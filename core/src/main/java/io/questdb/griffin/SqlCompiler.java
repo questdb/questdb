@@ -32,12 +32,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.*;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.*;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.engine.ops.CopyFactory;
-import io.questdb.griffin.engine.ops.InsertOperationImpl;
-import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
@@ -50,13 +48,13 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
-import java.util.function.Consumer;
 
 import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -97,6 +95,7 @@ public class SqlCompiler implements Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final Path path = new Path();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
+    private final QueryBuilder queryBuilder = new QueryBuilder();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex = new IndexBuilder();
@@ -385,6 +384,11 @@ public class SqlCompiler implements Closeable {
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    public QueryBuilder query() {
+        queryBuilder.clear();
+        return queryBuilder;
     }
 
     // used in tests
@@ -1200,40 +1204,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void cancelTextImport(SecurityContext securityContext, CopyModel model) throws SqlException {
-        assert model.isCancel();
-
-        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
-        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
-
-        long inProgressImportId = textImportExecutionContext.getActiveImportId();
-        // The cancellation is based on the best effort, so we don't worry about potential races with imports.
-        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
-            throw SqlException.$(0, "No active import to cancel.");
-        }
-
-        textImportExecutionContext.getOriginatorSecurityContext().authorizeCopyCancel(securityContext);
-
-        long importId;
-        try {
-            CharSequence idString = model.getTarget().token;
-            int start = 0;
-            int end = idString.length();
-            if (Chars.isQuoted(idString)) {
-                start = 1;
-                end--;
-            }
-            importId = Numbers.parseHexLong(idString, start, end);
-        } catch (NumericException e) {
-            throw SqlException.$(0, "Provided id has invalid format.");
-        }
-        if (inProgressImportId == importId) {
-            circuitBreaker.cancel();
-        } else {
-            throw SqlException.$(0, "Active import has different id.");
-        }
-    }
-
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -1253,6 +1223,58 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery compileCommit(SqlExecutionContext executionContext) {
         return compiledQuery.ofCommit();
+    }
+
+    private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
+        assert !model.isCancel();
+
+        securityContext.authorizeCopyExecute();
+
+        if (model.getTimestampColumnName() == null &&
+                ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+            throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
+        }
+        if (model.getDelimiter() < 0) {
+            model.setDelimiter((byte) ',');
+        }
+
+        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final ExpressionNode fileNameNode = model.getFileName();
+        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
+        assert fileName != null;
+
+        return new CopyFactory(
+                messageBus,
+                engine.getCopyContext(),
+                Chars.toString(tableName),
+                Chars.toString(fileName),
+                model
+        );
+    }
+
+    private RecordCursorFactory compileCopyCancel(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+        assert model.isCancel();
+
+        long cancelCopyID;
+        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTarget().token));
+        try {
+            cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
+
+        } catch (NumericException e) {
+            throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
+        }
+        return new CopyCancelFactory(
+                engine.getCopyContext(),
+                cancelCopyID,
+                cancelCopyIDStr,
+                query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("text_import_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory()
+        );
     }
 
     private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
@@ -1331,23 +1353,6 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofSet();
     }
 
-    private CopyFactory compileTextImport(CopyModel model) throws SqlException {
-        assert !model.isCancel();
-
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
-        final ExpressionNode fileNameNode = model.getFileName();
-        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
-        assert fileName != null;
-
-        return new CopyFactory(
-                messageBus,
-                engine.getTextImportExecutionContext(),
-                Chars.toString(tableName),
-                Chars.toString(fileName),
-                model
-        );
-    }
-
     @NotNull
     private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
@@ -1369,7 +1374,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.CREATE_TABLE:
                 return createTableWithRetries(executionModel, executionContext);
             case ExecutionModel.COPY:
-                return executeCopy(executionContext.getSecurityContext(), (CopyModel) executionModel);
+                return copy(executionContext, (CopyModel) executionModel);
             case ExecutionModel.RENAME_TABLE:
                 final RenameTableModel rtm = (RenameTableModel) executionModel;
                 engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
@@ -1396,6 +1401,24 @@ public class SqlCompiler implements Closeable {
                     return insert(executionModel, executionContext);
                 }
         }
+    }
+
+    @NotNull
+    private CompiledQuery copy(SqlExecutionContext executionContext, CopyModel copyModel) throws SqlException {
+        if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
+            // no-op implementation
+            executionContext.getSecurityContext().authorizeCopyExecute();
+            setupTextLoaderFromModel(copyModel);
+            return compiledQuery.ofCopyRemote(textLoader);
+        }
+
+        final RecordCursorFactory copyFactory;
+        if (copyModel.isCancel()) {
+            copyFactory = compileCopyCancel(executionContext, copyModel);
+        } else {
+            copyFactory = compileCopy(executionContext.getSecurityContext(), copyModel);
+        }
+        return compiledQuery.ofCopyLocal(copyFactory);
     }
 
     private long copyOrdered(
@@ -1667,12 +1690,12 @@ public class SqlCompiler implements Closeable {
             SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
-        final TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
+        TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
         int status = executionContext.getTableStatus(path, tableToken);
         if (createTableModel.isIgnoreIfExists() && status != TableUtils.TABLE_DOES_NOT_EXIST) {
-            return compiledQuery.ofCreateTable();
+            return compiledQuery.ofCreateTable(tableToken);
         }
 
         if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -1699,7 +1722,7 @@ public class SqlCompiler implements Closeable {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
                 if (volumeAlias == null) {
-                    engine.createTable(
+                    tableToken = engine.createTable(
                             executionContext.getSecurityContext(),
                             mem,
                             path,
@@ -1707,7 +1730,7 @@ public class SqlCompiler implements Closeable {
                             createTableModel,
                             false);
                 } else {
-                    engine.createTableInVolume(
+                    tableToken = engine.createTableInVolume(
                             executionContext.getSecurityContext(),
                             mem,
                             path,
@@ -1725,42 +1748,21 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            boolean keepLock = !createTableModel.isWalEnabled();
-            createTableFromCursorExecutor(createTableModel, executionContext, name.position, metadata -> {
-                if (volumeAlias == null) {
-                    engine.createTable(
-                            executionContext.getSecurityContext(),
-                            mem,
-                            path,
-                            false,
-                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
-                            keepLock
-                    );
-                } else {
-                    engine.createTableInVolume(
-                            executionContext.getSecurityContext(),
-                            mem,
-                            path,
-                            false,
-                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
-                            keepLock
-                    );
-                }
-            });
+            tableToken = createTableFromCursorExecutor(createTableModel, executionContext, name.position, volumeAlias);
         }
 
         if (createTableModel.getQueryModel() == null) {
-            return compiledQuery.ofCreateTable();
+            return compiledQuery.ofCreateTable(tableToken);
         } else {
-            return compiledQuery.ofCreateTableAsSelect(insertCount);
+            return compiledQuery.ofCreateTableAsSelect(tableToken, insertCount);
         }
     }
 
-    private void createTableFromCursorExecutor(
+    private TableToken createTableFromCursorExecutor(
             CreateTableModel model,
             SqlExecutionContext executionContext,
             int position,
-            Consumer<RecordMetadata> createTableMethod
+            CharSequence volumeAlias
     ) throws SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
@@ -1769,12 +1771,32 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
+            boolean keepLock = !model.isWalEnabled();
 
-            createTableMethod.accept(metadata);
+            final TableToken tableToken;
+
+            if (volumeAlias == null) {
+                tableToken = engine.createTable(
+                        executionContext.getSecurityContext(),
+                        mem,
+                        path,
+                        false,
+                        tableStructureAdapter.of(model, metadata, typeCast),
+                        keepLock
+                );
+            } else {
+                tableToken = engine.createTableInVolume(
+                        executionContext.getSecurityContext(),
+                        mem,
+                        path,
+                        false,
+                        tableStructureAdapter.of(model, metadata, typeCast),
+                        keepLock
+                );
+            }
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
-                TableToken tableToken = executionContext.getTableToken(model.getName().token);
                 copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
@@ -1783,6 +1805,7 @@ public class SqlCompiler implements Closeable {
                 }
                 throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
             }
+            return tableToken;
         }
     }
 
@@ -1847,40 +1870,6 @@ public class SqlCompiler implements Closeable {
         executionContext.getSecurityContext().authorizeTableDrop(tableToken);
         engine.drop(path, tableToken);
         return compiledQuery.ofDrop();
-    }
-
-    @NotNull
-    private CompiledQuery executeCopy(SecurityContext securityContext, CopyModel copyModel) throws SqlException {
-        securityContext.authorizeCopyExecute();
-        if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
-            // no-op implementation
-            setupTextLoaderFromModel(copyModel);
-            return compiledQuery.ofCopyRemote(textLoader);
-        }
-        RecordCursorFactory copyFactory = executeCopy0(securityContext, copyModel);
-        return compiledQuery.ofCopyLocal(copyFactory);
-    }
-
-    @Nullable
-    private RecordCursorFactory executeCopy0(SecurityContext securityContext, CopyModel model) throws SqlException {
-        try {
-            if (model.isCancel()) {
-                cancelTextImport(securityContext, model);
-                return null;
-            } else {
-                if (model.getTimestampColumnName() == null &&
-                        ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
-                    throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-                }
-                if (model.getDelimiter() < 0) {
-                    model.setDelimiter((byte) ',');
-                }
-                return compileTextImport(model);
-            }
-        } catch (TextImportException | TextException e) {
-            LOG.error().$((Throwable) e).$();
-            throw SqlException.$(0, e.getMessage());
-        }
     }
 
     private CompiledQuery executeWithRetries(
@@ -3122,6 +3111,29 @@ public class SqlCompiler implements Closeable {
             } finally {
                 tableTokens.clear();
             }
+        }
+    }
+
+    public class QueryBuilder implements Mutable {
+        private final StringSink sink = new StringSink();
+
+        public QueryBuilder $(CharSequence value) {
+            sink.put(value);
+            return this;
+        }
+
+        public QueryBuilder $(int value) {
+            sink.put(value);
+            return this;
+        }
+
+        @Override
+        public void clear() {
+            sink.clear();
+        }
+
+        public CompiledQuery compile(SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompiler.this.compile(sink, executionContext);
         }
     }
 

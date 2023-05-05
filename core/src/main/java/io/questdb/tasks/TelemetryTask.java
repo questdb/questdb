@@ -26,9 +26,9 @@ package io.questdb.tasks;
 
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
@@ -37,40 +37,38 @@ public class TelemetryTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry";
 
     private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
-    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = new Telemetry.TelemetryTypeBuilder<TelemetryTask>() {
-        @Override
-        public Telemetry.TelemetryType<TelemetryTask> build(CairoConfiguration configuration) {
-            return new Telemetry.TelemetryType<TelemetryTask>() {
-                private final TelemetryTask systemStatusTask = new TelemetryTask();
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = configuration -> new Telemetry.TelemetryType<TelemetryTask>() {
+        private final TelemetryTask systemStatusTask = new TelemetryTask();
 
-                @Override
-                public String getCreateSql() {
-                    // Telemetry table will not have sys. prefix for compatibility.
-                    return "CREATE TABLE IF NOT EXISTS \"" + TABLE_NAME + "\" (" +
+        @Override
+        public SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder) {
+            return builder
+                    .$("CREATE TABLE IF NOT EXISTS \"")
+                    .$(TABLE_NAME)
+                    .$("\" (" +
                             "created timestamp, " +
                             "event short, " +
                             "origin short" +
-                            ") timestamp(created)";
-                }
+                            ") timestamp(created)"
+                    );
+        }
 
-                @Override
-                public String getTableName() {
-                    return TABLE_NAME;
-                }
+        @Override
+        public String getTableName() {
+            return TABLE_NAME;
+        }
 
-                @Override
-                public ObjectFactory<TelemetryTask> getTaskFactory() {
-                    return TelemetryTask::new;
-                }
+        @Override
+        public ObjectFactory<TelemetryTask> getTaskFactory() {
+            return TelemetryTask::new;
+        }
 
-                @Override
-                public void logStatus(TableWriter writer, short systemStatus, long micros) {
-                    systemStatusTask.origin = TelemetryOrigin.INTERNAL;
-                    systemStatusTask.event = systemStatus;
-                    systemStatusTask.writeTo(writer, micros);
-                    writer.commit();
-                }
-            };
+        @Override
+        public void logStatus(TableWriter writer, short systemStatus, long micros) {
+            systemStatusTask.origin = TelemetryOrigin.INTERNAL;
+            systemStatusTask.event = systemStatus;
+            systemStatusTask.writeTo(writer, micros);
+            writer.commit();
         }
     };
     private short event;

@@ -27,13 +27,13 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.std.Mutable;
 
-public class TextImportRequestTask implements Mutable {
+public class CopyRequestTask implements Mutable {
     private SecurityContext securityContext;
     private int atomicity;
     private byte delimiter;
     private String fileName;
     private boolean headerFlag;
-    private long importId;
+    private long copyID;
     private int partitionBy;
     private String tableName;
     private String timestampColumnName;
@@ -41,7 +41,7 @@ public class TextImportRequestTask implements Mutable {
 
     @Override
     public void clear() {
-        this.importId = -1;
+        this.copyID = -1;
         this.tableName = null;
         this.fileName = null;
         this.headerFlag = false;
@@ -64,8 +64,8 @@ public class TextImportRequestTask implements Mutable {
         return fileName;
     }
 
-    public long getImportId() {
-        return importId;
+    public long getCopyID() {
+        return copyID;
     }
 
     public int getPartitionBy() {
@@ -94,7 +94,7 @@ public class TextImportRequestTask implements Mutable {
 
     public void of(
             SecurityContext securityContext,
-            long importId,
+            long copyID,
             String tableName,
             String fileName,
             boolean headerFlag,
@@ -106,7 +106,7 @@ public class TextImportRequestTask implements Mutable {
     ) {
         this.clear();
         this.securityContext = securityContext;
-        this.importId = importId;
+        this.copyID = copyID;
         this.tableName = tableName;
         this.fileName = fileName;
         this.headerFlag = headerFlag;
