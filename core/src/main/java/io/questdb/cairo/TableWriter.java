@@ -439,6 +439,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential
     ) {
 
+        new Exception().printStackTrace();
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";

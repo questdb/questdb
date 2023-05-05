@@ -126,7 +126,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
             if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {
                 return;
             }
-            LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+            throw CairoException.critical(ff.errno()).put("could not msync [fd=").put(fd).put(']');
         }
     }
 
