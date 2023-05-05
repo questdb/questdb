@@ -31,13 +31,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.TextImportRequestJob;
+import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -887,8 +886,8 @@ public final class TestUtils {
     }
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            processingJob.drain(0);
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1, null)) {
+            copyRequestJob.drain(0);
         }
     }
 
@@ -1303,35 +1302,6 @@ public final class TestUtils {
         final Path path = Path.getThreadLocal(root);
         final int rc = TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$());
         Assert.assertTrue("Test dir cleanup error, rc=" + rc, rc <= 0);
-    }
-
-    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
-        WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return new int[1];
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
-        WorkerPool pool = new WorkerPool(config, Metrics.disabled().health());
-        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
-        try {
-            pool.assign(processingJob);
-            pool.freeOnExit(processingJob);
-            pool.start(null);
-            task.run();
-        } finally {
-            pool.halt();
-        }
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {

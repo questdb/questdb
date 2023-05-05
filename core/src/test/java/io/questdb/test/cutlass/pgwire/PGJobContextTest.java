@@ -1735,7 +1735,7 @@ if __name__ == "__main__":
             }
         };
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -2162,7 +2162,7 @@ if __name__ == "__main__":
 
     @Test
     @Ignore
-    public void testCopyIn() throws SQLException {
+    public void testCopyIn() throws SQLException, SqlException {
         try (
                 final PGWireServer server = createPGServer(2);
                 final WorkerPool workerPool = server.getWorkerPool()
@@ -3783,12 +3783,12 @@ nodejs code:
 
     @Test
     public void testInsertTableDoesNotExistPrepared() throws Exception {
-        testInsertTableDoesNotExist(false, "table does not exist [table=x]");
+        testInsertTableDoesNotExist(false);
     }
 
     @Test
     public void testInsertTableDoesNotExistSimple() throws Exception {
-        testInsertTableDoesNotExist(true, "table does not exist [table=x]");
+        testInsertTableDoesNotExist(true);
     }
 
     @Test
@@ -4140,7 +4140,7 @@ nodejs code:
     @Test
     public void testLargeOutput() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             final String expected = "1[INTEGER],2[INTEGER],3[INTEGER]\n" +
                     "1,2,3\n" +
@@ -4447,23 +4447,21 @@ nodejs code:
                     final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
                     final ResultSet ignore = copy.executeQuery()
             ) {
-                TestUtils.runWithTextImportRequestJob(
-                        engine,
-                        () -> assertEventually(() -> {
-                                    try (
-                                            final PreparedStatement select = connection.prepareStatement("select * from x");
-                                            final ResultSet rs = select.executeQuery()
-                                    ) {
-                                        sink.clear();
-                                        assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                                                + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                                                + "CDE,bb,b,sentence 1\n"
-                                                + "sentence 2,12\n", sink, rs);
-                                    } catch (IOException | SQLException e) {
-                                        throw new AssertionError(e);
-                                    }
-                                }
-                        ));
+                assertEventually(() -> {
+                    try (
+                            final PreparedStatement select = connection.prepareStatement("select * from x");
+                            final ResultSet rs = select.executeQuery()
+                    ) {
+                        sink.clear();
+                        assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                                + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                                + "CDE,bb,b,sentence 1\n"
+                                + "sentence 2,12\n", sink, rs);
+                    } catch (IOException | SQLException e) {
+                        throw new AssertionError(e);
+                    }
+                });
+
             }
         });
     }
@@ -4473,35 +4471,40 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
-                String importId;
+                String copyID;
                 try (final ResultSet rs = copyStatement.executeQuery()) {
                     Assert.assertTrue(rs.next());
-                    importId = rs.getString("id");
+                    copyID = rs.getString("id");
                 }
 
-                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
-                    // Cancel should always succeed since we don't have text import jobs running here.
-                    cancelStatement.execute();
+                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel")) {
+                    try (final ResultSet rs = cancelStatement.executeQuery()) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(copyID, rs.getString(1));
+                        String status = rs.getString(2);
+                        Assert.assertTrue("cancelled".equals(status) || "finished".equals(status));
+                    }
                 }
 
                 try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
-                    incorrectCancelStatement.execute();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Active import has different id.");
+                    try (final ResultSet rs = incorrectCancelStatement.executeQuery()) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals("unknown", rs.getString(2));
+                    }
                 }
 
-                // Pretend that the import was cancelled and try to cancel it one more time.
-                engine.getTextImportExecutionContext().clear();
+                // Pretend that the copy was cancelled and try to cancel it one more time.
+                engine.getCopyContext().clear();
 
-                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
-                    cancelStatement.execute();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "No active import to cancel.");
+                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel")) {
+                    try (final ResultSet rs = cancelStatement.executeQuery()) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(copyID, rs.getString(1));
+                        Assert.assertNotEquals("cancelled", rs.getString(2));
+                    }
                 }
             } finally {
-                TestUtils.drainTextImportJobQueue(engine);
+                copyRequestJob.drain(0);
             }
         });
     }
@@ -4532,7 +4535,7 @@ nodejs code:
     @Test
     public void testLoginBadUsername() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4673,7 +4676,7 @@ nodejs code:
     @Test
     public void testMultiplePreparedStatements() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4990,7 +4993,7 @@ nodejs code:
     @Test
     public void testParseErrorDoesNotCorruptConnection() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5025,7 +5028,7 @@ nodejs code:
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
     public void testParseErrorDoesntCorruptConnection() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5152,7 +5155,7 @@ nodejs code:
     @Test
     public void testPreparedStatement() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5476,7 +5479,7 @@ nodejs code:
     @Test
     public void testPreparedStatementSelectNull() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5504,7 +5507,7 @@ nodejs code:
     @Test
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6759,6 +6762,7 @@ nodejs code:
                         assertResultSet(
                                 "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[VARCHAR],TYPE_SCHEM[VARCHAR],TYPE_NAME[VARCHAR],SELF_REFERENCING_COL_NAME[VARCHAR],REF_GENERATION[VARCHAR]\n" +
                                         "null,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,\n" +
+                                        "null,public,sys.text_import_log,TABLE,null,,,,,\n" +
                                         "null,public,test,TABLE,null,,,,,\n" +
                                         "null,public,test2,TABLE,null,,,,,\n",
                                 sink,
@@ -8069,7 +8073,7 @@ create table tab as (
     @Test
     public void testUnsupportedParameterType() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -8750,9 +8754,7 @@ create table tab as (
 
     @Test
     public void testMetadata() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close();
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
     private void assertHexScript(
@@ -9705,7 +9707,7 @@ create table tab as (
 
     private void testGeoHashSelect(boolean simple, boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -10144,7 +10146,7 @@ create table tab as (
         });
     }
 
-    private void testInsertTableDoesNotExist(boolean simple, String expectedError) throws Exception {
+    private void testInsertTableDoesNotExist(boolean simple) throws Exception {
         skipOnWalRun(); // non-partitioned table
         // we are going to:
         // 1. create a table
@@ -10178,7 +10180,7 @@ create table tab as (
                         insert.execute();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), expectedError);
+                        TestUtils.assertContains(e.getMessage(), "table does not exist [table=x]");
                     }
                 }
             }

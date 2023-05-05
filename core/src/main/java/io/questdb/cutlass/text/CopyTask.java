@@ -44,7 +44,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 
-public class TextImportTask {
+public class CopyTask {
 
     public static final byte NO_PHASE = -1;
     public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
@@ -62,7 +62,7 @@ public class TextImportTask {
     public static final byte STATUS_FAILED = 2;
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_STARTED = 0;
-    private static final Log LOG = LogFactory.getLog(TextImportTask.class);
+    private static final Log LOG = LogFactory.getLog(CopyTask.class);
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
 
