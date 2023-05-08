@@ -34,7 +34,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-
 public class AsOfJoinTest extends AbstractGriffinTest {
 
     @Before
@@ -86,6 +85,37 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinCombinedWithInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
+                    sqlExecutionContext
+            );
+            compiler.compile(
+                    "create table t2 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
+                    sqlExecutionContext
+            );
+            compiler.compile(
+                    "create table t3 (id long, ts timestamp) timestamp(ts) partition by day;",
+                    sqlExecutionContext
+            );
+
+            final String query = "SELECT *\n" +
+                    "FROM (\n" +
+                    "  (t1 INNER JOIN t2 ON id) \n" +
+                    "  ASOF JOIN t3 ON id\n" +
+                    ");";
+            final String expected = "id\tts\tid1\tts1\tid2\tts2\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
+            printSqlResult(expected, query, "ts", false, false);
+        });
+    }
+
+    @Test
     public void testAsOfJoinDynamicTimestamp() throws Exception {
         compiler.compile(
                 "create table positions2 as (" +
@@ -129,7 +159,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 "AA\t1573662097\t1573662097\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:48:00.000000Z\n" +
                 "AA\t339631474\t339631474\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:54:00.000000Z\n";
 
-
         assertQuery13(
                 "tag\thi\tlo\tts\tts1\n",
                 "select a.tag, a.seq hi, b.seq lo,  a.ts, b.ts from tab a asof join tab b on (tag)",
@@ -162,7 +191,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 "BB\t1545253512\t1545253512\n" +
                 "AA\t1573662097\t1573662097\n" +
                 "AA\t339631474\t339631474\n";
-
 
         assertQuery13(
                 "tag\thi\tlo\n",
@@ -289,6 +317,30 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinOnEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
+                    sqlExecutionContext
+            );
+            compiler.compile(
+                    "create table t2 (id long, ts timestamp) timestamp(ts) partition by day;",
+                    sqlExecutionContext
+            );
+
+            final String query = "SELECT * FROM t1 \n" +
+                    "ASOF JOIN t2 ON id;";
+            final String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
+            printSqlResult(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
     }
@@ -304,45 +356,13 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws Exception {
-        testFullJoinDoesNotConvertSymbolKeyToString("lt join");
-    }
-
-    @Test
     public void testFullAsOfJoinDoesNotConvertSymbolKeyToString() throws Exception {
         testFullJoinDoesNotConvertSymbolKeyToString("asof join");
     }
 
-    private void testFullJoinDoesNotConvertSymbolKeyToString(String joinType) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.setFullFatJoins(true);
-            compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
-            compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
-
-            compile("insert into tab_a values " +
-                    "('ABC', '2022-01-01T00:00:00.000000Z', 'foo')"
-            );
-            compile("insert into tab_b values " +
-                    "('DCE', '2021-01-01T00:00:00.000000Z', 'bar')," + // first INSERT a row with DCE to make sure symbol table for tab_b differs from tab_a
-                    "('ABC', '2021-01-01T00:00:00.000000Z', 'bar')"
-            );
-
-            String query = "select sym_a, sym_b from tab_a a " + joinType + " tab_b b on sym_a = sym_b";
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    io.questdb.cairo.sql.Record record = cursor.getRecord();
-                    RecordMetadata metadata = factory.getMetadata();
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
-                    Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
-                    CharSequence sym0 = record.getSym(0);
-                    CharSequence sym1 = record.getSym(1);
-                    TestUtils.assertEquals("ABC", sym0);
-                    TestUtils.assertEquals("ABC", sym1);
-                    Assert.assertFalse(cursor.hasNext());
-                }
-            }
-        });
+    @Test
+    public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws Exception {
+        testFullJoinDoesNotConvertSymbolKeyToString("lt join");
     }
 
     @Test
@@ -417,97 +437,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 false,
                 true
         );
-    }
-
-    @Test
-    public void testLtJoinOnSymbolWithSyntheticMasterSymbol() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.setFullFatJoins(true);
-
-            // create a master table - without a symbol column
-            compile("create table taba as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000000L) as ts from long_sequence(5)) timestamp(ts)");
-
-            // create a slave table - with a symbol column, with timestamps 1 microsecond before master timestamps
-            compile("create table tabb as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss') - 1, 10000000000000L) as ts, rnd_symbol('A', 'B', 'C') as sym from long_sequence(5)) timestamp(ts)");
-
-            // use a CTE to amend the master table with a synthetic symbol column
-            String query = "with s as (\n" +
-                    "  select cast (s as symbol) synthetic_sym, ts\n" +
-                    "  from (\n" +
-                    "      SELECT\n" +
-                    "        CASE\n" +
-                    "          WHEN ts % 3 = 0 THEN 'A'\n" +
-                    "          WHEN ts % 3 = 1 THEN 'B'\n" +
-                    "          ELSE 'C'\n" +
-                    "        END as s, *\n" +
-                    "      FROM taba\n" +
-                    "    )\n" +
-                    "  )\n" +
-                    "select * from s\n" +
-                    "lt join tabb on (s.synthetic_sym = tabb.sym);";
-            String expected = "synthetic_sym\tts\tts1\tsym\n" +
-                    "A\t2019-10-17T00:00:00.000000Z\t2019-10-16T23:59:59.999999Z\tA\n" +
-                    "B\t2020-02-09T17:46:40.000000Z\t\t\n" +
-                    "C\t2020-06-04T11:33:20.000000Z\t\t\n" +
-                    "A\t2020-09-28T05:20:00.000000Z\t2020-02-09T17:46:39.999999Z\tA\n" +
-                    "B\t2021-01-21T23:06:40.000000Z\t2020-06-04T11:33:19.999999Z\tB\n";
-            assertQuery(expected, query, "ts", false, true);
-        });
-    }
-
-
-    @Test
-    public void testLtJoinOnCompositeSymbolKey() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.setFullFatJoins(true);
-            // stock and exchange are composite keys
-            // rating is also a symbol, but not used in a join key
-            compile("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-            compile("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-
-            compile("INSERT INTO bids VALUES " +
-                    "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                    "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
-                    "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
-                    "('AAPL', 'LSE', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
-                    "('AAPL', 'LSE', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                    "('AAPL', 'LSE', '2002-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                    "('MSFT', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 7, 'GOOD')," +
-                    "('MSFT', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                    "('MSFT', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 9, 'SCAM')," +
-                    "('MSFT', 'LSE', '2000-01-01T00:00:00.000000Z', 10, 'UNKNOWN')," +
-                    "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'GOOD')"
-            );
-
-            compile("INSERT INTO asks VALUES " +
-                    "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                    "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
-                    "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
-                    "('AAPL', 'LSE', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
-                    "('AAPL', 'LSE', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                    "('AAPL', 'LSE', '2002-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                    "('MSFT', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
-                    "('MSFT', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                    "('MSFT', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
-                    "('MSFT', 'LSE', '2000-01-01T00:00:00.000000Z', 10, 'GOOD')," +
-                    "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'SCAM')"
-            );
-
-            String query = "SELECT * FROM bids LT JOIN asks ON (stock, exchange)";
-            String expected = "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
-                    "AAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\tNaN\t\n" +
-                    "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\tNaN\t\n" +
-                    "MSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tUNKNOWN\t\t\t\tNaN\t\n" +
-                    "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\tNaN\t\n" +
-                    "AAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tEXCELLENT\n" +
-                    "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\tMSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tEXCELLENT\n" +
-                    "MSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
-                    "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
-                    "AAPL\tLSE\t2002-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
-                    "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000Z\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\n" +
-                    "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n";
-            assertQuery(expected, query, "ts", false, true);
-        });
     }
 
     @Test
@@ -786,6 +715,84 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLtJoinOnCompositeSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+            // stock and exchange are composite keys
+            // rating is also a symbol, but not used in a join key
+            compile("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            compile("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+
+            compile("INSERT INTO bids VALUES " +
+                    "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                    "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
+                    "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
+                    "('AAPL', 'LSE', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
+                    "('AAPL', 'LSE', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                    "('AAPL', 'LSE', '2002-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                    "('MSFT', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 7, 'GOOD')," +
+                    "('MSFT', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                    "('MSFT', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 9, 'SCAM')," +
+                    "('MSFT', 'LSE', '2000-01-01T00:00:00.000000Z', 10, 'UNKNOWN')," +
+                    "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'GOOD')"
+            );
+
+            compile("INSERT INTO asks VALUES " +
+                    "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                    "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
+                    "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
+                    "('AAPL', 'LSE', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
+                    "('AAPL', 'LSE', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                    "('AAPL', 'LSE', '2002-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                    "('MSFT', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
+                    "('MSFT', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                    "('MSFT', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
+                    "('MSFT', 'LSE', '2000-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                    "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'SCAM')"
+            );
+
+            String query = "SELECT * FROM bids LT JOIN asks ON (stock, exchange)";
+            String expected = "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
+                    "AAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\tNaN\t\n" +
+                    "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\tNaN\t\n" +
+                    "MSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tUNKNOWN\t\t\t\tNaN\t\n" +
+                    "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\tNaN\t\n" +
+                    "AAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tEXCELLENT\n" +
+                    "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\tMSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tEXCELLENT\n" +
+                    "MSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                    "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
+                    "AAPL\tLSE\t2002-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
+                    "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000Z\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\n" +
+                    "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n";
+            assertQuery(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testLtJoinOnEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
+                    sqlExecutionContext
+            );
+            compiler.compile(
+                    "create table t2 (id long, ts timestamp) timestamp(ts) partition by day;",
+                    sqlExecutionContext
+            );
+
+            final String query = "SELECT * FROM t1 \n" +
+                    "LT JOIN t2 ON id;";
+            final String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
+            printSqlResult(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testLtJoinOnRandomlyGeneratedColumn() throws Exception {
         final String expected = "tag\thi\tlo\n" +
                 "CC\t592859671\t-948263339\n" +
@@ -809,6 +816,42 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 expected,
                 false
         );
+    }
+
+    @Test
+    public void testLtJoinOnSymbolWithSyntheticMasterSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+
+            // create a master table - without a symbol column
+            compile("create table taba as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000000L) as ts from long_sequence(5)) timestamp(ts)");
+
+            // create a slave table - with a symbol column, with timestamps 1 microsecond before master timestamps
+            compile("create table tabb as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss') - 1, 10000000000000L) as ts, rnd_symbol('A', 'B', 'C') as sym from long_sequence(5)) timestamp(ts)");
+
+            // use a CTE to amend the master table with a synthetic symbol column
+            String query = "with s as (\n" +
+                    "  select cast (s as symbol) synthetic_sym, ts\n" +
+                    "  from (\n" +
+                    "      SELECT\n" +
+                    "        CASE\n" +
+                    "          WHEN ts % 3 = 0 THEN 'A'\n" +
+                    "          WHEN ts % 3 = 1 THEN 'B'\n" +
+                    "          ELSE 'C'\n" +
+                    "        END as s, *\n" +
+                    "      FROM taba\n" +
+                    "    )\n" +
+                    "  )\n" +
+                    "select * from s\n" +
+                    "lt join tabb on (s.synthetic_sym = tabb.sym);";
+            String expected = "synthetic_sym\tts\tts1\tsym\n" +
+                    "A\t2019-10-17T00:00:00.000000Z\t2019-10-16T23:59:59.999999Z\tA\n" +
+                    "B\t2020-02-09T17:46:40.000000Z\t\t\n" +
+                    "C\t2020-06-04T11:33:20.000000Z\t\t\n" +
+                    "A\t2020-09-28T05:20:00.000000Z\t2020-02-09T17:46:39.999999Z\tA\n" +
+                    "B\t2021-01-21T23:06:40.000000Z\t2020-06-04T11:33:19.999999Z\tB\n";
+            assertQuery(expected, query, "ts", false, true);
+        });
     }
 
     @Test
@@ -1184,5 +1227,37 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                         "(select * from x order by ts limit 5) b",
                 "create table x (ts timestamp, y int) timestamp(ts)",
                 timestamp, false);
+    }
+
+    private void testFullJoinDoesNotConvertSymbolKeyToString(String joinType) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+            compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
+            compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
+
+            compile("insert into tab_a values " +
+                    "('ABC', '2022-01-01T00:00:00.000000Z', 'foo')"
+            );
+            compile("insert into tab_b values " +
+                    "('DCE', '2021-01-01T00:00:00.000000Z', 'bar')," + // first INSERT a row with DCE to make sure symbol table for tab_b differs from tab_a
+                    "('ABC', '2021-01-01T00:00:00.000000Z', 'bar')"
+            );
+
+            String query = "select sym_a, sym_b from tab_a a " + joinType + " tab_b b on sym_a = sym_b";
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    io.questdb.cairo.sql.Record record = cursor.getRecord();
+                    RecordMetadata metadata = factory.getMetadata();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
+                    Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
+                    CharSequence sym0 = record.getSym(0);
+                    CharSequence sym1 = record.getSym(1);
+                    TestUtils.assertEquals("ABC", sym0);
+                    TestUtils.assertEquals("ABC", sym1);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
     }
 }

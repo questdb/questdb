@@ -5378,7 +5378,7 @@ public class IODispatcherTest extends AbstractTest {
 
                             @Override
                             public HttpRequestProcessor getDefaultProcessor() {
-                                return new HealthCheckProcessor();
+                                return new HealthCheckProcessor(false);
                             }
 
                             @Override
@@ -7008,7 +7008,6 @@ public class IODispatcherTest extends AbstractTest {
                             false
                     );
 
-                    // Cancel should always succeed since we don't have text import jobs running here.
                     final String cancelQuery = "copy '0000000000000000' cancel";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
@@ -7031,7 +7030,10 @@ public class IODispatcherTest extends AbstractTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    JSON_DDL_RESPONSE,
+                                    "bb\r\n" +
+                                    "{\"query\":\"copy '0000000000000000' cancel\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"},{\"name\":\"status\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\",\"finished\"]],\"timestamp\":-1,\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
                             1,
                             0,
                             false,
@@ -7053,16 +7055,17 @@ public class IODispatcherTest extends AbstractTest {
                                     "Accept-Encoding: gzip, deflate, br\r\n" +
                                     "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                                     "\r\n",
-                            "HTTP/1.1 400 Bad request\r\n" +
+                            "HTTP/1.1 200 OK\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                     "Transfer-Encoding: chunked\r\n" +
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "61\r\n" +
-                                    "{\"query\":\"copy 'ffffffffffffffff' cancel\",\"error\":\"Active import has different id.\",\"position\":0}\r\n" +
-                                    "00\r\n\r\n",
+                                    "ba\r\n" +
+                                    "{\"query\":\"copy 'ffffffffffffffff' cancel\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"},{\"name\":\"status\",\"type\":\"STRING\"}],\"dataset\":[[\"ffffffffffffffff\",\"unknown\"]],\"timestamp\":-1,\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
                             1,
                             0,
                             false,
