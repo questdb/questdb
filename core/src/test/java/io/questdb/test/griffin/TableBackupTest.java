@@ -106,6 +106,38 @@ public class TableBackupTest {
         });
     }
 
+    public static TableToken executeCreateTableStmt(
+            @NotNull String tableName,
+            int partitionBy,
+            boolean isWal,
+            int numRows,
+            @NotNull SqlCompiler compiler,
+            @NotNull SqlExecutionContext context
+    ) throws SqlException {
+        executeSqlStmt(
+                "CREATE TABLE '" + tableName + "' AS (" +
+                        selectGenerator(numRows) +
+                        "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
+                        "PARTITION BY " + PartitionBy.toString(partitionBy) +
+                        (isWal ? " WAL" : " BYPASS WAL"),
+                compiler, context);
+        return compiler.getEngine().verifyTableName(tableName);
+    }
+
+    public static void executeInsertGeneratorStmt(
+            TableToken tableToken,
+            int size,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        executeSqlStmt("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', compiler, sqlExecutionContext);
+    }
+
+    public static String testTableName(String tableName, String tableNameSuffix) {
+        int idx = tableName.indexOf('[');
+        return (idx > 0 ? tableName.substring(0, idx) : tableName) + '_' + tableNameSuffix;
+    }
+
     @Before
     public void setup() throws IOException {
         path = new Path();
@@ -354,9 +386,7 @@ public class TableBackupTest {
             selectAll(tableToken, true, firstBackup);
             Assert.assertEquals(sink1, firstBackup);
 
-            executeSqlStmt("INSERT INTO \"" + tableToken.getTableName() + "\" SELECT * FROM (" + selectGenerator() + ')', mainCompiler, mainSqlExecutionContext);
-            drainWalQueue();
-
+            executeInsertGeneratorStmt(tableToken);
             backupTable(tableToken);
             setFinalBackupPath(1);
             assertTables(tableToken);
@@ -397,30 +427,13 @@ public class TableBackupTest {
         });
     }
 
-    private static TableToken executeCreateTableStmt(
-            @NotNull String tableName,
-            int partitionBy,
-            boolean isWal,
-            @NotNull SqlCompiler compiler,
-            @NotNull SqlExecutionContext context
-    ) throws SqlException {
-        executeSqlStmt(
-                "CREATE TABLE \"" + tableName + "\" AS (" +
-                        selectGenerator() +
-                        "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
-                        "PARTITION BY " + PartitionBy.toString(partitionBy) +
-                        (isWal ? " WAL" : " BYPASS WAL"),
-                compiler, context);
-        return compiler.getEngine().verifyTableName(tableName);
-    }
-
     private static void executeSqlStmt(CharSequence stmt, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (OperationFuture future = compiler.compile(stmt, sqlExecutionContext).execute(null)) {
             future.await();
         }
     }
 
-    private static String selectGenerator() {
+    private static String selectGenerator(int size) {
         return " SELECT" +
                 "     rnd_boolean() bool," +
                 "     rnd_char() char," +
@@ -452,12 +465,7 @@ public class TableBackupTest {
                 "     rnd_geohash(60) g60," +
                 "     rnd_uuid4() uuid," +
                 "     rnd_long256() long256" +
-                " FROM long_sequence(10000)";
-    }
-
-    private static String testTableName(String tableName) {
-        int idx = tableName.indexOf('[');
-        return (idx > 0 ? tableName.substring(0, idx) : tableName) + "_すばらしい";
+                " FROM long_sequence(" + size + ')';
     }
 
     private void assertDatabase() {
@@ -519,9 +527,14 @@ public class TableBackupTest {
     }
 
     private TableToken executeCreateTableStmt(String tableName) throws SqlException {
-        TableToken tableToken = executeCreateTableStmt(testTableName(tableName), partitionBy, isWal, mainCompiler, mainSqlExecutionContext);
+        TableToken tableToken = executeCreateTableStmt(testTableName(tableName, "すばらしい"), partitionBy, isWal, 10000, mainCompiler, mainSqlExecutionContext);
         drainWalQueue();
         return tableToken;
+    }
+
+    private void executeInsertGeneratorStmt(TableToken tableToken) throws SqlException {
+        executeInsertGeneratorStmt(tableToken, 6, mainCompiler, mainSqlExecutionContext);
+        drainWalQueue();
     }
 
     private void executeSqlStmt(String stmt) throws SqlException {

@@ -159,7 +159,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             SqlExecutionContext context,
             TableToken tableToken
     ) throws Exception {
-        compiler.compile("DROP TABLE " + tableToken.getTableName(), context);
+        compiler.compile("DROP TABLE '" + tableToken.getTableName() + '\'', context);
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {
