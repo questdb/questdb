@@ -24,35 +24,48 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class ClearTextPgWireAuthenticator implements Mutable, PgWireAuthenticator {
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final boolean readOnlySecurityContext;
+    private final String readOnlyUser;
     private final PGConnectionContext.ResponseAsciiSink responseAsciiSink;
+    private final SecurityContextFactory securityContextFactory;
     private final PgWireUserDatabase userDatabase;
-    private CharSequence principal;
+    private SecurityContext securityContext;
     private State state = State.SEND_LOGIN_REQUEST;
 
     public ClearTextPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, PGWireConfiguration configuration) {
-        this(responseAsciiSink, new StaticUserDatabase(configuration));
+        this.responseAsciiSink = responseAsciiSink;
+        this.userDatabase = new StaticUserDatabase(configuration);
+        this.securityContextFactory = configuration.getFactoryProvider().getSecurityContextFactory();
+        this.readOnlySecurityContext = configuration.readOnlySecurityContext();
+        this.readOnlyUser = configuration.isReadOnlyUserEnabled() ? configuration.getReadOnlyUsername() : null;
     }
 
-    public ClearTextPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, PgWireUserDatabase userDatabase) {
+    public ClearTextPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, SecurityContextFactory securityContextFactory, PgWireUserDatabase userDatabase) {
         this.responseAsciiSink = responseAsciiSink;
         this.userDatabase = userDatabase;
+        this.securityContextFactory = securityContextFactory;
+        this.readOnlySecurityContext = false;
+        this.readOnlyUser = null;
     }
 
     @Override
     public void clear() {
         state = State.SEND_LOGIN_REQUEST;
+        securityContext = null;
     }
 
-
     @Override
-    public CharSequence getPrincipal() {
-        return principal;
+    public SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     @Override
@@ -75,7 +88,12 @@ public class ClearTextPgWireAuthenticator implements Mutable, PgWireAuthenticato
         long hi = PGConnectionContext.getStringLength(msgStart, msgLimit, "bad password length");
         dbcs.of(msgStart, hi);
         if (userDatabase.match(usernameFromInitMessage, dbcs)) {
-            principal = usernameFromInitMessage;
+            boolean readOnly = readOnlySecurityContext || (readOnlyUser != null && usernameFromInitMessage != null && Chars.equals(readOnlyUser, usernameFromInitMessage));
+            securityContext = securityContextFactory.getInstance(usernameFromInitMessage, readOnly);
+            if (securityContext == null) {
+                state = State.FAILED;
+                return AuthenticationResult.AUTHENTICATION_FAILED;
+            }
             state = State.SUCCESS;
             return AuthenticationResult.AUTHENTICATION_SUCCESS;
         } else {

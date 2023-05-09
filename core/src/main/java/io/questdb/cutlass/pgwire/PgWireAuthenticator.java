@@ -24,10 +24,11 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.std.Mutable;
 
 public interface PgWireAuthenticator extends Mutable {
-    CharSequence getPrincipal();
+    SecurityContext getSecurityContext();
 
     boolean isAuthenticated();
 

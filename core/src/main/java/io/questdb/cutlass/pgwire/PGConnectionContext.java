@@ -29,7 +29,6 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -129,12 +128,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final NetworkFacade nf;
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
-    private final boolean readOnlyContext;
-    private final String readOnlyUsername;
     private final int recvBufferSize;
     private final CircuitBreakerRegistry registry;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
-    private final SecurityContextFactory securityContextFactory;
     private final IntList selectColumnTypes = new IntList();
     private final int sendBufferSize;
     private final String serverVersion;
@@ -238,10 +234,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(responseAsciiSink, configuration);
-        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
-        this.readOnlyUsername = configuration.getReadOnlyUsername();
-        this.readOnlyContext = configuration.readOnlySecurityContext();
+        PgWireAuthenticationFactory pgWireAuthenticationFactory = factoryProvider.getPgWireAuthenticationFactory();
+        this.authenticator = pgWireAuthenticationFactory.getPgWireAuthenticator(responseAsciiSink, configuration);
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -1543,10 +1537,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void onAfterAuthSuccess() throws AuthenticationException {
-        CharSequence principal = authenticator.getPrincipal();
-
-        boolean readOnly = readOnlyContext || (readOnlyUsername != null && principal != null && Chars.equals(principal, readOnlyUsername));
-        SecurityContext securityContext = securityContextFactory.getInstance(principal, readOnly);
+        SecurityContext securityContext = authenticator.getSecurityContext();
         if (securityContext == null) {
             throw AuthenticationException.INSTANCE;
         }
@@ -1840,12 +1831,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareParams(responseAsciiSink, "client_encoding", "UTF8");
         prepareBackendKeyData(responseAsciiSink);
         prepareReadyForQuery();
-    }
-
-    private void prepareLoginResponse() {
-        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES * 2);
-        responseAsciiSink.putNetworkInt(3); // clear text password
     }
 
     private void prepareNoDataMessage() {
