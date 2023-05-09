@@ -24,10 +24,12 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -105,7 +107,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
-    private final PGAuthenticator authenticator;
+    private final PgWireAuthenticator authenticator;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     //stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -127,11 +129,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final NetworkFacade nf;
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
+    private final boolean readOnlyContext;
+    private final String readOnlyUsername;
     private final int recvBufferSize;
     private final CircuitBreakerRegistry registry;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
-    @Nullable
-    private final PGAuthenticator roUserAuthenticator;
+    private final SecurityContextFactory securityContextFactory;
     private final IntList selectColumnTypes = new IntList();
     private final int sendBufferSize;
     private final String serverVersion;
@@ -146,6 +149,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     //list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList activeSelectColumnTypes;
     private boolean authenticationRequired = true;
+    //    private boolean authenticationRequired = true;
     private BindVariableService bindVariableService;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
@@ -196,7 +200,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private CharSequence username;
-
     private NamedStatementWrapper wrapper;
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, CircuitBreakerRegistry registry) {
@@ -215,11 +218,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
 
-        PGAuthenticatorFactory authenticatorFactory = configuration.getFactoryProvider().getPGAuthenticatorFactory();
-        this.authenticator = authenticatorFactory.getInstance(configuration);
-        this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
-                ? authenticatorFactory.getInstanceReadOnly(configuration)
-                : null;
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
@@ -239,6 +237,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
+        FactoryProvider factoryProvider = configuration.getFactoryProvider();
+        this.authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(responseAsciiSink, configuration);
+        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+        this.readOnlyUsername = configuration.getReadOnlyUsername();
+        this.readOnlyContext = configuration.readOnlySecurityContext();
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -301,11 +304,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public void clear() {
         sendBufferPtr = sendBuffer;
         requireInitialMessage = true;
+        authenticationRequired = true;
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         responseAsciiSink.reset();
         prepareForNewQuery();
-        authenticationRequired = true;
+        authenticator.clear();
         username = null;
         typeManager.clear();
         clearWriters();
@@ -371,7 +375,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
-        return getTableWriterAPI(engine.verifyTableName(tableName) ,lockReason);
+        return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
     }
 
     public void handleClientOperation(
@@ -1259,32 +1263,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void doAuthentication(
-            long msgLo,
-            long msgLimit
-    ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException {
-
-        SecurityContext securityContext = null;
-        // First, try to authenticate as the read-only user if it's configured.
-        if (roUserAuthenticator != null) {
-            try {
-                securityContext = roUserAuthenticator.authenticate(username, msgLo, msgLimit);
-            } catch (AuthenticationException ignore) {
-                // Wrong user, never mind.
-            }
-        }
-        // Next, authenticate as the primary user if we failed to recognize the read-only user.
-        if (securityContext == null) {
-            securityContext = authenticator.authenticate(username, msgLo, msgLimit);
-        }
-        if (securityContext != null) {
-            sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
-            authenticationRequired = false;
-            prepareLoginOk();
-            sendAndReset();
-        }
-    }
-
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int offset = bufferOffset;
         int remaining = bufferSize;
@@ -1564,6 +1542,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void onAfterAuthSuccess() throws AuthenticationException {
+        CharSequence principal = authenticator.getPrincipal();
+
+        boolean readOnly = readOnlyContext || (readOnlyUsername != null && principal != null && Chars.equals(principal, readOnlyUsername));
+        SecurityContext securityContext = securityContextFactory.getInstance(principal, readOnly);
+        if (securityContext == null) {
+            throw AuthenticationException.INSTANCE;
+        }
+        sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
+        sendRNQ = true;
+        authenticationRequired = false;
+        prepareLoginOk();
+    }
+
     /**
      * Returns address of where parsing stopped. If there are remaining bytes left
      * in the buffer they need to be passed again in parse function along with
@@ -1578,6 +1570,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (requireInitialMessage) {
             sendRNQ = true;
             processInitialMessage(address, len);
+            if (requireInitialMessage) {
+                return;
+            }
+            PgWireAuthenticator.AuthenticationResult res = authenticator.onAfterInitMessage();
+            switch (res) {
+                case AUTHENTICATION_FAILED:
+                    throw AuthenticationException.INSTANCE;
+                case AUTHENTICATION_SUCCESS:
+                    onAfterAuthSuccess();
+                    // intentional fall through
+                case NEED_READ:
+                    sendAndReset();
+                    return;
+            }
+            sendAndReset();
             return;
         }
 
@@ -1625,10 +1632,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
         if (authenticationRequired) {
-            sendRNQ = true;
-            doAuthentication(msgLo, msgLimit);
+            PgWireAuthenticator.AuthenticationResult res = null;
+            if (authenticator.isAuthenticated() || ((res = authenticator.processMessage(username, msgLo, msgLimit)) == PgWireAuthenticator.AuthenticationResult.AUTHENTICATION_SUCCESS)) {
+                onAfterAuthSuccess();
+            }
+            if (res == PgWireAuthenticator.AuthenticationResult.AUTHENTICATION_FAILED) {
+                throw AuthenticationException.INSTANCE;
+            }
+            assert res == null || res == PgWireAuthenticator.AuthenticationResult.AUTHENTICATION_SUCCESS || res == PgWireAuthenticator.AuthenticationResult.NEED_READ;
+            sendAndReset();
             return;
         }
+
         switch (type) {
             case 'P': // parse
                 sendRNQ = true;
@@ -1655,20 +1670,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 processExec(msgLo, msgLimit, compiler);
                 break;
             case 'S': // sync
-                // At completion of each series of extended-query messages, the frontend should issue a Sync message. 
-                // This parameterless message causes the backend to close the current transaction if it's not inside a BEGIN/COMMIT transaction block 
-                // (“close” meaning to commit if no error, or roll back if error). Then a ReadyForQuery response is issued. 
-                // The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected while processing any extended-query message, 
-                // the backend issues ErrorResponse, then reads and discards messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing. 
-                // (But note that no skipping occurs if an error is detected while processing Sync — this ensures that there is one and only one ReadyForQuery sent for each Sync.) 
+                // At completion of each series of extended-query messages, the frontend should issue a Sync message.
+                // This parameterless message causes the backend to close the current transaction if it's not inside a BEGIN/COMMIT transaction block
+                // (“close” meaning to commit if no error, or roll back if error). Then a ReadyForQuery response is issued.
+                // The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected while processing any extended-query message,
+                // the backend issues ErrorResponse, then reads and discards messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing.
+                // (But note that no skipping occurs if an error is detected while processing Sync — this ensures that there is one and only one ReadyForQuery sent for each Sync.)
                 processSyncActions();
                 prepareReadyForQuery();
                 prepareForNewQuery();
                 sendRNQ = true;
                 // fall thru
             case 'H': // flush
-                // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers. 
-                //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands. 
+                // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
+                //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands.
                 //  Without Flush, messages returned by the backend will be combined into the minimum possible number of packets to minimize network overhead."
                 // some clients (asyncpg) chose not to send 'S' (sync) message
                 // but instead fire 'H'. Can't wrap my head around as to why
@@ -1686,7 +1701,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 sendRNQ = true;
                 processQuery(msgLo, msgLimit, compiler);
                 break;
-            case 'd': // COPY data 
+            case 'd': // COPY data
                 break;
             default:
                 LOG.error().$("unknown message [type=").$(type).$(']').$();
@@ -2312,8 +2327,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 characterStore.clear();
 
                 assertTrue(this.username != null, "user is not specified");
-                prepareLoginResponse();
-                sendAndReset();
+//                prepareLoginResponse();
+//                sendAndReset();
                 break;
             case INIT_CANCEL_REQUEST:
                 // From https://www.postgresql.org/docs/current/protocol-flow.html :  
@@ -2947,7 +2962,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    class ResponseAsciiSink extends AbstractCharSink {
+    public class ResponseAsciiSink extends AbstractCharSink {
 
         private long bookmarkPtr = -1;
 

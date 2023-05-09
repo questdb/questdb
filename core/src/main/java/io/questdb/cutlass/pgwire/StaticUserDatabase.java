@@ -22,19 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
-import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.std.Chars;
 
-public interface FactoryProvider {
-    AuthenticatorFactory getAuthenticatorFactory();
+public class StaticUserDatabase implements PgWireUserDatabase {
+    private final String defaultPassword;
+    private final String defaultUsername;
 
-    PgWireAuthenticationFactory getPgWireAuthenticationFactory();
+    private final String roPassword;
+    private final String roUsername;
 
-    SecurityContextFactory getSecurityContextFactory();
 
-    SqlCompilerFactory getSqlCompilerFactory();
+    public StaticUserDatabase(PGWireConfiguration configuration) {
+        this.defaultUsername = configuration.getDefaultUsername();
+        this.defaultPassword = configuration.getDefaultPassword();
+        this.roUsername = configuration.getReadOnlyUsername();
+        this.roPassword = configuration.getReadOnlyPassword();
+    }
+
+    @Override
+    public boolean match(CharSequence username, CharSequence password) {
+        boolean matchRo = roUsername != null && roPassword != null && Chars.equals(roUsername, username) && Chars.equals(roPassword, password);
+        return matchRo || Chars.equals(defaultUsername, username) && Chars.equals(defaultPassword, password);
+    }
 }

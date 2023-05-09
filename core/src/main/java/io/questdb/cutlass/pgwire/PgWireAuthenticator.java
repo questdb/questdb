@@ -24,27 +24,20 @@
 
 package io.questdb.cutlass.pgwire;
 
-public final class PGBasicAuthenticatorFactory implements PGAuthenticatorFactory {
-    public static final PGBasicAuthenticatorFactory INSTANCE = new PGBasicAuthenticatorFactory();
+import io.questdb.std.Mutable;
 
-    @Override
-    public PGAuthenticator getInstance(PGWireConfiguration configuration) {
-        return new PGBasicAuthenticator(
-                configuration.getFactoryProvider().getSecurityContextFactory(),
-                configuration.getDefaultUsername(),
-                configuration.getDefaultPassword(),
-                configuration.readOnlySecurityContext()
-        );
-    }
+public interface PgWireAuthenticator extends Mutable {
+    CharSequence getPrincipal();
 
-    @Override
-    public PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration) {
-        assert configuration.isReadOnlyUserEnabled();
-        return new PGBasicAuthenticator(
-                configuration.getFactoryProvider().getSecurityContextFactory(),
-                configuration.getReadOnlyUsername(),
-                configuration.getReadOnlyPassword(),
-                true
-        );
+    boolean isAuthenticated();
+
+    AuthenticationResult onAfterInitMessage();
+
+    AuthenticationResult processMessage(CharSequence usernameFromInitMessage, long msgStart, long msgLimit) throws BadProtocolException;
+
+    enum AuthenticationResult {
+        AUTHENTICATION_SUCCESS,
+        AUTHENTICATION_FAILED,
+        NEED_READ
     }
 }

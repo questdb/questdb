@@ -22,19 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
-import io.questdb.griffin.SqlCompilerFactory;
-
-public interface FactoryProvider {
-    AuthenticatorFactory getAuthenticatorFactory();
-
-    PgWireAuthenticationFactory getPgWireAuthenticationFactory();
-
-    SecurityContextFactory getSecurityContextFactory();
-
-    SqlCompilerFactory getSqlCompilerFactory();
+public interface PgWireAuthenticationFactory {
+    PgWireAuthenticator getPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, PGWireConfiguration configuration);
 }

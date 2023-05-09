@@ -24,9 +24,11 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.SecurityContext;
+public class DefaultPgWireAuthenticationFactory implements PgWireAuthenticationFactory {
+    public static final PgWireAuthenticationFactory INSTANCE = new DefaultPgWireAuthenticationFactory();
 
-@FunctionalInterface
-public interface PGAuthenticator {
-    SecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, AuthenticationException;
+    @Override
+    public ClearTextPgWireAuthenticator getPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, PGWireConfiguration configuration) {
+        return new ClearTextPgWireAuthenticator(responseAsciiSink, configuration);
+    }
 }

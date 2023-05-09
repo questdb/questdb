@@ -24,9 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-public interface PGAuthenticatorFactory {
-
-    PGAuthenticator getInstance(PGWireConfiguration configuration);
-
-    PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration);
+public interface PgWireUserDatabase {
+    boolean match(CharSequence username, CharSequence password);
 }
