@@ -3130,7 +3130,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // reuse memory column object to create index and close it at the end
             try {
                 ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
+                ddlMem.truncate();
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
+                valueFileName(path.trimTo(plen), columnName, columnNameTxn);
+                if (ff.exists(path)) {
+                    int valueFd = openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+                    if (!ff.truncate(valueFd, 0)) {
+                        ff.close(valueFd);
+                        throw CairoException.critical(ff.errno()).put("could not truncate value file");
+                    }
+                    ff.close(valueFd);
+                }
             } catch (CairoException e) {
                 // looks like we could not create key file properly
                 // lets not leave half-baked file sitting around

@@ -42,10 +42,7 @@ import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,6 +68,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef = WalWriterFuzzTest::checkNoSuspendedTables;
+    private Rnd testRnd;
 
 
     @BeforeClass
@@ -79,8 +77,19 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         AbstractGriffinTest.setUpStatic();
     }
 
+    @After
+    public void logSeeds() {
+        if (this.testRnd != null) {
+            long s0 = this.testRnd.getSeed0();
+            long s1 = this.testRnd.getSeed1();
+            LOG.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+            System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+        }
+    }
+
     @Before
     public void setUp() {
+        this.testRnd = null;
         configOverrideO3ColumnMemorySize(512 * 1024);
         setFuzzProperties(100, 1000, 2);
         super.setUp();
@@ -456,6 +465,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     private void runFuzz(Rnd rnd) throws Exception {
+        this.testRnd = rnd;
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
         assertMemoryLeak(() -> {
@@ -601,6 +611,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     private void runFuzz(Rnd rnd, String tableNameBase, int tableCount, boolean randomiseProbs, boolean randomiseCounts) throws Exception {
+        this.testRnd = rnd;
         assertMemoryLeak(() -> {
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
             for (int i = 0; i < tableCount; i++) {

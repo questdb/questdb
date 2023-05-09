@@ -92,7 +92,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(0); // KEY COUNT
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(1); // SEQUENCE CHECK
-        keyMem.putLong(0); // maxRow
+        keyMem.putLong(-1); // maxRow. It's inclusive, -1 means no rows
         keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
@@ -323,6 +323,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                     MemoryTag.MMAP_INDEX_WRITER
             );
 
+            if (init) {
+                assert valueMemSize == 0;
+                this.valueMem.truncate();
+            }
+
             // block value count is always a power of two
             // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
@@ -353,7 +358,15 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public void rollbackConditionally(long row) {
         final long currentMaxRow;
         if (row >= 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow >= row)) {
-            rollbackValues(row - 1);
+            if (row == 0) {
+                keyMem.truncate();
+                initKeyMemory(keyMem, blockValueCountMod + 1);
+                this.keyCount = 0;
+                this.valueMem.truncate();
+                this.valueMemSize = 0;
+            } else {
+                rollbackValues(row - 1);
+            }
         }
     }
 
