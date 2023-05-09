@@ -312,6 +312,15 @@ public class ColumnPurgeOperator implements Closeable {
 
                 // Check if it's symbol, try remove .k and .v files in the partition
                 if (ColumnType.isSymbol(columnType)) {
+                    if (isSymbolRootFiles) {
+                        path.trimTo(pathTrimToPartition);
+                        TableUtils.offsetFileName(path, columnName, columnVersion);
+                        if (couldNotRemove(ff, path)) {
+                            allDone = false;
+                            continue;
+                        }
+                    }
+
                     path.trimTo(pathTrimToPartition);
                     BitmapIndexUtils.keyFileName(path, columnName, columnVersion);
                     if (couldNotRemove(ff, path)) {
@@ -324,15 +333,6 @@ public class ColumnPurgeOperator implements Closeable {
                     if (couldNotRemove(ff, path)) {
                         allDone = false;
                         continue;
-                    }
-
-                    if (isSymbolRootFiles) {
-                        path.trimTo(pathTrimToPartition);
-                        TableUtils.offsetFileName(path, columnName, columnVersion);
-                        if (couldNotRemove(ff, path)) {
-                            allDone = false;
-                            continue;
-                        }
                     }
                 }
                 completedRowIds.add(updateRowId);
