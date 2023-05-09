@@ -359,11 +359,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         final long currentMaxRow;
         if (row >= 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow >= row)) {
             if (row == 0) {
-                keyMem.truncate();
-                initKeyMemory(keyMem, blockValueCountMod + 1);
-                this.keyCount = 0;
-                this.valueMem.truncate();
-                this.valueMemSize = 0;
+                truncate();
             } else {
                 rollbackValues(row - 1);
             }
@@ -417,9 +413,9 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public void truncate() {
         keyMem.truncate();
         valueMem.truncate();
-        initKeyMemory(keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+        initKeyMemory(keyMem, blockValueCountMod + 1);
         keyCount = 0;
-        valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;
+        valueMemSize = 0;
     }
 
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {

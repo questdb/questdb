@@ -1090,7 +1090,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     static void o3NotifyPartitionUpdate(
             TableWriter tableWriter,
-            final long partitionSinkAddress,
+            final long partitionUpdateSinkAddr,
             long timestampMin,
             long partitionTimestamp,
             final long newPartitionSize,
@@ -1098,12 +1098,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             boolean partitionMutates,
             boolean isLastWrittenPartition
     ) {
-        Unsafe.getUnsafe().putLong(partitionSinkAddress, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionSinkAddress + Long.BYTES, timestampMin);
-        Unsafe.getUnsafe().putLong(partitionSinkAddress + 2 * Long.BYTES, newPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionSinkAddress + 3 * Long.BYTES, oldPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
         long flags = Numbers.encodeLowHighInts(partitionMutates ? 1 : 0, isLastWrittenPartition ? 1 : 0);
-        Unsafe.getUnsafe().putLong(partitionSinkAddress + 4 * Long.BYTES, flags);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, flags);
 
         tableWriter.o3ClockDownPartitionUpdateCount();
     }
