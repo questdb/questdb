@@ -314,6 +314,13 @@ public class ColumnPurgeOperator implements Closeable {
                 if (ColumnType.isSymbol(columnType)) {
                     if (isSymbolRootFiles) {
                         path.trimTo(pathTrimToPartition);
+                        TableUtils.charFileName(path, columnName, columnVersion);
+                        if (couldNotRemove(ff, path)) {
+                            allDone = false;
+                            continue;
+                        }
+
+                        path.trimTo(pathTrimToPartition);
                         TableUtils.offsetFileName(path, columnName, columnVersion);
                         if (couldNotRemove(ff, path)) {
                             allDone = false;
