@@ -2312,8 +2312,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 characterStore.clear();
 
                 assertTrue(this.username != null, "user is not specified");
-//                prepareLoginResponse();
-//                sendAndReset();
                 break;
             case INIT_CANCEL_REQUEST:
                 // From https://www.postgresql.org/docs/current/protocol-flow.html :  
