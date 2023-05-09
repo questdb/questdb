@@ -1536,11 +1536,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void onAfterAuthSuccess() throws AuthenticationException {
+    private void onAfterAuthSuccess() {
         SecurityContext securityContext = authenticator.getSecurityContext();
-        if (securityContext == null) {
-            throw AuthenticationException.INSTANCE;
-        }
+        assert securityContext != null;
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
         sendRNQ = true;
         authenticationRequired = false;
