@@ -846,6 +846,10 @@ public final class TestUtils {
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
+
+        if (tableModel.isWalEnabled()) {
+            sql.append(" WAL ");
+        }
         return sql.toString();
     }
 
