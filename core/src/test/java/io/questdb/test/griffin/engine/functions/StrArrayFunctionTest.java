@@ -39,8 +39,18 @@ public class StrArrayFunctionTest {
         }
 
         @Override
+        public CharSequence getStr(Record rec) {
+            return "{hello}";
+        }
+
+        @Override
         public CharSequence getStr(Record rec, int arrayIndex) {
             return "hello";
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+            sink.put(getStr(rec));
         }
 
         @Override
@@ -49,8 +59,18 @@ public class StrArrayFunctionTest {
         }
 
         @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr(rec);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec, int arrayIndex) {
             return getStr(rec, arrayIndex);
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            return getStr(rec).length();
         }
 
         @Override
@@ -117,36 +137,6 @@ public class StrArrayFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr() {
-        function.getStr(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrB() {
-        function.getStrB(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrLen() {
-        function.getStrLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetSym() {
-        function.getSymbol(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetSymbolB() {
-        function.getSymbolB(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

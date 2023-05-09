@@ -47,6 +47,7 @@ public class HttpServerConfigurationBuilder {
     private String httpProtocolVersion = "HTTP/1.1 ";
     private long multipartIdleSpinCount = -1;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+    private boolean pessimisticHealthCheck = false;
     private int receiveBufferSize = 1024 * 1024;
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
@@ -225,6 +226,11 @@ public class HttpServerConfigurationBuilder {
                     }
                 };
             }
+
+            @Override
+            public boolean isPessimisticHealthCheckEnabled() {
+                return pessimisticHealthCheck;
+            }
         };
     }
 
@@ -260,6 +266,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
+        this.pessimisticHealthCheck = pessimisticHealthCheck;
         return this;
     }
 

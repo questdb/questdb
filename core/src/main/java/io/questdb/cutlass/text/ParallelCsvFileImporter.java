@@ -90,6 +90,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final ObjList<PartitionInfo> partitions;
     private final Sequence pubSeq;
     private final RingQueue<CopyTask> queue;
+    private final IntList symbolCapacities;
     private final TableStructureAdapter targetTableStructure;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
@@ -190,6 +191,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.partitionNameSink = new StringSink();
         this.partitions = new ObjList<>();
         this.taskDistribution = new IntList();
+        this.symbolCapacities = new IntList();
     }
 
     // Load balances existing partitions between given number of workers using partition sizes.
@@ -285,6 +287,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         taskDistribution.clear();
         utf8Sink.clear();
         typeManager.clear();
+        symbolCapacities.clear();
         textMetadataDetector.clear();
         otherToTimestampAdapterPool.clear();
         partitions.clear();
@@ -838,7 +841,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         }
 
-        // at this point we've to use target table columns names otherwise partition attach could fail on metadata differences
+        // at this point we've to use target table columns names otherwise
+        // partition attach could fail on metadata differences
         // (if header names or synthetic names are different from table's)
         for (int i = 0, n = remapIndex.size(); i < n; i++) {
             names.set(i, metadata.getColumnName(remapIndex.get(i)));
@@ -848,7 +852,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (names.size() < metadata.getColumnCount()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 boolean unused = true;
-
                 for (int r = 0, rn = remapIndex.size(); r < rn; r++) {
                     if (remapIndex.get(r) == i) {
                         unused = false;
@@ -859,7 +862,20 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 if (unused) {
                     names.add(metadata.getColumnName(i));
                     types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                    remapIndex.add(i);
                 }
+            }
+        }
+
+        // copy symbol capacities from the destination table to avoid
+        // having default, undersized capacities in temporary tables
+        symbolCapacities.setAll(remapIndex.size(), -1);
+        for (int i = 0, n = remapIndex.size(); i < n; i++) {
+            final int columnIndex = remapIndex.getQuick(i);
+            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                final int columnWriterIndex = metadata.getWriterIndex(columnIndex);
+                final MapWriter symbolWriter = writer.getSymbolMapWriter(columnWriterIndex);
+                symbolCapacities.set(i, symbolWriter.getSymbolCapacity());
             }
         }
 
@@ -1361,7 +1377,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
 
                     validate(names, types, null, NO_INDEX);
-                    targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
+                    symbolCapacities.setAll(types.size(), -1);
+                    targetTableStructure.of(tableName, names, types, symbolCapacities, timestampIndex, partitionBy);
 
                     createTable(
                             ff,
@@ -1395,13 +1412,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         throw TextException.$("target table is not partitioned");
                     }
                     validate(names, types, designatedTimestampColumnName, designatedTimestampIndex);
-                    targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
+                    targetTableStructure.of(tableName, names, types, symbolCapacities, timestampIndex, partitionBy);
                     break;
                 default:
                     throw TextException.$("name is reserved [table=").put(tableName).put(']');
             }
 
-            inputFilePath.of(inputRoot).concat(inputFileName).$();//getStatus might override it
+            inputFilePath.of(inputRoot).concat(inputFileName).$(); // getStatus might override it
             targetTableStructure.setIgnoreColumnIndexedFlag(true);
 
             if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
@@ -1453,8 +1470,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         final long bytes;
         final long key;
         final CharSequence name;
-        long importedRows;//used to detect partitions that need skipping (because e.g. no data was imported for them)
-        int taskId;//assigned worker/task id
+        long importedRows; // used to detect partitions that need skipping (because e.g. no data was imported for them)
+        int taskId; // assigned worker/task id
 
         public PartitionInfo(long key, CharSequence name, long bytes) {
             this.key = key;
@@ -1495,6 +1512,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         private ObjList<CharSequence> columnNames;
         private boolean ignoreColumnIndexedFlag;
         private int partitionBy;
+        private IntList symbolCapacities;
         private CharSequence tableName;
         private int timestampColumnIndex;
 
@@ -1544,7 +1562,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         @Override
         public int getSymbolCapacity(int columnIndex) {
-            return configuration.getDefaultSymbolCapacity();
+            final int capacity = symbolCapacities.getQuick(columnIndex);
+            return capacity != -1 ? capacity : configuration.getDefaultSymbolCapacity();
         }
 
         public int getSymbolColumnIndex(CharSequence symbolColumnName) {
@@ -1553,12 +1572,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 if (getColumnType(i) == ColumnType.SYMBOL) {
                     index++;
                 }
-
                 if (symbolColumnName.equals(columnNames.get(i))) {
                     return index;
                 }
             }
-
             return -1;
         }
 
@@ -1591,11 +1608,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final CharSequence tableName,
                 final ObjList<CharSequence> names,
                 final ObjList<TypeAdapter> types,
+                final IntList symbolCapacities,
                 final int timestampColumnIndex,
                 final int partitionBy
         ) {
             this.tableName = tableName;
             this.columnNames = names;
+            this.symbolCapacities = symbolCapacities;
             this.ignoreColumnIndexedFlag = false;
 
             this.columnBits.clear();
