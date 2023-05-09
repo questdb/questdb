@@ -1574,9 +1574,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 case NEED_READ:
                     sendAndReset();
                     return;
+                default:
+                    assert false;
             }
-            sendAndReset();
-            return;
         }
 
         // this is a type-prefixed message
