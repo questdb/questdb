@@ -715,6 +715,10 @@ public final class Numbers {
         return val;
     }
 
+    public static long parseHexLong(CharSequence sequence) throws NumericException {
+        return parseHexLong(sequence, 0, sequence.length());
+    }
+
     public static long parseHexLong(CharSequence sequence, int lo, int hi) throws NumericException {
         if (hi == 0) {
             throw NumericException.INSTANCE;

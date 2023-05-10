@@ -86,6 +86,11 @@ class TableRenameSupportExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
+    public boolean isUninterruptible() {
+        return true;
+    }
+
+    @Override
     public boolean isWalApplication() {
         return true;
     }

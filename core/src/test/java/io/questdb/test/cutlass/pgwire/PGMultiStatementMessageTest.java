@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.SuspendEvent;
@@ -1572,7 +1573,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute(
                         "SHOW TABLES; SELECT '15';");
-                assertResults(statement, hasResult, Result.EMPTY, data(row(15L)));
+                assertResults(statement, hasResult, data(row(configuration.getSystemTableNamePrefix() + "text_import_log")), data(row(15L)));
             }
         });
     }
@@ -1733,14 +1734,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         final PGWireServer server;
         final Statement statement;
 
-        PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException {
+        PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException, SqlException {
             server = createPGServer(2, queryTimeout);
             server.getWorkerPool().start(LOG);
             connection = getConnection(server.getPort(), useSimpleMode, true);
             statement = connection.createStatement();
         }
 
-        PGTestSetup() throws SQLException {
+        PGTestSetup() throws SQLException, SqlException {
             this(true, Long.MAX_VALUE);
         }
 

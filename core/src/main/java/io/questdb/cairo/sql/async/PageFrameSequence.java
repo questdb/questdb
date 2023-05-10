@@ -74,6 +74,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private int shard;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
+    private boolean uninterruptible;
 
     public PageFrameSequence(
             CairoConfiguration configuration,
@@ -254,6 +255,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return valid.get();
     }
 
+    public boolean isUninterruptible() {
+        return uninterruptible;
+    }
+
     /**
      * This method is not thread safe. It's always invoked on a single "query owner" thread.
      * <p>
@@ -312,6 +317,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         sqlExecutionContext = executionContext;
         startTime = clock.getTicks();
         circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
+        this.uninterruptible = executionContext.isUninterruptible();
 
         initRecord(executionContext.getCircuitBreaker());
 

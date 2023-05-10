@@ -161,4 +161,8 @@ public interface SqlExecutionContext extends Closeable {
 
     default void storeTelemetry(short event, short origin) {
     }
+
+    default boolean isUninterruptible() {
+        return false;
+    }
 }

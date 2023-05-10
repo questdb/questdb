@@ -33,6 +33,7 @@ import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -2085,6 +2086,7 @@ public class SqlParser {
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
             model.setTimestamp(timestamp);
+            model.setExplicitTimestamp(true);
             tok = optTok(lexer);
         }
         return tok;
@@ -2196,6 +2198,7 @@ public class SqlParser {
     }
 
     // test only
+    @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
         expressionParser.parseExpr(lexer, listener);
     }

@@ -43,6 +43,19 @@ public class CurrentSchemasFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCurrentSchemasFuncInSelect() throws Exception {
+        assertQuery(
+                "s\n" +
+                        "{public}\n",
+                "select current_schemas(true) s from long_sequence(1)",
+                "create table x as (select x from long_sequence(1))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testPrefixedCurrentSchemasFunc() throws Exception {
         assertQuery(
                 "x\n" +

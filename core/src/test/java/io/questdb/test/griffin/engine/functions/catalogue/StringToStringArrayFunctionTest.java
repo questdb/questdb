@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -76,6 +77,30 @@ public class StringToStringArrayFunctionTest {
         Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoLong(null));
         Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoShort(null));
         Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoByte(null));
+    }
+
+    @Test
+    public void testGetStrEmpty() throws SqlException {
+        StringToStringArrayFunction function = new StringToStringArrayFunction(42, "{}");
+        TestUtils.assertEquals("{}", function.getStr(null));
+        TestUtils.assertEquals("{}", function.getStrB(null));
+        Assert.assertEquals(2, function.getStrLen(null));
+
+        StringSink sink = new StringSink();
+        function.getStr(null, sink);
+        TestUtils.assertEquals("{}", sink);
+    }
+
+    @Test
+    public void testGetStrSimple() throws SqlException {
+        StringToStringArrayFunction function = new StringToStringArrayFunction(42, "{ab, 3,true,1.26,test 1}");
+        TestUtils.assertEquals("{ab,3,true,1.26,test 1}", function.getStr(null));
+        TestUtils.assertEquals("{ab,3,true,1.26,test 1}", function.getStrB(null));
+        Assert.assertEquals(23, function.getStrLen(null));
+
+        StringSink sink = new StringSink();
+        function.getStr(null, sink);
+        TestUtils.assertEquals("{ab,3,true,1.26,test 1}", sink);
     }
 
     @Test

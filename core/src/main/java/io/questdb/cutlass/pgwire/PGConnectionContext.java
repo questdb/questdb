@@ -672,7 +672,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendDateColumnBin(Record record, int columnIndex) {
-        final long longValue = record.getLong(columnIndex);
+        final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
             responseAsciiSink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
@@ -960,7 +960,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendTimestampColumnBin(Record record, int columnIndex) {
-        final long longValue = record.getLong(columnIndex);
+        final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
             responseAsciiSink.setNullValue();
         } else {
@@ -1713,12 +1713,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         throw BadProtocolException.INSTANCE;
     }
 
-    //send BackendKeyData message with query cancellation info 
+    //send BackendKeyData message with query cancellation info
     private void prepareBackendKeyData(ResponseAsciiSink responseAsciiSink) {
         responseAsciiSink.put('K');
         responseAsciiSink.putNetworkInt(Integer.BYTES * 3); // length of this message
-        responseAsciiSink.putNetworkInt(circuitBreakerId);//process id 
-        responseAsciiSink.putNetworkInt(circuitBreaker.getSecret());//secret key 
+        responseAsciiSink.putNetworkInt(circuitBreakerId);//process id
+        responseAsciiSink.putNetworkInt(circuitBreaker.getSecret());//secret key
     }
 
     private void prepareBindComplete() {
@@ -1831,6 +1831,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareParams(responseAsciiSink, "client_encoding", "UTF8");
         prepareBackendKeyData(responseAsciiSink);
         prepareReadyForQuery();
+        sendRNQ = true;
     }
 
     private void prepareNoDataMessage() {
@@ -1954,7 +1955,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         try {
             if (parameterValueCount > 0) {
-                //client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message    
+                //client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message
                 if (this.parsePhaseBindVariableCount == parameterValueCount || activeBindVariableTypes.size() > 0) {
                     lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
                 } else {
@@ -2314,11 +2315,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 assertTrue(this.username != null, "user is not specified");
                 break;
             case INIT_CANCEL_REQUEST:
-                // From https://www.postgresql.org/docs/current/protocol-flow.html :  
-                // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message 
-                // that would ordinarily be sent across a new connection. The server will process this request and then close the connection. 
+                // From https://www.postgresql.org/docs/current/protocol-flow.html :
+                // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message
+                // that would ordinarily be sent across a new connection. The server will process this request and then close the connection.
                 // For security reasons, no direct reply is made to the cancel request message.
-                int pid = getIntUnsafe(address + 2 * Integer.BYTES);//thread id really 
+                int pid = getIntUnsafe(address + 2 * Integer.BYTES);//thread id really
                 int secret = getIntUnsafe(address + 3 * Integer.BYTES);
                 LOG.info().$("cancel request [pid=").$(pid).I$();
                 try {

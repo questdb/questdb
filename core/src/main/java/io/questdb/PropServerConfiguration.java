@@ -26,6 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.auth.AuthenticatorFactory;
+import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
+import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -79,6 +82,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
     }
 
+    private final AuthenticatorFactory authenticatorFactory;
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -348,6 +352,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
+    private boolean httpPessimisticHealthCheckEnabled;
     private boolean httpReadOnlySecurityContext;
     private boolean httpServerKeepAlive;
     private String httpVersion;
@@ -564,8 +569,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
                 this.httpMinWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
-                this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, cpuAvailable > 16 ? 1 : 0);
-                cpuUsed += this.httpMinWorkerCount;
+                this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
                 this.httpMinWorkerAffinity = getAffinity(properties, env, PropertyKey.HTTP_MIN_WORKER_AFFINITY, httpMinWorkerCount);
                 this.httpMinWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_YIELD_THRESHOLD, 10);
                 this.httpMinWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_THRESHOLD, 100);
@@ -679,6 +683,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
+                this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
                 this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
                 this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
                 this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
@@ -2546,6 +2551,29 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private class PropFactoryProvider implements FactoryProvider {
+
+        @Override
+        public AuthenticatorFactory getAuthenticatorFactory() {
+            return authenticatorFactory;
+        }
+
+        @Override
+        public PGAuthenticatorFactory getPGAuthenticatorFactory() {
+            return PGBasicAuthenticatorFactory.INSTANCE;
+        }
+
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return AllowAllSecurityContextFactory.INSTANCE;
+        }
+
+        @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return SqlParserFactoryImpl.INSTANCE;
+        }
+    }
+
     private class PropHttpContextConfiguration implements HttpContextConfiguration {
 
         @Override
@@ -2854,6 +2882,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isEnabled() {
             return httpMinServerEnabled;
         }
+
+        @Override
+        public boolean isPessimisticHealthCheckEnabled() {
+            return httpPessimisticHealthCheckEnabled;
+        }
     }
 
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
@@ -2931,6 +2964,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpServerEnabled;
+        }
+
+        @Override
+        public boolean isPessimisticHealthCheckEnabled() {
+            return httpPessimisticHealthCheckEnabled;
         }
 
         @Override

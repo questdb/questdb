@@ -97,7 +97,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return;
         }
         String tableName = telemetryType.getTableName();
-        compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);
+        telemetryType.getCreateSql(compiler.query()).compile(sqlExecutionContext);
         final TableToken tableToken = engine.verifyTableName(tableName);
         try {
             writer = engine.getWriter(tableToken, "telemetry");
@@ -134,7 +134,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        String getCreateSql();
+        SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder);
 
         String getTableName();
 
