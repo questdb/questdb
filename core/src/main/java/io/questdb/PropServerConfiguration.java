@@ -26,9 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
-import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -82,7 +79,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
     }
 
-    private final AuthenticatorFactory authenticatorFactory;
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -1650,11 +1646,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     class PropCairoConfiguration implements CairoConfiguration {
-        private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
+        private final LongSupplier copyIDSupplier = () -> getRandom().nextPositiveLong();
 
         @Override
-        public LongSupplier getImportIDSupplier() {
-            return importIDSupplier;
+        public LongSupplier getCopyIDSupplier() {
+            return copyIDSupplier;
         }
 
         @Override
@@ -2548,29 +2544,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
-        }
-    }
-
-    private class PropFactoryProvider implements FactoryProvider {
-
-        @Override
-        public AuthenticatorFactory getAuthenticatorFactory() {
-            return authenticatorFactory;
-        }
-
-        @Override
-        public PGAuthenticatorFactory getPGAuthenticatorFactory() {
-            return PGBasicAuthenticatorFactory.INSTANCE;
-        }
-
-        @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return AllowAllSecurityContextFactory.INSTANCE;
-        }
-
-        @Override
-        public SqlParserFactory getSqlParserFactory() {
-            return SqlParserFactoryImpl.INSTANCE;
         }
     }
 

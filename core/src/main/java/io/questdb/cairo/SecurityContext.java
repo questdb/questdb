@@ -75,6 +75,7 @@ public interface SecurityContext {
     default void authorizeDatabaseSnapshot() {
     }
 
+    @SuppressWarnings("unused")
     default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
     }
 
@@ -83,6 +84,7 @@ public interface SecurityContext {
     default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
+    @SuppressWarnings("unused")
     default void authorizeManageAccess() {
     }
 
@@ -113,4 +115,5 @@ public interface SecurityContext {
 
     default void authorizeTableVacuum(TableToken tableToken) {
     }
+
 }

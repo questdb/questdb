@@ -62,7 +62,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public LongSupplier getImportIDSupplier() {
+    public LongSupplier getCopyIDSupplier() {
         return importIDSupplier;
     }
 

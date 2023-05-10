@@ -37,16 +37,16 @@ public class CopyContext implements Mutable {
     private final AtomicLong activeCopyID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
-    private final LongSupplier importIDSupplier;
+    private final LongSupplier copyIDSupplier;
     private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
     public CopyContext(CairoConfiguration configuration) {
-        this.importIDSupplier = configuration.getImportIDSupplier();
+        this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
     public long assignActiveImportId(SecurityContext securityContext) {
-        final long id = importIDSupplier.getAsLong();
-        activeImportId.set(id);
+        final long id = copyIDSupplier.getAsLong();
+        activeCopyID.set(id);
         this.originatorSecurityContext = securityContext;
         return id;
     }

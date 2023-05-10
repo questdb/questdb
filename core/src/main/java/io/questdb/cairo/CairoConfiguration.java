@@ -491,7 +491,7 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
-    LongSupplier getImportIDSupplier();
+    LongSupplier getCopyIDSupplier();
 
     FactoryProvider getFactoryProvider();
 }

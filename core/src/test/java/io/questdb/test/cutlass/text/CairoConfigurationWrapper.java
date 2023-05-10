@@ -47,8 +47,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public LongSupplier getImportIDSupplier() {
-        return conf.getImportIDSupplier();
+    public LongSupplier getCopyIDSupplier() {
+        return conf.getCopyIDSupplier();
     }
 
     @Override

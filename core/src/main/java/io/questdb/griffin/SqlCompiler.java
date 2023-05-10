@@ -30,11 +30,9 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextLoader;
+import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -115,6 +113,7 @@ public class SqlCompiler implements Closeable {
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
         this(engine, null, null);
@@ -1081,53 +1080,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void cancelTextImport(SecurityContext securityContext, CopyModel model) throws SqlException {
-        assert model.isCancel();
-
-        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
-        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
-
-        long inProgressImportId = textImportExecutionContext.getActiveImportId();
-        // The cancellation is based on the best effort, so we don't worry about potential races with imports.
-        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
-            throw SqlException.$(0, "No active import to cancel.");
-        }
-
-        textImportExecutionContext.getOriginatorSecurityContext().authorizeCopyCancel(securityContext);
-
-        long importId;
-        try {
-            CharSequence idString = model.getTarget().token;
-            int start = 0;
-            int end = idString.length();
-            if (Chars.isQuoted(idString)) {
-                start = 1;
-                end--;
-            }
-            importId = Numbers.parseHexLong(idString, start, end);
-        } catch (NumericException e) {
-            throw SqlException.$(0, "Provided id has invalid format.");
-        }
-        if (inProgressImportId == importId) {
-            circuitBreaker.cancel();
-        } else {
-            throw SqlException.$(0, "Active import has different id.");
-        }
-    }
-
-    private void clear() {
-        sqlNodePool.clear();
-        characterStore.clear();
-        queryColumnPool.clear();
-        queryModelPool.clear();
-        optimiser.clear();
-        parser.clear();
-        backupAgent.clear();
-        alterOperationBuilder.clear();
-        backupAgent.clear();
-        functionParser.clear();
-    }
-
     private CompiledQuery compileBegin(SqlExecutionContext executionContext) {
         return compiledQuery.ofBegin();
     }
@@ -1139,7 +1091,7 @@ public class SqlCompiler implements Closeable {
     private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
         assert !model.isCancel();
 
-        securityContext.authorizeCopyExecute();
+        securityContext.authorizeCopy();
 
         if (model.getTimestampColumnName() == null &&
                 ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
@@ -1325,7 +1277,7 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery copy(SqlExecutionContext executionContext, CopyModel copyModel) throws SqlException {
         if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
             // no-op implementation
-            executionContext.getSecurityContext().authorizeCopyExecute();
+            executionContext.getSecurityContext().authorizeCopy();
             setupTextLoaderFromModel(copyModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
@@ -1792,40 +1744,6 @@ public class SqlCompiler implements Closeable {
         executionContext.getSecurityContext().authorizeTableDrop(tableToken);
         engine.drop(path, tableToken);
         return compiledQuery.ofDrop();
-    }
-
-    @NotNull
-    private CompiledQuery executeCopy(SecurityContext securityContext, CopyModel copyModel) throws SqlException {
-        securityContext.authorizeCopy();
-        if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
-            // no-op implementation
-            setupTextLoaderFromModel(copyModel);
-            return compiledQuery.ofCopyRemote(textLoader);
-        }
-        RecordCursorFactory copyFactory = executeCopy0(securityContext, copyModel);
-        return compiledQuery.ofCopyLocal(copyFactory);
-    }
-
-    @Nullable
-    private RecordCursorFactory executeCopy0(SecurityContext securityContext, CopyModel model) throws SqlException {
-        try {
-            if (model.isCancel()) {
-                cancelTextImport(securityContext, model);
-                return null;
-            } else {
-                if (model.getTimestampColumnName() == null &&
-                        ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
-                    throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-                }
-                if (model.getDelimiter() < 0) {
-                    model.setDelimiter((byte) ',');
-                }
-                return compileTextImport(model);
-            }
-        } catch (TextImportException | TextException e) {
-            LOG.error().$((Throwable) e).$();
-            throw SqlException.$(0, e.getMessage());
-        }
     }
 
     private CompiledQuery executeWithRetries(
@@ -2824,6 +2742,7 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
     }
 
+    @SuppressWarnings({"unused", "RedundantThrows"})
     protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' expected");
@@ -2831,6 +2750,7 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
+    @SuppressWarnings({"unused", "RedundantThrows"})
     protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         return null; // no-op
     }
