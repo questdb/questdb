@@ -34,19 +34,19 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
+public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
     private final FilesFacade ff;
     private final long fileOpts;
-    private final ListPool<ContinuousFileFixFrameColumn> fixColumnPool = new ListPool<>();
-    private final ListPool<ContinuousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
+    private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
+    private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
     private final long keyAppendPageSize;
     private final long valueAppendPageSize;
-    private final ListPool<ContinuousFileVarFrameColumn> varColumnPool = new ListPool<>();
+    private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
     private boolean canWrite;
     private boolean isClosed;
 
-    public ContinuousFileColumnPool(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
+    public ContiguousFileColumnPool(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
         this.ff = ff;
         this.fileOpts = fileOpts;
         this.keyAppendPageSize = keyAppendPageSize;
@@ -78,13 +78,13 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
             switch (columnType) {
                 case ColumnType.SYMBOL:
                     if (canWrite && isIndexed) {
-                        ContinuousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
+                        ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
                         indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex);
                         return indexedColumn;
                     }
 
                 default: {
-                    ContinuousFileFixFrameColumn column = getFixColumn();
+                    ContiguousFileFixFrameColumn column = getFixColumn();
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
@@ -95,7 +95,7 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
 
                 case ColumnType.STRING:
                 case ColumnType.BINARY: {
-                    ContinuousFileVarFrameColumn column = getVarColumn();
+                    ContiguousFileVarFrameColumn column = getVarColumn();
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
@@ -106,29 +106,29 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
             }
         }
 
-        private ContinuousFileFixFrameColumn getFixColumn() {
+        private ContiguousFileFixFrameColumn getFixColumn() {
             if (fixColumnPool.size() > 0) {
                 return fixColumnPool.pop();
             }
-            ContinuousFileFixFrameColumn col = new ContinuousFileFixFrameColumn(ff, fileOpts);
+            ContiguousFileFixFrameColumn col = new ContiguousFileFixFrameColumn(ff, fileOpts);
             col.setPool(fixColumnPool);
             return col;
         }
 
-        private ContinuousFileIndexedFrameColumn getIndexedColumn() {
+        private ContiguousFileIndexedFrameColumn getIndexedColumn() {
             if (indexedColumnPool.size() > 0) {
-                return (ContinuousFileIndexedFrameColumn) indexedColumnPool.pop();
+                return (ContiguousFileIndexedFrameColumn) indexedColumnPool.pop();
             }
-            ContinuousFileIndexedFrameColumn col = new ContinuousFileIndexedFrameColumn(ff, fileOpts, keyAppendPageSize, valueAppendPageSize);
+            ContiguousFileIndexedFrameColumn col = new ContiguousFileIndexedFrameColumn(ff, fileOpts, keyAppendPageSize, valueAppendPageSize);
             col.setPool(indexedColumnPool);
             return col;
         }
 
-        private ContinuousFileVarFrameColumn getVarColumn() {
+        private ContiguousFileVarFrameColumn getVarColumn() {
             if (varColumnPool.size() > 0) {
                 return varColumnPool.pop();
             }
-            ContinuousFileVarFrameColumn col = new ContinuousFileVarFrameColumn(ff, fileOpts);
+            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(ff, fileOpts);
             col.setPool(varColumnPool);
             return col;
         }

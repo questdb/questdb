@@ -1240,108 +1240,6 @@ public class TableReaderTest extends AbstractCairoTest {
     };
 
     @Test
-    public void tesAsyncRemoveAndReloadSymRetried() throws Exception {
-        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
-        String columnName = "b";
-        String suffix = "";
-        TestFilesFacade ff = new TestFilesFacade() {
-            @Override
-            public int called() {
-                return counterRef.get();
-            }
-
-            @Override
-            public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, columnName + ".v" + suffix)) {
-                    if (counterRef.get() == CANNOT_DELETE) {
-                        return false;
-                    }
-                    counterRef.incrementAndGet();
-                }
-                return super.remove(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return counterRef.get() > 0;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-
-            // create table with two string columns
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.SYMBOL)
-                    .col("b", ColumnType.SYMBOL)) {
-                CreateTableTestUtils.create(model);
-            }
-
-            Rnd rnd = new Rnd();
-            final int N = 1000;
-
-            // populate table and delete column
-            try (TableWriter writer = getWriter("x")) {
-                appendTwoSymbols(writer, rnd, 1);
-                writer.commit();
-
-                try (TableReader reader = newTableReader(configuration, "x")) {
-                    long counter = 0;
-
-                    rnd.reset();
-                    RecordCursor cursor = reader.getCursor();
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
-                        Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
-                        counter++;
-                    }
-
-                    Assert.assertEquals(N, counter);
-
-                    // this should write metadata without column "b" but will ignore
-                    // file delete failures
-                    writer.removeColumn("b");
-
-                    // now when we add new column by same name it must not pick up files we failed to delete previously
-                    writer.addColumn("b", ColumnType.SYMBOL);
-
-                    // SymbolMap must be cleared when we try to do add values to new column
-                    appendTwoSymbols(writer, rnd, 2);
-                    writer.commit();
-
-                    // now assert what reader sees
-                    Assert.assertTrue(reader.reload());
-                    Assert.assertEquals(N * 2, reader.size());
-
-                    rnd.reset();
-                    cursor.toTop();
-                    counter = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
-                        if (counter < N) {
-                            // roll random generator to make sure it returns same values
-                            rnd.nextChars(15);
-                            Assert.assertNull(record.getSym(1));
-                        } else {
-                            Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
-                        }
-                        counter++;
-                    }
-
-                    Assert.assertEquals(N * 2, counter);
-                }
-            }
-
-            Assert.assertFalse(ff.wasCalled());
-            try (ColumnPurgeJob job = new ColumnPurgeJob(engine, null)) {
-                job.run(0);
-            }
-
-            checkColumnPurgeRemovesFiles(counterRef, ff, 1);
-        });
-    }
-
-    @Test
     public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
         ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
         assertMemoryLeak(() -> {
@@ -1585,6 +1483,108 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             });
         }
+    }
+
+    @Test
+    public void testAsyncRemoveAndReloadSymRetried() throws Exception {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        String columnName = "b";
+        String suffix = "";
+        TestFilesFacade ff = new TestFilesFacade() {
+            @Override
+            public int called() {
+                return counterRef.get();
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.endsWith(name, columnName + ".v" + suffix)) {
+                    if (counterRef.get() == CANNOT_DELETE) {
+                        return false;
+                    }
+                    counterRef.incrementAndGet();
+                }
+                return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return counterRef.get() > 0;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL)
+                    .col("b", ColumnType.SYMBOL)) {
+                CreateTableTestUtils.create(model);
+            }
+
+            Rnd rnd = new Rnd();
+            final int N = 1000;
+
+            // populate table and delete column
+            try (TableWriter writer = getWriter("x")) {
+                appendTwoSymbols(writer, rnd, 1);
+                writer.commit();
+
+                try (TableReader reader = newTableReader(configuration, "x")) {
+                    long counter = 0;
+
+                    rnd.reset();
+                    RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
+
+                    // this should write metadata without column "b" but will ignore
+                    // file delete failures
+                    writer.removeColumn("b");
+
+                    // now when we add new column by same name it must not pick up files we failed to delete previously
+                    writer.addColumn("b", ColumnType.SYMBOL);
+
+                    // SymbolMap must be cleared when we try to do add values to new column
+                    appendTwoSymbols(writer, rnd, 2);
+                    writer.commit();
+
+                    // now assert what reader sees
+                    Assert.assertTrue(reader.reload());
+                    Assert.assertEquals(N * 2, reader.size());
+
+                    rnd.reset();
+                    cursor.toTop();
+                    counter = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        if (counter < N) {
+                            // roll random generator to make sure it returns same values
+                            rnd.nextChars(15);
+                            Assert.assertNull(record.getSym(1));
+                        } else {
+                            Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        }
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N * 2, counter);
+                }
+            }
+
+            Assert.assertFalse(ff.wasCalled());
+            try (ColumnPurgeJob job = new ColumnPurgeJob(engine, null)) {
+                job.run(0);
+            }
+
+            checkColumnPurgeRemovesFiles(counterRef, ff, 1);
+        });
     }
 
     @Test

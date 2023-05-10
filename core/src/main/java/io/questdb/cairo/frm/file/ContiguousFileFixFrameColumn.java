@@ -37,19 +37,19 @@ import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
 
-public class ContinuousFileFixFrameColumn implements FrameColumn {
+public class ContiguousFileFixFrameColumn implements FrameColumn {
     public static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WRITER;
-    private static final Log LOG = LogFactory.getLog(ContinuousFileFixFrameColumn.class);
+    private static final Log LOG = LogFactory.getLog(ContiguousFileFixFrameColumn.class);
     private final FilesFacade ff;
     private final long fileOpts;
     private int columnIndex;
     private long columnTop;
     private int columnType;
     private int fd = -1;
-    private Pool<ContinuousFileFixFrameColumn> pool;
+    private Pool<ContiguousFileFixFrameColumn> pool;
     private int shl;
 
-    public ContinuousFileFixFrameColumn(FilesFacade ff, long fileOpts) {
+    public ContiguousFileFixFrameColumn(FilesFacade ff, long fileOpts) {
         this.ff = ff;
         this.fileOpts = fileOpts;
     }
@@ -62,7 +62,7 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
 
     @Override
     public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
-        if (sourceColumn.getStorageType() == COLUMN_CONTINUOUS_FILE) {
+        if (sourceColumn.getStorageType() == COLUMN_CONTIGUOUS_FILE) {
             sourceLo -= sourceColumn.getColumnTop();
             sourceHi -= sourceColumn.getColumnTop();
             offset -= columnTop;
@@ -147,7 +147,7 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
 
     @Override
     public int getStorageType() {
-        return COLUMN_CONTINUOUS_FILE;
+        return COLUMN_CONTIGUOUS_FILE;
     }
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
@@ -184,7 +184,7 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
         }
     }
 
-    public void setPool(Pool<ContinuousFileFixFrameColumn> pool) {
+    public void setPool(Pool<ContiguousFileFixFrameColumn> pool) {
         assert this.pool == null;
         this.pool = pool;
     }

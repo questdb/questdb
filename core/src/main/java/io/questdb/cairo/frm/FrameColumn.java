@@ -27,8 +27,8 @@ package io.questdb.cairo.frm;
 import java.io.Closeable;
 
 public interface FrameColumn extends Closeable {
-    int COLUMN_CONTINUOUS_FILE = 0;
-    int COLUMN_CONTINUOUS_MEM = 1;
+    int COLUMN_CONTIGUOUS_FILE = 0;
+    int COLUMN_CONTIGUOUS_MEM = 1;
 
     void addTop(long value);
 

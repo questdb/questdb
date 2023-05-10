@@ -36,8 +36,8 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class ContinuousFileVarFrameColumn implements FrameColumn {
-    private static final Log LOG = LogFactory.getLog(ContinuousFileFixFrameColumn.class);
+public class ContiguousFileVarFrameColumn implements FrameColumn {
+    private static final Log LOG = LogFactory.getLog(ContiguousFileFixFrameColumn.class);
     private static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WRITER;
     private final FilesFacade ff;
     private final long fileOpts;
@@ -45,12 +45,12 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
     private long columnTop;
     private int columnType;
     private int fixedFd = -1;
-    private Pool<ContinuousFileVarFrameColumn> pool;
+    private Pool<ContiguousFileVarFrameColumn> pool;
     private long varAppendOffset = -1;
     private int varFd = -1;
     private long varLength = -1;
 
-    public ContinuousFileVarFrameColumn(FilesFacade ff, long fileOpts) {
+    public ContiguousFileVarFrameColumn(FilesFacade ff, long fileOpts) {
         this.ff = ff;
         this.fileOpts = fileOpts;
     }
@@ -62,7 +62,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
-        if (sourceColumn.getStorageType() != COLUMN_CONTINUOUS_FILE) {
+        if (sourceColumn.getStorageType() != COLUMN_CONTIGUOUS_FILE) {
             throw new UnsupportedOperationException();
         }
 
@@ -212,7 +212,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public int getStorageType() {
-        return COLUMN_CONTINUOUS_FILE;
+        return COLUMN_CONTIGUOUS_FILE;
     }
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
@@ -261,7 +261,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
         }
     }
 
-    public void setPool(Pool<ContinuousFileVarFrameColumn> pool) {
+    public void setPool(Pool<ContiguousFileVarFrameColumn> pool) {
         assert this.pool == null;
         this.pool = pool;
     }

@@ -32,11 +32,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColumn {
+public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColumn {
     private final FilesFacade ff;
     private final BitmapIndexWriter indexWriter;
 
-    public ContinuousFileIndexedFrameColumn(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
+    public ContiguousFileIndexedFrameColumn(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
         super(ff, fileOpts);
         this.ff = ff;
         this.indexWriter = new BitmapIndexWriter(ff, keyAppendPageSize, valueAppendPageSize);

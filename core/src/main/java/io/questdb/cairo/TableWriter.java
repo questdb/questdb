@@ -3607,7 +3607,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         linkFile(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, newColumnNameTxn));
         if (ColumnType.isVariableLength(columnType)) {
             linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
-        } else if (ColumnType.isSymbol(columnType)) {
+        } else if (ColumnType.isSymbol(columnType) && metadata.isColumnIndexed(columnIndex)) {
             linkFile(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn), keyFileName(other.trimTo(plen), newName, newColumnNameTxn));
             linkFile(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn), valueFileName(other.trimTo(plen), newName, newColumnNameTxn));
         }
@@ -6621,7 +6621,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // stop calculating oversize as soon as we find first over-sized column
             recordLength += setColumnSize(i, rowCount, doubleAllocate);
         }
-        avgRecordSize = rowCount > 0 ? recordLength / rowCount : recordLength;
+        avgRecordSize = rowCount > 0 ? recordLength / rowCount : Math.max(avgRecordSize, recordLength);
     }
 
     private long setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
@@ -6664,6 +6664,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (mem2 != null) {
                         mem2.jumpTo(0);
                         mem2.putLong(0);
+                        // Assume var length columns use 28 bytes per value to estimate the record size
+                        // if there are no rows in the partition yet.
+                        // The record size used to estimate the partition size
+                        // to split partition in O3 commit when necessary
                         dataSizeBytes = Long.BYTES + 20;
                     }
                 }

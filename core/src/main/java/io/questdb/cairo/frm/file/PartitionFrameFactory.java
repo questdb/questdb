@@ -42,7 +42,7 @@ public class PartitionFrameFactory implements Pool<PartitionFrame>, Closeable {
     private boolean closed;
 
     public PartitionFrameFactory(CairoConfiguration configuration) {
-        this.columnPool = new ContinuousFileColumnPool(
+        this.columnPool = new ContiguousFileColumnPool(
                 configuration.getFilesFacade(),
                 configuration.getWriterFileOpenOpts(),
                 configuration.getDataIndexKeyAppendPageSize(),
