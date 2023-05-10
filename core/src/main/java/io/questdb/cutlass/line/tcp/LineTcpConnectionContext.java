@@ -186,7 +186,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 IOContextResult result = authenticator.handleIO(netIoJob);
                 if (authenticator.isAuthenticated()) {
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), false);
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal());
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
@@ -204,7 +204,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, false);
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null);
         }
         return super.of(fd, dispatcher);
     }

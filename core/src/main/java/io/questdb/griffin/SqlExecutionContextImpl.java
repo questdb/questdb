@@ -155,7 +155,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SecurityContext getSecurityContext() {
+    public @NotNull SecurityContext getSecurityContext() {
         return securityContext;
     }
 

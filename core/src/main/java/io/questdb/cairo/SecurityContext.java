@@ -30,6 +30,9 @@ import org.jetbrains.annotations.Nullable;
 
 public interface SecurityContext {
 
+    default void assumeRole(CharSequence roleName) {
+    }
+
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 
@@ -66,10 +69,10 @@ public interface SecurityContext {
     default void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
-    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    default void authorizeCopy() {
     }
 
-    default void authorizeCopy() {
+    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
     default void authorizeDatabaseSnapshot() {
@@ -116,4 +119,6 @@ public interface SecurityContext {
     default void authorizeTableVacuum(TableToken tableToken) {
     }
 
+    default void exitRole(CharSequence roleName) {
+    }
 }
