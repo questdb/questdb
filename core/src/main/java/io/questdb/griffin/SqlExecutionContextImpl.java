@@ -50,7 +50,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
     private BindVariableService bindVariableService;
-    private SecurityContext securityContext;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
@@ -61,6 +60,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelFilterEnabled;
     private Rnd random;
     private long requestFd = -1;
+    private SecurityContext securityContext;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         assert workerCount > 0;
@@ -88,7 +88,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Transient @Nullable ColumnTypes partitionByKeyTypes, boolean ordered, boolean baseSupportsRandomAccess) {
+    public void configureAnalyticContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Transient @Nullable ColumnTypes partitionByKeyTypes,
+            boolean ordered,
+            boolean baseSupportsRandomAccess
+    ) {
         analyticContext.of(partitionByRecord, partitionBySink, partitionByKeyTypes, ordered, baseSupportsRandomAccess);
     }
 
@@ -105,11 +111,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public @NotNull CairoEngine getCairoEngine() {
         return cairoEngine;
-    }
-
-    @Override
-    public SecurityContext getSecurityContext() {
-        return securityContext;
     }
 
     @Override
@@ -150,6 +151,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public long getRequestFd() {
         return requestFd;
+    }
+
+    @Override
+    public SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     @Override
