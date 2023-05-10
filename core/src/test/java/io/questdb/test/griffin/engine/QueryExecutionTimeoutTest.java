@@ -573,7 +573,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
                 final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+                final SqlExecutionContextImpl sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
         ) {
             sqlExecutionContext.with(circuitBreaker);
             if (pool != null) {

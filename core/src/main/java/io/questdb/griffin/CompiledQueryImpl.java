@@ -261,7 +261,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(ROLLBACK);
     }
 
-    CompiledQuery ofSet() {
+    public CompiledQuery ofSet() {
         return of(SET);
     }
 

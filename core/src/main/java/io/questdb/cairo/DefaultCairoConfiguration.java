@@ -25,34 +25,31 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
-public class DefaultCairoConfiguration implements CairoConfiguration {
+import java.util.function.LongSupplier;
 
+public class DefaultCairoConfiguration implements CairoConfiguration {
+    private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final BuildInformation buildInformation = new BuildInformationHolder();
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
-    private final CharSequence root;
+    private final String root;
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean writerMixedIOEnabled;
-
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
@@ -62,6 +59,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
         this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
+    }
+
+    @Override
+    public LongSupplier getCopyIDSupplier() {
+        return importIDSupplier;
     }
 
     @Override
@@ -122,11 +124,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
-    }
-
-    @Override
-    public SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
     }
 
     @Override
@@ -252,6 +249,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getExplainPoolCapacity() {
         return 32;
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override
@@ -476,7 +478,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getRoot() {
+    public String getRoot() {
         return root;
     }
 
@@ -725,11 +727,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return 1_000;
-    }
-
-    @Override
-    public SqlParserFactory getSqlParserFactory() {
-        return SqlParserFactoryImpl.INSTANCE;
     }
 
     @Override

@@ -44,7 +44,8 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void clear() {
-
+        format = 0;
+        model = null;
     }
 
     public int getFormat() {

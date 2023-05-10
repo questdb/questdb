@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.test.fuzz;
 
-public interface PGAuthenticatorFactory {
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.Rnd;
 
-    PGAuthenticator getInstance(PGWireConfiguration configuration);
-
-    PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration);
+public interface FuzzTransactionOperation {
+    boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex);
 }
