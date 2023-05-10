@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -103,6 +104,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public CharSequence getDefaultMapType() {
         return overrides.getDefaultMapType() == null ? super.getDefaultMapType() : overrides.getDefaultMapType();
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
 
     @Override

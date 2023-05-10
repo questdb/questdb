@@ -190,9 +190,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     @Override
     public CharSequence next() {
-
         if (unparsed.size() > 0) {
-
             this._lo = unparsedPosition.pollLast();
             this._pos = unparsedPosition.pollLast();
 

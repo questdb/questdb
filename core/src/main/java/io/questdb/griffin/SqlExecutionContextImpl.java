@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -71,7 +72,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
         cairoConfiguration = cairoEngine.getConfiguration();
         clock = cairoConfiguration.getMicrosecondClock();
-        securityContext = cairoEngine.getConfiguration().getSecurityContextFactory().getRootContext();
+        securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
         telemetry = cairoEngine.getTelemetry();
@@ -154,7 +155,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SecurityContext getSecurityContext() {
+    public @NotNull SecurityContext getSecurityContext() {
         return securityContext;
     }
 

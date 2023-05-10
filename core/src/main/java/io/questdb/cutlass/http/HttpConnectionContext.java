@@ -344,7 +344,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private void configureSecurityContext() {
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
-            securityContext = configuration.getSecurityContextFactory().getInstance(
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
                     headerParser.getHeader("Authorization"),
                     configuration.readOnlySecurityContext()
             );

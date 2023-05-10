@@ -536,7 +536,7 @@ public class PropServerConfigurationTest {
     public void testDeprecatedValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("http.net.rcv.buf.size", "10000");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
         Assert.assertFalse(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
@@ -712,7 +712,7 @@ public class PropServerConfigurationTest {
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("invalid.key", "value");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
         Assert.assertTrue(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
@@ -817,7 +817,7 @@ public class PropServerConfigurationTest {
     public void testObsoleteValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.timeout", "10000");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
         Assert.assertTrue(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
@@ -1272,7 +1272,7 @@ public class PropServerConfigurationTest {
             String volumeCPath = volumeC.getAbsolutePath();
             Properties properties = new Properties();
             properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), "");
-            Assert.assertNull(PropServerConfiguration.validate(properties));
+            Assert.assertNull(validate(properties));
             for (int i = 0; i < 20; i++) {
                 sink.clear();
                 loadVolumePath(aliasA, volumeAPath);
@@ -1308,7 +1308,7 @@ public class PropServerConfigurationTest {
     public void testValidConfiguration() {
         Properties properties = new Properties();
         properties.setProperty("http.net.connection.rcvbuf", "10000");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNull(result);
     }
 
@@ -1350,5 +1350,9 @@ public class PropServerConfigurationTest {
         for (int i = 0, n = Math.abs(rnd.nextInt()) % 4; i < n; i++) {
             sink.put(' ');
         }
+    }
+
+    private PropServerConfiguration.ValidationResult validate(Properties properties) {
+        return new PropServerConfiguration.PropertyValidator().validate(properties);
     }
 }

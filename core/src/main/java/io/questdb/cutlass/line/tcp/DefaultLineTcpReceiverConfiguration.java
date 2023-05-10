@@ -57,6 +57,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
 
     @Override
+    public String getAuthDB() {
+        return null;
+    }
+
+    @Override
     public boolean getAutoCreateNewColumns() {
         return true;
     }

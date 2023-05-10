@@ -22,41 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.griffin;
 
-import io.questdb.FactoryProvider;
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.cairo.CairoEngine;
 
-public interface HttpContextConfiguration {
-
-    boolean allowDeflateBeforeSend();
-
-    MillisecondClock getClock();
-
-    int getConnectionPoolInitialCapacity();
-
-    int getConnectionStringPoolCapacity();
-
-    boolean getDumpNetworkTraffic();
-
-    String getHttpVersion();
-
-    int getMultipartHeaderBufferSize();
-
-    long getMultipartIdleSpinCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getRecvBufferSize();
-
-    int getRequestHeaderBufferSize();
-
-    int getSendBufferSize();
-
-    boolean getServerKeepAlive();
-
-    boolean readOnlySecurityContext();
-
-    FactoryProvider getFactoryProvider();
+public interface SqlCompilerFactory {
+    SqlCompiler getInstance(
+            CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+    );
 }

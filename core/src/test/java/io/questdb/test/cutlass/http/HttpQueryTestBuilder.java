@@ -46,6 +46,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 
 import java.util.concurrent.BrokenBarrierException;
+import java.util.function.LongSupplier;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -124,6 +125,11 @@ public class HttpQueryTestBuilder {
                     @Override
                     public CharSequence getSqlCopyInputRoot() {
                         return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
+                    }
+
+                    @Override
+                    public LongSupplier getCopyIDSupplier() {
+                        return () -> 0;
                     }
 
                     @Override

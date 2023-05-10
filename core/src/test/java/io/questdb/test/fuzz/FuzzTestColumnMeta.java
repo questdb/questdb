@@ -22,48 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.test.fuzz;
 
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 
-public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
+public class FuzzTestColumnMeta extends GenericRecordMetadata {
+    int liveColumnCount = 0;
+
     @Override
-    public boolean checkConnection() {
-        return true;
+    public GenericRecordMetadata add(TableColumnMetadata meta) {
+        columnNameIndexMap.put(meta.getName(), columnCount);
+        columnMetadata.extendAndSet(columnCount, meta);
+        columnCount++;
+        if (meta.getType() > 0) {
+            liveColumnCount++;
+        }
+        return this;
     }
 
-    @Override
-    public int getBufferSize() {
-        return 64;
+    public int getLiveColumnCount() {
+        return liveColumnCount;
     }
 
-    @Override
-    public int getCircuitBreakerThrottle() {
-        return 5;
-    }
-
-    @Override
-    public @NotNull MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public @NotNull NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public long getTimeout() {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
+    public void rename(int columnIndex, String name, String newName) {
+        columnMetadata.get(columnIndex).setName(newName);
+        columnNameIndexMap.remove(name);
+        columnNameIndexMap.put(newName, columnIndex);
     }
 }
