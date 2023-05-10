@@ -268,6 +268,7 @@ class WalWriterEvents implements Closeable {
 
     void sync(boolean async) {
         eventMem.sync(async);
+        ff.fsync(indexFd);
     }
 
     int truncate() {

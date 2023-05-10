@@ -1223,7 +1223,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String commitMode = overrideWithEnv(properties, env, key);
 
         if (commitMode == null) {
-            return CommitMode.NOSYNC;
+            return CommitMode.SYNC;
         }
 
         if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {

@@ -64,6 +64,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     //since we're only interested in timestamp field/col there's no point buffering whole line
     //we'll copy field part to buffer only if current field is designated timestamp
     private static final int MAX_TIMESTAMP_LENGTH = 100;
+    private final int commitMode;
     private final int dirMode;
     private final FilesFacade ff;
     private final int fieldRollBufLen;
@@ -137,6 +138,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.path = new Path();
         this.sortBufferPtr = -1;
         this.sortBufferLength = 0;
+        this.commitMode = configuration.getCommitMode();
     }
 
     @Override
@@ -549,7 +551,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         path.put(index);
 
-        return new IndexOutputFile(ff, path, partitionKey);
+        return new IndexOutputFile(ff, path, partitionKey, commitMode);
     }
 
     private void putToRollBuf(byte c) {
@@ -646,17 +648,18 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     class IndexOutputFile implements Closeable {
-        final MemoryPMARImpl memory = new MemoryPMARImpl();
+        final MemoryPMARImpl memory;
         final long partitionKey;
         int chunkNumber;
         long dataSize;//partition data size in bytes
         long indexChunkSize;
 
-        IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {
+        IndexOutputFile(FilesFacade ff, Path path, long partitionKey, int commitMode) {
             this.partitionKey = partitionKey;
             this.indexChunkSize = 0;
             this.chunkNumber = 0;
             this.dataSize = 0;
+            this.memory = new MemoryPMARImpl(commitMode);
 
             nextChunk(ff, path);
         }

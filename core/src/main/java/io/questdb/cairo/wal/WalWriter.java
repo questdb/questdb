@@ -80,7 +80,7 @@ public class WalWriter implements TableWriterAPI {
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableSequencerAPI sequencer;
-    private final MemoryMAR symbolMapMem = Vm.getMARInstance();
+    private final MemoryMAR symbolMapMem;
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
@@ -124,6 +124,7 @@ public class WalWriter implements TableWriterAPI {
         this.rootLen = path.length();
         this.metrics = metrics;
         this.open = true;
+        this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
 
         try {
             lockWal();
@@ -735,11 +736,11 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void configureColumn(int index, int columnType) {
+    private void configureColumn(int index, int columnType, int commitMode) {
         final int baseIndex = getPrimaryColumnIndex(index);
         if (columnType > 0) {
-            final MemoryMA primary = Vm.getMAInstance();
-            final MemoryMA secondary = createSecondaryMem(columnType);
+            final MemoryMA primary = Vm.getMAInstance(commitMode);
+            final MemoryMA secondary = createSecondaryMem(columnType, commitMode);
             columns.extendAndSet(baseIndex, primary);
             columns.extendAndSet(baseIndex + 1, secondary);
             configureNullSetters(nullSetters, columnType, primary, secondary);
@@ -753,8 +754,9 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void configureColumns() {
+        final int commitMode = configuration.getCommitMode();
         for (int i = 0; i < columnCount; i++) {
-            configureColumn(i, metadata.getColumnType(i));
+            configureColumn(i, metadata.getColumnType(i), commitMode);
         }
     }
 
@@ -930,11 +932,11 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private MemoryMA createSecondaryMem(int columnType) {
+    private MemoryMA createSecondaryMem(int columnType, int commitMode) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                return Vm.getMAInstance();
+                return Vm.getMAInstance(commitMode);
             default:
                 return null;
         }
@@ -1470,7 +1472,7 @@ public class WalWriter implements TableWriterAPI {
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
                     // create column file
-                    configureColumn(columnIndex, columnType);
+                    configureColumn(columnIndex, columnType, configuration.getCommitMode());
                     if (ColumnType.isSymbol(columnType)) {
                         configureSymbolMapWriter(columnIndex, columnName, 0, -1);
                     }
