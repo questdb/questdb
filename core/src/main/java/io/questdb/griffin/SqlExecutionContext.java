@@ -67,8 +67,6 @@ public interface SqlExecutionContext extends Closeable {
     @NotNull
     CairoEngine getCairoEngine();
 
-    SecurityContext getSecurityContext();
-
     @NotNull
     SqlExecutionCircuitBreaker getCircuitBreaker();
 
@@ -105,6 +103,9 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     long getRequestFd();
+
+    @NotNull
+    SecurityContext getSecurityContext();
 
     default int getSharedWorkerCount() {
         return getWorkerCount();
@@ -159,5 +160,9 @@ public interface SqlExecutionContext extends Closeable {
     void setRandom(Rnd rnd);
 
     default void storeTelemetry(short event, short origin) {
+    }
+
+    default boolean isUninterruptible() {
+        return false;
     }
 }

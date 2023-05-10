@@ -25,12 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.BuildInformation;
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.griffin.SqlParserFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -40,6 +39,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 import java.lang.ThreadLocal;
+import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
@@ -82,8 +82,6 @@ public interface CairoConfiguration {
     int getBindVariablePoolSize();
 
     BuildInformation getBuildInformation();
-
-    SecurityContextFactory getSecurityContextFactory();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -269,7 +267,7 @@ public interface CairoConfiguration {
 
     int getRndFunctionMemoryPageSize();
 
-    CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
+    String getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     default RostiAllocFacade getRostiAllocFacade() {
         return RostiAllocFacadeImpl.INSTANCE;
@@ -386,8 +384,6 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
-    SqlParserFactory getSqlParserFactory();
-
     int getSqlSmallMapKeyCapacity();
 
     int getSqlSmallMapPageSize();
@@ -494,4 +490,8 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    LongSupplier getCopyIDSupplier();
+
+    FactoryProvider getFactoryProvider();
 }

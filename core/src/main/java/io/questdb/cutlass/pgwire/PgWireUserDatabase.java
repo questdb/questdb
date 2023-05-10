@@ -22,30 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.std.Rnd;
-
-public class FuzzAddColumnOperation implements FuzzTransactionOperation {
-
-    private final boolean indexFlag;
-    private final int indexValueBlockCapacity;
-    private final String newColName;
-    private final int newType;
-    private final boolean symbolTableStatic;
-
-    public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
-        this.newColName = newColName;
-        this.newType = newType;
-        this.indexFlag = indexFlag;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
-        this.symbolTableStatic = symbolTableStatic;
-    }
-
-    @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
-        return true;
-    }
+public interface PgWireUserDatabase {
+    boolean match(CharSequence username, CharSequence password);
 }

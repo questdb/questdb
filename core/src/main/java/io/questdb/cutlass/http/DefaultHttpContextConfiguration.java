@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -58,6 +58,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public String getHttpVersion() {
         // trailing space is important
         return "HTTP/1.1 ";
@@ -86,11 +91,6 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public int getRequestHeaderBufferSize() {
         return 4096;
-    }
-
-    @Override
-    public SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
     }
 
     @Override

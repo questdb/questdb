@@ -22,19 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb;
 
-public final class PGBasicAuthenticatorFactory implements PGAuthenticatorFactory {
-    public static final PGBasicAuthenticatorFactory INSTANCE = new PGBasicAuthenticatorFactory();
-
-    @Override
-    public PGAuthenticator getInstance(PGWireConfiguration configuration) {
-        return new PGBasicAuthenticator(configuration.getSecurityContextFactory(), configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
-    }
-
-    @Override
-    public PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration) {
-        assert configuration.isReadOnlyUserEnabled();
-        return new PGBasicAuthenticator(configuration.getSecurityContextFactory(), configuration.getReadOnlyUsername(), configuration.getReadOnlyPassword(), true);
-    }
+public interface ConfigProperty {
+    String getPropertyPath();
 }

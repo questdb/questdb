@@ -24,11 +24,12 @@
 
 package io.questdb.test;
 
-import io.questdb.test.cairo.Overrides;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.test.cairo.Overrides;
 
 public class StaticOverrides extends Overrides {
 
@@ -75,6 +76,11 @@ public class StaticOverrides extends Overrides {
     @Override
     public long getDataAppendPageSize() {
         return AbstractCairoTest.dataAppendPageSize;
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return AbstractCairoTest.factoryProvider;
     }
 
     @Override
@@ -195,6 +201,7 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.ff = null;
         AbstractCairoTest.dataAppendPageSize = -1;
         AbstractCairoTest.maxOpenPartitions = -1;
+        AbstractCairoTest.factoryProvider = null;
     }
 
     @Override
@@ -240,6 +247,11 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setDataAppendPageSize(long dataAppendPageSize) {
         AbstractCairoTest.dataAppendPageSize = dataAppendPageSize;
+    }
+
+    @Override
+    public void setFactoryProvider(FactoryProvider factoryProvider) {
+        AbstractCairoTest.factoryProvider = factoryProvider;
     }
 
     @Override

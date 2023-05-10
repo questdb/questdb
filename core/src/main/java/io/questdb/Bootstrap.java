@@ -63,7 +63,7 @@ public class Bootstrap {
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
-        this(new DefaultBootstrapConfiguration(), args);
+        this(new PropBootstrapConfiguration(), args);
     }
 
     public Bootstrap(BootstrapConfiguration bootstrapConfiguration, String... args) {
