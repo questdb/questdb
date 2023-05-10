@@ -84,6 +84,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
         keyMem.toTop();
+        Vect.memset(keyMem.addressOf(0), keyMem.getAppendAddressSize(), 0);
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();
