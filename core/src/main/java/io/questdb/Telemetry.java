@@ -34,9 +34,9 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjectFactory;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.tasks.AbstractTelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -110,6 +110,10 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
 
         telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_UP, clock.getTicks());
+        telemetryType.logStatus(writer, getOSClass(), clock.getTicks());
+        telemetryType.logStatus(writer, getCpuClass(), clock.getTicks());
+        telemetryType.logStatus(writer, getDBSizeClass(engine.getConfiguration()), clock.getTicks());
+        telemetryType.logStatus(writer, getTableCountClass(engine), clock.getTicks());
     }
 
     public boolean isEnabled() {
@@ -131,6 +135,74 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
     public void store() {
         telemetryPubSeq.done(telemetryPubSeq.current());
+    }
+
+    private static short getCpuClass() {
+        final int cpus = Runtime.getRuntime().availableProcessors();
+        if (cpus <= 4) {         // 0 - 1-4 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE;
+        } else if (cpus <= 8) {  // 1 - 5-8 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 1;
+        } else if (cpus <= 16) { // 2 - 9-16 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 2;
+        } else if (cpus <= 32) { // 3 - 17-32 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 3;
+        } else if (cpus <= 64) { // 4 - 33-64 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 4;
+        }
+        // 5 - 65+ cores
+        return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 5;
+    }
+
+    private static short getDBSizeClass(CairoConfiguration configuration) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence root = configuration.getRoot();
+        final Path path = Path.PATH.get();
+        path.of(root).$();
+
+        final long dbSize = ff.getDirSize(path);
+        if (dbSize <= 10L * Numbers.SIZE_1GB) {          // 0 - <10GB
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
+        } else if (dbSize <= 50L * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 1;
+        } else if (dbSize <= 100L * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 2;
+        } else if (dbSize <= 500L * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 3;
+        } else if (dbSize <= 1024L * Numbers.SIZE_1GB) { // 4 - (500GB,1TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 4;
+        }
+        // 5 - >1TB
+        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 5;
+    }
+
+    private static short getOSClass() {
+        if (Os.isLinux()) {          // 0 - Linux
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE;
+        } else if (Os.isOSX()) {     // 1 - OS X
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE + 1;
+        } else if (Os.isWindows()) { // 2 - Windows
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE + 2;
+        }
+        // 3 - BSD
+        return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE + 3;
+    }
+
+    private static short getTableCountClass(CairoEngine engine) {
+        final long tableCount = engine.getTableTokenCount(false);
+        if (tableCount <= 10) {          // 0 - 0-10 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE;
+        } else if (tableCount <= 25) {   // 1 - 11-25 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 1;
+        } else if (tableCount <= 50) {   // 2 - 26-50 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 2;
+        } else if (tableCount <= 100) {  // 3 - 51-100 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 3;
+        } else if (tableCount <= 250) {  // 4 - 101-250 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 4;
+        }
+        // 5 - 251+ tables
+        return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 5;
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
