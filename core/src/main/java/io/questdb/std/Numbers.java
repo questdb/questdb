@@ -30,13 +30,13 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
 //#else
 import jdk.internal.math.FDBigInteger;
 //#endif
 import org.jetbrains.annotations.NotNull;
-import io.questdb.std.str.StringSink;
 
 import java.util.Arrays;
 
@@ -48,7 +48,8 @@ public final class Numbers {
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
     public static final int SIZE_1MB = 1024 * 1024;
-    public static final int SIZE_1GB = 1024 * SIZE_1MB;
+    public static final long SIZE_1GB = 1024 * SIZE_1MB;
+    public static final long SIZE_1TB = 1024L * SIZE_1GB;
     public static final double TOLERANCE = 1E-15d;
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     public final static int[] hexNumbers;
@@ -480,12 +481,6 @@ public final class Numbers {
         }
 
         appendHex(sink, a, false);
-    }
-
-    public static String toHexStrPadded(long value) {
-        StringSink sink = new StringSink();
-        appendHexPadded(sink, value, Long.BYTES);
-        return sink.toString();
     }
 
     public static void appendUuid(long lo, long hi, CharSink sink) {
@@ -1280,6 +1275,12 @@ public final class Numbers {
         v = (v | (v << 2)) & 0x3333333333333333L;
         v = (v | (v << 1)) & 0x5555555555555555L;
         return v;
+    }
+
+    public static String toHexStrPadded(long value) {
+        StringSink sink = new StringSink();
+        appendHexPadded(sink, value, Long.BYTES);
+        return sink.toString();
     }
 
     private static void appendDouble0(

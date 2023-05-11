@@ -161,18 +161,20 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         path.of(root).$();
 
         final long dbSize = ff.getDirSize(path);
-        if (dbSize <= 10L * Numbers.SIZE_1GB) {          // 0 - <10GB
+        if (dbSize <= 10 * Numbers.SIZE_1GB) {          // 0 - <10GB
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
-        } else if (dbSize <= 50L * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
+        } else if (dbSize <= 50 * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 1;
-        } else if (dbSize <= 100L * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
+        } else if (dbSize <= 100 * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 2;
-        } else if (dbSize <= 500L * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
+        } else if (dbSize <= 500 * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 3;
-        } else if (dbSize <= 1024L * Numbers.SIZE_1GB) { // 4 - (500GB,1TB]
+        } else if (dbSize <= Numbers.SIZE_1TB) {        // 4 - (500GB,1TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 4;
+        } else if (dbSize <= 5 * Numbers.SIZE_1TB) {    // 5 - (1TB,5TB]
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 4;
         }
-        // 5 - >1TB
+        // 6 - >5TB
         return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 5;
     }
 
