@@ -94,7 +94,7 @@ public class PartitionFrameFactory implements RecycleBin<PartitionFrame>, Closea
             return frm;
         }
         PartitionFrame frame = new PartitionFrame(columnPool);
-        frame.setPool(this);
+        frame.setRecycleBin(this);
         return frame;
     }
 }

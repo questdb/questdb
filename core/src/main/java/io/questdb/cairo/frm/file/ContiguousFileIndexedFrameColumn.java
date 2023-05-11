@@ -41,8 +41,8 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
-        super.append(offset, sourceColumn, sourceLo, sourceHi);
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+        super.append(offset, sourceColumn, sourceLo, sourceHi, commitMode);
         int fd = super.getPrimaryFd();
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
@@ -57,6 +57,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
                     indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), offset + i);
                 }
                 indexWriter.setMaxValue(offset + size - 1);
+                indexWriter.commit();
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, size << shl, MEMORY_TAG);
             }
@@ -64,13 +65,14 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     }
 
     @Override
-    public void appendNulls(long offset, long count) {
-        super.appendNulls(offset, count);
+    public void appendNulls(long offset, long count, int commitMode) {
+        super.appendNulls(offset, count, commitMode);
         indexWriter.rollbackConditionally(offset);
         for (long i = 0; i < count; i++) {
             indexWriter.add(0, offset + i);
         }
         indexWriter.setMaxValue(offset + count - 1);
+        indexWriter.commit();
     }
 
     @Override

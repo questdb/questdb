@@ -26,6 +26,7 @@ package io.questdb.cairo.frm.file;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
@@ -61,7 +62,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         if (sourceColumn.getStorageType() != COLUMN_CONTIGUOUS_FILE) {
             throw new UnsupportedOperationException();
         }
@@ -128,11 +129,16 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, srcFixAddr, sourceLo * Long.BYTES, srcFixMapSize, MEMORY_TAG);
             }
+
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(fixedFd);
+                ff.fsync(varFd);
+            }
         }
     }
 
     @Override
-    public void appendNulls(long offset, long count) {
+    public void appendNulls(long offset, long count, int commitMode) {
         offset -= columnTop;
         assert offset >= 0;
 
@@ -163,6 +169,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, fixedSize, MEMORY_TAG);
+            }
+
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(fixedFd);
+                ff.fsync(varFd);
             }
         }
     }

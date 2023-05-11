@@ -137,7 +137,7 @@ public class PartitionFrame implements Frame {
         partitionPath = Misc.free(partitionPath);
     }
 
-    void setPool(RecycleBin<PartitionFrame> frameRecycleBin) {
+    void setRecycleBin(RecycleBin<PartitionFrame> frameRecycleBin) {
         this.frameRecycleBin = frameRecycleBin;
     }
 }

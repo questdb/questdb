@@ -6819,10 +6819,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (squashCount > 0) {
                 long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
                 TableUtils.setPathForPartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
-                long originalSize = txWriter.getPartitionSizeByPartitionTimestamp(targetPartition);
-                try (
-                        Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, originalSize)
-                ) {
+                final long originalSize = txWriter.getPartitionSizeByPartitionTimestamp(targetPartition);
+                try (Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, originalSize)) {
                     for (int i = 0; i < squashCount; i++) {
                         long sourcePartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo + 1);
 
@@ -6841,7 +6839,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn)).$(", targetSize=").$(targetFrame.getSize())
                                 .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn)).$(", sourceSize=").$(partitionSize).I$();
                         try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
-                            FrameAlgebra.append(targetFrame, sourceFrame);
+                            FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
                             physicallyWrittenRowsSinceLastCommit.addAndGet(sourceFrame.getSize());
                         } catch (Throwable th) {
                             LOG.critical().$("partition squashing failed [table=").$(tableToken).$(", error=").$(th).I$();
