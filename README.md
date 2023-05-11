@@ -167,7 +167,9 @@ with contributing:
   of QuestDB and submit a pull request with your proposed changes.
 
 ✨ As a sign of our gratitude, we also send **QuestDB swag** to our
-contributors. [Claim your swag here.](https://questdb.io/community)
+contributors. 
+- [Claim your swag here.](https://questdb.io/community)
+- [Fill the forms. ](https://docs.google.com/forms/d/e/1FAIpQLSePTQjsiifOJ7fGB4ClDCysJQpejpGtrIKWBw5nQECu2lp1KQ/formResponse)
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
