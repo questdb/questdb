@@ -35,7 +35,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -3119,7 +3118,7 @@ public class SqlCompiler implements Closeable {
             if (ff.copy(srcPath, dstPath) < 0) {
                 throw CairoException.critical(ff.errno())
                         .put("cannot backup table registry file [from=").put(srcPath)
-                        .put("m to=").put(dstPath)
+                        .put(", to=").put(dstPath)
                         .put(']');
             }
 
@@ -3130,7 +3129,7 @@ public class SqlCompiler implements Closeable {
             if (ff.copy(srcPath, dstPath) < 0) {
                 throw CairoException.critical(ff.errno())
                         .put("cannot backup table index file [from=").put(srcPath)
-                        .put("m to=").put(dstPath)
+                        .put(", to=").put(dstPath)
                         .put(']');
             }
 
