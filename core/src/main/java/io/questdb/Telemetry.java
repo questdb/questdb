@@ -142,16 +142,16 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (cpus <= 4) {         // 0 - 1-4 cores
             return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE;
         } else if (cpus <= 8) {  // 1 - 5-8 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 1;
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 1;
         } else if (cpus <= 16) { // 2 - 9-16 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 2;
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 2;
         } else if (cpus <= 32) { // 3 - 17-32 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 3;
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 3;
         } else if (cpus <= 64) { // 4 - 33-64 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 4;
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 4;
         }
         // 5 - 65+ cores
-        return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE + 5;
+        return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 5;
     }
 
     private static short getDBSizeClass(CairoConfiguration configuration) {
@@ -164,30 +164,30 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (dbSize <= 10 * Numbers.SIZE_1GB) {          // 0 - <10GB
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
         } else if (dbSize <= 50 * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 1;
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 1;
         } else if (dbSize <= 100 * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 2;
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 2;
         } else if (dbSize <= 500 * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 3;
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 3;
         } else if (dbSize <= Numbers.SIZE_1TB) {        // 4 - (500GB,1TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 4;
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 4;
         } else if (dbSize <= 5 * Numbers.SIZE_1TB) {    // 5 - (1TB,5TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 4;
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 5;
         }
         // 6 - >5TB
-        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE + 5;
+        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
     }
 
     private static short getOSClass() {
         if (Os.isLinux()) {          // 0 - Linux
             return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE;
         } else if (Os.isOSX()) {     // 1 - OS X
-            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE + 1;
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 1;
         } else if (Os.isWindows()) { // 2 - Windows
-            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE + 2;
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 2;
         }
         // 3 - BSD
-        return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE + 3;
+        return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 3;
     }
 
     private static short getTableCountClass(CairoEngine engine) {
@@ -195,16 +195,16 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (tableCount <= 10) {          // 0 - 0-10 tables
             return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE;
         } else if (tableCount <= 25) {   // 1 - 11-25 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 1;
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 1;
         } else if (tableCount <= 50) {   // 2 - 26-50 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 2;
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 2;
         } else if (tableCount <= 100) {  // 3 - 51-100 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 3;
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 3;
         } else if (tableCount <= 250) {  // 4 - 101-250 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 4;
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 4;
         }
         // 5 - 251+ tables
-        return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE + 5;
+        return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 5;
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {

@@ -164,7 +164,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         final short event = record.getShort(1);
-                        if (event >= TelemetrySystemEvent.SYSTEM_UP) {
+                        if (event >= 0) {
                             continue; // skip event entries
                         }
                         actualClasses.add((short) (event - event % 10));
@@ -266,7 +266,7 @@ public class TelemetryTest extends AbstractCairoTest {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             final short event = record.getShort(1);
-            if (event < TelemetrySystemEvent.SYSTEM_UP) {
+            if (event < 0) {
                 continue; // skip non-event entries
             }
             TestUtils.printColumn(record, metadata, 1, sink, false);
