@@ -48,6 +48,8 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    private int o3PartitionSplitMaxCount = -1;
+    private long partitionO3SplitThreshold;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
@@ -222,6 +224,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getO3PartitionSplitMaxCount() {
+        return o3PartitionSplitMaxCount;
+    }
+
+    @Override
     public int getPageFrameMaxRows() {
         return pageFrameMaxRows;
     }
@@ -239,6 +246,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getParallelImportStatusLogKeepNDays() {
         return parallelImportStatusLogKeepNDays;
+    }
+
+    @Override
+    public long getPartitionO3SplitThreshold() {
+        return partitionO3SplitThreshold;
     }
 
     @Override
@@ -587,6 +599,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount) {
+        this.o3PartitionSplitMaxCount = o3PartitionSplitMaxCount;
+    }
+
+    @Override
     public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
         this.o3QuickSortEnabled = o3QuickSortEnabled;
     }
@@ -614,6 +631,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         this.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
+    }
+
+    @Override
+    public void setPartitionO3SplitThreshold(long value) {
+        this.partitionO3SplitThreshold = value;
     }
 
     @Override

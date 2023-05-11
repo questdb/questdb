@@ -737,7 +737,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
                 // verify that the link has been renamed to what we expect
                 path.trimTo(pathLen).concat(partitionName[i]);
-                TableUtils.txnPartitionConditionally(path, txn - 1);
+                TestUtils.txnPartitionConditionally(path, txn - 1);
                 Assert.assertTrue(Files.exists(path.$()));
             }
 
@@ -762,7 +762,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 for (int i = 0, expectedTxn = 2; i < partitionCount - 2; i++, expectedTxn += 2) {
                     compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
                     path.trimTo(pathLen).concat(partitionName[i]);
-                    TableUtils.txnPartitionConditionally(path, expectedTxn);
+                    TestUtils.txnPartitionConditionally(path, expectedTxn);
                     Assert.assertTrue(Files.exists(path.$()));
                 }
                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[partitionCount - 2] + "'", sqlExecutionContext);
@@ -835,8 +835,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         ) {
                             TxReader txReader = reader.getTxFile();
                             Assert.assertTrue(txReader.unsafeLoadAll());
-                            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
-                            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
+                            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestampByIndex(0)));
+                            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestampByIndex(1)));
                             if (Os.isWindows()) {
                                 engine.releaseInactive();
                             }
@@ -1100,7 +1100,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             // verify that the link has been renamed to what we expect
             path.of(configuration.getRoot()).concat(tableToken).concat(readOnlyPartitionName);
-            TableUtils.txnPartitionConditionally(path, 2);
+            TestUtils.txnPartitionConditionally(path, 2);
             Assert.assertTrue(Files.exists(path.$()));
 
             // verify RO flag

@@ -97,7 +97,9 @@ public class O3Utils {
     }
 
     static long findVarOffset(long srcFixAddr, long srcLo) {
-        return Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+        long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+        assert (srcLo == 0 && result == 0) || result > 0;
+        return result;
     }
 
     static void fsync(FilesFacade ff, int fd, int commitMode) {

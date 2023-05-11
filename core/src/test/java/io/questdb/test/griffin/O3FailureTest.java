@@ -307,9 +307,11 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public boolean allocate(int fd, long size) {
-                if (fd == theFd && size == 1472) {
-                    theFd = -1;
-                    return false;
+                if (fd == theFd) {
+                    if (size == 1480) {
+                        theFd = -1;
+                        return false;
+                    }
                 }
                 return super.allocate(fd, size);
             }

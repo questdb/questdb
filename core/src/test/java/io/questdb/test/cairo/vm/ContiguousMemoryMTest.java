@@ -24,18 +24,18 @@
 
 package io.questdb.test.cairo.vm;
 
-import io.questdb.cairo.vm.MemoryCMRImpl;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,9 +43,9 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ContinuousMemoryMTest extends AbstractCairoTest {
+public class ContiguousMemoryMTest extends AbstractCairoTest {
 
-    private static final Log LOG = LogFactory.getLog(ContinuousMemoryMTest.class);
+    private static final Log LOG = LogFactory.getLog(ContiguousMemoryMTest.class);
     private final long _4M = 4 * 1024 * 1024;
     private final long _8M = 2 * _4M;
     private final Rnd rnd = new Rnd();

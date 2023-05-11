@@ -219,10 +219,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             if (partitionIndex < partitionCount) {
                 // we are within the partition table
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
-                long timestamp = tableTxReader.getPartitionTimestamp(partitionIndex);
+                long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
-                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp, false);
-                TableUtils.txnPartitionConditionally(path.concat(partitionName), tableTxReader.getPartitionNameTxn(partitionIndex));
+                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
+                TableUtils.setPathForPartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
@@ -258,7 +258,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     }
                                     detachedTxReader.ofRO(path, partitionBy);
                                     detachedTxReader.unsafeLoadAll();
-                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);
+                                    int length = partitionName.indexOf(".");
+                                    if (length < 0) {
+                                        length = partitionName.length();
+                                    }
+                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, length);
                                     int pIndex = detachedTxReader.getPartitionIndex(timestamp);
                                     // could set dynamicPartitionIndex to -pIndex
                                     numRows = detachedTxReader.getPartitionSize(pIndex);

@@ -716,8 +716,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.concat(tablePath);
             path.put(Files.SEPARATOR);
-            PartitionBy.setSinkForPartition(path, partitionBy, partitionTs, false);
-            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+            TableUtils.setPathForPartition(path, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
             LOG.info().$("removing ").utf8(path).$();
             Assert.assertTrue(Files.remove(path.$()));

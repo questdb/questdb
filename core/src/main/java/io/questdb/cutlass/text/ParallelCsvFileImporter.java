@@ -1170,7 +1170,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 for (int p = 0; p < partitionCount; p++) {
                     final long partitionSize = txFile.getPartitionSize(p);
-                    final long partitionTimestamp = txFile.getPartitionTimestamp(p);
+                    final long partitionTimestamp = txFile.getPartitionTimestampByIndex(p);
                     int symbolColumnIndex = 0;
 
                     if (partitionSize == 0) {

@@ -33,7 +33,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -160,10 +159,6 @@ final class Mig607 {
         }
     }
 
-    public static void txnPartition(CharSink path, long txn) {
-        path.put('.').put(txn);
-    }
-
     private static void charFileName(Path path, CharSequence columnName) {
         path.concat(columnName).put(".c").$();
     }
@@ -233,19 +228,16 @@ final class Mig607 {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         final long partitionDataOffset = partitionCountOffset + Integer.BYTES + partitionIndex * 8L * LONGS_PER_TX_ATTACHED_PARTITION;
 
-                        setPathForPartition(
-                                path.trimTo(plen),
-                                partitionBy,
-                                txMem.getLong(partitionDataOffset),
-                                false
-                        );
                         // the row count may not be stored in _txn file for the last partition
                         // we need to use transient row count instead
                         long rowCount = partitionIndex < partitionCount - 1 ? txMem.getLong(partitionDataOffset + Long.BYTES) : transientRowCount;
                         long txSuffix = txMem.getLong(MigrationActions.prefixedBlockOffset(partitionDataOffset, 2, Long.BYTES));
-                        if (txSuffix > -1) {
-                            txnPartition(path, txSuffix);
-                        }
+                        setPathForPartition(
+                                path.trimTo(plen),
+                                partitionBy,
+                                txMem.getLong(partitionDataOffset),
+                                txSuffix
+                        );
                         migrate(ff, path, migrationContext, metaMem, columnCount, rowCount, columnNameOffset);
                     }
                 } else {

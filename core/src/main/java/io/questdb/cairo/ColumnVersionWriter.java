@@ -42,9 +42,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
-    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName, long size) {
+    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName) {
         final FilesFacade ff = configuration.getFilesFacade();
-        this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
+        this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
         this.configuration = configuration;
         this.size = this.mem.size();
         super.ofRO(mem);

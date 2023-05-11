@@ -64,6 +64,8 @@ public class O3Test extends AbstractO3Test {
     @Before
     public void setUp4() {
         Vect.resetPerformanceCounters();
+        partitionO3SplitThreshold = 512 * (1L << 10);
+        LOG.info().$("partitionO3SplitThreshold = ").$(partitionO3SplitThreshold).$();
     }
 
     @After
@@ -85,6 +87,7 @@ public class O3Test extends AbstractO3Test {
             System.err.println(tstData);
             System.err.flush();
         }
+        partitionO3SplitThreshold = -1;
     }
 
     @Test
@@ -835,6 +838,7 @@ public class O3Test extends AbstractO3Test {
         // Read the partition with a column top at the same time
         // when TableWriter is merges it with O3 data.
 
+        Assume.assumeTrue(partitionO3SplitThreshold > 2000);
         AtomicReference<SqlCompiler> compilerRef = new AtomicReference<>();
         AtomicReference<SqlExecutionContext> executionContextRef = new AtomicReference<>();
         AtomicBoolean compared = new AtomicBoolean(false);
@@ -1006,6 +1010,8 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVarColumnCopyLargePrefix() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        partitionO3SplitThreshold = 100 * (1L << 30); // 100GB, effectively no partition split
 
         ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
         executeWithPool(0,
@@ -6894,15 +6900,15 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T00:40:00.000000Z', '24', '3')",
                 sqlExecutionContext).execute(null).await();
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T00:40:00.000000Z\t24\t\t\t3\n" +
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                         "2022-06-08T02:54:00.000000Z\t17\t\t\t3\n" +
                         "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
                         "2022-06-08T02:56:00.000000Z\t18\t\t\t3\n" +
-                        "2022-06-08T03:15:00.000000Z\t22\t\t\t3\n" +
                         "2022-06-08T03:15:00.000000Z\t19\t\t\t3\n" +
+                        "2022-06-08T03:15:00.000000Z\t22\t\t\t3\n" +
                         "2022-06-08T03:15:00.000000Z\t23\t\t\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +

@@ -939,7 +939,7 @@ public class SqlCompiler implements Closeable {
             // before applying to WAL writer
             if (reader != null) {
                 try {
-                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy(), 0, -1);
                     alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
                 } catch (CairoException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
