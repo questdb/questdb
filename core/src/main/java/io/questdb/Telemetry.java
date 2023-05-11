@@ -60,7 +60,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         final TelemetryConfiguration telemetryConfiguration = type.getTelemetryConfiguration(configuration);
         enabled = telemetryConfiguration.getEnabled();
         if (enabled) {
-            this.telemetryType = type;
+            telemetryType = type;
             clock = configuration.getMicrosecondClock();
             telemetryQueue = new RingQueue<>(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
@@ -110,10 +110,13 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
 
         telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_UP, clock.getTicks());
-        telemetryType.logStatus(writer, getOSClass(), clock.getTicks());
-        telemetryType.logStatus(writer, getCpuClass(), clock.getTicks());
-        telemetryType.logStatus(writer, getDBSizeClass(engine.getConfiguration()), clock.getTicks());
-        telemetryType.logStatus(writer, getTableCountClass(engine), clock.getTicks());
+
+        if (telemetryType.shouldLogClasses()) {
+            telemetryType.logStatus(writer, getOSClass(), clock.getTicks());
+            telemetryType.logStatus(writer, getCpuClass(), clock.getTicks());
+            telemetryType.logStatus(writer, getDBSizeClass(engine.getConfiguration()), clock.getTicks());
+            telemetryType.logStatus(writer, getTableCountClass(engine), clock.getTicks());
+        }
     }
 
     public boolean isEnabled() {
@@ -221,6 +224,10 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
 
         default void logStatus(TableWriter writer, short systemStatus, long micros) {
+        }
+
+        default boolean shouldLogClasses() {
+            return false;
         }
     }
 
