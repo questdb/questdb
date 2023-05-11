@@ -176,9 +176,11 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 4;
         } else if (dbSize <= 5 * Numbers.SIZE_1TB) {    // 5 - (1TB,5TB]
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 5;
+        } else if (dbSize <= 10 * Numbers.SIZE_1TB) {   // 6 - (5TB,10TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
         }
-        // 6 - >5TB
-        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
+        // 7 - >10TB
+        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
     }
 
     private static short getOSClass() {
@@ -205,9 +207,11 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 3;
         } else if (tableCount <= 250) {  // 4 - 101-250 tables
             return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 4;
+        } else if (tableCount <= 1000) { // 5 - 251-1000 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 5;
         }
-        // 5 - 251+ tables
-        return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 5;
+        // 6 - 1001+ tables
+        return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 6;
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
