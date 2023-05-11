@@ -1417,13 +1417,7 @@ public final class TableUtils {
             mem.sync(false);
         } finally {
             if (dirFd > 0) {
-                if (ff.fsync(dirFd) != 0) {
-                    LOG.error()
-                            .$("could not fsync [fd=").$(dirFd)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
-                }
-                ff.close(dirFd);
+                ff.fsyncAndClose(dirFd);
             }
         }
     }

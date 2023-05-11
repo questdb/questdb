@@ -68,7 +68,9 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
-    int fsync(int fd);
+    void fsync(int fd);
+
+    void fsyncAndClose(int fd);
 
     long getDirSize(Path path);
 

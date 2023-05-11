@@ -124,10 +124,9 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public void sync(boolean async) {
-        if (ff.fsync(fd) == 0) {
-            return;
+        if (fd != -1) {
+            ff.fsync(fd);
         }
-        throw CairoException.critical(ff.errno()).put("could not fsync [fd=").put(fd).put(']');
     }
 
     public void truncate() {

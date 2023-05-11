@@ -146,8 +146,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int fsync(int fd) {
-        return Files.fsync(fd);
+    public void fsync(int fd) {
+        int res = Files.fsync(fd);
+        if (res == 0) {
+            return;
+        }
+        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
+    }
+
+    @Override
+    public void fsyncAndClose(int fd) {
+        int res = Files.fsync(fd);
+        if (res == 0) {
+            close(fd);
+            return;
+        }
+        close(fd);
+        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
     }
 
     @Override

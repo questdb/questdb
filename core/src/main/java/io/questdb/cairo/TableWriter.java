@@ -438,8 +438,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential
     ) {
-
-        new Exception().printStackTrace();
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
@@ -525,6 +523,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         bumpStructureVersion();
 
         metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex);
+
+        if (!Os.isWindows()) {
+            ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
+        }
 
         LOG.info().$("ADDED column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
@@ -2612,6 +2614,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.putLong(24, todoTxn);
             // ensure file is closed with correct length
             todoMem.jumpTo(40);
+            todoMem.sync(false);
         } finally {
             path.trimTo(rootLen);
         }
@@ -6947,6 +6950,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Unsafe.getUnsafe().storeFence();
         todoMem.putLong(24, todoTxn);
         todoMem.jumpTo(56);
+        todoMem.sync(false);
     }
 
     static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {

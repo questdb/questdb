@@ -458,7 +458,8 @@ public class WalWriter implements TableWriterAPI {
                         final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
                         final String columnName = metadata.getColumnName(columnIndex);
 
-                        CopyWalSegmentUtils.rollColumnToSegment(ff,
+                        CopyWalSegmentUtils.rollColumnToSegment(
+                                ff,
                                 configuration.getWriterFileOpenOpts(),
                                 primaryColumn,
                                 secondaryColumn,
@@ -728,11 +729,17 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
+        int commitMode = configuration.getCommitMode();
+
         // Each record is about primary and secondary file. File descriptor is set every half a record.
         int halfRecord = NEW_COL_RECORD_SIZE / 2;
         for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += halfRecord) {
             final int fd = (int) newColumnFiles.get(fdIndex);
-            ff.close(fd);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsyncAndClose(fd);
+            } else {
+                ff.close(fd);
+            }
         }
     }
 
@@ -1081,6 +1088,13 @@ public class WalWriter implements TableWriterAPI {
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(segmentId);
+            final int dirFd;
+            final int commitMode = configuration.getCommitMode();
+            if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
+                dirFd = -1;
+            } else {
+                dirFd = TableUtils.openRO(ff, path, LOG);
+            }
 
             for (int i = 0; i < columnCount; i++) {
                 int type = metadata.getColumnType(i);
@@ -1104,6 +1118,13 @@ public class WalWriter implements TableWriterAPI {
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
+            if (commitMode != CommitMode.NOSYNC) {
+                events.sync(commitMode == CommitMode.ASYNC);
+            }
+
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
             lastSegmentTxn = 0;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
@@ -1190,6 +1211,7 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.length());
         lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        events.sync(false);
     }
 
     private void rolloverSegmentLock() {
@@ -1293,6 +1315,7 @@ public class WalWriter implements TableWriterAPI {
             } finally {
                 ff.munmap(address, columnFileSize, MEM_TAG);
             }
+            ff.fsync(fixedSizeColumn.getFd());
         }
     }
 
@@ -1316,6 +1339,7 @@ public class WalWriter implements TableWriterAPI {
             } finally {
                 ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
             }
+            ff.fsync(fixedSizeColumn.getFd());
         }
     }
 
@@ -1330,6 +1354,7 @@ public class WalWriter implements TableWriterAPI {
             } finally {
                 ff.munmap(address, varColSize, MEM_TAG);
             }
+            ff.fsync(varColumn.getFd());
         }
     }
 
@@ -1341,7 +1366,9 @@ public class WalWriter implements TableWriterAPI {
                 long currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 1);
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
+                primaryColumnFile.sync(false);
                 primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
+                primaryColumnFile.sync(false);
 
                 int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1) {
@@ -1349,7 +1376,9 @@ public class WalWriter implements TableWriterAPI {
                     currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
                     newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);
                     secondaryColumnFile.jumpTo(currentOffset);
+                    secondaryColumnFile.sync(false);
                     secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
+                    secondaryColumnFile.sync(false);
                 }
             }
         }
