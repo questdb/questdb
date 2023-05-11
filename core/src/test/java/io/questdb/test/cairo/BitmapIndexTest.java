@@ -1024,13 +1024,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                     create(configuration, path.trimTo(plen), "x", N / MOD / 128);
                     try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
-                        writer.of(
-                                path.trimTo(plen),
-                                "x",
-                                COLUMN_NAME_TXN_NONE,
-                                configuration.getDataIndexKeyAppendPageSize(),
-                                configuration.getDataIndexValueAppendPageSize()
-                        );
+                        writer.of(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE);
                         indexInts(rwin, writer, N);
                     }
                 }

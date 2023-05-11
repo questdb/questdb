@@ -36,7 +36,6 @@ import io.questdb.std.str.Path;
 public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
-    private final CairoConfiguration configuration;
     private final MemorySRImpl mem = new MemorySRImpl();
     private final BitmapIndexWriter writer;
     private long columnTop;
@@ -45,13 +44,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     private volatile long sequence = 0L;
 
     public SymbolColumnIndexer(CairoConfiguration configuration) {
-        this.configuration = configuration;
         writer = new BitmapIndexWriter(configuration);
-    }
-
-    @Override
-    public void sync(boolean async) {
-        writer.sync(async);
     }
 
     @Override
@@ -80,13 +73,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     ) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(
-                    path,
-                    name,
-                    columnNameTxn,
-                    configuration.getDataIndexKeyAppendPageSize(),
-                    configuration.getDataIndexValueAppendPageSize()
-            );
+            this.writer.of(path, name, columnNameTxn);
             this.mem.of(columnMem, MemoryTag.MMAP_INDEX_SLIDER);
         } catch (Throwable e) {
             this.close();
@@ -95,16 +82,10 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop) {
+    public void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(
-                    path,
-                    name,
-                    columnNameTxn,
-                    configuration.getDataIndexKeyAppendPageSize(),
-                    configuration.getDataIndexValueAppendPageSize()
-            );
+            this.writer.of(path, name, columnNameTxn);
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -156,6 +137,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void rollback(long maxRow) {
         this.writer.rollbackValues(maxRow);
+    }
+
+    @Override
+    public void sync(boolean async) {
+        writer.sync(async);
     }
 
     @Override

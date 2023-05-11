@@ -45,7 +45,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private long columnTop;
     private int columnType;
     private int fixedFd = -1;
-    private Pool<ContiguousFileVarFrameColumn> pool;
+    private RecycleBin<ContiguousFileVarFrameColumn> recycleBin;
     private long varAppendOffset = -1;
     private int varFd = -1;
     private long varLength = -1;
@@ -178,10 +178,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             varFd = -1;
         }
 
-        if (pool != null && !pool.isClosed()) {
+        if (recycleBin != null && !recycleBin.isClosed()) {
             varAppendOffset = 0;
             varLength = 0;
-            pool.put(this);
+            recycleBin.put(this);
         }
     }
 
@@ -261,9 +261,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         }
     }
 
-    public void setPool(Pool<ContiguousFileVarFrameColumn> pool) {
-        assert this.pool == null;
-        this.pool = pool;
+    public void setPool(RecycleBin<ContiguousFileVarFrameColumn> recycleBin) {
+        assert this.recycleBin == null;
+        this.recycleBin = recycleBin;
     }
 
     private long getVarOffset(long offset) {

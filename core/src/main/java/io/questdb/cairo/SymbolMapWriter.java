@@ -102,14 +102,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             // index writer is used to identify attempts to store duplicate symbol value
             // symbol table index stores int keys and long values, e.g. value = key * 2 storage size
-            this.indexWriter = new BitmapIndexWriter(
-                    configuration,
-                    path.trimTo(plen),
-                    name,
-                    columnNameTxn,
-                    configuration.getDataIndexKeyAppendPageSize(),
-                    configuration.getDataIndexKeyAppendPageSize() * 2
-            );
+            this.indexWriter = new BitmapIndexWriter(configuration);
+            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
 
             // this is the place where symbol values are stored
             this.charMem = Vm.getWholeMARWInstance(

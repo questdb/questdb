@@ -159,7 +159,7 @@ public class IndexBuilder extends RebuildColumnBase {
                                     MemoryTag.MMAP_TABLE_WRITER
                             );
                             try {
-                                indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             } finally {
                                 indexer.clear();

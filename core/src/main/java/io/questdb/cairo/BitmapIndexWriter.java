@@ -44,31 +44,22 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private final MemoryMARW valueMem = Vm.getMARWInstance();
     private int blockCapacity;
     private int blockValueCountMod;
-    private FilesFacade ff;
-    private long keyAppendPageSize;
+    private final FilesFacade ff;
     private int keyCount = -1;
     private long seekValueBlockOffset;
     private long seekValueCount;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
-    private long valueAppendPageSize;
     private long valueMemSize = -1;
 
+    @TestOnly
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
         this(configuration);
-        of(
-                path,
-                name,
-                columnNameTxn
-        );
-    }
-
-    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
-        this(configuration);
-        of(path, name, columnNameTxn, keyAppendPageSize, valueAppendPageSize);
+        of(path, name, columnNameTxn);
     }
 
     public BitmapIndexWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
@@ -275,7 +266,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             boolean init = indexBlockCapacity > 0;
             BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
             if (init) {
-                this.keyMem.of(ff, path, keyAppendPageSize, 0L, MemoryTag.MMAP_INDEX_WRITER);
+                this.keyMem.of(ff, path, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 keyMem.zero();
                 initKeyMemory(this.keyMem, indexBlockCapacity);
             } else {
@@ -284,7 +275,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                     LOG.error().$(path).$(" not found").$();
                     throw CairoException.critical(0).put("Index does not exist: ").put(path);
                 }
-                this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
+                this.keyMem.of(ff, path, configuration.getDataIndexKeyAppendPageSize(), ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();
@@ -317,7 +308,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.valueMem.of(
                     ff,
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
-                    valueAppendPageSize,
+                    configuration.getDataIndexValueAppendPageSize(),
                     this.valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
             );
@@ -345,13 +336,6 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long dataIndexKeyAppendPageSize, long dataIndexValueAppendPageSize) {
-        this.ff = configuration.getFilesFacade();
-        this.keyAppendPageSize = dataIndexKeyAppendPageSize;
-        this.valueAppendPageSize = dataIndexValueAppendPageSize;
-        of(path, name, columnNameTxn);
     }
 
     public void rollbackConditionally(long row) {

@@ -25,21 +25,19 @@
 package io.questdb.cairo.frm.file;
 
 import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColumn {
-    private final FilesFacade ff;
     private final BitmapIndexWriter indexWriter;
 
-    public ContiguousFileIndexedFrameColumn(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
-        super(ff, fileOpts);
-        this.ff = ff;
-        this.indexWriter = new BitmapIndexWriter(ff, keyAppendPageSize, valueAppendPageSize);
+    public ContiguousFileIndexedFrameColumn(CairoConfiguration configuration) {
+        super(configuration);
+        this.indexWriter = new BitmapIndexWriter(configuration);
     }
 
     @Override

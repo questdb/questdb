@@ -42,7 +42,7 @@ public interface ColumnIndexer extends QuietCloseable {
             long columnTop
     );
 
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop);
+    void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop);
 
     void distress();
 
