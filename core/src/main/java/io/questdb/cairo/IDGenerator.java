@@ -95,6 +95,7 @@ public class IDGenerator implements Closeable {
     }
 
     long getCurrentId() {
+        assert uniqueIdMem > 0;
         return Unsafe.getUnsafe().getLong(uniqueIdMem);
     }
 }

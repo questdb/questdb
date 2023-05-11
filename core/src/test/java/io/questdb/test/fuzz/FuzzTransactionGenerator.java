@@ -53,10 +53,10 @@ public class FuzzTransactionGenerator {
             double probabilityOfTruncate,
             double probabilityOfSameTimestamp,
             int maxStrLenForStrColumns,
-            String[] symbols
+            String[] symbols,
+            int metaVersion
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
-        int metaVersion = 0;
         int waitBarrierVersion = 0;
         RecordMetadata meta = GenericRecordMetadata.deepCopyOf(metadata);
 
@@ -71,7 +71,7 @@ public class FuzzTransactionGenerator {
         probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);
 
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
-        transactionCount = Math.min(transactionCount, 1_500_000 / rowCount);
+        transactionCount = Math.max(Math.min(transactionCount, 1_500_000 / rowCount), 3);
 
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = rnd.nextDouble();
@@ -246,7 +246,7 @@ public class FuzzTransactionGenerator {
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         int newType = generateNewColumnType(rnd);
-        boolean indexFlag = newType == ColumnType.SYMBOL && rnd.nextBoolean();
+        boolean indexFlag = newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9;
         int indexValueBlockCapacity = 256;
         boolean symbolTableStatic = rnd.nextBoolean();
 

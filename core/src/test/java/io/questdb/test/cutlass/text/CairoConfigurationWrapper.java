@@ -317,6 +317,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3LastPartitionMaxSplits() {
+        return conf.getO3LastPartitionMaxSplits();
+    }
+
+    @Override
     public int getMaxSwapFileCount() {
         return conf.getMaxSwapFileCount();
     }
@@ -434,6 +439,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getParallelIndexThreshold() {
         return conf.getParallelIndexThreshold();
+    }
+
+    @Override
+    public long getPartitionO3SplitMinSize() {
+        return conf.getPartitionO3SplitMinSize();
     }
 
     @Override

@@ -396,6 +396,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
         Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
+
+
+        Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
+        Assert.assertEquals(1L << 40, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
     }
 
     @Test
@@ -1168,6 +1172,10 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
             Assert.assertEquals(42.2d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getWalDataAppendPageSize());
+
+            Assert.assertEquals(1, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
+            final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
+            Assert.assertEquals(TB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         }
     }
 

@@ -83,6 +83,8 @@ public interface ConfigurationOverrides {
 
     long getO3MinLag();
 
+    int getO3PartitionSplitMaxCount();
+
     int getPageFrameMaxRows();
 
     int getPageFrameReduceQueueCapacity();
@@ -90,6 +92,8 @@ public interface ConfigurationOverrides {
     int getPageFrameReduceShardCount();
 
     int getParallelImportStatusLogKeepNDays();
+
+    long getPartitionO3SplitThreshold();
 
     int getQueryCacheEventQueueCapacity();
 
@@ -211,6 +215,8 @@ public interface ConfigurationOverrides {
 
     void setO3MinLag(long minLag);
 
+    void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount);
+
     void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
 
     void setPageFrameMaxRows(int pageFrameMaxRows);
@@ -222,6 +228,8 @@ public interface ConfigurationOverrides {
     void setParallelFilterEnabled(Boolean parallelFilterEnabled);
 
     void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays);
+
+    void setPartitionO3SplitThreshold(long value);
 
     void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity);
 

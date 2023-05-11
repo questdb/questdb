@@ -83,7 +83,7 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
             Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
             for (int i = 0; i < partitionCount; i++) {
                 Assert.assertEquals(txFile.isPartitionReadOnly(i), partitionIsReadOnly[i]);
-                Assert.assertEquals(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestamp(i)), partitionIsReadOnly[i]);
+                Assert.assertEquals(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestampByIndex(i)), partitionIsReadOnly[i]);
             }
         }
     }

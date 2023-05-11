@@ -29,6 +29,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -301,13 +302,12 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(2, txReader.getPartitionCount());
                     for (int p = 0; p < 2; p++) {
-                        long partitionTs = txReader.getPartitionTimestamp(p);
+                        long partitionTs = txReader.getPartitionTimestampByIndex(p);
                         long partitionNameVersion = txReader.getPartitionNameTxn(p);
 
                         for (int v = 0; v < partitionNameVersion + 5; v++) {
                             path.trimTo(len);
-                            TableUtils.setPathForPartition(path, partitionBy, partitionTs, false);
-                            TableUtils.txnPartitionConditionally(path, v);
+                            TableUtils.setPathForPartition(path, partitionBy, partitionTs, v);
                             path.concat("x.d").$();
                             Assert.assertEquals(Chars.toString(path), v == partitionNameVersion, Files.exists(path));
                         }
@@ -394,6 +394,55 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
+        });
+    }
+
+    @Test
+    public void testPartitionSplitWithReaders() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(100);
+
+            TableToken token;
+            try (TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)
+                    .col("x", ColumnType.INT).timestamp()) {
+                token = createPopulateTable(1, tm, 2000, "2022-02-24T04", 2);
+            }
+
+            Path path = Path.getThreadLocal("");
+
+            // This should lock partition 1970-01-10.1 from being deleted from disk
+            try (TableReader rdr = getReader("tbl")) {
+
+                // OOO insert
+                compiler.compile("insert into tbl select 4, '2022-02-24T19'", sqlExecutionContext);
+
+                try (TableReader rdr2 = getReader("tbl")) {
+                    // in order insert
+                    compiler.compile("insert into tbl select 2, '2022-02-26T19'", sqlExecutionContext);
+
+                    path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.1");
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    // OOO insert
+                    compiler.compile("insert into tbl select 4, '2022-02-24T19'", sqlExecutionContext);
+
+                    runPartitionPurgeJobs();
+
+                    rdr2.openPartition(0);
+                }
+
+                runPartitionPurgeJobs();
+
+                // This should not fail
+                rdr.openPartition(0);
+            }
+            runPartitionPurgeJobs();
+
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.1");
+            Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.3");
+            Assert.assertTrue(Chars.toString(path), Files.exists(path));
         });
     }
 
@@ -613,8 +662,11 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
-                compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-10', 60*60*1000000L) ts from long_sequence(1)) timestamp(ts) partition by HOUR", sqlExecutionContext);
+                compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-09T22', 60*60*1000000L) ts" +
+                        " from long_sequence(10)) " +
+                        " timestamp(ts) partition by HOUR", sqlExecutionContext);
 
+                // Remove middle partition
                 TableToken tableToken = engine.verifyTableName("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
@@ -634,7 +686,29 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 }
                 runPartitionPurgeJobs();
 
+                // Remove last partition
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T00").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                try (TableReader rdr = getReader("tbl")) {
+                    try (TableReader rdr2 = getReader("tbl")) {
+                        compile("alter table tbl drop partition list '1970-01-10T07'", sqlExecutionContext);
+                        runPartitionPurgeJobs();
+
+                        // This should not fail
+                        rdr2.openPartition(0);
+                    }
+                    runPartitionPurgeJobs();
+
+                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    // This should not fail
+                    rdr.openPartition(0);
+                }
+                runPartitionPurgeJobs();
+
+                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
         });

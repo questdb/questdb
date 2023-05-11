@@ -97,7 +97,15 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                         e.assignTenant(i, tenant);
                         notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
                     } else {
-                        tenant.refresh();
+                        try {
+                            tenant.refresh();
+                        } catch (Throwable th) {
+                            tenant.goodbye();
+                            tenant.close();
+                            e.assignTenant(i, null);
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                            throw th;
+                        }
                         notifyListener(thread, tableToken, PoolListener.EV_GET, e.index, i);
                     }
 
