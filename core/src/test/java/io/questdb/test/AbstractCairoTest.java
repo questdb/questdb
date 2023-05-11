@@ -24,6 +24,7 @@
 
 package io.questdb.test;
 
+import io.questdb.FactoryProvider;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
@@ -87,6 +88,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
+    protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
@@ -192,7 +194,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         nodes.clear();
         node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides());
         configuration = node1.getConfiguration();
-        securityContext = configuration.getSecurityContextFactory().getRootContext();
+        securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         snapshotAgent = node1.getSnapshotAgent();
@@ -213,6 +215,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         nodes.clear();
         backupDir = null;
         backupDirTimestampFormat = null;
+        factoryProvider = null;
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }

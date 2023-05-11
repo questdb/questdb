@@ -28,33 +28,27 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.std.Mutable;
-import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 public class CopyContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
     private final AtomicLong activeCopyID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
-    private final Rnd rnd;
+    private final LongSupplier copyIDSupplier;
     private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
     public CopyContext(CairoConfiguration configuration) {
-        MicrosecondClock clock = configuration.getMicrosecondClock();
-        this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
+        this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
-    public long assignActiveCopyID(SecurityContext securityContext) {
-        // avoid using INACTIVE as real import ID
-        long copyID;
-        do {
-            copyID = rnd.nextPositiveLong();
-        } while (copyID == INACTIVE_COPY_ID);
-        activeCopyID.set(copyID);
+    public long assignActiveImportId(SecurityContext securityContext) {
+        final long id = copyIDSupplier.getAsLong();
+        activeCopyID.set(id);
         this.originatorSecurityContext = securityContext;
-        return copyID;
+        return id;
     }
 
     @Override

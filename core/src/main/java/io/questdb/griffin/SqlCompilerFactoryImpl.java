@@ -24,46 +24,22 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoEngine;
+import org.jetbrains.annotations.Nullable;
 
-public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
-    @Override
-    public boolean checkConnection() {
-        return true;
-    }
+public class SqlCompilerFactoryImpl implements SqlCompilerFactory {
+    public static final SqlCompilerFactory INSTANCE = new SqlCompilerFactoryImpl();
 
     @Override
-    public int getBufferSize() {
-        return 64;
-    }
-
-    @Override
-    public int getCircuitBreakerThrottle() {
-        return 5;
-    }
-
-    @Override
-    public @NotNull MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public @NotNull NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public long getTimeout() {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
+    public SqlCompiler getInstance(
+            CairoEngine engine,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent
+    ) {
+        return new SqlCompiler(
+                engine,
+                functionFactoryCache,
+                snapshotAgent
+        );
     }
 }

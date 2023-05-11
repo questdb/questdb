@@ -27,20 +27,22 @@ package io.questdb;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticationFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 
-public class DefaultFactoryProvider implements FactoryProvider {
-    public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
+public class FactoryProviderImpl implements FactoryProvider {
+    private final AuthenticatorFactory authenticatorFactory;
+
+    public FactoryProviderImpl(ServerConfiguration configuration) {
+        this.authenticatorFactory = ServerMain.getAuthenticatorFactory(configuration);
+    }
 
     @Override
     public AuthenticatorFactory getAuthenticatorFactory() {
-        return DefaultAuthenticatorFactory.INSTANCE;
+        return authenticatorFactory;
     }
-
 
     @Override
     public PgWireAuthenticationFactory getPgWireAuthenticationFactory() {

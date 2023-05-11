@@ -22,32 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.std.Mutable;
 
-public class FuzzTestColumnMeta extends GenericRecordMetadata {
-    int liveColumnCount = 0;
+public interface PgWireAuthenticator extends Mutable {
+    SecurityContext getSecurityContext();
 
-    @Override
-    public GenericRecordMetadata add(TableColumnMetadata meta) {
-        columnNameIndexMap.put(meta.getName(), columnCount);
-        columnMetadata.extendAndSet(columnCount, meta);
-        columnCount++;
-        if (meta.getType() > 0) {
-            liveColumnCount++;
-        }
-        return this;
-    }
+    boolean isAuthenticated();
 
-    public int getLiveColumnCount() {
-        return liveColumnCount;
-    }
+    AuthenticationResult onAfterInitMessage();
 
-    public void rename(int columnIndex, String name, String newName) {
-        columnMetadata.get(columnIndex).setName(newName);
-        columnNameIndexMap.remove(name);
-        columnNameIndexMap.put(newName, columnIndex);
+    AuthenticationResult processMessage(CharSequence usernameFromInitMessage, long msgStart, long msgLimit) throws BadProtocolException;
+
+    enum AuthenticationResult {
+        AUTHENTICATION_SUCCESS,
+        AUTHENTICATION_FAILED,
+        NEED_READ
     }
 }

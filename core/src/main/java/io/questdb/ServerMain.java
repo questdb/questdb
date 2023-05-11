@@ -32,6 +32,9 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
+import io.questdb.cutlass.auth.AuthenticatorFactory;
+import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
+import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -48,6 +51,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.io.File;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -84,6 +88,8 @@ public class ServerMain implements Closeable {
                 cairoConfig,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
+
+        config.init(engine, ffCache);
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
@@ -211,6 +217,22 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("server is ready to be started").$();
     }
 
+    public static AuthenticatorFactory getAuthenticatorFactory(ServerConfiguration configuration) {
+        AuthenticatorFactory authenticatorFactory;
+        // create default authenticator for Line TCP protocol
+        if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
+            authenticatorFactory = new EllipticCurveAuthenticatorFactory(
+                    configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
+                    new File(
+                            configuration.getCairoConfiguration().getRoot(),
+                            configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
+            );
+        } else {
+            authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;
+        }
+        return authenticatorFactory;
+    }
+
     public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
@@ -233,20 +255,15 @@ public class ServerMain implements Closeable {
         }
     }
 
+    public ServerConfiguration getConfiguration() {
+        return config;
+    }
+
     public CairoEngine getEngine() {
         if (closed.get()) {
             throw new IllegalStateException("close was called");
         }
         return engine;
-    }
-
-    public ServerConfiguration getConfiguration() {
-        return config;
-    }
-
-    @SuppressWarnings("unused")
-    public FunctionFactoryCache getFfCache() {
-        return ffCache;
     }
 
     public WorkerPoolManager getWorkerPoolManager() {
@@ -295,7 +312,7 @@ public class ServerMain implements Closeable {
         }));
     }
 
-    private <T extends Closeable> T freeOnExit(T closeable) {
+    protected <T extends Closeable> T freeOnExit(T closeable) {
         if (closeable != null) {
             freeOnExitList.add(closeable);
         }
