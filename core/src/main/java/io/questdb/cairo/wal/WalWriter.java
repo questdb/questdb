@@ -103,6 +103,7 @@ public class WalWriter implements TableWriterAPI {
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
+    private WalInitializer walInitializer;
     private int walLockFd = -1;
 
     public WalWriter(
@@ -116,6 +117,7 @@ public class WalWriter implements TableWriterAPI {
         this.configuration = configuration;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
+        this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
         this.tableToken = tableToken;
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
@@ -921,6 +923,7 @@ public class WalWriter implements TableWriterAPI {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
+        walInitializer.initSegmentDirectory(path);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
     }

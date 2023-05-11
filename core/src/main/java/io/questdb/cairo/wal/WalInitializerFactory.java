@@ -22,24 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
-import io.questdb.griffin.SqlCompilerFactory;
-
-public interface FactoryProvider {
-
-    // todo: this interface is not great - it assumes a single username / password
-    PGAuthenticatorFactory getPGAuthenticatorFactory();
-
-    SecurityContextFactory getSecurityContextFactory();
-
-    SqlCompilerFactory getSqlCompilerFactory();
-
-    AuthenticatorFactory getAuthenticatorFactory();
-
-    WalInitializerFactory getWalInitializerFactory();
+public interface WalInitializerFactory {
+    WalInitializer getInstance();
 }
