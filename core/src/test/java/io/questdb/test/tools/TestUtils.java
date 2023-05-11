@@ -1372,6 +1372,12 @@ public final class TestUtils {
         }
     }
 
+    public static void txnPartitionConditionally(Path path, int txn) {
+        if (txn > -1) {
+            path.put('.').put(txn);
+        }
+    }
+
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
@@ -1463,9 +1469,28 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
+                String expected = recordToString(rr, metadataExpected);
+                String actual = recordToString(lr, metadataActual);
+                Assert.assertEquals(
+                        String.format(String.format("Row %d column %s[%s]", rowIndex, columnName, ColumnType.nameOf(columnType))),
+                        expected,
+                        actual
+                );
+                // If above didn't fail because of types not included or double precision not enough, throw here anyway
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
             }
         }
+    }
+
+    private static String recordToString(Record record, RecordMetadata metadata) {
+        sink.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            printColumn(record, metadata, i, sink, false);
+            if (i < n - 1) {
+                sink.put('\t');
+            }
+        }
+        return sink.toString();
     }
 
     private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {

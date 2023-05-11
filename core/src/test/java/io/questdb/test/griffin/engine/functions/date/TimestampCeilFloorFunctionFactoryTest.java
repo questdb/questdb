@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -189,7 +189,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                         "  from t\n",
                 sink,
                 "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
-                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.850000Z\t2016-02-10T16:18:20.000000Z\t2016-02-10T16:15:00.000000Z\t2016-02-10T15:00:00.000000Z\t2016-02-09T00:00:00.000000Z\t2016-01-25T00:00:00.000000Z\n"
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.850000Z\t2016-02-10T16:18:20.000000Z\t2016-02-10T16:15:00.000000Z\t2016-02-10T15:00:00.000000Z\t2016-02-09T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\n"
         ));
     }
 }

@@ -78,5 +78,5 @@ public interface BitmapIndexReader extends Closeable {
 
     boolean isOpen();
 
-    void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn);
+    void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount);
 }

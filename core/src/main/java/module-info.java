@@ -107,6 +107,8 @@ open module io.questdb {
     exports io.questdb.cairo.wal.seq;
     exports io.questdb.cutlass.auth;
     exports io.questdb.cutlass.line.tcp.auth;
+    exports io.questdb.cairo.frm;
+    exports io.questdb.cairo.frm.file;
 
     provides FunctionFactory with
             // test functions

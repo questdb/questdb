@@ -630,7 +630,7 @@ public class CopyTask {
             TableToken tableToken = cairoEngine.verifyTableName(tableStructure.getTableName());
             path.of(root).concat(tableToken.getTableName()).put('_').put(index);
             int plen = path.length();
-            PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
+            TableUtils.setPathForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
 
             long columnMemory = 0;

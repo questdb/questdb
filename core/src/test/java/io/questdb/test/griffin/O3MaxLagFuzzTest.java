@@ -131,7 +131,8 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     1, // insert only
                     0,
                     5,
-                    new String[]{"ABC", "CDE", "XYZ"}
+                    new String[]{"ABC", "CDE", "XYZ"},
+                    0
             );
 
             Rnd rnd1 = new Rnd();

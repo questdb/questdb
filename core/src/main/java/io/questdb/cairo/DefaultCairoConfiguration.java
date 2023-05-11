@@ -332,6 +332,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3LastPartitionMaxSplits() {
+        return 15;
+    }
+
+    @Override
     public int getMaxSwapFileCount() {
         return 30;
     }
@@ -440,6 +445,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParallelIndexThreshold() {
         return 100000;
+    }
+
+    @Override
+    public long getPartitionO3SplitMinSize() {
+        return 50 * Numbers.SIZE_1MB;
     }
 
     @Override
