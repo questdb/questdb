@@ -358,6 +358,27 @@ public final class TestUtils {
         }
     }
 
+    public static boolean equals(CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return true;
+        }
+
+        if (expected == null || actual == null) {
+            return false;
+        }
+
+        if (expected.length() != actual.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < expected.length(); i++) {
+            if (expected.charAt(i) != actual.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
         if (bs == null) {
             Assert.assertNull(actBs);
@@ -854,17 +875,17 @@ public final class TestUtils {
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1);
+        return new SqlExecutionContextImpl(engine, 1).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(engine.getConfiguration().getSecurityContextFactory().getRootContext(), bindVariableService);
+        ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
         return ctx;
     }
 
-    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, int workerCount) {
-        return new SqlExecutionContextImpl(engine, workerCount);
+    public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
     public static void createTestPath(CharSequence root) {
@@ -906,7 +927,7 @@ public final class TestUtils {
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
         ) {
             try {
                 if (pool != null) {
@@ -1497,6 +1518,22 @@ public final class TestUtils {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
     }
+
+/*
+    private static RecordMetadata copySymAstStr(RecordMetadata src) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0, n = src.getColumnCount(); i < n; i++) {
+            metadata.add(
+                    new TableColumnMetadata(
+                            src.getColumnName(i),
+                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
+                    )
+            );
+        }
+        metadata.setTimestampIndex(src.getTimestampIndex());
+        return metadata;
+    }
+*/
 
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;

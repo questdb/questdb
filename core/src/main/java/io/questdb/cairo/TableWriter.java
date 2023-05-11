@@ -1705,6 +1705,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
             shrinkO3Mem();
+
+            if (commitListener != null) {
+                commitListener.onCommit(txWriter.getTxn(), rowsAdded);
+            }
             return rowsAdded;
         }
 
@@ -1958,6 +1962,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 distressed = true;
             }
         }
+    }
+
+    @SuppressWarnings("unused")
+    public void setCommitListener(CommitListener commitListener) {
+        this.commitListener = commitListener;
     }
 
     public void setExtensionListener(ExtensionListener listener) {

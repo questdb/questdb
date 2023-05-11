@@ -22,35 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.test.fuzz;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.ObjectPool;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.Rnd;
 
-public class SqlParserFactoryImpl implements SqlParserFactory {
-    public static final SqlParserFactory INSTANCE = new SqlParserFactoryImpl();
+public class FuzzDropColumnOperation implements FuzzTransactionOperation {
+    private final String columnName;
+
+    public FuzzDropColumnOperation(String columnName) {
+        this.columnName = columnName;
+    }
 
     @Override
-    public SqlParser getInstance(
-            CairoConfiguration configuration,
-            SqlOptimiser optimiser,
-            CharacterStore characterStore,
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<QueryModel> queryModelPool,
-            PostOrderTreeTraversalAlgo traversalAlgo
-    ) {
-        return new SqlParser(
-                configuration,
-                optimiser,
-                characterStore,
-                expressionNodePool,
-                queryColumnPool,
-                queryModelPool,
-                traversalAlgo
-        );
+    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
+        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
+                0,
+                wApi.getTableToken(),
+                wApi.getMetadata().getTableId()
+        ).ofDropColumn(columnName).build();
+        wApi.apply(alterOp, true);
+        return true;
     }
 }

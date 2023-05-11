@@ -22,48 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.test.fuzz;
 
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.Rnd;
 
-public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
-    @Override
-    public boolean checkConnection() {
-        return true;
+public class FuzzAddColumnOperation implements FuzzTransactionOperation {
+
+    private final boolean indexFlag;
+    private final int indexValueBlockCapacity;
+    private final String newColName;
+    private final int newType;
+    private final boolean symbolTableStatic;
+
+    public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
+        this.newColName = newColName;
+        this.newType = newType;
+        this.indexFlag = indexFlag;
+        this.indexValueBlockCapacity = indexValueBlockCapacity;
+        this.symbolTableStatic = symbolTableStatic;
     }
 
     @Override
-    public int getBufferSize() {
-        return 64;
-    }
-
-    @Override
-    public int getCircuitBreakerThrottle() {
-        return 5;
-    }
-
-    @Override
-    public @NotNull MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public @NotNull NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public long getTimeout() {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public boolean isEnabled() {
+    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
+        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
         return true;
     }
 }

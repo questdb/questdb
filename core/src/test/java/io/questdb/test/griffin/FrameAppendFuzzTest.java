@@ -29,8 +29,8 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.griffin.wal.AbstractFuzzTest;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

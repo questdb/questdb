@@ -22,22 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.ObjectPool;
+import io.questdb.std.FilesFacadeImpl;
 
-public interface SqlParserFactory {
-    SqlParser getInstance(
-            CairoConfiguration configuration,
-            SqlOptimiser optimiser,
-            CharacterStore characterStore,
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<QueryModel> queryModelPool,
-            PostOrderTreeTraversalAlgo traversalAlgo
-    );
+class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
+
+    @Override
+    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+        return new PropServerConfiguration(
+                bootstrap.getRootDirectory(),
+                bootstrap.loadProperties(),
+                getEnv(),
+                bootstrap.getLog(),
+                bootstrap.getBuildInformation(),
+                FilesFacadeImpl.INSTANCE,
+                FactoryProviderFactoryImpl.INSTANCE
+        );
+    }
 }

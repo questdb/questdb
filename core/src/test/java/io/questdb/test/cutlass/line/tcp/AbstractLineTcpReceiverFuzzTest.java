@@ -167,6 +167,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     private void assertTable(TableData table) throws SqlException {
+        if (table.size() < 1) {
+            return;
+        }
         final CharSequence tableName = tableNames.get(table.getName());
         if (tableName == null) {
             throw new RuntimeException("Table name is missing");
@@ -576,7 +579,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         for (int i = 0; i < numOfTables; i++) {
             final CharSequence tableName = getTableName(i);
             final TableData table = tables.get(tableName);
-            waitForTable(table);
+            if (table.size() > 0) {
+                waitForTable(table);
+            }
         }
     }
 

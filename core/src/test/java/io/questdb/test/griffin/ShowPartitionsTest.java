@@ -228,7 +228,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                 compile("SHOW PARTITIONS FROM " + tabName + " WHERE active=true", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [tok=WHERE]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [WHERE]");
             }
         });
     }
@@ -520,7 +520,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                 do {
                     long namePtr = Files.findName(pFind);
                     if (Files.notDots(namePtr)) {
-                       sink.clear();
+                        sink.clear();
                         Chars.utf8ToUtf16Z(namePtr, sink);
                         path.trimTo(len).concat(sink).$();
                         int n = sink.length();

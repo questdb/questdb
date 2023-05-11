@@ -22,28 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.Rnd;
+import io.questdb.std.Chars;
 
-public class FuzzDropColumnOperation implements FuzzTransactionOperation {
-    private final String columnName;
+public class StaticUserDatabase implements PgWireUserDatabase {
+    private final String defaultPassword;
+    private final String defaultUsername;
 
-    public FuzzDropColumnOperation(String columnName) {
-        this.columnName = columnName;
+    private final String roPassword;
+    private final String roUsername;
+
+
+    public StaticUserDatabase(PGWireConfiguration configuration) {
+        this.defaultUsername = configuration.getDefaultUsername();
+        this.defaultPassword = configuration.getDefaultPassword();
+        this.roUsername = configuration.getReadOnlyUsername();
+        this.roPassword = configuration.getReadOnlyPassword();
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
-                0,
-                wApi.getTableToken(),
-                wApi.getMetadata().getTableId()
-        ).ofDropColumn(columnName).build();
-        wApi.apply(alterOp, true);
-        return true;
+    public boolean match(CharSequence username, CharSequence password) {
+        boolean matchRo = roUsername != null && roPassword != null && Chars.equals(roUsername, username) && Chars.equals(roPassword, password);
+        return matchRo || Chars.equals(defaultUsername, username) && Chars.equals(defaultPassword, password);
     }
 }

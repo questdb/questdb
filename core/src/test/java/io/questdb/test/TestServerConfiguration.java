@@ -26,7 +26,9 @@ package io.questdb.test;
 
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.FactoryProvider;
-import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
@@ -36,13 +38,24 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.test.tools.TestUtils;
+
+import java.util.function.LongSupplier;
 
 public class TestServerConfiguration extends DefaultServerConfiguration {
+
+    public static final long importID = 100L;
+
+    @SuppressWarnings("unused")
+    public static final String importIDStr = Numbers.toHexStrPadded(importID);
+
+    private final CairoConfiguration cairoConfiguration;
 
     private final HttpMinServerConfiguration confHttpMin = new DefaultHttpServerConfiguration() {
         @Override
@@ -50,6 +63,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return false;
         }
     };
+
     private final LineUdpReceiverConfiguration confLineUdp = new DefaultLineUdpReceiverConfiguration() {
         @Override
         public boolean isEnabled() {
@@ -63,13 +77,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final FactoryProvider factoryProvider;
     private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
         @Override
-        public PGAuthenticatorFactory getAuthenticatorFactory() {
-            return factoryProvider.getPGAuthenticatorFactory();
-        }
-
-        @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return factoryProvider.getSecurityContextFactory();
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
@@ -85,8 +94,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
 
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return factoryProvider.getSecurityContextFactory();
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
     }) {
         @Override
@@ -115,6 +124,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     };
     private final LineTcpReceiverConfiguration confLineTcp = new DefaultLineTcpReceiverConfiguration() {
         @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
         public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
             return confLineTcpIOPool;
         }
@@ -122,11 +136,6 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         @Override
         public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
             return confLineTcpWriterPool;
-        }
-
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
         }
 
         @Override
@@ -149,6 +158,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             FactoryProvider factoryProvider
     ) {
         super(root);
+        // something we can override in test
         this.workerCountHttp = workerCountHttp;
         this.workerCountShared = workerCountShared;
         this.enableHttp = enableHttp;
@@ -157,6 +167,35 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         this.workerCountLineTcpIO = workerCountLineTcpIO;
         this.workerCountLineTcpWriter = workerCountLineTcpWriter;
         this.factoryProvider = factoryProvider;
+        final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            // do not check connection for SQLs executed via embedded API
+            @Override
+            public boolean checkConnection() {
+                return false;
+            }
+        };
+        this.cairoConfiguration = new DefaultCairoConfiguration(root) {
+            @Override
+            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                return circuitBreakerConfiguration;
+            }
+
+            // fix import ID
+            @Override
+            public LongSupplier getCopyIDSupplier() {
+                return () -> importID;
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return TestUtils.getCsvRoot();
+            }
+        };
+    }
+
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return cairoConfiguration;
     }
 
     @Override

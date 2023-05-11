@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -53,6 +54,7 @@ public class Overrides implements ConfigurationOverrides {
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
+    private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
@@ -164,6 +166,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getDefaultTableWriteMode() {
         return defaultTableWriteMode;
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return factoryProvider;
     }
 
     @Override
@@ -443,6 +450,7 @@ public class Overrides implements ConfigurationOverrides {
         maxOpenPartitions = -1;
         walApplyTableTimeQuote = -1;
         repeatMigrationsFromVersion = -1;
+        factoryProvider = null;
     }
 
     @Override
@@ -518,6 +526,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setDefaultTableWriteMode(int defaultTableWriteMode) {
         this.defaultTableWriteMode = defaultTableWriteMode;
+    }
+
+    @Override
+    public void setFactoryProvider(FactoryProvider factoryProvider) {
+        this.factoryProvider = factoryProvider;
     }
 
     @Override

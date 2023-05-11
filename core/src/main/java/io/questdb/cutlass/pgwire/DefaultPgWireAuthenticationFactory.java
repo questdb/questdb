@@ -22,18 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.std.ObjList;
+public class DefaultPgWireAuthenticationFactory implements PgWireAuthenticationFactory {
+    public static final PgWireAuthenticationFactory INSTANCE = new DefaultPgWireAuthenticationFactory();
 
-public class FuzzTransaction {
-    public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
-    public boolean rollback;
-    public int structureVersion;
-    public boolean waitAllDone;
-    public int waitBarrierVersion;
-
-    public void forceWait() {
-        waitAllDone = true;
+    @Override
+    public ClearTextPgWireAuthenticator getPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, PGWireConfiguration configuration) {
+        return new ClearTextPgWireAuthenticator(responseAsciiSink, configuration);
     }
 }

@@ -32,9 +32,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
+import io.questdb.test.fuzz.FuzzTransaction;
+import io.questdb.test.fuzz.FuzzTransactionGenerator;
+import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 
 public class AbstractFuzzTest extends AbstractGriffinTest {
