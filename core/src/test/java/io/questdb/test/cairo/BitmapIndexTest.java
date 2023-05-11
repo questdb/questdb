@@ -1011,7 +1011,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int N = 100000000;
         final int MOD = 1024;
         TestUtils.assertMemoryLeak(() -> {
-            try (MemoryMAR mem = Vm.getMARInstance(CommitMode.NOSYNC)) {
+            try (MemoryMAR mem = Vm.getMARInstance()) {
 
                 mem.wholeFile(configuration.getFilesFacade(), path.concat("x.dat").$(), MemoryTag.MMAP_DEFAULT);
 

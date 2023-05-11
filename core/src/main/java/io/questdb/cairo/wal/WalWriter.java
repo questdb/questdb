@@ -124,7 +124,7 @@ public class WalWriter implements TableWriterAPI {
         this.rootLen = path.length();
         this.metrics = metrics;
         this.open = true;
-        this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
+        this.symbolMapMem = Vm.getMARInstance();
 
         try {
             lockWal();
@@ -736,11 +736,11 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void configureColumn(int index, int columnType, int commitMode) {
+    private void configureColumn(int index, int columnType) {
         final int baseIndex = getPrimaryColumnIndex(index);
         if (columnType > 0) {
-            final MemoryMA primary = Vm.getMAInstance(commitMode);
-            final MemoryMA secondary = createSecondaryMem(columnType, commitMode);
+            final MemoryMA primary = Vm.getMAInstance();
+            final MemoryMA secondary = createSecondaryMem(columnType);
             columns.extendAndSet(baseIndex, primary);
             columns.extendAndSet(baseIndex + 1, secondary);
             configureNullSetters(nullSetters, columnType, primary, secondary);
@@ -754,9 +754,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void configureColumns() {
-        final int commitMode = configuration.getCommitMode();
         for (int i = 0; i < columnCount; i++) {
-            configureColumn(i, metadata.getColumnType(i), commitMode);
+            configureColumn(i, metadata.getColumnType(i));
         }
     }
 
@@ -932,11 +931,11 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private MemoryMA createSecondaryMem(int columnType, int commitMode) {
+    private MemoryMA createSecondaryMem(int columnType) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                return Vm.getMAInstance(commitMode);
+                return Vm.getMAInstance();
             default:
                 return null;
         }
@@ -1472,7 +1471,7 @@ public class WalWriter implements TableWriterAPI {
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
                     // create column file
-                    configureColumn(columnIndex, columnType, configuration.getCommitMode());
+                    configureColumn(columnIndex, columnType);
                     if (ColumnType.isSymbol(columnType)) {
                         configureSymbolMapWriter(columnIndex, columnName, 0, -1);
                     }

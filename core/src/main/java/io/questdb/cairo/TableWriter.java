@@ -268,7 +268,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
             }
-            this.ddlMem = Vm.getMARInstance(configuration.getCommitMode());
+            this.ddlMem = Vm.getMARInstance();
             this.metaMem = Vm.getMRInstance();
             this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen);
 
@@ -487,7 +487,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // add column objects
-        configureColumn(columnType, isIndexed, columnCount, configuration.getCommitMode());
+        configureColumn(columnType, isIndexed, columnCount);
         if (isIndexed) {
             populateDenseIndexerList();
         }
@@ -2742,7 +2742,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = nullSetters;
     }
 
-    private void configureColumn(int type, boolean indexFlag, int index, int commitMode) {
+    private void configureColumn(int type, boolean indexFlag, int index) {
         final MemoryMA primary;
         final MemoryMA secondary;
         final MemoryCARW oooPrimary;
@@ -2751,14 +2751,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MemoryCARW oooSecondary2;
 
         if (type > 0) {
-            primary = Vm.getMAInstance(commitMode);
+            primary = Vm.getMAInstance();
             oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
 
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
-                    secondary = Vm.getMAInstance(commitMode);
+                    secondary = Vm.getMAInstance();
                     oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                     oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                     break;
@@ -2792,10 +2792,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void configureColumnMemory() {
         symbolMapWriters.setPos(columnCount);
-        final int commitMode = configuration.getCommitMode();
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
-            configureColumn(type, metadata.isColumnIndexed(i), i, commitMode);
+            configureColumn(type, metadata.isColumnIndexed(i), i);
 
             if (ColumnType.isSymbol(type)) {
                 final int symbolIndex = denseSymbolMapWriters.size();
