@@ -54,9 +54,10 @@ class TextImportProcessorState implements Mutable, Closeable {
     @Override
     public void clear() {
         responseState = TextImportProcessor.RESPONSE_PREFIX;
-        columnIndex = 0;
         messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
+        columnIndex = 0;
         analysed = false;
+        json = false;
         state = STATE_OK;
         textLoader.clear();
         errorMessage = null;
