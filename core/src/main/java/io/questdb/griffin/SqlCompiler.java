@@ -2990,13 +2990,15 @@ public class SqlCompiler implements Closeable {
                             mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
                             TableUtils.createTableNameFile(mem, tableToken.getTableName());
 
-                            // copy txn_seq folder
+                            // initialise txn_seq folder
                             auxPath.trimTo(tableRootLen).concat(WalUtils.SEQ_DIR).slash$();
                             if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
                                 throw CairoException.critical(ff.errno()).put("Cannot create [path=").put(auxPath).put(']');
                             }
-                            srcPath.of(configuration.getRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).$();
-                            ff.copyRecursive(srcPath, auxPath, configuration.getMkDirMode());
+                            // _wal_index.d
+                            mem.smallFile(ff, auxPath.concat(WalUtils.WAL_INDEX_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
                         }
                     } finally {
                         mem.close();
