@@ -331,6 +331,18 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private static void expectIndexKeyword(GenericLexer lexer) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'index' expected");
+        }
+
+        if (!SqlKeywords.isIndexKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'index' expected");
+        }
+    }
+
     private static boolean isCompatibleCase(int from, int to) {
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
@@ -391,7 +403,7 @@ public class SqlCompiler implements Closeable {
                         final CharSequence columnName = GenericLexer.immutableOf(tok);
                         tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
-                            expectKeyword(lexer, "index");
+                            expectIndexKeyword(lexer);
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
 
@@ -423,7 +435,7 @@ public class SqlCompiler implements Closeable {
 
                         } else if (SqlKeywords.isDropKeyword(tok)) {
                             // alter table <table name> alter column drop index
-                            expectKeyword(lexer, "index");
+                            expectIndexKeyword(lexer);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && !isSemicolon(tok)) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
@@ -2642,18 +2654,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    protected static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
-        }
-
-        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
-        }
-    }
-
     protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
@@ -2890,14 +2890,12 @@ public class SqlCompiler implements Closeable {
 
     private class DatabaseBackupAgent implements Closeable {
         private final Path auxPath = new Path();
-        private final BackupFileFindVisitor confFilesBackupOnFind = new BackupFileFindVisitor();
         private final Path dstPath = new Path();
         private final StringSink sink = new StringSink();
         private final Path srcPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
         private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
-        private final BackupFileFindVisitor txnSeqFilesBackupOnFind = new BackupFileFindVisitor();
         private transient String cachedBackupTmpRoot;
         private transient int dstCurrDirLen;
         private transient int dstPathRoot;
@@ -2998,7 +2996,7 @@ public class SqlCompiler implements Closeable {
                                 throw CairoException.critical(ff.errno()).put("Cannot create [path=").put(auxPath).put(']');
                             }
                             srcPath.of(configuration.getRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).$();
-                            ff.iterateDir(srcPath, txnSeqFilesBackupOnFind.of(srcPath.length(), auxPath.length()));
+                            ff.copyRecursive(srcPath, auxPath, configuration.getMkDirMode());
                         }
                     } finally {
                         mem.close();
@@ -3135,9 +3133,7 @@ public class SqlCompiler implements Closeable {
 
             // backup conf directory
             mkBackupDstDir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
-            auxPath.of(dstPath).$();
-            ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind.of(srcPath.length(), auxPath.length()));
-
+            ff.copyRecursive(srcPath.of(configuration.getConfRoot()).$(), auxPath.of(dstPath).$(), configuration.getMkDirMode());
             return compiledQuery.ofBackupTable();
         }
 
@@ -3171,29 +3167,6 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.ofBackupTable();
             } finally {
                 tableTokens.clear();
-            }
-        }
-
-        private class BackupFileFindVisitor implements FindVisitor {
-            private int auxPathLen;
-            private int srcPathLen;
-
-            @Override
-            public void onFind(long pUtf8NameZ, int type) {
-                if (type == Files.DT_FILE) {
-                    srcPath.trimTo(srcPathLen).concat(pUtf8NameZ).$();
-                    auxPath.trimTo(auxPathLen).concat(pUtf8NameZ).$();
-                    LOG.info().$("backup copying file [from=").utf8(srcPath).$(",to=").utf8(auxPath).I$();
-                    if (ff.copy(srcPath, auxPath) < 0) {
-                        throw CairoException.critical(ff.errno()).put("cannot backup file [from=").put(srcPath).put(", to=").put(dstPath).put(']');
-                    }
-                }
-            }
-
-            BackupFileFindVisitor of(int srcPathLen, int auxPathLen) {
-                this.srcPathLen = srcPathLen;
-                this.auxPathLen = auxPathLen;
-                return this;
             }
         }
     }
