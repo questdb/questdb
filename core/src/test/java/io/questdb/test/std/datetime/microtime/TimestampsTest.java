@@ -446,24 +446,6 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testIsoWeekMicrosOffset() throws Exception {
-        long micros = TimestampFormatUtils.parseTimestamp("2022-09-26T13:32:12.531Z");
-        Assert.assertEquals(4, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
-        micros = TimestampFormatUtils.parseTimestamp("2022-09-27T13:32:12.531Z");
-        Assert.assertEquals(4, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
-        micros = TimestampFormatUtils.parseTimestamp("2022-09-28T13:32:12.531Z");
-        Assert.assertEquals(4, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
-        micros = TimestampFormatUtils.parseTimestamp("2022-09-29T13:32:12.531Z");
-        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
-        micros = TimestampFormatUtils.parseTimestamp("2022-09-30T13:32:12.531Z");
-        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
-        micros = TimestampFormatUtils.parseTimestamp("2022-10-01T13:32:12.531Z");
-        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
-        micros = TimestampFormatUtils.parseTimestamp("2022-10-02T13:32:12.531Z");
-        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
-    }
-
-    @Test
     public void testMonthsBetween() throws Exception {
         // a < b, same year
         Assert.assertEquals(2,

@@ -916,7 +916,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                                     for (int i = 0; i < txReader0.getPartitionCount(); i++) {
                                         Assert.assertEquals(txReader0.getPartitionNameTxn(i), txReader1.getPartitionNameTxn(i));
                                         Assert.assertEquals(txReader0.getPartitionSize(i), txReader1.getPartitionSize(i));
-                                        Assert.assertEquals(txReader0.getPartitionTimestamp(i), txReader1.getPartitionTimestamp(i));
+                                        Assert.assertEquals(txReader0.getPartitionTimestampByIndex(i), txReader1.getPartitionTimestampByIndex(i));
                                         Assert.assertEquals(txReader0.getPartitionColumnVersion(i), txReader1.getPartitionColumnVersion(i));
                                     }
                                 }

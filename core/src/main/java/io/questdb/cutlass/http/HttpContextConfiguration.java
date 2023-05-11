@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.FactoryProvider;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -52,11 +52,11 @@ public interface HttpContextConfiguration {
 
     int getRequestHeaderBufferSize();
 
-    SecurityContextFactory getSecurityContextFactory();
-
     int getSendBufferSize();
 
     boolean getServerKeepAlive();
 
     boolean readOnlySecurityContext();
+
+    FactoryProvider getFactoryProvider();
 }

@@ -22,28 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb;
 
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.Rnd;
-
-public class FuzzDropColumnOperation implements FuzzTransactionOperation {
-    private final String columnName;
-
-    public FuzzDropColumnOperation(String columnName) {
-        this.columnName = columnName;
-    }
-
-    @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
-                0,
-                wApi.getTableToken(),
-                wApi.getMetadata().getTableId()
-        ).ofDropColumn(columnName).build();
-        wApi.apply(alterOp, true);
-        return true;
-    }
+public interface ConfigProperty {
+    String getPropertyPath();
 }

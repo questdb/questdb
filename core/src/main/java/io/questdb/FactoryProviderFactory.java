@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb;
 
-import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 
-@FunctionalInterface
-public interface PGAuthenticator {
-    SecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, AuthenticationException;
+public interface FactoryProviderFactory {
+    FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FunctionFactoryCache functionFactoryCache);
 }

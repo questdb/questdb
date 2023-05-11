@@ -39,7 +39,8 @@ public enum AttachDetachStatus {
     ATTACH_ERR_COPY,
     ATTACH_ERR_MISSING_PARTITION,
     ATTACH_ERR_DIR_EXISTS,
-    ATTACH_ERR_EMPTY_PARTITION;
+    ATTACH_ERR_EMPTY_PARTITION,
+    DETACH_ERR_CANNOT_SQUASH(false);
 
     private final boolean isCritical;
 

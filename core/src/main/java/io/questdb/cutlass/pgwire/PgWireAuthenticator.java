@@ -22,30 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.std.Rnd;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.std.Mutable;
 
-public class FuzzAddColumnOperation implements FuzzTransactionOperation {
+public interface PgWireAuthenticator extends Mutable {
+    SecurityContext getSecurityContext();
 
-    private final boolean indexFlag;
-    private final int indexValueBlockCapacity;
-    private final String newColName;
-    private final int newType;
-    private final boolean symbolTableStatic;
+    boolean isAuthenticated();
 
-    public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
-        this.newColName = newColName;
-        this.newType = newType;
-        this.indexFlag = indexFlag;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
-        this.symbolTableStatic = symbolTableStatic;
-    }
+    AuthenticationResult onAfterInitMessage();
 
-    @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
-        return true;
+    AuthenticationResult processMessage(CharSequence usernameFromInitMessage, long msgStart, long msgLimit) throws BadProtocolException;
+
+    enum AuthenticationResult {
+        AUTHENTICATION_SUCCESS,
+        AUTHENTICATION_FAILED,
+        NEED_READ
     }
 }

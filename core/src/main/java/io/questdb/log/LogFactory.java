@@ -157,6 +157,10 @@ public class LogFactory implements Closeable {
         }
     }
 
+    @SuppressWarnings({"EmptyMethod", "unused"})
+    public static void init() {
+    }
+
     public synchronized void add(final LogWriterConfig config) {
         assert !configured;
         final int index = scopeConfigMap.keyIndex(config.getScope());

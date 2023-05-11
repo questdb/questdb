@@ -22,32 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb;
 
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.std.FilesFacadeImpl;
 
-public class FuzzTestColumnMeta extends GenericRecordMetadata {
-    int liveColumnCount = 0;
+class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
 
     @Override
-    public GenericRecordMetadata add(TableColumnMetadata meta) {
-        columnNameIndexMap.put(meta.getName(), columnCount);
-        columnMetadata.extendAndSet(columnCount, meta);
-        columnCount++;
-        if (meta.getType() > 0) {
-            liveColumnCount++;
-        }
-        return this;
-    }
-
-    public int getLiveColumnCount() {
-        return liveColumnCount;
-    }
-
-    public void rename(int columnIndex, String name, String newName) {
-        columnMetadata.get(columnIndex).setName(newName);
-        columnNameIndexMap.remove(name);
-        columnNameIndexMap.put(newName, columnIndex);
+    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+        return new PropServerConfiguration(
+                bootstrap.getRootDirectory(),
+                bootstrap.loadProperties(),
+                getEnv(),
+                bootstrap.getLog(),
+                bootstrap.getBuildInformation(),
+                FilesFacadeImpl.INSTANCE,
+                FactoryProviderFactoryImpl.INSTANCE
+        );
     }
 }

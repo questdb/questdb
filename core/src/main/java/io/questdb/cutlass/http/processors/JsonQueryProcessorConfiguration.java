@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.griffin.SqlParserFactory;
+import io.questdb.FactoryProvider;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -36,6 +36,8 @@ public interface JsonQueryProcessorConfiguration {
 
     int getDoubleScale();
 
+    FactoryProvider getFactoryProvider();
+
     FilesFacade getFilesFacade();
 
     int getFloatScale();
@@ -43,6 +45,4 @@ public interface JsonQueryProcessorConfiguration {
     CharSequence getKeepAliveHeader();
 
     long getMaxQueryResponseRowLimit();
-
-    SqlParserFactory getSqlParserFactory();
 }

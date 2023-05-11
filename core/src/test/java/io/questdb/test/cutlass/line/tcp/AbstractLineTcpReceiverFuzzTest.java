@@ -117,7 +117,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
         random = new Rnd(s0, s1);
-        getLog().info().$("random seed : ").$(s0).$(", ").$(s1).$();
+        getLog().info().$("random seed : ").$(random.getSeed0()).$(", ").$(random.getSeed1()).$();
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {
@@ -167,6 +167,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     private void assertTable(TableData table) throws SqlException {
+        if (table.size() < 1) {
+            return;
+        }
         final CharSequence tableName = tableNames.get(table.getName());
         if (tableName == null) {
             throw new RuntimeException("Table name is missing");
@@ -188,7 +191,12 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     Assert.assertEquals(dataMinTs, txnMinTs);
                     cursor.toTop();
                 }
-                assertCursorTwoPass(expected, cursor, metadata);
+
+                try {
+                    assertCursorTwoPass(expected, cursor, metadata);
+                } catch (AssertionError e) {
+                    throw new AssertionError("Table: " + table.getName(), e);
+                }
             } else {
                 try (
                         SqlCompiler compiler = new SqlCompiler(engine);
@@ -571,7 +579,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         for (int i = 0; i < numOfTables; i++) {
             final CharSequence tableName = getTableName(i);
             final TableData table = tables.get(tableName);
-            waitForTable(table);
+            if (table.size() > 0) {
+                waitForTable(table);
+            }
         }
     }
 

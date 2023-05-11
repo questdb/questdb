@@ -23,11 +23,11 @@
  ******************************************************************************/
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -80,6 +80,11 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
+                public FactoryProvider getFactoryProvider() {
+                    return DefaultFactoryProvider.INSTANCE;
+                }
+
+                @Override
                 public FilesFacade getFilesFacade() {
                     return TestFilesFacadeImpl.INSTANCE;
                 }
@@ -97,11 +102,6 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
-                }
-
-                @Override
-                public SqlParserFactory getSqlParserFactory() {
-                    return SqlParserFactoryImpl.INSTANCE;
                 }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {

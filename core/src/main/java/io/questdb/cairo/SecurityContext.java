@@ -30,25 +30,65 @@ import org.jetbrains.annotations.Nullable;
 
 public interface SecurityContext {
 
+    default void assumeRole(CharSequence roleName) {
+    }
+
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 
+    default void authorizeAlterTableAttachPartition(TableToken tableToken) {
+    }
+
+    default void authorizeAlterTableDetachPartition(TableToken tableToken) {
+    }
+
+    default void authorizeAlterTableDropPartition(TableToken tableToken) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
     // the names are pairs from-to
-    default void authorizeAlterTableRenameColumns(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     default void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
-    default void authorizeAlterTableAlterColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeCopy() {
     }
 
-    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    }
+
+    default void authorizeDatabaseSnapshot() {
+    }
+
+    @SuppressWarnings("unused")
+    default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
     }
 
     // when insert SQL doesn't specify any columns (this means all columns) the 'columnName' list
     // will be empty
     default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    @SuppressWarnings("unused")
+    default void authorizeManageAccess() {
     }
 
     default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
@@ -57,24 +97,13 @@ public interface SecurityContext {
     default void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
     }
 
-    default void authorizeTableCreate(CharSequence tableName) {
-    }
-
-    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-    }
-
-    default void authorizeCopyExecute() {
-    }
-
-    default void authorizeDatabaseSnapshot() {
+    default void authorizeTableCreate() {
     }
 
     default void authorizeTableDrop(TableToken tableToken) {
     }
 
-    default void authorizeGrant(TableToken tableToken) {
-    }
-
+    // TODO: columnName should be removed, or this permission should change to column level
     default void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
     }
 
@@ -84,9 +113,12 @@ public interface SecurityContext {
     default void authorizeTableTruncate(TableToken tableToken) {
     }
 
+    default void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
     default void authorizeTableVacuum(TableToken tableToken) {
     }
 
-    default void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void exitRole(CharSequence roleName) {
     }
 }

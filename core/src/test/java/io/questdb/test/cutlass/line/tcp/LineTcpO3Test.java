@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -56,6 +58,7 @@ import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
+import java.util.ServiceLoader;
 import java.util.zip.GZIPInputStream;
 
 @RunWith(Parameterized.class)
@@ -106,7 +109,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             name = LineTcpO3Test.class.getSimpleName() + ".server.conf";
         }
         try (InputStream is = LineTcpO3Test.class.getResourceAsStream(name)) {
-            File mimeTypesFile = new File(new File(root.toString(), PropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
+            File mimeTypesFile = new File(new File(root, PropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
             if (!mimeTypesFile.exists()) {
                 mimeTypesFile.getParentFile().mkdirs();
                 FileOutputStream fos = new FileOutputStream(mimeTypesFile);
@@ -114,7 +117,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 fos.close();
             }
             properties.load(is);
-            serverConf = new PropServerConfiguration(root.toString(), properties, null, LOG, null);
+            serverConf = new PropServerConfiguration(root, properties, null, LOG, null);
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
@@ -123,6 +126,13 @@ public class LineTcpO3Test extends AbstractCairoTest {
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
+        serverConf.init(
+                engine,
+                new FunctionFactoryCache(
+                        configuration,
+                        ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+                )
+        );
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
     }

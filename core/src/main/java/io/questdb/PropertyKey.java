@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public enum PropertyKey {
+public enum PropertyKey implements ConfigProperty {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
@@ -401,7 +401,9 @@ public enum PropertyKey {
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
-    CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version");
+    CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
+    CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
+    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;
@@ -414,6 +416,7 @@ public enum PropertyKey {
         return Optional.ofNullable(nameMapping.get(name));
     }
 
+    @Override
     public String getPropertyPath() {
         return propertyPath;
     }

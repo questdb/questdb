@@ -22,22 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.test.fuzz;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.ObjectPool;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.Rnd;
 
-public interface SqlParserFactory {
-    SqlParser getInstance(
-            CairoConfiguration configuration,
-            SqlOptimiser optimiser,
-            CharacterStore characterStore,
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<QueryModel> queryModelPool,
-            PostOrderTreeTraversalAlgo traversalAlgo
-    );
+public interface FuzzTransactionOperation {
+    boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex);
 }

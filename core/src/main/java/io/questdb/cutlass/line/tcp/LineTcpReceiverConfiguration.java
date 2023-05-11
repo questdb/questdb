@@ -58,6 +58,8 @@ public interface LineTcpReceiverConfiguration {
 
     FilesFacade getFilesFacade();
 
+    String getAuthDB();
+
     WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
     /**

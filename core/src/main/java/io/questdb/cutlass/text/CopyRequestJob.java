@@ -80,9 +80,9 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
 
-        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null, configuration.getSqlParserFactory());
+        this.sqlCompiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(configuration.getSecurityContextFactory().getRootContext(), null, null);
+        this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         this.statusTableToken = this.sqlCompiler.query()
                 .$("CREATE TABLE IF NOT EXISTS \"")
