@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,18 +33,27 @@ import io.questdb.network.PeerIsSlowToReadException;
 
 public class HealthCheckProcessor implements HttpRequestProcessor {
 
+    private final boolean pessimisticMode;
+
+    public HealthCheckProcessor(boolean pessimisticMode) {
+        this.pessimisticMode = pessimisticMode;
+    }
+
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        final HealthMetricsImpl metrics = context.getMetrics().health();
-        final long unhandledErrors = metrics.unhandledErrorsCount();
-        if (unhandledErrors > 0) {
-            r.status(500, "text/plain");
-            r.sendHeader();
-            r.put("Status: Unhealthy\nUnhandled errors: ");
-            r.put(unhandledErrors);
-            r.sendChunk(true);
-            return;
+
+        if (pessimisticMode) {
+            final HealthMetricsImpl metrics = context.getMetrics().health();
+            final long unhandledErrors = metrics.unhandledErrorsCount();
+            if (unhandledErrors > 0) {
+                r.status(500, "text/plain");
+                r.sendHeader();
+                r.put("Status: Unhealthy\nUnhandled errors: ");
+                r.put(unhandledErrors);
+                r.sendChunk(true);
+                return;
+            }
         }
 
         r.status(200, "text/plain");

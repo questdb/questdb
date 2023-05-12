@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,15 @@ import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
 
 public class StringSink extends AbstractCharSink implements MutableCharSink, CloneableMutable {
-    private final StringBuilder builder = new StringBuilder();
+    private final StringBuilder builder;
+
+    public StringSink() {
+        this.builder = new StringBuilder();
+    }
+
+    public StringSink(int initialCapacity) {
+        this.builder = new StringBuilder(initialCapacity);
+    }
 
     @Override
     public char charAt(int index) {
@@ -57,6 +65,10 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
     @Override
     public int hashCode() {
         return Chars.hashCode(builder);
+    }
+
+    public int indexOf(String s) {
+        return builder.indexOf(s);
     }
 
     @Override

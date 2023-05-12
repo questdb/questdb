@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -73,9 +74,23 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             if (truncate) {
                 long appendOffset = getAppendOffset();
                 truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
+
                 long sz = Math.min(size, truncateSize);
                 if (appendOffset < sz) {
-                    Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+                    try {
+                        // If this is a lazy close of unused memory the underlying file can already be truncated
+                        //  using another fd and memset can lead to SIGBUS on Linux.
+                        // Check the physical file length before trying to memset to the mapped memory.
+                        sz = Math.min(sz, ff.length(fd));
+                        if (appendOffset < sz) {
+                            Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+                        }
+                    } catch (CairoException e) {
+                        LOG.error().$("cannot determine file length to safely truncate [fd=").$(fd)
+                                .$(", errno=").$(e.getErrno())
+                                .$(", error=").$(e.getFlyweightMessage())
+                                .I$();
+                    }
                 }
             } else {
                 truncateSize = -1L;
@@ -88,7 +103,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 fd = -1;
             }
         }
-        if (ff != null && ff.closeChecked(fd)) {
+        if (ff != null && ff.close(fd)) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
@@ -213,11 +228,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 this.pageAddress = TableUtils.mremap(
                         ff,
                         fd,
-                        this.pageAddress,
-                        this.size,
+                        pageAddress,
+                        size,
                         sz,
                         Files.MAP_RW,
-                        memoryTag);
+                        memoryTag
+                );
             } catch (Throwable e) {
                 appendAddress = pageAddress;
                 long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);
@@ -276,7 +292,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.pageAddress = TableUtils.mremap(
                     ff,
                     fd,
-                    this.pageAddress,
+                    pageAddress,
                     previousSize,
                     newSize,
                     Files.MAP_RW,

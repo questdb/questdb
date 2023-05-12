@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.BuildInformation;
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -37,6 +39,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 import java.lang.ThreadLocal;
+import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
@@ -47,6 +50,10 @@ public interface CairoConfiguration {
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
+
+    default boolean disableColumnPurgeJob() {
+        return false;
+    }
 
     boolean enableTestFactories();
 
@@ -142,6 +149,8 @@ public interface CairoConfiguration {
 
     long getIdleCheckInterval();
 
+    int getInactiveReaderMaxOpenPartitions();
+
     long getInactiveReaderTTL();
 
     long getInactiveWalWriterTTL();
@@ -157,6 +166,8 @@ public interface CairoConfiguration {
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
+
+    int getO3LastPartitionMaxSplits();
 
     int getMaxSwapFileCount();
 
@@ -188,6 +199,8 @@ public interface CairoConfiguration {
 
     int getO3CopyQueueCapacity();
 
+    int getO3LagCalculationWindowsSize();
+
     default double getO3LagDecreaseFactor() {
         return 0.5;
     }
@@ -203,6 +216,8 @@ public interface CairoConfiguration {
      * @return upper bound of "commit lag" in micros
      */
     long getO3MaxLag();
+
+    int getO3MemMaxPages();
 
     long getO3MinLag();
 
@@ -231,6 +246,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    long getPartitionO3SplitMinSize();
+
     int getQueryCacheEventQueueCapacity();
 
     default Rnd getRandom() {
@@ -248,11 +265,13 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
+    int getRepeatMigrationsFromVersion();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
 
-    CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
+    String getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     default RostiAllocFacade getRostiAllocFacade() {
         return RostiAllocFacadeImpl.INSTANCE;
@@ -391,6 +410,8 @@ public interface CairoConfiguration {
 
     long getTableRegistryAutoReloadFrequency();
 
+    int getTableRegistryCompactionThreshold();
+
     TelemetryConfiguration getTelemetryConfiguration();
 
     TextConfiguration getTextConfiguration();
@@ -399,6 +420,14 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    VolumeDefinitions getVolumeDefinitions();
+
+    int getWalApplyLookAheadTransactionCount();
+
+    long getWalApplyTableTimeQuota();
+
+    long getWalDataAppendPageSize();
+
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();
@@ -406,6 +435,8 @@ public interface CairoConfiguration {
     int getWalRecreateDistressedSequencerAttempts();
 
     long getWalSegmentRolloverRowCount();
+
+    double getWalSquashUncommittedRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -446,7 +477,13 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterPreTouchEnabled();
 
+    boolean isTableTypeConversionEnabled();
+
+    boolean isWalApplyEnabled();
+
     boolean isWalSupported();
+
+    boolean isWriterMixedIOEnabled();
 
     /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.
@@ -457,4 +494,8 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    LongSupplier getCopyIDSupplier();
+
+    FactoryProvider getFactoryProvider();
 }

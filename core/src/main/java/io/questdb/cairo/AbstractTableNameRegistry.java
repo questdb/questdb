@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,17 +24,15 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-
-import java.util.Iterator;
-import java.util.Map;
+import io.questdb.std.ObjHashSet;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryFileStore nameStore;
-    private Map<CharSequence, TableToken> nameTokenMap;
-    private Map<CharSequence, ReverseTableMapItem> reverseNameTokenMap;
+    private ConcurrentHashMap<TableToken> nameTokenMap;
+    private ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
 
     public AbstractTableNameRegistry(CairoConfiguration configuration) {
         this.nameStore = new TableNameRegistryFileStore(configuration);
@@ -62,13 +60,11 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public void getTableTokens(ObjList<TableToken> bucket, boolean includeDropped) {
-        bucket.clear();
-        Iterator<ReverseTableMapItem> iterator = reverseNameTokenMap.values().iterator();
-        while (iterator.hasNext()) {
-            ReverseTableMapItem entry = iterator.next();
+    public void getTableTokens(ObjHashSet<TableToken> target, boolean includeDropped) {
+        target.clear();
+        for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {
             if (includeDropped || !entry.isDropped()) {
-                bucket.add(entry.getToken());
+                target.add(entry.getToken());
             }
         }
     }
@@ -91,8 +87,8 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     void setNameMaps(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap) {
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap) {
         this.nameTokenMap = nameTableTokenMap;
         this.reverseNameTokenMap = reverseTableNameTokenMap;
     }

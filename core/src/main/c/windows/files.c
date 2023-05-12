@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,8 +70,8 @@ jboolean set_file_pos(HANDLE fd, jlong offset) {
     return TRUE;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
-        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong fromOffset, jlong length) {
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong fromOffset, jlong destOffset, jlong length) {
 
     char buf[16 * 4096];
     DWORD read_sz;
@@ -86,6 +86,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
     }
 
     if (!set_file_pos(FD_TO_HANDLE(srcFd), fromOffset)) {
+        return -1;
+    }
+
+    if (!set_file_pos(FD_TO_HANDLE(destFd), destOffset)) {
         return -1;
     }
 
@@ -126,6 +130,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
 
     SaveLastError();
     return rd_off - fromOffset;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong fromOffset, jlong length) {
+    return Java_io_questdb_std_Files_copyDataToOffset(e, cls, srcFd, destFd, fromOffset, 0, length);
 }
 
 HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition) {
@@ -316,7 +325,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
             OPEN_EXISTING
     );
 
-
     if (handle != INVALID_HANDLE_VALUE) {
         millis += MILLIS_SINCE_1970; // millis between 1601-01-01 and 1970-01-01
         millis *= 10000;
@@ -339,10 +347,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0(JNIEnv *e, jclass cl, 
     );
 
     if (h == INVALID_HANDLE_VALUE) {
-        return -1L;
+        return -1;
     }
 
-    jlong len = Java_io_questdb_std_Files_length(e, cl, (jlong) h);
+    jlong len = Java_io_questdb_std_Files_length(e, cl, HANDLE_TO_FD(h));
     CloseHandle(h);
     return len;
 }
@@ -805,11 +813,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
            com_questdb_std_Files_DT_DIR : com_questdb_std_Files_DT_REG;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
-        (JNIEnv *e, jclass cl, jlong findPtr) {
-    return ((FIND *) findPtr)->find_data->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jint fd) {
     if (LockFile(FD_TO_HANDLE(fd), 0, 0, 1, 0)) {
@@ -827,7 +830,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     sOverlapped.OffsetHigh = 0;
     jint fd = Java_io_questdb_std_Files_openRW(e, cl, lpszName);
 
-    if (fd < -1) {
+    if (fd < 0) {
         // error opening / creating file
         // save last error already called
         return fd;
@@ -843,8 +846,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                 // write first byte to 0
                 DWORD writtenCount = 0;
                 byte buff[1] = {0};
-                if (set_file_pos(handle, 0) && WriteFile(handle, (LPCVOID) &buff, (DWORD) 1, &writtenCount, NULL) &&
-                    writtenCount == 1) {
+                if (set_file_pos(handle, 0)
+                        && WriteFile(handle, (LPCVOID) &buff, (DWORD) 1, &writtenCount, NULL)
+                        && writtenCount == 1) {
 
                     // extend file to `size`
                     if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
@@ -867,10 +871,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                 }
             }
         }
-    } else {
-        // file size is already 0, no cleanup but allocate the file.
-        if (Java_io_questdb_std_Files_truncate(e, cl, fd, size)
-            && LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
+    } else if (fileSize == 0) {
+        // file size is already 0, no cleanup but allocate the file
+        if (Java_io_questdb_std_Files_truncate(e, cl, fd, size) == JNI_TRUE
+                && LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
             return fd;
         }
     }
@@ -879,11 +883,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     SaveLastError();
     CloseHandle(handle);
     return -1;
-
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
-
     int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszOld, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf1[len];

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,19 +91,17 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next() {
-        if (this.reenterDataFrame) {
+        if (reenterDataFrame) {
             return computeFrame(reenterPartitionLo, reenterPartitionHi);
         }
         DataFrame dataFrame = dataFrameCursor.next();
         if (dataFrame != null) {
-            this.reenterPartitionIndex = dataFrame.getPartitionIndex();
+            reenterPartitionIndex = dataFrame.getPartitionIndex();
             final long lo = dataFrame.getRowLo();
             final long hi = dataFrame.getRowHi();
-            this.currentPageFrameRowLimit = Math.min(
+            currentPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
-                    Math.max(
-                            pageFrameMinRows, (hi - lo) / workerCount
-                    )
+                    Math.max(pageFrameMinRows, (hi - lo) / workerCount)
             );
             return computeFrame(lo, hi);
         }
@@ -111,8 +109,8 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     public BwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
-        this.reader = dataFrameCursor.getTableReader();
         this.dataFrameCursor = dataFrameCursor;
+        reader = dataFrameCursor.getTableReader();
         toTop();
         return this;
     }
@@ -124,7 +122,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void toTop() {
-        this.dataFrameCursor.toTop();
+        dataFrameCursor.toTop();
         pages.setAll(columnCount, 0);
         topsRemaining.setAll(columnCount, 0);
         columnPageAddress.setAll(columnCount * 2, 0);
@@ -209,11 +207,6 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
-
-        @Override
-        public void copyColumnAddressesTo(LongList destColumnAddresses) {
-            destColumnAddresses.add(columnPageAddress);
-        }
 
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {

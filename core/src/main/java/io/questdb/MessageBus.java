@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cutlass.text.TextImportRequestTask;
-import io.questdb.cutlass.text.TextImportTask;
+import io.questdb.cutlass.text.CopyRequestTask;
+import io.questdb.cutlass.text.CopyTask;
 import io.questdb.mp.*;
 import io.questdb.tasks.*;
 
@@ -109,11 +109,11 @@ public interface MessageBus extends Closeable {
 
     Sequence getTextImportPubSeq();
 
-    RingQueue<TextImportTask> getTextImportQueue();
+    RingQueue<CopyTask> getTextImportQueue();
 
-    MPSequence getTextImportRequestPubSeq();
+    MPSequence getCopyRequestPubSeq();
 
-    RingQueue<TextImportRequestTask> getTextImportRequestQueue();
+    RingQueue<CopyRequestTask> getTextImportRequestQueue();
 
     Sequence getTextImportRequestSubSeq();
 

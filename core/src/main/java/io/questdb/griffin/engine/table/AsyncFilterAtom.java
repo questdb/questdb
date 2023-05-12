@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,12 +31,12 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
@@ -45,10 +45,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
 
     private final Function filter;
     private final ObjList<Function> perWorkerFilters;
-    private final AtomicIntegerArray perWorkerLocks;
+    private final PerWorkerLocks perWorkerLocks;
     private final IntList preTouchColumnTypes;
-    // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
-    private final Rnd rnd;
     private boolean preTouchEnabled;
 
     public AsyncFilterAtom(
@@ -57,14 +55,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable IntList preTouchColumnTypes
     ) {
-        this.rnd = new Rnd(
-                configuration.getNanosecondClock().getTicks(),
-                configuration.getMicrosecondClock().getTicks()
-        );
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
         if (perWorkerFilters != null) {
-            perWorkerLocks = new AtomicIntegerArray(perWorkerFilters.size());
+            perWorkerLocks = new PerWorkerLocks(configuration, perWorkerFilters.size());
         } else {
             perWorkerLocks = null;
         }
@@ -72,25 +66,14 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     }
 
     public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerFilters == null) {
+        if (perWorkerLocks == null) {
             return -1;
         }
         if (workerId == -1 && owner) {
             // Owner thread is free to use the original filter anytime.
             return -1;
         }
-        final int size = perWorkerFilters.size();
-        workerId = workerId == -1 ? rnd.nextInt(size) : workerId;
-        while (true) {
-            for (int i = 0; i < size; i++) {
-                int id = (i + workerId) % size;
-                if (perWorkerLocks.compareAndSet(id, 0, 1)) {
-                    return id;
-                }
-            }
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            Os.pause();
-        }
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     @Override
@@ -120,6 +103,16 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             }
         }
         preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+    }
+
+    @Override
+    public void initCursor() {
+        filter.initCursor();
+        if (perWorkerFilters != null) {
+            // Initialize all per-worker filters on the query owner thread to avoid
+            // DataUnavailableException thrown on worker threads when filtering.
+            Function.initCursor(perWorkerFilters);
+        }
     }
 
     /**
@@ -201,6 +194,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                             sum += bs.byteAt(0);
                         }
                         break;
+                    case ColumnType.UUID:
+                        sum += record.getLong128Hi(i);
+                        sum += record.getLong128Lo(i);
+                        break;
                 }
             }
         }
@@ -209,10 +206,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     }
 
     public void releaseFilter(int filterId) {
-        if (filterId == -1) {
+        if (perWorkerLocks == null) {
             return;
         }
-        perWorkerLocks.set(filterId, 0);
+        perWorkerLocks.releaseSlot(filterId);
     }
 
     @Override

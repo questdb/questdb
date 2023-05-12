@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -238,6 +238,10 @@ public class FastMap implements Map, Reopenable {
         }
     }
 
+    public long getAppendOffset() {
+        return kPos;
+    }
+
     public long getAreaSize() {
         return kLimit - kStart;
     }
@@ -254,6 +258,10 @@ public class FastMap implements Map, Reopenable {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    public int getValueColumnCount() {
+        return valueColumnCount;
     }
 
     public void reopen() {
@@ -408,14 +416,6 @@ public class FastMap implements Map, Reopenable {
 
     private FastMapValue valueOf(long address, boolean newValue, FastMapValue value) {
         return value.of(address, kLimit, newValue);
-    }
-
-    long getAppendOffset() {
-        return kPos;
-    }
-
-    int getValueColumnCount() {
-        return valueColumnCount;
     }
 
     int keySize() {
@@ -593,7 +593,7 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128LittleEndian(long hi, long lo) {
+        public void putLong128(long lo, long hi) {
             assert appendAddress + 16 <= kLimit;
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
@@ -734,7 +734,7 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128LittleEndian(long hi, long lo) {
+        public void putLong128(long lo, long hi) {
             checkSize(16);
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);

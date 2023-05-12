@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,6 +34,8 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 
 public interface CompiledQuery {
+
+    // these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short ALTER = 4;
     short BACKUP_TABLE = 13;
     short BEGIN = 18;
@@ -46,19 +49,17 @@ public interface CompiledQuery {
     short EXPLAIN = 25;
     short INSERT = 2;
     short INSERT_AS_SELECT = 10;
-    short LOCK = 15;
     short RENAME_TABLE = 12;
     short REPAIR = 5;
     short ROLLBACK = 20;
-    // these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short SELECT = 1;
     short SET = 6;
     short SNAPSHOT_DB_COMPLETE = 23;
     short SNAPSHOT_DB_PREPARE = 22;
-    short TABLE_RESUME = 25;
+    short TABLE_RESUME = 26;
+    short TABLE_SET_TYPE = 27;
     short TRUNCATE = 3;
-    short TYPES_COUNT = EXPLAIN;
-    short UNLOCK = 16;
+    short TYPES_COUNT = TABLE_SET_TYPE;
     short UPDATE = 14;
     short VACUUM = 17;
 
@@ -87,6 +88,8 @@ public interface CompiledQuery {
     InsertOperation getInsertOperation();
 
     RecordCursorFactory getRecordCursorFactory();
+
+    TableToken getTableToken();
 
     String getSqlStatement();
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,10 +28,12 @@ import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSenderMain {
     public static void main(String[] args) {
-        int n = 3;
+        int n = 1;
         final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
         for (int i = 0; i < n; i++) {
             int k = i;
@@ -48,20 +50,18 @@ public class LineTCPSenderMain {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
+        MicrosecondClock clock = new MicrosecondClockImpl();
         String tab = "weather" + k;
         try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; ; i++) {
                 sender.metric(tab);
                 sender
                         .tag("location", "london")
                         .tag("by", "blah")
                         .field("temp", rnd.nextPositiveLong())
                         .field("ok", rnd.nextPositiveInt());
-                sender.$();
+                sender.$(clock.getTicks() * 1000);
             }
-            sender.flush();
         }
-        System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
-        haltLatch.countDown();
     }
 }

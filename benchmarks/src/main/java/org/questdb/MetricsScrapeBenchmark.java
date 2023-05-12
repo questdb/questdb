@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 package org.questdb;
 
 import io.questdb.metrics.Counter;
-import io.questdb.metrics.Gauge;
+import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.std.Sinkable;
@@ -45,7 +45,7 @@ public class MetricsScrapeBenchmark {
 
     private static final MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
     private static final Counter counter = metricsRegistry.newCounter("counter");
-    private static final Gauge gauge = metricsRegistry.newGauge("gauge");
+    private static final LongGauge gauge = metricsRegistry.newLongGauge("gauge");
     private static final CharSink sink = new NullCharSink();
 
     public static void main(String[] args) throws RunnerException {

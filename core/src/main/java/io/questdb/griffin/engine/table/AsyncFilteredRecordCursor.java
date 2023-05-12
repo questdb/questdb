@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,10 +59,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
+    public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
         this.filter = filter;
-        this.hasDescendingOrder = hasDescendingOrder;
-        this.record = new PageAddressCacheRecord();
+        this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+        record = new PageAddressCacheRecord();
     }
 
     @Override
@@ -114,7 +114,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         // Check for the first hasNext call.
-        if (frameIndex == -1 && frameLimit > -1) {
+        if (frameIndex == -1) {
             fetchNextFrame();
         }
 
@@ -177,9 +177,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
-        if (frameLimit > -1) {
-            frameIndex = -1;
-        }
+        frameIndex = -1;
         allFramesActive = true;
     }
 
@@ -202,9 +200,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void fetchNextFrame() {
+        if (frameLimit == -1) {
+            frameSequence.prepareForDispatch();
+            frameLimit = frameSequence.getFrameCount() - 1;
+        }
+
         try {
             do {
-                this.cursor = frameSequence.next();
+                cursor = frameSequence.next();
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()
@@ -215,23 +218,25 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
-                    this.allFramesActive &= frameSequence.isActive();
-                    this.rows = task.getRows();
-                    this.frameRowCount = rows.size();
-                    this.frameIndex = task.getFrameIndex();
-                    this.frameRowIndex = 0;
-                    if (this.frameRowCount > 0 && frameSequence.isActive()) {
+                    allFramesActive &= frameSequence.isActive();
+                    rows = task.getRows();
+                    frameRowCount = rows.size();
+                    frameIndex = task.getFrameIndex();
+                    frameRowIndex = 0;
+                    if (frameRowCount > 0 && frameSequence.isActive()) {
                         record.setFrameIndex(task.getFrameIndex());
                         break;
                     } else {
                         // Force reset frame size if frameSequence was canceled or failed.
-                        this.frameRowCount = 0;
+                        frameRowCount = 0;
                         collectCursor(false);
                     }
+                } else if (cursor == -2) {
+                    break; // No frames to filter
                 } else {
                     Os.pause();
                 }
-            } while (this.frameIndex < frameLimit);
+            } while (frameIndex < frameLimit);
         } catch (Throwable e) {
             LOG.critical().$("unexpected error [ex=").$(e).I$();
             throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
@@ -243,13 +248,13 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
-        this.isOpen = true;
+        isOpen = true;
         this.frameSequence = frameSequence;
-        this.frameIndex = -1;
-        this.frameLimit = frameSequence.getFrameCount() - 1;
-        this.ogRowsRemaining = rowsRemaining;
+        frameIndex = -1;
+        frameLimit = -1;
+        ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
-        this.allFramesActive = true;
+        allFramesActive = true;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());

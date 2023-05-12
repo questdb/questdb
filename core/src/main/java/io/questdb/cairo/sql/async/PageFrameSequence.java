@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,12 +67,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private long id;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
+    private PageFrameCursor pageFrameCursor;
+    private boolean readyToDispatch;
     private PageAddressCacheRecord record;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
-    private SymbolTableSource symbolTableSource;
+    private boolean uninterruptible;
 
     public PageFrameSequence(
             CairoConfiguration configuration,
@@ -154,8 +156,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         frameCount = 0;
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
+        readyToDispatch = false;
         pageAddressCache.clear();
-        symbolTableSource = Misc.freeIfCloseable(symbolTableSource);
+        pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
         // collect sequence may not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
@@ -172,7 +175,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     @Override
     public void close() {
-        this.clear();
+        clear();
         Misc.freeIfCloseable(circuitBreaker);
         Misc.free(record);
     }
@@ -235,7 +238,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public SymbolTableSource getSymbolTableSource() {
-        return symbolTableSource;
+        return pageFrameCursor;
     }
 
     public PageFrameReduceTask getTask(long cursor) {
@@ -251,6 +254,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return valid.get();
     }
 
+    public boolean isUninterruptible() {
+        return uninterruptible;
+    }
+
     /**
      * This method is not thread safe. It's always invoked on a single "query owner" thread.
      * <p>
@@ -259,10 +266,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * instead, should use getTask and collect methods. <code>Long.MAX_VALUE</code> is the
      * reserved cursor value for the local reduce task case.
      *
-     * @return the next cursor value or -1 value if the cursor failed and the caller
-     * should retry
+     * @return the next cursor value, or -1 value if the cursor failed and the caller
+     * should retry, or -2 if there are no frames to dispatch
      */
     public long next() {
+        if (frameCount == 0) {
+            return -2;
+        }
+
         assert collectedFrameIndex < frameCount - 1;
         while (true) {
             long cursor = collectSubSeq.next();
@@ -302,42 +313,53 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             T atom,
             int order
     ) throws SqlException {
-        this.sqlExecutionContext = executionContext;
-        this.startTime = clock.getTicks();
-        this.circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
+        sqlExecutionContext = executionContext;
+        startTime = clock.getTicks();
+        circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
+        this.uninterruptible = executionContext.isUninterruptible();
 
         initRecord(executionContext.getCircuitBreaker());
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
-            final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, order);
-            final int frameCount = setupAddressCache(base, pageFrameCursor);
+            // pass one to cache page addresses
+            // this has to be separate pass to ensure there no cache reads
+            // while cache might be resizing
+            pageAddressCache.of(base.getMetadata());
 
-            // this method sets a lot of state of the page sequence
-            prepareForDispatch(rnd, frameCount, pageFrameCursor, atom, collectSubSeq);
+            assert pageFrameCursor == null;
+            pageFrameCursor = base.getPageFrameCursor(executionContext, order);
+            this.atom = atom;
+            this.collectSubSeq = collectSubSeq;
+            id = ID_SEQ.incrementAndGet();
+            done = false;
+            valid.set(true);
+            reduceCounter.set(0);
+            shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
+            reduceQueue = messageBus.getPageFrameReduceQueue(shard);
 
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(pageFrameCursor, executionContext);
-
-            // dispatch tasks only if there is anything to dispatch
-            if (frameCount > 0) {
-                // We need to subscribe publisher sequence before we return
-                // control to the caller of this method. However, this sequence
-                // will be unsubscribed asynchronously.
-                messageBus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
-                LOG.debug()
-                        .$("added [shard=").$(shard)
-                        .$(", id=").$(id)
-                        .$(", seqCurrent=").$(collectSubSeq.current())
-                        .$(", seq=").$(collectSubSeq)
-                        .I$();
-            }
         } catch (Throwable e) {
-            this.symbolTableSource = Misc.freeIfCloseable(this.symbolTableSource);
+            pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
             throw e;
         }
         return this;
+    }
+
+    /**
+     * Must be called before subsequence calls to {@link #next()} to count page frames and
+     * initialize page frame cache and filter functions.
+     *
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
+     */
+    public void prepareForDispatch() {
+        if (!readyToDispatch) {
+            atom.initCursor();
+            buildAddressCache();
+            readyToDispatch = true;
+        }
     }
 
     public void reset() {
@@ -368,6 +390,28 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             collectedFrameIndex = -1;
             reduceCounter.set(0);
             valid.set(true);
+        }
+    }
+
+    private void buildAddressCache() {
+        PageFrame frame;
+        while ((frame = pageFrameCursor.next()) != null) {
+            pageAddressCache.add(frameCount++, frame);
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+        }
+
+        // dispatch tasks only if there is anything to dispatch
+        if (frameCount > 0) {
+            // We need to subscribe publisher sequence before we return
+            // control to the caller of this method. However, this sequence
+            // will be unsubscribed asynchronously.
+            messageBus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
+            LOG.debug()
+                    .$("added [shard=").$(shard)
+                    .$(", id=").$(id)
+                    .$(", seqCurrent=").$(collectSubSeq.current())
+                    .$(", seq=").$(collectSubSeq)
+                    .I$();
         }
     }
 
@@ -450,50 +494,15 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (record == null) {
             final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
-            this.record = new PageAddressCacheRecord();
+            record = new PageAddressCacheRecord();
             if (sqlExecutionCircuitBreakerConfiguration != null) {
-                this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
+                circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
             } else {
-                this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             }
         }
 
-        this.circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
-    }
-
-    private void prepareForDispatch(
-            Rnd rnd,
-            int frameCount,
-            SymbolTableSource symbolTableSource,
-            T atom,
-            SCSequence collectSubSeq
-    ) {
-        this.id = ID_SEQ.incrementAndGet();
-        this.done = false;
-        this.valid.set(true);
-        this.reduceCounter.set(0);
-        this.shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
-        this.reduceQueue = messageBus.getPageFrameReduceQueue(shard);
-        this.frameCount = frameCount;
-        assert this.symbolTableSource == null;
-        this.symbolTableSource = symbolTableSource;
-        this.atom = atom;
-        this.collectSubSeq = collectSubSeq;
-    }
-
-    private int setupAddressCache(RecordCursorFactory base, PageFrameCursor pageFrameCursor) {
-        // pass one to cache page addresses
-        // this has to be separate pass to ensure there no cache reads
-        // while cache might be resizing
-        this.pageAddressCache.of(base.getMetadata());
-
-        PageFrame frame;
-        int frameIndex = 0;
-        while ((frame = pageFrameCursor.next()) != null) {
-            this.pageAddressCache.add(frameIndex++, frame);
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-        }
-        return frameIndex;
+        circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
     }
 
     private boolean stealWork(

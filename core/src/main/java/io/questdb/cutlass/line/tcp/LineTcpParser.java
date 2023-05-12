@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,16 +49,17 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_INTEGER = 3;
     public static final byte ENTITY_TYPE_LONG = 14;
     public static final byte ENTITY_TYPE_LONG256 = 7;
+    public static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_SHORT = 16;
     public static final byte ENTITY_TYPE_STRING = 4;
     public static final byte ENTITY_TYPE_SYMBOL = 5;
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
+    public static final byte ENTITY_TYPE_UUID = 20;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
-    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_CHAR + 1;
-    static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_UUID + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
     private static final byte ENTITY_HANDLER_TABLE = 0;

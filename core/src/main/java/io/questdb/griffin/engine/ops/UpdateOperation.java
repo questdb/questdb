@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -95,11 +95,11 @@ public class UpdateOperation extends AbstractOperation {
 
     public void forceTestTimeout() {
         if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            throw CairoException.nonCritical()
-                    .put("timeout, query aborted [fd=")
-                    .put(circuitBreaker.getFd())
-                    .put(']')
-                    .setInterruption(true);
+            if (circuitBreaker.isCancelled()) {
+                throw CairoException.queryCancelled(circuitBreaker.getFd());
+            } else {
+                throw CairoException.queryTimedOut(circuitBreaker.getFd());
+            }
         }
     }
 
@@ -136,11 +136,7 @@ public class UpdateOperation extends AbstractOperation {
 
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.nonCritical()
-                    .put("timeout, query aborted [fd=")
-                    .put(circuitBreaker.getFd())
-                    .put(']')
-                    .setInterruption(true);
+            throw CairoException.queryTimedOut(circuitBreaker.getFd());
         }
 
         circuitBreaker.statefulThrowExceptionIfTripped();

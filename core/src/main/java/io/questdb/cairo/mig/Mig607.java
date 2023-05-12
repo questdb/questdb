@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -132,7 +131,7 @@ final class Mig607 {
      */
     public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
         try {
-            if (ff.exists(topFile(path.chop$(), name))) {
+            if (ff.exists(topFile(path, name))) {
                 final int fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long n;
@@ -158,10 +157,6 @@ final class Mig607 {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    public static void txnPartition(CharSink path, long txn) {
-        path.put('.').put(txn);
     }
 
     private static void charFileName(Path path, CharSequence columnName) {
@@ -233,19 +228,16 @@ final class Mig607 {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         final long partitionDataOffset = partitionCountOffset + Integer.BYTES + partitionIndex * 8L * LONGS_PER_TX_ATTACHED_PARTITION;
 
-                        setPathForPartition(
-                                path.trimTo(plen),
-                                partitionBy,
-                                txMem.getLong(partitionDataOffset),
-                                false
-                        );
                         // the row count may not be stored in _txn file for the last partition
                         // we need to use transient row count instead
                         long rowCount = partitionIndex < partitionCount - 1 ? txMem.getLong(partitionDataOffset + Long.BYTES) : transientRowCount;
                         long txSuffix = txMem.getLong(MigrationActions.prefixedBlockOffset(partitionDataOffset, 2, Long.BYTES));
-                        if (txSuffix > -1) {
-                            txnPartition(path, txSuffix);
-                        }
+                        setPathForPartition(
+                                path.trimTo(plen),
+                                partitionBy,
+                                txMem.getLong(partitionDataOffset),
+                                txSuffix
+                        );
                         migrate(ff, path, migrationContext, metaMem, columnCount, rowCount, columnNameOffset);
                     }
                 } else {

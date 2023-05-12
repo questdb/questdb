@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,10 +28,12 @@ import io.questdb.cairo.sql.DataFrame;
 import org.jetbrains.annotations.Nullable;
 
 public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
+    private int skipToPartitionIndex = -1;
+    private long skipToPosition = -1;
 
     @Override
     public DataFrame next() {
-        while (this.partitionIndex > -1) {
+        while (partitionIndex > -1) {
             final long hi = reader.openPartition(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
@@ -55,30 +57,37 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
             return null;
         }
 
-        long position = rowCount;
-        long partitionRows = 0;
-        int partitionIndex = partitionCount - 1;
-
-        for (; partitionIndex > -1; partitionIndex--) {
-            partitionRows = getTableReader().openPartition(partitionIndex);
-            if (partitionRows < 0) {
-                continue;
-            }
-            if (partitionRows > position) {
-                break;
-            }
-            if (partitionIndex == 0) {
-                position = -1L;
-                break;
-            } else {
-                position -= partitionRows;
-            }
+        if (skipToPartitionIndex == -1) {
+            skipToPosition = rowCount;
+            skipToPartitionIndex = partitionCount - 1;
         }
 
-        frame.partitionIndex = partitionIndex;
-        frame.rowHi = position > -1L ? partitionRows - position : position;
+        long partitionRows = 0;
+        while (skipToPartitionIndex > -1) {
+            partitionRows = getTableReader().openPartition(skipToPartitionIndex);
+            if (partitionRows < 0) {
+                skipToPartitionIndex--;
+                continue;
+            }
+            if (partitionRows > skipToPosition) {
+                break;
+            }
+            if (skipToPartitionIndex == 0) {
+                skipToPosition = -1;
+                break;
+            } else {
+                skipToPosition -= partitionRows;
+            }
+            skipToPartitionIndex--;
+        }
+
+        frame.partitionIndex = skipToPartitionIndex;
+        frame.rowHi = skipToPosition > -1 ? partitionRows - skipToPosition : skipToPosition;
         frame.rowLo = 0;
-        this.partitionIndex = partitionIndex - 1;
+        this.partitionIndex = skipToPartitionIndex - 1;
+
+        skipToPosition = -1;
+        skipToPartitionIndex = -1;
 
         return frame;
     }
@@ -89,6 +98,8 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
     @Override
     public void toTop() {
-        this.partitionIndex = this.partitionHi - 1;
+        partitionIndex = partitionHi - 1;
+        skipToPartitionIndex = -1;
+        skipToPosition = -1;
     }
 }

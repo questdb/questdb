@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class Worker extends Thread {
     private final static AtomicInteger COUNTER = new AtomicInteger();
-    private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
     private final int affinity;
     private final WorkerCleaner cleaner;
     private final String criticalErrorLine;
@@ -43,11 +42,12 @@ public class Worker extends Thread {
     private final ObjHashSet<? extends Job> jobs;
     private final Log log;
     private final HealthMetrics metrics;
+    private final AtomicInteger running = new AtomicInteger();
+    private final Job.RunStatus runStatus = () -> running.get() == 2;
     private final long sleepMs;
     private final long sleepThreshold;
     private final int workerId;
     private final long yieldThreshold;
-    private volatile int running = 0;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -83,14 +83,14 @@ public class Worker extends Thread {
     }
 
     public void halt() {
-        running = 2;
+        running.set(2);
     }
 
     @Override
     public void run() {
         Throwable ex = null;
         try {
-            if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
+            if (running.compareAndSet(0, 1)) {
                 if (affinity > -1) {
                     if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
                         if (log != null) {
@@ -109,13 +109,13 @@ public class Worker extends Thread {
                 setupJobs();
                 int n = jobs.size();
                 long uselessCounter = 0;
-                while (running == 1) {
+                while (running.get() == 1) {
                     boolean useful = false;
                     for (int i = 0; i < n; i++) {
                         Unsafe.getUnsafe().loadFence();
                         try {
                             try {
-                                useful |= jobs.get(i).run(workerId);
+                                useful |= jobs.get(i).run(workerId, runStatus);
                             } catch (Throwable e) {
                                 onError(i, e);
                             }
@@ -178,7 +178,7 @@ public class Worker extends Thread {
     }
 
     private void setupJobs() {
-        if (running == 1) {
+        if (running.get() == 1) {
             for (int i = 0; i < jobs.size(); i++) {
                 Unsafe.getUnsafe().loadFence();
                 try {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -116,7 +116,7 @@ public class RecordComparatorCompiler {
             asm.iconst(columnIndex);
             asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
 
-            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128) {
+            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128 || columnTypes.getColumnType(columnIndex) == ColumnType.UUID) {
                 asm.aload(0);
                 asm.getfield(fieldIndices.getQuick(fieldIndex++));
                 asm.aload(1);
@@ -197,7 +197,7 @@ public class RecordComparatorCompiler {
             asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
             asm.putfield(fieldIndices.getQuick(fieldIndex++));
 
-            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128) {
+            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128 || columnTypes.getColumnType(columnIndex) == ColumnType.UUID) {
                 asm.aload(0);
                 asm.aload(1);
                 asm.iconst(columnIndex);
@@ -269,6 +269,26 @@ public class RecordComparatorCompiler {
                     getterNameA = "getFloat";
                     comparatorClass = Numbers.class;
                     break;
+                case ColumnType.GEOBYTE:
+                    fieldType = "B";
+                    getterNameA = "getGeoByte";
+                    comparatorClass = Byte.class;
+                    break;
+                case ColumnType.GEOSHORT:
+                    fieldType = "S";
+                    getterNameA = "getGeoShort";
+                    comparatorClass = Short.class;
+                    break;
+                case ColumnType.GEOINT:
+                    fieldType = "I";
+                    getterNameA = "getGeoInt";
+                    comparatorClass = Integer.class;
+                    break;
+                case ColumnType.GEOLONG:
+                    fieldType = "J";
+                    getterNameA = "getGeoLong";
+                    comparatorClass = Long.class;
+                    break;
                 case ColumnType.INT:
                     fieldType = "I";
                     getterNameA = "getInt";
@@ -311,12 +331,13 @@ public class RecordComparatorCompiler {
                     fieldType = "Lio/questdb/std/Long256;";
                     comparatorClass = Long256Util.class;
                     break;
+                case ColumnType.UUID:
                 case ColumnType.LONG128:
                     getterNameA = "getLong128Hi";
                     getterNameB = "getLong128Lo";
                     fieldType = "J";
                     comparatorDesc = "(JJJJ)I";
-                    comparatorClass = Long128Util.class;
+                    comparatorClass = Long128.class;
                     break;
                 default:
                     // SYMBOL
@@ -345,7 +366,7 @@ public class RecordComparatorCompiler {
 
             int methodIndex;
             String getterType = fieldType;
-            if (columnType == ColumnType.LONG128) {
+            if (columnType == ColumnType.LONG128 || columnType == ColumnType.UUID) {
                 // Special case, Long128 is 2 longs of type J on comparison
                 fieldTypeIndices.add(typeIndex);
                 int nameIndex2 = asm.poolUtf8().put('f').put(i).put(i).$();
@@ -353,11 +374,17 @@ public class RecordComparatorCompiler {
                 int nameAndTypeIndex = asm.poolNameAndType(nameIndex2, typeIndex);
                 fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
             }
-            methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameA, "(I)" + getterType));
+
+            int getterNameIndex = asm.poolUtf8(getterNameA);
+            int getterSigIndex = asm.poolUtf8().put("(I)").put(getterType).$();
+            int getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
+            methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
             fieldRecordAccessorIndicesA.add(methodIndex);
 
             if (getterNameB != null) {
-                methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameB, "(I)" + getterType));
+                getterNameIndex = asm.poolUtf8(getterNameB);
+                getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
+                methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
             }
 
             fieldRecordAccessorIndicesB.add(methodIndex);

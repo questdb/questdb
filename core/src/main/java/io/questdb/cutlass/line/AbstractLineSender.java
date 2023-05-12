@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -236,6 +236,12 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
+    public CharSink put(long value) {
+        Numbers.append(this, value, false);
+        return this;
+    }
+
+    @Override
     public void putUtf8Special(char c) {
         validateNotClosed();
         switch (c) {
@@ -313,8 +319,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         for (; ; ) {
             int rc = lineChannel.receive(ptr + n, capacity - n);
             if (rc < 0) {
+                int errno = lineChannel.errno();
                 close();
-                throw new LineSenderException("disconnected during authentication").errno(lineChannel.errno());
+                throw new LineSenderException("disconnected during authentication").errno(errno);
             }
             int eol = findEOL(ptr + n, rc);
             if (eol != -1) {
@@ -408,7 +415,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         // protected for testing
         byte[] rawSignature;
         try {
-            Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+            Signature sig = Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
             sig.initSign(privateKey);
             sig.update(challengeBytes);
             rawSignature = sig.sign();

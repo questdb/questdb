@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,16 +49,20 @@ public class O3Utils {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
-        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-
         workerPool.assign(purgeDiscoveryJob);
-        workerPool.assign(columnPurgeJob);
+
+        // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
+        if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
+            final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
+            workerPool.freeOnExit(columnPurgeJob);
+            workerPool.assign(columnPurgeJob);
+        }
+
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnExit(purgeDiscoveryJob);
-        workerPool.freeOnExit(columnPurgeJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
@@ -93,7 +97,9 @@ public class O3Utils {
     }
 
     static long findVarOffset(long srcFixAddr, long srcLo) {
-        return Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+        long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+        assert (srcLo == 0 && result == 0) || result > 0;
+        return result;
     }
 
     static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {

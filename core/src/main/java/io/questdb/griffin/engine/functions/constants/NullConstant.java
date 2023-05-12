@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public final class NullConstant implements ConstantFunction, ScalarFunction {
@@ -122,12 +123,12 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public long getLong128Hi(Record rec) {
-        return Long128Constant.NULL_HI;
+        return Numbers.LONG_NaN;
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return Long128Constant.NULL_LO;
+        return Numbers.LONG_NaN;
     }
 
     @Override

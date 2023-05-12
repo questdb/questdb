@@ -10,20 +10,44 @@ Please make sure not to publish it before `git` repo is ready.
 When crafting new release note, please take previous release notes as style
 guidelines. Releases should not look too dissimilar.
 
-## Update pom.xml to release
+## Create a new branch from `master`
 
-Update pom.xml to remove -SNAPSHOT part. There are 3 files to update. Commit
-this change to master.
+```bash
+git fetch
+git checkout master
+git branch v_7_1_1
+```
 
-## Publish release on GH
+## Clear previous release "memory"
 
-Publishing release will create a git tag on the latest master.
+```bash
+mvn release:clean
+```
+
+## Perform release
+
+This step will do the following:
+- create tag in `git` repo
+- roll the versions on your branch from one snapshot to the next, e.g. from 7.1.1-SNAPSHOT to 7.1.2-SNAPSHOT
+- publish `jar` to maven central
+
+Note: you will need write access to git repo and maven central.
+
+```bash
+mvn -B release:prepare release:perform
+```
+
+Note that `-B` flag will make assumptions about release version. Use it if your release is routine. When releasing
+a special version, for example `8.0` you will want to remove `-B` and answer questions about versions in interactive
+mode that follows.
 
 ## Compile binaries on multiple platforms
 
 Compile using maven on Windows, Linux and FreeBSD and upload to GH release
 
 ```bash
+git fetch
+git checkout tags/7.1.1
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
@@ -35,28 +59,23 @@ Prune docker images to ensure clean build
 docker system prune -a
 ```
 
-Build for multiple platforms at once and release version tag, `6.0.2` in this
-case. This will take some time.
+Build for multiple platforms at once and release version tag, `7.1.1` in this
+case. This will take some time. Please note that tag is used twice in the command line:
+
+```bash
+cd core
+docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:7.1.1 --build-arg tag_name=7.1.1 .
+```
+
+Then build `latest`. This should be instant. Note tag name on the end of the command line.
 
 ```
-docker buildx build --push --platform linux/arm64,linux/amd64 --no-cache --tag questdb/questdb:6.0.2 .
-```
-
-Then build `latest`. This should be instant.
-
-```
-docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:latest .
+docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:latest --build-arg tag_name=7.1.1 .
 ```
 
 ## Release Java Library
 
-Deploy to Maven Central
-
-```
-mvn clean deploy -DskipTests -P build-web-console,maven-central-release
-```
-
-Then `release` by logging into https://oss.sonatype.org/
+Logging into https://oss.sonatype.org/ to release the library
 
 ## Release AMI
 

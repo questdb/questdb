@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,11 @@ package io.questdb.std;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,6 +40,8 @@ public final class Files {
 
     public static final int DT_DIR = 4;
     public static final int DT_FILE = 8;
+    public static final int DT_LNK = 10; // soft link
+    public static final int DT_UNKNOWN = 0;
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     public static final int FILES_RENAME_OK = 0;
@@ -45,6 +50,9 @@ public final class Files {
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
+    // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
+    // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
+    // wasted disk read ops.
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
@@ -99,19 +107,16 @@ public final class Files {
     }
 
     public static int close(int fd) {
-        assert auditClose(fd);
-        int res = close0(fd);
-        if (res == 0) {
-            OPEN_FILE_COUNT.decrementAndGet();
+        // do not close `stdin` and `stdout`
+        if (fd > 1) {
+            assert auditClose(fd);
+            int res = close0(fd);
+            if (res == 0) {
+                OPEN_FILE_COUNT.decrementAndGet();
+            }
+            return res;
         }
-        return res;
-    }
-
-    // If fd is negative, no action occurs.
-    public static int closeChecked(int fd) {
-        if (fd >= 0) {
-            return close(fd);
-        }
+        // failed to close
         return -1;
     }
 
@@ -122,6 +127,8 @@ public final class Files {
     }
 
     public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
+
+    public static native long copyDataToOffset(int srcFd, int destFd, long offsetSrc, long offsetDest, long length);
 
     /**
      * close(fd) should be used instead of this method in most cases
@@ -160,20 +167,44 @@ public final class Files {
 
     public native static int findType(long findPtr);
 
-    public native static boolean findTypeIsSoftLink(long lpszName);
-
     public static long floorPageSize(long size) {
         return size - size % PAGE_SIZE;
     }
 
     public static native int fsync(int fd);
 
-    public static long getDiskSize(LPSZ path) {
+    public static long getDirSize(Path path) {
+        long pathUtf8Ptr = path.address();
+        long pFind = findFirst(pathUtf8Ptr);
+        if (pFind > 0L) {
+            int len = path.length();
+            try {
+                long totalSize = 0L;
+                do {
+                    long nameUtf8Ptr = findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    if (findType(pFind) == Files.DT_FILE) {
+                        totalSize += length(path);
+                    } else if (notDots(nameUtf8Ptr)) {
+                        totalSize += getDirSize(path);
+                    }
+                }
+                while (findNext(pFind) > 0);
+                return totalSize;
+            } finally {
+                findClose(pFind);
+                path.trimTo(len);
+            }
+        }
+        return 0L;
+    }
+
+    public static long getDiskFreeSpace(LPSZ path) {
         if (path != null) {
             return getDiskSize(path.address());
         }
         // current directory
-        return getDiskSize(0);
+        return 0L;
     }
 
     /**
@@ -205,6 +236,15 @@ public final class Files {
         return OPEN_FILE_COUNT.get();
     }
 
+    public @NotNull
+    static String getResourcePath(@Nullable URL url) {
+        assert url != null;
+        String file = url.getFile();
+        assert file != null;
+        assert file.length() > 0;
+        return file;
+    }
+
     public native static int getStdOutFd();
 
     public static native int hardLink(long lpszSrc, long lpszHardLink);
@@ -213,17 +253,25 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
-    public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
-        if (type == DT_DIR) {
-            nameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-            return notDots(nameSink);
+    public static boolean isDirOrSoftLinkDir(LPSZ path) {
+        long ptr = findFirst(path);
+        if (ptr < 1L) {
+            return false;
         }
-        return false;
+        try {
+            int type = findType(ptr);
+            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
+        } finally {
+            findClose(ptr);
+        }
     }
 
-    public static boolean isDir(long pUtf8NameZ, long type) {
-        return type == DT_DIR && notDots(pUtf8NameZ);
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
+    }
+
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @NotNull StringSink nameSink) {
+        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
     public static boolean isDots(CharSequence name) {
@@ -260,9 +308,8 @@ public final class Files {
         for (int i = 0, n = path.length(); i < n; i++) {
             char c = path.charAt(i);
             if (c == Files.SEPARATOR) {
-
                 // do not attempt to create '/' on linux or 'C:\' on Windows
-                if ((i == 0 && Os.type != Os.WINDOWS) || (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':')) {
+                if ((i == 0 && Os.isPosix()) || (i == 2 && Os.isWindows() && path.charAt(1) == ':')) {
                     continue;
                 }
 
@@ -355,13 +402,38 @@ public final class Files {
 
     public native static long read(int fd, long address, long len, long offset);
 
-    public native static byte readNonNegativeByte(int fd, long offset);
+    public static boolean readLink(Path softLink, Path readTo) {
+        final int len = readTo.length();
+        final int bufSize = 1024;
+        readTo.zeroPad(bufSize);
+        // readlink copies link target into the give buffer, without zero-terminating it
+        // the buffer therefor is filled with zeroes. It is also possible that buffer is
+        // not large enough to copy the entire target. We detect this by checking the return
+        // value. If the value is the same as the buffer size we make an assumption that
+        // the link target is perhaps longer than the buffer.
 
-    public native static short readNonNegativeShort(int fd, long offset);
+        int res = readLink0(softLink.address(), readTo.address() + len, bufSize);
+        if (res > 0 && res < bufSize) {
+            readTo.trimTo(len + res).$();
+            // check if symlink is absolute or relative
+            if (readTo.charAt(0) != '/') {
+                int prefixLen = Chars.lastIndexOf(softLink, '/');
+                if (prefixLen > 0) {
+                    readTo.prefix(softLink, prefixLen + 1).$();
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    public native static byte readNonNegativeByte(int fd, long offset);
 
     public native static int readNonNegativeInt(int fd, long offset);
 
     public native static long readNonNegativeLong(int fd, long offset);
+
+    public native static short readNonNegativeShort(int fd, long offset);
 
     public static boolean remove(LPSZ lpsz) {
         return remove(lpsz.address());
@@ -372,41 +444,41 @@ public final class Files {
     }
 
     public static int rmdir(Path path) {
-        long p = findFirst(path.address());
-        int len = path.length();
-        int errno = -1;
-        if (p > 0) {
+        long pathUtf8Ptr = path.address();
+        long pFind = findFirst(pathUtf8Ptr);
+        if (pFind > 0L) {
+            int len = path.length();
+            int errno;
+            int type;
+            long nameUtf8Ptr;
             try {
                 do {
-                    long lpszName = findName(p);
-                    path.trimTo(len).concat(lpszName).$();
-                    if (findType(p) == DT_DIR) {
-                        if (strcmp(lpszName, "..") || strcmp(lpszName, ".")) {
-                            continue;
+                    nameUtf8Ptr = findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    type = findType(pFind);
+                    if (type == Files.DT_FILE) {
+                        if (!remove(pathUtf8Ptr)) {
+                            return Os.errno();
                         }
-
-                        if ((errno = rmdir(path)) == 0) {
-                            continue;
+                    } else if (notDots(nameUtf8Ptr)) {
+                        errno = type == Files.DT_LNK ? unlink(pathUtf8Ptr) : rmdir(path);
+                        if (errno != 0) {
+                            return errno;
                         }
-
-                    } else {
-                        if ((remove(path.address()))) {
-                            continue;
-                        }
-                        errno = Os.errno();
                     }
-                    return errno;
-                } while (findNext(p) > 0);
+                }
+                while (findNext(pFind) > 0);
             } finally {
-                findClose(p);
+                findClose(pFind);
+                path.trimTo(len).$();
             }
-            if (rmdir(path.trimTo(len).$().address())) {
+            if (isSoftLink(pathUtf8Ptr)) {
+                return unlink(pathUtf8Ptr);
+            } else if (rmdir(pathUtf8Ptr)) {
                 return 0;
             }
-            return Os.errno();
         }
-
-        return errno;
+        return Os.errno();
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {
@@ -417,6 +489,17 @@ public final class Files {
 
     public static int softLink(LPSZ src, LPSZ softLink) {
         return softLink(src.address(), softLink.address());
+    }
+
+    public static boolean strcmp(long lpsz, CharSequence s) {
+        int len = s.length();
+        for (int i = 0; i < len; i++) {
+            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
+            if (b == 0 || b != (byte) s.charAt(i)) {
+                return false;
+            }
+        }
+        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
     }
 
     public static native int sync();
@@ -432,10 +515,61 @@ public final class Files {
 
     public native static boolean truncate(int fd, long size);
 
+    public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+        if (!notDots(pUtf8NameZ)) {
+            return DT_UNKNOWN;
+        }
+
+        if (type == DT_DIR) {
+            if (nameSink != null) {
+                nameSink.clear();
+                Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+            }
+            path.trimTo(rootLen).concat(pUtf8NameZ).$();
+            return DT_DIR;
+        }
+
+        if (type == DT_LNK) {
+            if (nameSink != null) {
+                nameSink.clear();
+                Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+            }
+            path.trimTo(rootLen).concat(pUtf8NameZ).$();
+            if (isDir(path.address())) {
+                return DT_LNK;
+            }
+        }
+
+        return DT_UNKNOWN;
+    }
+
     public native static int unlink(long lpszSoftLink);
 
     public static int unlink(LPSZ softLink) {
         return unlink(softLink.address());
+    }
+
+    public static void walk(Path path, FindVisitor func) {
+        int len = path.length();
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long name = findName(p);
+                    if (notDots(name)) {
+                        int type = findType(p);
+                        path.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            func.onFind(name, type);
+                        } else {
+                            walk(path.concat(name).$(), func);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+            }
+        }
     }
 
     public native static long write(int fd, long address, long len, long offset);
@@ -443,6 +577,9 @@ public final class Files {
     private native static int close0(int fd);
 
     private static native boolean exists0(long lpsz);
+
+    //caller must call findClose to free allocated struct
+    private native static long findFirst(long lpszName);
 
     private static native long getDiskSize(long lpszPath);
 
@@ -459,6 +596,8 @@ public final class Files {
     private native static int getPosixMadvRandom();
 
     private native static int getPosixMadvSequential();
+
+    private native static boolean isDir(long pUtf8PathZ);
 
     private native static long length0(long lpszName);
 
@@ -478,6 +617,8 @@ public final class Files {
 
     private native static int openRWOpts(long lpszName, long opts);
 
+    private static native int readLink0(long lpszPath, long buffer, int len);
+
     private native static boolean remove(long lpsz);
 
     private static native int rename(long lpszOld, long lpszNew);
@@ -485,20 +626,6 @@ public final class Files {
     private native static boolean rmdir(long lpsz);
 
     private native static boolean setLastModified(long lpszName, long millis);
-
-    //caller must call findClose to free allocated struct
-    native static long findFirst(long lpszName);
-
-    static boolean strcmp(long lpsz, CharSequence s) {
-        int len = s.length();
-        for (int i = 0; i < len; i++) {
-            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
-            if (b == 0 || b != (byte) s.charAt(i)) {
-                return false;
-            }
-        }
-        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
-    }
 
     static {
         Os.init();

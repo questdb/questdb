@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.http.ex.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -37,10 +37,9 @@ import io.questdb.std.str.StdoutSink;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnectionContext> implements Locality, Retry {
+public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
-    private final boolean allowDeflateBeforeSend;
-    private final CairoSecurityContext cairoSecurityContext;
+    private final HttpContextConfiguration configuration;
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final boolean dumpNetworkTraffic;
     private final HttpHeaderParser headerParser;
@@ -51,7 +50,6 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     private final long multipartIdleSpinCount;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
-    private final Runnable onPeerDisconnect;
     private final int recvBufferSize;
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
@@ -59,7 +57,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
         throw RetryOperationException.INSTANCE;
     };
-    private final boolean serverKeepAlive;
+    private SecurityContext securityContext;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -69,6 +67,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     private long totalBytesSent;
 
     public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
+        this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
@@ -78,10 +77,8 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.recvBufferSize = configuration.getRecvBufferSize();
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
-        this.cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
-        this.serverKeepAlive = configuration.getServerKeepAlive();
-        this.onPeerDisconnect = configuration.onPeerDisconnect();
+        // this is default behaviour until the security context is overridden with correct principal
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
     }
 
@@ -136,6 +133,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink.close();
         this.receivedBytes = 0;
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
         clearSuspendEvent();
         LOG.debug().$("closed").$();
     }
@@ -152,8 +150,8 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         return retryAttemptAttributes;
     }
 
-    public CairoSecurityContext getCairoSecurityContext() {
-        return cairoSecurityContext;
+    public SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {
@@ -207,6 +205,9 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             case IOOperation.WRITE:
                 keepGoing = handleClientSend();
                 break;
+            case IOOperation.HEARTBEAT:
+                dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
+                return false;
             default:
                 dispatcher.disconnect(this, DISCONNECT_REASON_UNKNOWN_OPERATION);
                 keepGoing = false;
@@ -215,7 +216,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
 
         boolean useful = keepGoing;
         if (keepGoing) {
-            if (serverKeepAlive) {
+            if (configuration.getServerKeepAlive()) {
                 do {
                     keepGoing = handleClientRecv(selector, rescheduleContext);
                 } while (keepGoing);
@@ -236,14 +237,15 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         HttpConnectionContext r = super.of(fd, dispatcher);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
-            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            this.responseSink.close();
+            recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            responseSink.close();
+            securityContext = DenyAllSecurityContext.INSTANCE;
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
-                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             }
-            this.responseSink.of(fd);
+            responseSink.of(fd);
         }
         return r;
     }
@@ -294,20 +296,20 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 pendingRetry = true;
                 return false;
             } catch (PeerDisconnectedException ignore) {
-                handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);
             } catch (PeerIsSlowToReadException e2) {
                 LOG.info().$("peer is slow on running the rerun [fd=").$(fd).$(", thread=")
                         .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this, false);
                 resumeProcessor = processor;
-                getDispatcher().registerChannel(this, IOOperation.WRITE);
+                dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (QueryPausedException e) {
                 LOG.info().$("partition is in cold storage, suspending query [fd=").$(fd).$(", thread=")
                         .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
                 suspendEvent = e.getEvent();
-                getDispatcher().registerChannel(this, IOOperation.WRITE);
+                dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RERUN);
@@ -319,7 +321,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     @SuppressWarnings("StatementWithEmptyBody")
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         clear();
-        if (serverKeepAlive) {
+        if (configuration.getServerKeepAlive()) {
             while (handleClientRecv(selector, rescheduleContext)) ;
         } else {
             dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
@@ -337,6 +339,15 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         } catch (RetryOperationException e) {
             pendingRetry = true;
             scheduleRetry(processor, rescheduleContext);
+        }
+    }
+
+    private void configureSecurityContext() {
+        if (securityContext == DenyAllSecurityContext.INSTANCE) {
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    headerParser.getHeader("Authorization"),
+                    configuration.readOnlySecurityContext()
+            );
         }
     }
 
@@ -408,7 +419,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         while (true) {
             final int n = nf.recv(fd, buf, bufRemaining);
             if (n < 0) {
-                handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);
                 break;
             }
 
@@ -502,7 +513,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             processor.failRequest(this, e);
             dispatcher.disconnect(this, reason);
         } catch (PeerDisconnectedException peerDisconnectedException) {
-            handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+            dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
             LOG.info().$("peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
             processor.parkRequest(this, false);
@@ -519,10 +530,11 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
-        HttpRequestProcessor processor = selector.select(headerParser.getUrl());
-
+        HttpRequestProcessor processor;
+        final CharSequence url = headerParser.getUrl();
+        processor = selector.select(url);
         if (processor == null) {
-            processor = selector.getDefaultProcessor();
+            return selector.getDefaultProcessor();
         }
         return processor;
     }
@@ -547,7 +559,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                                 .$(", errno=").$(nf.errno())
                                 .$(']').$();
                         // peer disconnect
-                        handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_HEADER_RECV);
+                        dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_HEADER_RECV);
                         return false;
                     }
 
@@ -560,6 +572,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                     dumpBuffer(recvBuffer, read);
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
                 }
+                configureSecurityContext();
             }
 
             final CharSequence url = headerParser.getUrl();
@@ -571,7 +584,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
-            if (allowDeflateBeforeSend && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
+            if (configuration.allowDeflateBeforeSend() && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
                 responseSink.setDeflateBeforeSend(true);
             }
 
@@ -594,7 +607,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                     if (read != 0) {
                         dumpBuffer(recvBuffer, read);
                         LOG.info().$("disconnect after request [fd=").$(fd).$(']').$();
-                        handlePeerDisconnect(DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                        dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                         busyRecv = false;
                     } else {
                         processor.onHeadersReady(this);
@@ -609,7 +622,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 scheduleRetry(processor, rescheduleContext);
                 busyRecv = false;
             } catch (PeerDisconnectedException e) {
-                handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
                 busyRecv = false;
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
@@ -657,7 +670,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 LOG.debug().$("partition is in cold storage").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (PeerDisconnectedException ignore) {
-                handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
@@ -666,11 +679,6 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             LOG.error().$("spurious write request [fd=").$(fd).I$();
         }
         return false;
-    }
-
-    private void handlePeerDisconnect(int reason) {
-        dispatcher.disconnect(this, reason);
-        onPeerDisconnect.run();
     }
 
     private boolean parseMultipartResult(

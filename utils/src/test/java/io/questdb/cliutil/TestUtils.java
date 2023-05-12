@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
 import org.junit.Assert;
 
 public class TestUtils {
@@ -98,10 +97,10 @@ public class TestUtils {
                         Assert.assertEquals(rr.getTimestamp(i), lr.getTimestamp(i));
                         break;
                     case ColumnType.DOUBLE:
-                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
+                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), 1E-6);
                         break;
                     case ColumnType.FLOAT:
-                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 4);
+                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-3);
                         break;
                     case ColumnType.INT:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
@@ -146,9 +145,11 @@ public class TestUtils {
                     case ColumnType.LONG256:
                     case ColumnType.BINARY:
                         throw new UnsupportedOperationException();
+                    case ColumnType.UUID:
+                        // fall through
                     case ColumnType.LONG128:
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
-                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
+                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Hi(i));
                         break;
                     default:
                         // Unknown record type.

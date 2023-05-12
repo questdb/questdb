@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,39 @@ public class IOURingFacadeImpl implements IOURingFacade {
 
     public static final IOURingFacadeImpl INSTANCE = new IOURingFacadeImpl();
     private static final boolean available;
+
+    /**
+     * io_uring is available since kernel 5.1, but we require 5.12 to avoid ulimit -l issues.
+     */
+    public static boolean isAvailableOn(String kernelVersion) {
+        final String[] versionParts = kernelVersion.split("\\.");
+        if (versionParts.length < 3) {
+            return false;
+        }
+
+        int major;
+        try {
+            major = Numbers.parseInt(versionParts[0]);
+        } catch (NumericException e) {
+            return false;
+        }
+
+        if (major < 5) {
+            return false;
+        }
+        if (major > 5) {
+            return true;
+        }
+
+        int minor;
+        try {
+            minor = Numbers.parseInt(versionParts[1]);
+        } catch (NumericException e) {
+            return false;
+        }
+
+        return minor > 11;
+    }
 
     @Override
     public void close(long ptr) {
@@ -62,39 +95,6 @@ public class IOURingFacadeImpl implements IOURingFacade {
     @Override
     public int submitAndWait(long ptr, int waitNr) {
         return IOUringAccessor.submitAndWait(ptr, waitNr);
-    }
-
-    /**
-     * io_uring is available since kernel 5.1, but we require 5.12 to avoid ulimit -l issues.
-     */
-    static boolean isAvailableOn(String kernelVersion) {
-        final String[] versionParts = kernelVersion.split("\\.");
-        if (versionParts.length < 3) {
-            return false;
-        }
-
-        int major;
-        try {
-            major = Numbers.parseInt(versionParts[0]);
-        } catch (NumericException e) {
-            return false;
-        }
-
-        if (major < 5) {
-            return false;
-        }
-        if (major > 5) {
-            return true;
-        }
-
-        int minor;
-        try {
-            minor = Numbers.parseInt(versionParts[1]);
-        } catch (NumericException e) {
-            return false;
-        }
-
-        return minor > 11;
     }
 
     static {

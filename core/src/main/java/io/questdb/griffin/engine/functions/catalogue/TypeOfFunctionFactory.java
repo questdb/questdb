@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -81,6 +81,7 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         TYPE_NAMES.put(ColumnType.PARAMETER, new StrConstant(ColumnType.nameOf(ColumnType.PARAMETER)));
         TYPE_NAMES.put(ColumnType.CURSOR, new StrConstant(ColumnType.nameOf(ColumnType.CURSOR)));
         TYPE_NAMES.put(ColumnType.VAR_ARG, new StrConstant(ColumnType.nameOf(ColumnType.VAR_ARG)));
+        TYPE_NAMES.put(ColumnType.UUID, new StrConstant(ColumnType.nameOf(ColumnType.UUID)));
 
         TYPE_NAMES.put(ColumnType.GEOBYTE, new StrConstant("null(GEOBYTE)"));
         TYPE_NAMES.put(ColumnType.GEOSHORT, new StrConstant("null(GEOSHORT)"));

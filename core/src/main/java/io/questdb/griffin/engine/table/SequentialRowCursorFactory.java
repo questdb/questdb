@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
 /**
  * Returns rows from current data frame in order of cursors list :
  * - first fetches and returns all records from first cursor
- * - then from second cursors,
+ * - then from second cursor, third, ...
  * until all cursors are exhausted .
  */
 public class SequentialRowCursorFactory implements RowCursorFactory {
@@ -47,8 +47,8 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
-        this.cursors = new ObjList<>();
-        this.cursor = new SequentialRowCursor();
+        cursors = new ObjList<>();
+        cursor = new SequentialRowCursor();
         this.cursorFactoriesIdx = cursorFactoriesIdx;
     }
 
@@ -62,13 +62,18 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
+    public void prepareCursor(TableReader tableReader) {
+        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
     }
 
     @Override
@@ -106,7 +111,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         }
 
         private void init() {
-            this.cursorIndex = 0;
+            cursorIndex = 0;
             if (cursorIndex < cursorFactoriesIdx[0]) {
                 currentCursor = cursors.getQuick(cursorIndex);
             }

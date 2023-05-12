@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,10 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.AbstractLockable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class O3CopyTask extends AbstractLockable {
+public class O3CopyTask {
     private int blockType;
     private AtomicInteger columnCounter;
     private int columnType;
@@ -51,9 +50,12 @@ public class O3CopyTask extends AbstractLockable {
     private long dstVarSize;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
+    private long newPartitionSize;
+    private long oldPartitionSize;
     private AtomicInteger partCounter;
     private boolean partitionMutates;
     private long partitionTimestamp;
+    private long partitionUpdateSinkAddr;
     private long srcDataFixAddr;
     private int srcDataFixFd;
     private long srcDataFixOffset;
@@ -77,7 +79,6 @@ public class O3CopyTask extends AbstractLockable {
     private int srcTimestampFd;
     private long srcTimestampSize;
     private TableWriter tableWriter;
-    private long timestampMax;
     private long timestampMergeIndexAddr;
     private long timestampMergeIndexSize;
     private long timestampMin;
@@ -162,12 +163,24 @@ public class O3CopyTask extends AbstractLockable {
         return indexWriter;
     }
 
+    public long getNewPartitionSize() {
+        return newPartitionSize;
+    }
+
+    public long getOldPartitionSize() {
+        return oldPartitionSize;
+    }
+
     public AtomicInteger getPartCounter() {
         return partCounter;
     }
 
     public long getPartitionTimestamp() {
         return partitionTimestamp;
+    }
+
+    public long getPartitionUpdateSinkAddr() {
+        return partitionUpdateSinkAddr;
     }
 
     public long getSrcDataFixAddr() {
@@ -262,10 +275,6 @@ public class O3CopyTask extends AbstractLockable {
         return tableWriter;
     }
 
-    public long getTimestampMax() {
-        return timestampMax;
-    }
-
     public long getTimestampMergeIndexAddr() {
         return timestampMergeIndexAddr;
     }
@@ -309,7 +318,6 @@ public class O3CopyTask extends AbstractLockable {
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long oooTimestampHi,
             int dstFixFd,
             long dstFixAddr,
@@ -331,8 +339,11 @@ public class O3CopyTask extends AbstractLockable {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long partitionUpdateSinkAddr
     ) {
         this.columnCounter = columnCounter;
         this.partCounter = partCounter;
@@ -360,7 +371,6 @@ public class O3CopyTask extends AbstractLockable {
         this.srcOooPartitionLo = srcOooPartitionLo;
         this.srcOooPartitionHi = srcOooPartitionHi;
         this.timestampMin = timestampMin;
-        this.timestampMax = timestampMax;
         this.partitionTimestamp = oooTimestampHi;
         this.dstFixFd = dstFixFd;
         this.dstFixAddr = dstFixAddr;
@@ -382,7 +392,10 @@ public class O3CopyTask extends AbstractLockable {
         this.srcTimestampAddr = srcTimestampAddr;
         this.srcTimestampSize = srcTimestampSize;
         this.partitionMutates = partitionMutates;
+        this.newPartitionSize = newPartitionSize;
+        this.oldPartitionSize = oldPartitionSize;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
+        this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
     }
 }

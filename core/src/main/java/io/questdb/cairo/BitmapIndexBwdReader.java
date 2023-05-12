@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,21 +40,9 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             Path path,
             CharSequence name,
             long columnNameTxn,
-            long unIndexedNullCount,
-            long partitionTxn
-    ) {
-        of(configuration, path, name, columnNameTxn, unIndexedNullCount, partitionTxn);
-    }
-
-    // test only
-    public BitmapIndexBwdReader(
-            CairoConfiguration configuration,
-            Path path,
-            CharSequence name,
-            long columnNameTxn,
             long unIndexedNullCount
     ) {
-        of(configuration, path, name, columnNameTxn, unIndexedNullCount, -1);
+        of(configuration, path, name, columnNameTxn, unIndexedNullCount);
     }
 
     @Override

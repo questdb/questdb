@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,18 +35,21 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
-public class DefaultCairoConfiguration implements CairoConfiguration {
+import java.util.function.LongSupplier;
 
+public class DefaultCairoConfiguration implements CairoConfiguration {
+    private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final BuildInformation buildInformation = new BuildInformationHolder();
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
-    private final CharSequence root;
+    private final String root;
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
-
+    private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final boolean writerMixedIOEnabled;
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
@@ -55,6 +58,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
+        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
+    }
+
+    @Override
+    public LongSupplier getCopyIDSupplier() {
+        return importIDSupplier;
     }
 
     @Override
@@ -79,7 +88,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public String getAttachPartitionSuffix() {
-        return ".attachable";
+        return TableUtils.ATTACHABLE_DIR_MARKER;
     }
 
     @Override
@@ -184,7 +193,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getDataAppendPageSize() {
-        return getFilesFacade().getMapPageSize();
+        return 2 * 1024 * 1024;
     }
 
     @Override
@@ -243,6 +252,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return 30;
     }
@@ -270,6 +284,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getIdleCheckInterval() {
         return 100;
+    }
+
+    @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return 128;
     }
 
     @Override
@@ -310,6 +329,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMaxFileNameLength() {
         return 127;
+    }
+
+    @Override
+    public int getO3LastPartitionMaxSplits() {
+        return 15;
     }
 
     @Override
@@ -358,9 +382,19 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3LagCalculationWindowsSize() {
+        return 4;
+    }
+
+    @Override
     public long getO3MaxLag() {
         // 5 min
         return 300_000_000L;
+    }
+
+    @Override
+    public int getO3MemMaxPages() {
+        return Integer.MAX_VALUE;
     }
 
     @Override
@@ -414,6 +448,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionO3SplitMinSize() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getPartitionPurgeListCapacity() {
         return 64;
     }
@@ -434,6 +473,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRepeatMigrationsFromVersion() {
+        return -1;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }
@@ -444,7 +488,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getRoot() {
+    public String getRoot() {
         return root;
     }
 
@@ -751,6 +795,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getTableRegistryCompactionThreshold() {
+        return 100;
+    }
+
+    @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
@@ -771,6 +820,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return volumeDefinitions;
+    }
+
+    @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return 20;
+    }
+
+    @Override
+    public long getWalApplyTableTimeQuota() {
+        return 1000L;
+    }
+
+    @Override
+    public long getWalDataAppendPageSize() {
+        return 1024 * 1024;
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return false;
     }
@@ -788,6 +857,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return 200000;
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return 20;
     }
 
     @Override
@@ -880,8 +954,23 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isTableTypeConversionEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isWalApplyEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isWalSupported() {
-        return false;
+        return true;
+    }
+
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        return writerMixedIOEnabled;
     }
 
     @Override

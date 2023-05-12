@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -319,24 +319,20 @@ public class TableTransactionLog implements Closeable {
 
                 throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
             } finally {
-                ff.closeChecked(txnFd);
-                ff.closeChecked(txnMetaFd);
-                ff.closeChecked(txnMetaIndexFd);
+                ff.close(txnFd);
+                ff.close(txnMetaFd);
+                ff.close(txnMetaIndexFd);
             }
         }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
-        private static final long WAL_ID_OFFSET = 0;
-        // @formatter:off
-        private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
-        private static final long SEGMENT_TXN_OFFSET = SEGMENT_ID_OFFSET + Integer.BYTES;
-        // @formatter:on
         private long address;
         private int fd;
         private FilesFacade ff;
         private long txn;
         private long txnCount;
+        private long txnLo;
         private long txnOffset;
 
         public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
@@ -345,7 +341,7 @@ public class TableTransactionLog implements Closeable {
 
         @Override
         public void close() {
-            ff.closeChecked(fd);
+            ff.close(fd);
             ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
         }
 
@@ -360,7 +356,7 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public long getSegmentTxn() {
+        public int getSegmentTxn() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
         }
 
@@ -387,14 +383,37 @@ public class TableTransactionLog implements Closeable {
 
             final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
-                final long oldSize = getMappedLen();
-                txnCount = newTxnCount;
-                final long newSize = getMappedLen();
-                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
-
-                return hasNext(newSize);
+                remap(newTxnCount);
+                return hasNext(getMappedLen());
             }
             return false;
+        }
+
+        @Override
+        public boolean setPosition() {
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > txnCount) {
+                remap(newTxnCount);
+
+                this.txnLo = txn - 1;
+                this.txnOffset -= RECORD_SIZE;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void setPosition(long txn) {
+            this.txnOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
+            this.txn = txn;
+        }
+
+        @Override
+        public void toTop() {
+            if (txnCount > -1L) {
+                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
+                this.txn = txnLo;
+            }
         }
 
         private long getMappedLen() {
@@ -419,8 +438,16 @@ public class TableTransactionLog implements Closeable {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             }
+            this.txnLo = txnLo;
             txn = txnLo;
             return this;
+        }
+
+        private void remap(long newTxnCount) {
+            final long oldSize = getMappedLen();
+            txnCount = newTxnCount;
+            final long newSize = getMappedLen();
+            address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
         }
     }
 }

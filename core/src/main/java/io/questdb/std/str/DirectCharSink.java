@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     private long hi;
     private long lo;
     private long ptr;
+    private FloatingCharSequence subSequence;
 
     public DirectCharSink(long capacity) {
         ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
@@ -59,6 +60,11 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     @Override
     public void close() {
         Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+    }
+
+    @TestOnly
+    public long getCapacity() {
+        return capacity;
     }
 
     @Override
@@ -117,7 +123,10 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
 
     @Override
     public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
+        if (subSequence == null) {
+            subSequence = new FloatingCharSequence();
+        }
+        return subSequence.of(start, end - start);
     }
 
     @NotNull
@@ -135,8 +144,25 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         this.hi = ptr + cap;
     }
 
-    @TestOnly
-    long getCapacity() {
-        return capacity;
+    private class FloatingCharSequence extends AbstractCharSequence {
+
+        private int len;
+        private int startIndex;
+
+        @Override
+        public char charAt(int index) {
+            return Unsafe.getUnsafe().getChar(ptr + (startIndex + index) * 2L);
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
+
+        CharSequence of(int startIndex, int len) {
+            this.startIndex = startIndex;
+            this.len = len;
+            return this;
+        }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,17 @@
 #include <cmath>
 #include "util.h"
 #include "vec_agg_vanilla.h"
+
+int64_t countInt_Vanilla(int32_t *pi, int64_t count) {
+    int32_t *pi1 = pi;
+    const int32_t *lim = pi1 + count;
+    int64_t cnt = 0;
+    for (; pi1 < lim; pi1++) {
+        const int32_t i = *pi1;
+        cnt += (i != I_MIN);
+    }
+    return cnt;
+}
 
 int64_t sumInt_Vanilla(int32_t *pi, int64_t count) {
     int32_t *pi1 = pi;
@@ -66,6 +77,18 @@ int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
         }
     }
     return max;
+}
+
+int64_t countDouble_Vanilla(double *d, int64_t count) {
+    const double *lim = d + count;
+    int64_t cnt = 0;
+    for (; d < lim; d++) {
+        const double v = *d;
+        if (v == v) {
+            cnt += 1;
+        }
+    }
+    return cnt;
 }
 
 double sumDouble_Vanilla(double *d, int64_t count) {
@@ -149,6 +172,16 @@ double maxDouble_Vanilla(double *d, int64_t count) {
         }
     }
     return hasData ? max : NAN;
+}
+
+int64_t countLong_Vanilla(int64_t *pl, int64_t count) {
+    const int64_t *lim = pl + count;
+    int64_t cnt = 0;
+    for (; pl < lim; pl++) {
+        const int64_t l = *pl;
+        cnt += (l != L_MIN);
+    }
+    return cnt;
 }
 
 int64_t sumLong_Vanilla(int64_t *pl, int64_t count) {

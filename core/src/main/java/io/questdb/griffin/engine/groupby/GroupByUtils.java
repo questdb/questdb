@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -189,6 +189,9 @@ public class GroupByUtils {
                         case ColumnType.LONG128:
                             fun = Long128Column.newInstance(keyColumnIndex - 1);
                             break;
+                        case ColumnType.UUID:
+                            fun = UuidColumn.newInstance(keyColumnIndex - 1);
+                            break;
                         default:
                             fun = BinColumn.newInstance(keyColumnIndex - 1);
                             break;
@@ -211,7 +214,7 @@ public class GroupByUtils {
 
                 // and finish with populating metadata for this factory
                 if (column.getAlias() == null) {
-                    groupByMetadata.add(AbstractRecordMetadata.copyOf(metadata, index));
+                    groupByMetadata.add(metadata.getColumnMetadata(index));
                 } else {
                     groupByMetadata.add(
                             new TableColumnMetadata(
@@ -315,7 +318,6 @@ public class GroupByUtils {
                     throw SqlException.$(key.position, "bind variable is not allowed here");
                 case ExpressionNode.FUNCTION:
                 case ExpressionNode.OPERATION:
-                case ExpressionNode.CONSTANT:
                     final ObjList<QueryColumn> availableColumns = nested.getTopDownColumns();
                     boolean invalid = true;
                     for (int j = 0, n = availableColumns.size(); j < n; j++) {
@@ -330,6 +332,9 @@ public class GroupByUtils {
                     if (invalid) {
                         throw SqlException.$(key.position, "group by expression does not match anything select in statement");
                     }
+                    break;
+                case ExpressionNode.CONSTANT:
+                    //ignore
                     break;
                 default:
                     throw SqlException.$(key.position, "unsupported type of expression");

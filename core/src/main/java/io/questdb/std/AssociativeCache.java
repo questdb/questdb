@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@
 
 package io.questdb.std;
 
-import io.questdb.metrics.Gauge;
-import io.questdb.metrics.NullGauge;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.NullLongGauge;
 
 import java.io.Closeable;
 
@@ -37,17 +37,17 @@ public class AssociativeCache<V> implements Closeable, Mutable {
     private final int blocks;
     private final int bmask;
     private final int bshift;
-    private final Gauge cachedGauge;
+    private final LongGauge cachedGauge;
     private final CharSequence[] keys;
     private final int rmask;
     private final V[] values;
 
     public AssociativeCache(int blocks, int rows) {
-        this(blocks, rows, NullGauge.INSTANCE);
+        this(blocks, rows, NullLongGauge.INSTANCE);
     }
 
     @SuppressWarnings("unchecked")
-    public AssociativeCache(int blocks, int rows, Gauge cachedGauge) {
+    public AssociativeCache(int blocks, int rows, LongGauge cachedGauge) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
         rows = Math.max(MIN_ROWS, Numbers.ceilPow2(rows));
 

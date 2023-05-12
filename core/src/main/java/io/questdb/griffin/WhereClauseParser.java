@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ import static io.questdb.griffin.SqlKeywords.*;
  * - designated timestamp expressions to use for interval scan
  * - indexed symbol column expressions to use for index scan
  **/
-final class WhereClauseParser implements Mutable {
+public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_BETWEEN = 9;
     private static final int INTRINSIC_OP_EQUAL = 6;
     private static final int INTRINSIC_OP_GREATER = 2;
@@ -87,6 +87,7 @@ final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private CharSequence preferredKeyColumn;
     private CharSequence timestamp;
+    private int withinPosition;
 
     @Override
     public void clear() {
@@ -108,6 +109,86 @@ final class WhereClauseParser implements Mutable {
         this.preferredKeyColumn = null;
         this.allKeyValuesAreKnown = true;
         this.allKeyExcludedValuesAreKnown = true;
+        withinPosition = -1;
+    }
+
+    public IntrinsicModel extract(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata m,
+            CharSequence preferredKeyColumn,
+            int timestampIndex,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            TableReader reader
+    ) throws SqlException {
+        clearKeys();
+        clearExcludedKeys();
+
+        this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
+        this.preferredKeyColumn = preferredKeyColumn;
+
+        IntrinsicModel model = models.next();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        if (removeAndIntrinsics(
+                translator,
+                model,
+                node,
+                m,
+                functionParser,
+                metadata,
+                executionContext,
+                latestByMultiColumn, reader)) {
+            createKeyValueBindVariables(model, functionParser, executionContext);
+            return model;
+        }
+
+        ExpressionNode root = node;
+        while (!stack.isEmpty() || node != null) {
+            if (node != null) {
+                if (isAndKeyword(node.token)) {
+                    if (!removeAndIntrinsics(
+                            translator,
+                            model,
+                            node.rhs,
+                            m,
+                            functionParser,
+                            metadata,
+                            executionContext,
+                            latestByMultiColumn,
+                            reader)) {
+                        stack.push(node.rhs);
+                    }
+                    node = removeAndIntrinsics(
+                            translator,
+                            model,
+                            node.lhs,
+                            m,
+                            functionParser,
+                            metadata,
+                            executionContext,
+                            latestByMultiColumn,
+                            reader) ? null : node.lhs;
+                } else {
+                    node = stack.poll();
+                }
+            } else {
+                node = stack.poll();
+            }
+        }
+        applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
+        model.filter = collapseIntrinsicNodes(root);
+        createKeyValueBindVariables(model, functionParser, executionContext);
+        return model;
+    }
+
+    public int getWithinPosition() {
+        return withinPosition;
     }
 
     private static short adjustComparison(boolean equalsTo, boolean isLo) {
@@ -385,14 +466,14 @@ final class WhereClauseParser implements Mutable {
                                         addValue(node, b, value);
                                     }
                                 } else if (tempKeyValues.size() > 0) {
-                                    // "x in ('a','b') and x = 'c' means we have a conflicting predicates 
+                                    // "x in ('a','b') and x = 'c' means we have a conflicting predicates
                                     clearKeys();
                                     node.intrinsicValue = IntrinsicModel.TRUE;
                                     model.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
 
-                                // x not in ('a', 'b') and x = 'a'  or 
+                                // x not in ('a', 'b') and x = 'a'  or
                                 // x not in ($1, 'a') and x = $1  means we have conflicting predicates
                                 if (tempKeyExcludedValues.contains(value)) {
                                     if (value != null) {
@@ -672,8 +753,8 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    //checks and merges given in list with temp keys 
-    //NOTE: sets containing bind variables can't be merged  
+    //checks and merges given in list with temp keys
+    //NOTE: sets containing bind variables can't be merged
     private boolean analyzeListOfValues(
             IntrinsicModel model,
             CharSequence columnName,
@@ -697,7 +778,7 @@ final class WhereClauseParser implements Mutable {
                 return false;
             }
 
-            //if key values contain bind variable then we can't merge it with any other set and have to push this list to filter 
+            //if key values contain bind variable then we can't merge it with any other set and have to push this list to filter
             if (!allKeyValuesAreKnown) {
                 return false;
             }
@@ -932,7 +1013,7 @@ final class WhereClauseParser implements Mutable {
                                     keyExclNodes.add(node);
                                 } else if (tempKeyValues.contains(value)
                                         && (allKeyValuesAreKnown && b.type != ExpressionNode.BIND_VARIABLE)) {
-                                    // sets can't be merged if either contains a bind variable 
+                                    // sets can't be merged if either contains a bind variable
                                     int listIdx;
                                     if (value == null) {
                                         listIdx = tempKeyValues.removeNull();
@@ -946,7 +1027,7 @@ final class WhereClauseParser implements Mutable {
                                     removeNodes(b, keyNodes);
                                     node.intrinsicValue = IntrinsicModel.TRUE;
 
-                                    //in set is empty  
+                                    //in set is empty
                                     if (tempKeyValues.size() == 0) {
                                         model.intrinsicValue = IntrinsicModel.FALSE;
                                     }
@@ -1348,9 +1429,9 @@ final class WhereClauseParser implements Mutable {
                 }
             }
 
-            //sql code generator assumes only one set has items so clear NOT IN set   
+            //sql code generator assumes only one set has items so clear NOT IN set
             if (tempKeyValues.size() > 0 && tempKeyExcludedValues.size() > 0) {
-                //if both sets are constant values it's fine but 
+                //if both sets are constant values it's fine but
                 //if any set contains bind variables then we've to push not in set to filter
                 if (!allKeyValuesAreKnown || !allKeyExcludedValuesAreKnown) {
                     resetExcludedNodes();
@@ -1389,7 +1470,6 @@ final class WhereClauseParser implements Mutable {
         return ColumnType.isString(type);
     }
 
-
     private void clearExcludedKeys() {
         tempKeyExcludedValues.clear();
         tempKeyExcludedValuePos.clear();
@@ -1404,7 +1484,7 @@ final class WhereClauseParser implements Mutable {
         allKeyValuesAreKnown = true;
     }
 
-    //removes nodes extracted into special symbol/key or timestamp filters from given node   
+    //removes nodes extracted into special symbol/key or timestamp filters from given node
     private ExpressionNode collapseIntrinsicNodes(ExpressionNode node) {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
@@ -1588,7 +1668,7 @@ final class WhereClauseParser implements Mutable {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
     }
 
-    //calculates intersect of existing and new set for IN () 
+    //calculates intersect of existing and new set for IN ()
     //and sum of existing and new set for NOT IN ()
     //returns false when there's a type clash between items with the same 'key', e.g. ':id' literal and :id bind variable
     private boolean mergeKeys(IntrinsicModel model, boolean includedValues) {
@@ -1791,6 +1871,7 @@ final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
             LongList prefixes) throws SqlException {
+
         if (isWithinKeyword(node.token)) {
 
             if (prefixes.size() > 0) {
@@ -1836,6 +1917,7 @@ final class WhereClauseParser implements Mutable {
                     processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
                 }
             }
+            withinPosition = node.position;
             return true;
         } else {
             return false;
@@ -1890,81 +1972,6 @@ final class WhereClauseParser implements Mutable {
         return value;
     }
 
-    IntrinsicModel extract(
-            AliasTranslator translator,
-            ExpressionNode node,
-            RecordMetadata m,
-            CharSequence preferredKeyColumn,
-            int timestampIndex,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
-            TableReader reader
-    ) throws SqlException {
-        clearKeys();
-        clearExcludedKeys();
-
-        this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
-        this.preferredKeyColumn = preferredKeyColumn;
-
-        IntrinsicModel model = models.next();
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
-        if (removeAndIntrinsics(
-                translator,
-                model,
-                node,
-                m,
-                functionParser,
-                metadata,
-                executionContext,
-                latestByMultiColumn, reader)) {
-            createKeyValueBindVariables(model, functionParser, executionContext);
-            return model;
-        }
-
-        ExpressionNode root = node;
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                if (isAndKeyword(node.token)) {
-                    if (!removeAndIntrinsics(
-                            translator,
-                            model,
-                            node.rhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            latestByMultiColumn,
-                            reader)) {
-                        stack.push(node.rhs);
-                    }
-                    node = removeAndIntrinsics(
-                            translator,
-                            model,
-                            node.lhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            latestByMultiColumn,
-                            reader) ? null : node.lhs;
-                } else {
-                    node = stack.poll();
-                }
-            } else {
-                node = stack.poll();
-            }
-        }
-        applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
-        model.filter = collapseIntrinsicNodes(root);
-        createKeyValueBindVariables(model, functionParser, executionContext);
-        return model;
-    }
-
     ExpressionNode extractWithin(
             AliasTranslator translator,
             ExpressionNode node,
@@ -1975,6 +1982,7 @@ final class WhereClauseParser implements Mutable {
     ) throws SqlException {
 
         prefixes.clear();
+        withinPosition = -1;
         if (node == null) return null;
 
         // pre-order iterative tree traversal

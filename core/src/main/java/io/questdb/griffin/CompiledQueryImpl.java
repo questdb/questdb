@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -51,9 +52,10 @@ public class CompiledQueryImpl implements CompiledQuery {
     private String sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
+    private TableToken tableToken;
     private TextLoader textLoader;
     private short type;
-    private UpdateOperation updateOperation;
+    private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
         updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
@@ -82,8 +84,8 @@ public class CompiledQueryImpl implements CompiledQuery {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
             case UPDATE:
-                updateOperation.withSqlStatement(sqlStatement);
-                return updateOperationDispatcher.execute(updateOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
+                updateOp.withSqlStatement(sqlStatement);
+                return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
@@ -123,6 +125,11 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    @Override
     public TextLoader getTextLoader() {
         return textLoader;
     }
@@ -134,15 +141,16 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @Override
     public UpdateOperation getUpdateOperation() {
-        return updateOperation;
+        return updateOp;
     }
 
     public CompiledQuery of(short type) {
-        return of(type, null);
+        return of(type, null, null);
     }
 
-    public CompiledQuery ofLock() {
-        type = LOCK;
+    public CompiledQuery ofAlter(AlterOperation alterOp) {
+        of(ALTER);
+        this.alterOp = alterOp;
         return this;
     }
 
@@ -151,13 +159,13 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQuery ofUnlock() {
-        type = UNLOCK;
+    public CompiledQuery ofTableSetType() {
+        type = TABLE_SET_TYPE;
         return this;
     }
 
     public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
-        this.updateOperation = updateOperation;
+        this.updateOp = updateOperation;
         this.type = UPDATE;
         return this;
     }
@@ -171,21 +179,16 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.sqlStatement = sqlStatement;
     }
 
-    private CompiledQuery of(short type, RecordCursorFactory factory) {
+    private CompiledQuery of(short type, RecordCursorFactory factory, TableToken tableToken) {
         this.type = type;
         this.recordCursorFactory = factory;
+        this.tableToken = tableToken;
         this.affectedRowsCount = -1;
         return this;
     }
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory);
-    }
-
-    CompiledQuery ofAlter(AlterOperation statement) {
-        of(ALTER);
-        alterOp = statement;
-        return this;
+        return of(SELECT, recordCursorFactory, null);
     }
 
     CompiledQuery ofBackupTable() {
@@ -212,12 +215,12 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(COPY_REMOTE);
     }
 
-    CompiledQuery ofCreateTable() {
-        return of(CREATE_TABLE);
+    CompiledQuery ofCreateTable(TableToken tableToken) {
+        return of(CREATE_TABLE, null, tableToken);
     }
 
-    CompiledQuery ofCreateTableAsSelect(long affectedRowsCount) {
-        of(CREATE_TABLE_AS_SELECT);
+    CompiledQuery ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
+        of(CREATE_TABLE_AS_SELECT, null, tableToken);
         this.affectedRowsCount = affectedRowsCount;
         return this;
     }
@@ -232,7 +235,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
-        return of(EXPLAIN, recordCursorFactory);
+        return of(EXPLAIN, recordCursorFactory, null);
     }
 
     CompiledQuery ofInsert(InsertOperation insertOperation) {
@@ -258,7 +261,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(ROLLBACK);
     }
 
-    CompiledQuery ofSet() {
+    public CompiledQuery ofSet() {
         return of(SET);
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import static io.questdb.std.fastdouble.FastDoubleMath.*;
  * See {@link io.questdb.std.fastdouble} for a description of
  * {@code FloatingPointLiteral}.
  */
-class FastFloatMath {
+public class FastFloatMath {
     /**
      * Bias used in the exponent of a float.
      */
@@ -144,7 +144,7 @@ class FastFloatMath {
      * @param power      int32 the exponent of the number
      * @return the computed double on success, {@link Double#NaN} on failure
      */
-    static float tryDecToFloatWithFastAlgorithm(boolean isNegative, long digits, int power) {
+    public static float tryDecToFloatWithFastAlgorithm(boolean isNegative, long digits, int power) {
 
         // we start with a fast path
         if (-10 <= power && power <= 10 && Long.compareUnsigned(digits, (1L << FLOAT_SIGNIFICAND_WIDTH) - 1L) <= 0) {

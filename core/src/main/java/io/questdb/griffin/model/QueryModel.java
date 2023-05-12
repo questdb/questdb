@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -117,6 +117,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
+    private boolean explicitTimestamp;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -176,7 +177,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (current.updateTableModel != null) {
                 backupWhereClause(pool, current.updateTableModel);
             }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+            for (int i = 1, n = current.joinModels.size(); i < n; i++) {
                 final QueryModel m = current.joinModels.get(i);
                 if (m != null && current != m) {
                     backupWhereClause(pool, m);
@@ -197,7 +198,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (current.updateTableModel != null) {
                 restoreWhereClause(pool, current.updateTableModel);
             }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+            for (int i = 1, n = current.joinModels.size(); i < n; i++) {
                 final QueryModel m = current.joinModels.get(i);
                 if (m != null && current != m) {
                     restoreWhereClause(pool, m);
@@ -379,6 +380,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableToken = null;
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
+        explicitTimestamp = false;
     }
 
     public void clearColumnMapStructs() {
@@ -849,6 +851,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return withClauseModel;
     }
 
+    public boolean hasExplicitTimestamp() {
+        return timestamp != null && explicitTimestamp;
+    }
+
     @Override
     public int hashCode() {
         int hash = super.hashCode();
@@ -894,6 +900,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isDistinct() {
         return distinct;
+    }
+
+    public boolean isExplicitTimestamp() {
+        return explicitTimestamp;
     }
 
     public boolean isLimitImplemented() {
@@ -981,7 +991,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 } else {
                     addParsedWhereNode(n, false);
                     n = null;
-
                 }
             } else {
                 n = sqlNodeStack.poll();
@@ -1016,6 +1025,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setDistinct(boolean distinct) {
         this.distinct = distinct;
+    }
+
+    public void setExplicitTimestamp(boolean explicitTimestamp) {
+        this.explicitTimestamp = explicitTimestamp;
     }
 
     public void setIsUpdate(boolean isUpdate) {

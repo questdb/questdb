@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -72,6 +72,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void bumpPartitionTableVersion() {
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion.incrementAndGet();
@@ -111,9 +116,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // Never trim _txn file to size. Size of the file can only grow up.
             txMemBase.close(false);
         }
-        recordStructureVersion = 0;
-        lastRecordStructureVersion = -1;
-        prevRecordStructureVersion = -2;
+        recordStructureVersion = 0L;
+        lastRecordStructureVersion = -1L;
+        prevRecordStructureVersion = -2L;
         lastRecordBaseOffset = -1;
         prevRecordBaseOffset = -2;
     }
@@ -134,9 +139,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-
         if (prevRecordStructureVersion == recordStructureVersion && prevRecordBaseOffset > 0) {
-
             // Optimisation for the case where commit appends rows to the last partition only
             // In this case all to be changed is TX_OFFSET_MAX_TIMESTAMP_64 and TX_OFFSET_TRANSIENT_ROW_COUNT_64
             writeBaseOffset = prevRecordBaseOffset;
@@ -144,6 +147,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
             putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
             putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
+            putLagValues();
 
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
@@ -152,7 +156,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
             super.switchRecord(writeBaseOffset, writeAreaSize); // writeAreaSize should be between records
-            this.readBaseOffset = writeBaseOffset;
+            readBaseOffset = writeBaseOffset;
 
             prevTransientRowCount = transientRowCount;
             prevMinTimestamp = minTimestamp;
@@ -196,7 +200,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean isActivePartition(long timestamp) {
-        return getPartitionTimestampLo(maxTimestamp) == timestamp;
+        return getPartitionTimestampByTimestamp(maxTimestamp) == timestamp;
     }
 
     @Override
@@ -242,13 +246,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void removeAttachedPartitions(long timestamp) {
         recordStructureVersion++;
-        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        if (index > -1) {
+        final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        if (indexRaw > -1) {
             final int size = attachedPartitions.size();
             final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
-            if (index < lim) {
-                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
+            if (indexRaw < lim) {
+                attachedPartitions.arrayCopy(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION, indexRaw, lim - indexRaw);
             }
             attachedPartitions.setPos(lim);
             partitionTableVersion++;
@@ -282,12 +286,36 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void setColumnVersion(long newVersion) {
         if (columnVersion != newVersion) {
             recordStructureVersion++;
-            this.columnVersion = newVersion;
+            columnVersion = newVersion;
         }
     }
 
     public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
         this.extensionListener = extensionListener;
+    }
+
+    public void setLagMaxTimestamp(long timestamp) {
+        lagMaxTimestamp = timestamp;
+    }
+
+    public void setLagMinTimestamp(long timestamp) {
+        lagMinTimestamp = timestamp;
+    }
+
+    public void setLagOrdered(boolean ordered) {
+        lagOrdered = ordered;
+    }
+
+    public void setLagRowCount(int rowCount) {
+        lagRowCount = rowCount;
+    }
+
+    public void setLagTxnCount(int txnCount) {
+        lagTxnCount = txnCount;
+    }
+
+    public void setMaxTimestamp(long timestamp) {
+        this.maxTimestamp = timestamp;
     }
 
     public void setMinTimestamp(long timestamp) {
@@ -298,6 +326,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
+        setPartitionReadOnlyByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
+    }
+
+    public void setPartitionReadOnlyByRawIndex(int indexRaw, boolean isReadOnly) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+        attachedPartitions.setQuick(offset, updatePartitionIsReadOnly(maskedSize, isReadOnly));
+    }
+
+    public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
+        setPartitionReadOnlyByRawIndex(findAttachedPartitionRawIndex(timestamp), isReadOnly);
+    }
+
     public void setSeqTxn(long seqTxn) {
         this.seqTxn = seqTxn;
     }
@@ -306,27 +351,27 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         recordStructureVersion++;
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
-        long partitionTimestampLo = getPartitionTimestampLo(maxTimestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        updatePartitionSizeByIndex(index, transientRowCount);
+        long partitionTimestampLo = getPartitionTimestampByTimestamp(maxTimestamp);
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        updatePartitionSizeByRawIndex(indexRaw, transientRowCount);
 
-        index += LONGS_PER_TX_ATTACHED_PARTITION;
+        indexRaw += LONGS_PER_TX_ATTACHED_PARTITION;
 
-        attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
-        long newTimestampLo = getPartitionTimestampLo(timestamp);
-        initPartitionAt(index, newTimestampLo, 0, txn - 1, -1);
-        transientRowCount = 0;
+        attachedPartitions.setPos(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION);
+        long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
+        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1, -1L);
+        transientRowCount = 0L;
         txPartitionCount++;
         if (extensionListener != null) {
             extensionListener.onTableExtended(newTimestampLo);
         }
     }
 
-    public void truncate(long columnVersion) {
+    public void truncate(long columnVersion, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0, -1L, columnVersion);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L, columnVersion);
         }
 
         writeAreaSize = calculateWriteSize();
@@ -343,7 +388,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 columnVersion,
                 truncateVersion
         );
-        finishABHeader(writeBaseOffset, symbolColumnCount * 8, 0, CommitMode.NOSYNC);
+        storeSymbolCounts(symbolCountProviders);
+        finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, 0, CommitMode.NOSYNC);
     }
 
     public boolean unsafeLoadAll() {
@@ -366,8 +412,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         maxTimestamp = timestamp;
     }
 
-    public void updatePartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
-        updateAttachedPartitionSizeByIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
+    public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
+        if (partitionIndex > -1) {
+            updatePartitionSizeByRawIndex(partitionIndex, partitionSize);
+        } else {
+            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
+        }
     }
 
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
@@ -378,6 +428,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount, long partitionNameTxn) {
         recordStructureVersion++;
         updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, partitionNameTxn);
+    }
+
+    private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
+        if (isReadOnly) {
+            maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
+        } else {
+            maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+        }
+        return maskedSize;
     }
 
     private int calculateWriteOffset(int areaSize) {
@@ -397,7 +456,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.clear();
         }
-        return calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
+        return calculateTxRecordSize(symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES);
     }
 
     private void commitFullRecord(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
@@ -416,7 +475,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
+        putLagValues();
         putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
+        putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCount));
 
         // store symbol counts
         storeSymbolCounts(symbolCountProviders);
@@ -424,7 +485,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // store attached partitions
         txPartitionCount = 1;
         saveAttachedPartitionsToTx(symbolColumnCount);
-        finishABHeader(writeBaseOffset, symbolColumnCount * 8, attachedPartitions.size() * 8, commitMode);
+        finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES, commitMode);
 
         prevTransientRowCount = transientRowCount;
         prevMinTimestamp = minTimestamp;
@@ -451,8 +512,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         Unsafe.getUnsafe().storeFence();
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
-        this.readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
-        this.readBaseOffset = areaOffset;
+        readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+        readBaseOffset = areaOffset;
         super.switchRecord(readBaseOffset, readRecordSize);
 
         if (commitMode != CommitMode.NOSYNC) {
@@ -476,7 +537,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
-        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1);
+        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1L);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
@@ -492,8 +553,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void putInt(long offset, int value) {
-        assert offset + 4 <= writeAreaSize;
+        assert offset + Integer.BYTES <= writeAreaSize;
         txMemBase.putInt(writeBaseOffset + offset, value);
+    }
+
+    private void putLagValues() {
+        putLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
+        putLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+        putInt(TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
+        int lagTxnRaw = lagOrdered ? lagTxnCount : -lagTxnCount;
+        putInt(TX_OFFSET_LAG_TXN_COUNT_32, lagTxnRaw);
+        putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnRaw));
     }
 
     private void putLong(long offset, long value) {
@@ -522,36 +592,29 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    private void updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
-        if (partitionIndex > -1) {
-            updatePartitionSizeByIndex(partitionIndex, partitionSize);
-        } else {
-            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
-        }
+    public void updatePartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
+        updateAttachedPartitionSizeByRawIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
     }
 
     private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
-        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
+        final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
+        updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 
-    private void updatePartitionSizeByIndex(int index, long partitionSize) {
-        if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
+    private void updatePartitionSizeByRawIndex(int index, long partitionSize) {
+        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+        if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
+            attachedPartitions.setQuick(offset, (maskedSize & PARTITION_FLAGS_MASK) | (partitionSize));
             recordStructureVersion++;
-            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
         }
     }
 
     private void writeTransientSymbolCount(int symbolIndex, int symCount) {
         // This updates into current record
         long recordOffset = getSymbolWriterTransientIndexOffset(symbolIndex);
-        assert recordOffset + 4 <= readRecordSize;
+        assert recordOffset + Integer.BYTES <= readRecordSize;
         txMemBase.putInt(readBaseOffset + recordOffset, symCount);
-    }
-
-    void bumpPartitionTableVersion() {
-        recordStructureVersion++;
-        partitionTableVersion++;
     }
 
     // It is possible that O3 commit will create partition just before
@@ -559,7 +622,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     // That's when the data from the last partition is moved to in-memory lag.
     // One way to detect this is to check if index of the "last" partition is not
     // last partition in the attached partition list.
-    boolean reconcileOptimisticPartitions() {
+    void reconcileOptimisticPartitions() {
         int lastPartitionTsIndex = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET;
         if (lastPartitionTsIndex > 0 && maxTimestamp < attachedPartitions.getQuick(lastPartitionTsIndex)) {
             int maxTimestampPartitionIndex = getPartitionIndex(getLastPartitionTimestamp());
@@ -577,10 +640,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 this.fixedRowCount -= rowCount;
                 this.maxTimestamp = getMaxTimestamp();
                 this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);
-                return true;
             }
         }
-        return false;
     }
 
     void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {
@@ -603,18 +664,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
     }
 
-    protected long unsafeGetRawMemorySize() {
-        return Math.max(super.unsafeGetRawMemorySize(), writeAreaSize + writeBaseOffset);
-    }
-
     void updatePartitionColumnVersion(long partitionTimestamp) {
-        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
+        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+        attachedPartitions.set(indexRaw + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
-    void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
+    void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
         recordStructureVersion++;
-        attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+        updatePartitionSizeByRawIndex(index, partitionSize);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }

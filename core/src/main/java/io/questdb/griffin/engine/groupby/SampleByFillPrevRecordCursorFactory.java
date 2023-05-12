@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final AbstractNoRecordSampleByCursor cursor;
+    private final SampleByFillPrevRecordCursor cursor;
 
     public SampleByFillPrevRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -69,7 +69,7 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 recordFunctions
         );
         final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        this.cursor = new SampleByFillPrevRecordCursor(
+        cursor = new SampleByFillPrevRecordCursor(
                 map,
                 mapSink,
                 groupByFunctions,

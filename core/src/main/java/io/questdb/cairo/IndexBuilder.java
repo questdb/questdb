@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -124,49 +124,53 @@ public class IndexBuilder extends RebuildColumnBase {
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,
             CharSequence columnName,
-            CharSequence partitionName,
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int partitionBy,
             int indexValueBlockCapacity
     ) {
-        path.trimTo(rootLen).concat(partitionName);
-        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
-        final int plen = path.length();
+        final int trimTo = path.length();
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        try {
+            final int plen = path.length();
 
-        if (ff.exists(path.$())) {
-            try (final MemoryMR roMem = indexMem) {
-                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
-                removeIndexFiles(columnName, columnNameTxn);
-                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+            if (ff.exists(path.$())) {
+                try (final MemoryMR roMem = indexMem) {
+                    long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
+                    removeIndexFiles(columnName, columnNameTxn);
+                    TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
-                if (columnTop > -1L) {
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
+                    if (columnTop > -1L) {
 
-                    if (partitionSize > columnTop) {
-                        LOG.info().$("indexing [path=").utf8(path).I$();
-                        createIndexFiles(columnName, indexValueBlockCapacity, plen, columnNameTxn);
-                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                        roMem.of(
-                                ff,
-                                path,
-                                0,
-                                (partitionSize - columnTop) * Integer.BYTES,
-                                MemoryTag.MMAP_TABLE_WRITER
-                        );
-                        try {
-                            indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                            indexer.index(roMem, columnTop, partitionSize);
-                        } finally {
-                            indexer.clear();
+                        if (partitionSize > columnTop) {
+                            LOG.info().$("indexing [path=").utf8(path).I$();
+                            createIndexFiles(columnName, indexValueBlockCapacity, plen, columnNameTxn);
+                            TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+                            roMem.of(
+                                    ff,
+                                    path,
+                                    0,
+                                    (partitionSize - columnTop) * Integer.BYTES,
+                                    MemoryTag.MMAP_TABLE_WRITER
+                            );
+                            try {
+                                indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                                indexer.index(roMem, columnTop, partitionSize);
+                            } finally {
+                                indexer.clear();
+                            }
                         }
+                    } else {
+                        LOG.info().$("column is empty in partition [path=").$(path).I$();
                     }
-                } else {
-                    LOG.info().$("column is empty in partition [path=").$(path).I$();
                 }
+            } else {
+                LOG.info().$("partition does not exist [path=").$(path).I$();
             }
-        } else {
-            LOG.info().$("partition does not exist [path=").$(path).I$();
+        } finally {
+            path.trimTo(trimTo);
         }
     }
 

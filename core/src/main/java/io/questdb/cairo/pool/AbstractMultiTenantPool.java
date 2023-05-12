@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,13 +41,14 @@ import java.util.Map;
 
 public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
+    public final static String NO_LOCK_REASON = "unknown";
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
-    private static final Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
     private static final int NEXT_OPEN = 0;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long UNLOCKED = -1L;
+    private final Log LOG = LogFactory.getLog(this.getClass());
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
@@ -72,7 +73,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
         if (lockOwner != UNLOCKED) {
             LOG.info().$('\'').utf8(tableToken.getDirName()).$("' is locked [owner=").$(lockOwner).$(']').$();
-            throw EntryLockedException.instance("unknown");
+            throw EntryLockedException.instance(NO_LOCK_REASON);
         }
 
         do {
@@ -86,7 +87,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                             LOG.info()
                                     .$("open '").utf8(tableToken.getDirName())
                                     .$("' [at=").$(e.index).$(':').$(i)
-                                    .$(']').$();
+                                    .I$();
                             tenant = newTenant(tableToken, e, i);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
@@ -96,7 +97,15 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                         e.assignTenant(i, tenant);
                         notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
                     } else {
-                        tenant.refresh();
+                        try {
+                            tenant.refresh();
+                        } catch (Throwable th) {
+                            tenant.goodbye();
+                            tenant.close();
+                            e.assignTenant(i, null);
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                            throw th;
+                        }
                         notifyListener(thread, tableToken, PoolListener.EV_GET, e.index, i);
                     }
 
@@ -126,7 +135,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         // max entries exceeded
         notifyListener(thread, tableToken, PoolListener.EV_FULL, -1, -1);
         LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
-        throw EntryUnavailableException.instance("unknown");
+        throw EntryUnavailableException.instance(NO_LOCK_REASON);
     }
 
     public int getBusyCount() {
@@ -187,7 +196,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                 e = e.next;
             } while (e != null);
         } else {
-            LOG.error().$("' already locked [table=`").utf8(tableToken.getDirName()).$("`, owner=").$(e.lockOwner).$(']').$();
+            LOG.error().$("already locked [table=`").utf8(tableToken.getDirName()).$("`, owner=").$(e.lockOwner).$(']').$();
             notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY, -1, -1);
             return false;
         }
@@ -297,6 +306,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
+        TableToken leftBehind = null;
         for (Entry<T> e : entries.values()) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
@@ -313,7 +323,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                             casFailures++;
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodbye();
+                                Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                                 LOG.info().$("shutting down. '").utf8(r.getTableToken().getDirName()).$("' is left behind").$();
+                                leftBehind = r.getTableToken();
                             }
                         }
                     }
@@ -321,6 +333,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                 // this does not release the next
                 e = e.next;
             } while (e != null);
+        }
+
+        if (leftBehind != null) {
+            // This code branch should be in tests only.
+            // Release the item, to not block the pool, but throw an exception to fail the test
+            throw CairoException.nonCritical().put('\'').put(leftBehind.getDirName()).put("' is left behind on pool shutdown");
         }
 
         // when we are timing out entries the result is "true" if there was any work done

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,16 +35,16 @@ import io.questdb.std.ObjList;
 
 /**
  * Returns rows from current data frame in table (physical) order :
- * - fetches first record index per cursor into priority queue
- * - then returns record with smallest index and adds next record from related cursor into queue
+ * - fetches first record index/row id per cursor into priority queue
+ * - then returns record with the smallest available index and adds next record from related cursor into queue
  * until all cursors are exhausted .
  */
 public class HeapRowCursorFactory implements RowCursorFactory {
     private final HeapRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
+    // used to skip some cursor factories if values repeat
+    private final int[] cursorFactoriesIdx;
     private final ObjList<RowCursor> cursors;
-    //used to skip some cursor factories if values repeat  
-    private int[] cursorFactoriesIdx;
 
     public HeapRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
@@ -63,13 +63,18 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
+    public void prepareCursor(TableReader tableReader) {
+        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
     }
 
     @Override

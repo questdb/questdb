@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,24 +24,24 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.metrics.Gauge;
+import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 
 public class PGWireMetrics {
 
-    private final Gauge cachedSelectsGauge;
-    private final Gauge cachedUpdatesGauge;
+    private final LongGauge cachedSelectsGauge;
+    private final LongGauge cachedUpdatesGauge;
 
     public PGWireMetrics(MetricsRegistry metricsRegistry) {
-        this.cachedSelectsGauge = metricsRegistry.newGauge("pg_wire_select_queries_cached");
-        this.cachedUpdatesGauge = metricsRegistry.newGauge("pg_wire_update_queries_cached");
+        this.cachedSelectsGauge = metricsRegistry.newLongGauge("pg_wire_select_queries_cached");
+        this.cachedUpdatesGauge = metricsRegistry.newLongGauge("pg_wire_update_queries_cached");
     }
 
-    public Gauge cachedSelectsGauge() {
+    public LongGauge cachedSelectsGauge() {
         return cachedSelectsGauge;
     }
 
-    public Gauge cachedUpdatesGauge() {
+    public LongGauge cachedUpdatesGauge() {
         return cachedUpdatesGauge;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 
 /**
  * This factory has limitations. In that it does not differentiate cursor.toTop() from creating new
- * cursor instance. Semantically toTop() does not refresh data snapshot and newInstance() does, or it supposed to.
+ * cursor instance. Semantically toTop() does not refresh data snapshot and newInstance() does, or it's supposed to.
  */
 public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursor cursor;

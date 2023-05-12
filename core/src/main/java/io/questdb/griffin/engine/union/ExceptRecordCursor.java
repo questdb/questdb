@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 class ExceptRecordCursor extends AbstractSetRecordCursor {
     private final Map map;
     private final RecordSink recordSink;
+    private boolean isCursorBHashed;
     private boolean isOpen;
     private Record recordA;
     private Record recordB;
@@ -44,7 +45,7 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     public ExceptRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
-        this.isOpen = true;
+        isOpen = true;
     }
 
     @Override
@@ -73,6 +74,11 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (!isCursorBHashed) {
+            hashCursorB();
+            toTop();
+            isCursorBHashed = true;
+        }
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
             key.put(recordA, recordSink);
@@ -118,14 +124,14 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
-        this.recordB = cursorB.getRecord();
         if (!isOpen) {
             map.reopen();
             isOpen = true;
         }
-        hashCursorB();
+
+        super.of(cursorA, cursorB, circuitBreaker);
         recordA = cursorA.getRecord();
-        toTop();
+        recordB = cursorB.getRecord();
+        isCursorBHashed = false;
     }
 }

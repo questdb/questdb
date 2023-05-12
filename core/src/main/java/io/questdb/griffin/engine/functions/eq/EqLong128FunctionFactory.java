@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,7 +56,8 @@ public class EqLong128FunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (
-                    left.getLong128Lo(rec) == right.getLong128Lo(rec) && left.getLong128Hi(rec) == right.getLong128Hi(rec)
+                    left.getLong128Lo(rec) == right.getLong128Lo(rec)
+                            && left.getLong128Hi(rec) == right.getLong128Hi(rec)
             );
         }
     }

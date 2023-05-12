@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import io.questdb.std.*;
 
 import static io.questdb.griffin.OperatorExpression.DOT_PRECEDENCE;
 
-class ExpressionParser {
+public class ExpressionParser {
 
     private static final int BRANCH_BETWEEN_END = 14;
     private static final int BRANCH_BETWEEN_START = 13;
@@ -176,7 +176,7 @@ class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null);
+        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true);
         argStackDepth = onNode(listener, node, argStackDepth);
 
         // pop our control node if sub-query hasn't done it
@@ -526,7 +526,7 @@ class ExpressionParser {
                                     if (prevBranch != BRANCH_GEOHASH) {
                                         // validate type
                                         final short columnTypeTag = ColumnType.tagOf(node.token);
-                                        if (((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) ||
+                                        if (((columnTypeTag < ColumnType.BOOLEAN || (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID)) && !asPoppedNull) ||
                                                 (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
                                             throw SqlException.$(node.position, "unsupported cast");
                                         }
@@ -806,7 +806,7 @@ class ExpressionParser {
 
                                     // validate type
                                     final short columnType = ColumnType.tagOf(prevNode.token);
-                                    if (columnType < ColumnType.BOOLEAN || columnType > ColumnType.LONG256) {
+                                    if (columnType < ColumnType.BOOLEAN || (columnType > ColumnType.LONG256 && columnType != ColumnType.UUID)) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {
                                         ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lastPos);

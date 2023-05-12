@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,12 +25,12 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PartitionPurgeTask;
@@ -47,21 +47,18 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final StringSink[] fileNameSinks;
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final ObjList<DirectLongList> partitionList;
-    private final MutableCharSink[] sink;
     private final ObjList<TxReader> txnReaders;
     private final ObjList<TxnScoreboard> txnScoreboards;
 
     public O3PartitionPurgeJob(MessageBus messageBus, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
         this.configuration = messageBus.getConfiguration();
-        this.sink = new MutableCharSink[workerCount];
         this.fileNameSinks = new StringSink[workerCount];
         this.partitionList = new ObjList<>(workerCount);
         this.txnScoreboards = new ObjList<>(workerCount);
         this.txnReaders = new ObjList<>(workerCount);
 
         for (int i = 0; i < workerCount; i++) {
-            sink[i] = new StringSink();
             fileNameSinks[i] = new StringSink();
             partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
             txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
@@ -78,34 +75,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
-    private static void deletePartitionDirectory(
-            FilesFacade ff,
-            Path path
-    ) {
-        if (ff.isSoftLink(path)) {
-            // in windows ^ ^ will return false, but that is ok as the behaviour
-            // is to delete the link, not the contents of the target. in *nix
-            // systems we can simply unlink, which deletes the link and leaves
-            // the contents of the target intact
-            if (ff.unlink(path) == 0) {
-                LOG.info().$("purged by unlink [path=").utf8(path).I$();
-                return;
-            } else {
-                LOG.error().$("failed to unlink, will delete [path=").utf8(path).I$();
-            }
-        }
-        long errno;
-        if ((errno = ff.rmdir(path)) == 0) {
-            LOG.info()
-                    .$("purged [path=").utf8(path)
-                    .I$();
-        } else {
-            LOG.info()
-                    .$("partition purge failed [path=").utf8(path)
-                    .$(", errno=").$(errno)
-                    .I$();
-        }
-    }
 
     private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
         int index = Chars.lastIndexOf(fileNameSink, '.');
@@ -134,7 +103,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
-                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                if (!Chars.startsWith(fileNameSink, WalUtils.WAL_NAME_BASE) && !Chars.equals(fileNameSink, WalUtils.SEQ_DIR)) {
+                    LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
             }
         } catch (NumericException e) {
@@ -165,8 +136,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
-            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, nameTxn - 1);
+            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn - 1);
             path.$();
 
             if (rangeUnlocked) {
@@ -174,10 +144,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 // -1 here is to compensate +1 added when partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
                 LOG.info().$("purging dropped partition directory [path=").utf8(path).I$();
-                deletePartitionDirectory(
-                        ff,
-                        path
-                );
+                ff.unlinkOrRemove(path, LOG);
                 lastTxn = nameTxn;
             } else {
                 LOG.info().$("cannot purge partition directory, locked for reading [path=").utf8(path).I$();
@@ -198,7 +165,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int lo,
             int hi
     ) {
-        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
+        boolean partitionInTxnFile = txReader.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp) >= 0;
         if (partitionInTxnFile) {
             processPartition0(
                     ff,
@@ -254,8 +221,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 path.trimTo(tableRootLen);
-                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-                TableUtils.txnPartitionConditionally(path, previousNameVersion - 1);
+                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, previousNameVersion - 1);
                 path.$();
 
                 if (rangeUnlocked) {
@@ -263,10 +229,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
                     LOG.info().$("purging overwritten partition directory [path=").utf8(path).I$();
-                    deletePartitionDirectory(
-                            ff,
-                            path
-                    );
+                    ff.unlinkOrRemove(path, LOG);
                 } else {
                     LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").utf8(path).I$();
                 }
@@ -276,7 +239,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private void discoverPartitions(
             FilesFacade ff,
-            MutableCharSink sink,
             StringSink fileNameSink,
             DirectLongList partitionList,
             CharSequence root,
@@ -286,25 +248,17 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int partitionBy) {
 
         LOG.info().$("processing [table=").utf8(tableToken.getDirName()).I$();
-        Path path = Path.getThreadLocal(root).concat(tableToken).slash$();
-
-        sink.clear();
+        Path path = Path.getThreadLocal(root).concat(tableToken);
+        int plimit = path.length();
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-
-        long p = ff.findFirst(path);
+        long p = ff.findFirst(path.$());
         if (p > 0) {
             try {
                 do {
-                    long fileName = ff.findName(p);
-                    boolean isSoftLink = Files.findTypeIsSoftLink(p);
-                    if (Files.isDir(fileName, ff.findType(p), fileNameSink) || isSoftLink) {
-                        // extract txn, partition ts from name
-                        if (isSoftLink) {
-                            fileNameSink.clear();
-                            Chars.utf8DecodeZ(fileName, fileNameSink);
-                        }
+                    if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(p), ff.findType(p), fileNameSink)) {
                         parsePartitionDateVersion(fileNameSink, partitionList, tableToken.getDirName(), partitionByFormat);
+                        path.trimTo(plimit).$();
                     }
                 } while (ff.findNext(p) > 0);
             } finally {
@@ -326,13 +280,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         try {
             txnScoreboard.ofRO(path);
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
-            TableUtils.safeReadTxn(txReader, this.configuration.getMillisecondClock(), this.configuration.getSpinLockTimeout());
+            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
             for (int i = 0; i < n; i += 2) {
                 long currentPartitionTs = partitionList.get(i + 1);
                 if (currentPartitionTs != partitionTimestamp) {
                     if (i > lo + 2 ||
-                            (i > 0 && txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0)) {
+                            (i > 0 && txReader.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp) < 0)) {
                         processPartition(
                                 ff,
                                 path,
@@ -382,11 +336,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final O3PartitionPurgeTask task = queue.get(cursor);
         discoverPartitions(
                 configuration.getFilesFacade(),
-                sink[workerId],
                 fileNameSinks[workerId],
                 partitionList.get(workerId),
                 configuration.getRoot(),

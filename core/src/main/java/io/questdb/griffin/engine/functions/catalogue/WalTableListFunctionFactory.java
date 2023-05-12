@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,11 +65,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-        int position,
-        ObjList<Function> args,
-        IntList argPositions,
-        CairoConfiguration configuration,
-        SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return new CursorFunction(new WalTableListCursorFactory(configuration, sqlExecutionContext)) {
             @Override
@@ -119,7 +119,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final TxReader txReader = new TxReader(ff);
-            private final ObjList<TableToken> tableBucket = new ObjList<>();
+            private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private int tableIndex = -1;
 
             @Override
@@ -228,8 +228,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         sequencerTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                     } finally {
                         rootPath.trimTo(rootLen);
-                        ff.closeChecked(metaFd);
-                        ff.closeChecked(txnFd);
+                        ff.close(metaFd);
+                        ff.close(txnFd);
                     }
 
                     rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();

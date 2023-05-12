@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -84,9 +83,15 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
-        this.sqlCompiler.compile(
-                "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (" +
+        this.sqlExecutionContext.with(
+                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                null,
+                null
+        );
+        this.tableToken = this.sqlCompiler.query().$(
+                        "CREATE TABLE IF NOT EXISTS \"")
+                .$(tableName)
+                .$("\" (" +
                         "ts timestamp, " + // 0
                         "table_name symbol, " + // 1
                         "column_name symbol, " + // 2
@@ -99,11 +104,11 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         "partition_timestamp timestamp, " + // 9
                         "partition_name_txn long," + // 10
                         "completed timestamp" + // 11
-                        ") timestamp(ts) partition by MONTH",
-                sqlExecutionContext
-        );
-        this.tableToken = engine.getTableToken(tableName);
-        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "QuestDB system");
+                        ") timestamp(ts) partition by MONTH BYPASS WAL"
+                )
+                .compile(sqlExecutionContext)
+                .getTableToken();
+        this.writer = engine.getWriter(tableToken, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
         processTableRecords(engine);
     }
@@ -196,10 +201,11 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
     private void processTableRecords(CairoEngine engine) {
         try {
-            CompiledQuery reloadQuery = sqlCompiler.compile(
-                    "SELECT * FROM \"" + tableToken.getTableName() + "\" WHERE completed = null",
-                    sqlExecutionContext
-            );
+            CompiledQuery reloadQuery = sqlCompiler.query()
+                    .$("SELECT * FROM \"")
+                    .$(tableToken.getTableName())
+                    .$("\" WHERE completed = null")
+                    .compile(sqlExecutionContext);
 
             long microTime = clock.getTicks();
             try (RecordCursorFactory recordCursorFactory = reloadQuery.getRecordCursorFactory()) {
@@ -229,7 +235,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             int tableId = rec.getInt(TABLE_ID_COLUMN);
                             long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
-                            int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
+                            int partitionBy = rec.getInt(PARTITION_BY_COLUMN);
                             long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);
                             TableToken token = engine.getTableTokenByDirName(tableName, tableId);
 
@@ -244,7 +250,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                     tableId,
                                     truncateVersion,
                                     columnType,
-                                    partitionBY,
+                                    partitionBy,
                                     updateTxn,
                                     retryDelay,
                                     microTime

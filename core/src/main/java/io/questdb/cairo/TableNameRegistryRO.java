@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,19 +24,18 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-
-import java.util.HashMap;
-import java.util.Map;
 
 public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;
     private volatile long lastReloadTimestampMs = 0;
-    private Map<CharSequence, TableToken> nameTableTokenMap = new HashMap<>();
-    private Map<CharSequence, TableToken> nameTableTokenMap2 = new HashMap<>();
-    private Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap = new HashMap<>();
-    private Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap2 = new HashMap<>();
+    private ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
+    private ConcurrentHashMap<TableToken> nameTableTokenMap2 = new ConcurrentHashMap<>(false);
+    private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap2 = new ConcurrentHashMap<>();
 
     public TableNameRegistryRO(CairoConfiguration configuration) {
         super(configuration);
@@ -77,19 +76,19 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void reloadTableNameCache() {
+    public synchronized void reloadTableNameCache(ObjList<TableToken> convertedTables) {
         nameTableTokenMap2.clear();
         reverseTableNameTokenMap2.clear();
-        nameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2);
+        nameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2, convertedTables);
 
         // Swap the maps
         setNameMaps(nameTableTokenMap2, reverseTableNameTokenMap2);
 
-        Map<CharSequence, TableToken> tmp = nameTableTokenMap2;
+        ConcurrentHashMap<TableToken> tmp = nameTableTokenMap2;
         nameTableTokenMap2 = nameTableTokenMap;
         nameTableTokenMap = tmp;
 
-        Map<CharSequence, ReverseTableMapItem> tmp2 = reverseTableNameTokenMap2;
+        ConcurrentHashMap<ReverseTableMapItem> tmp2 = reverseTableNameTokenMap2;
         reverseTableNameTokenMap2 = reverseTableNameTokenMap;
         reverseTableNameTokenMap = tmp2;
 

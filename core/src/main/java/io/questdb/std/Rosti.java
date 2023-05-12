@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import static io.questdb.std.Numbers.hexDigits;
 public final class Rosti {
 
     public static long alloc(ColumnTypes types, long capacity) {
-        //min capacity that works on all platforms is 16  
+        // min capacity that works on all platforms is 16  
         assert capacity >= 16;
 
         final int columnCount = types.getColumnCount();
@@ -115,6 +115,12 @@ public final class Rosti {
 
     public static native boolean keyedHourCount(long pRosti, long pKeys, long count, int valueOffset);
 
+    public static native boolean keyedHourCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedHourCountInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
+
+    public static native boolean keyedHourCountLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
     public static native boolean keyedHourDistinct(long pRosti, long pKeys, long count);
 
     public static native boolean keyedHourKSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
@@ -153,7 +159,15 @@ public final class Rosti {
 
     public static native boolean keyedIntCount(long pRosti, long pKeys, long count, int valueOffset);
 
+    public static native boolean keyedIntCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedIntCountInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
+
+    public static native boolean keyedIntCountLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
     public static native boolean keyedIntCountMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native boolean keyedIntCountWrapUp(long pRosti, int valueOffset, long valueAtNull);
 
     public static native boolean keyedIntDistinct(long pRosti, long pKeys, long count);
 

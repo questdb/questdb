@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,15 +25,12 @@
 package io.questdb;
 
 public class ServerConfigurationException extends Exception {
+
     public ServerConfigurationException(String message) {
         super(message);
     }
 
-    public static ServerConfigurationException forInvalidKey(String key) {
-        return new ServerConfigurationException("invalid configuration value [key= " + key + "]");
-    }
-
     public static ServerConfigurationException forInvalidKey(String key, String value) {
-        return new ServerConfigurationException("invalid configuration value [key=" + key + ", value=" + value + "]");
+        return new ServerConfigurationException("invalid configuration value [key=" + key + ", value=" + value + ']');
     }
 }

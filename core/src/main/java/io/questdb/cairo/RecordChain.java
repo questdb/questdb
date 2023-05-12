@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -212,8 +212,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public void putLong128LittleEndian(long hi, long lo) {
-        mem.putLong128LittleEndian(hi, lo);
+    public void putLong128(long lo, long hi) {
+        mem.putLong128(lo, hi);
     }
 
     @Override
@@ -376,7 +376,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
         @Override
         public long getLong128Hi(int col) {
-            return mem.getLong(fixedWithColumnOffset(col) + 8);
+            return mem.getLong(fixedWithColumnOffset(col) + Long.BYTES);
         }
 
         @Override

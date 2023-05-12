@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,15 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Telemetry;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -47,11 +46,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final int sharedWorkerCount;
-    private final RingQueue<TelemetryTask> telemetryQueue;
+    private final Telemetry<TelemetryTask> telemetry;
+    private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
     private BindVariableService bindVariableService;
-    private CairoSecurityContext cairoSecurityContext;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
@@ -59,27 +58,25 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int jitMode;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
+    private boolean parallelFilterEnabled;
     private Rnd random;
     private long requestFd = -1;
-    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
-    private Sequence telemetryPubSeq;
+    private SecurityContext securityContext;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
-        this.cairoConfiguration = cairoEngine.getConfiguration();
         assert workerCount > 0;
         this.workerCount = workerCount;
         assert sharedWorkerCount > 0;
         this.sharedWorkerCount = sharedWorkerCount;
         this.cairoEngine = cairoEngine;
-        this.clock = cairoConfiguration.getMicrosecondClock();
-        this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
-        this.jitMode = cairoConfiguration.getSqlJitMode();
 
-        this.telemetryQueue = cairoEngine.getTelemetryQueue();
-        if (telemetryQueue != null) {
-            this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
-            this.telemetryMethod = this::doStoreTelemetry;
-        }
+        cairoConfiguration = cairoEngine.getConfiguration();
+        clock = cairoConfiguration.getMicrosecondClock();
+        securityContext = DenyAllSecurityContext.INSTANCE;
+        jitMode = cairoConfiguration.getSqlJitMode();
+        parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
+        telemetry = cairoEngine.getTelemetry();
+        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -99,13 +96,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             boolean ordered,
             boolean baseSupportsRandomAccess
     ) {
-        analyticContext.of(
-                partitionByRecord,
-                partitionBySink,
-                partitionByKeyTypes,
-                ordered,
-                baseSupportsRandomAccess
-        );
+        analyticContext.of(partitionByRecord, partitionBySink, partitionByKeyTypes, ordered, baseSupportsRandomAccess);
     }
 
     @Override
@@ -121,11 +112,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public @NotNull CairoEngine getCairoEngine() {
         return cairoEngine;
-    }
-
-    @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return cairoSecurityContext;
     }
 
     @Override
@@ -169,6 +155,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @NotNull SecurityContext getSecurityContext() {
+        return securityContext;
+    }
+
+    @Override
     public int getSharedWorkerCount() {
         return sharedWorkerCount;
     }
@@ -186,6 +177,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isColumnPreTouchEnabled() {
         return columnPreTouchEnabled;
+    }
+
+    @Override
+    public boolean isParallelFilterEnabled() {
+        return parallelFilterEnabled;
     }
 
     @Override
@@ -230,21 +226,22 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
+        this.parallelFilterEnabled = parallelFilterEnabled;
+    }
+
+    @Override
     public void setRandom(Rnd rnd) {
         this.random = rnd;
     }
 
     @Override
     public void storeTelemetry(short event, short origin) {
-        telemetryMethod.store(event, origin);
+        telemetryFacade.store(event, origin);
     }
 
-    public SqlExecutionContextImpl with(
-            @NotNull CairoSecurityContext cairoSecurityContext,
-            @Nullable BindVariableService bindVariableService,
-            @Nullable Rnd rnd
-    ) {
-        this.cairoSecurityContext = cairoSecurityContext;
+    public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
+        this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         return this;
@@ -254,14 +251,26 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.requestFd = requestFd;
     }
 
+    public void with(BindVariableService bindVariableService) {
+        this.bindVariableService = bindVariableService;
+    }
+
+    public void with(SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
+    }
+
+    public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService) {
+        return with(securityContext, bindVariableService, null, -1, null);
+    }
+
     public SqlExecutionContextImpl with(
-            @NotNull CairoSecurityContext cairoSecurityContext,
+            @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
             long requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        this.cairoSecurityContext = cairoSecurityContext;
+        this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
@@ -270,9 +279,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void doStoreTelemetry(short event, short origin) {
-        TelemetryTask.store(telemetryQueue, telemetryPubSeq, event, origin, clock);
+        TelemetryTask.store(telemetry, origin, event);
     }
 
     private void storeTelemetryNoop(short event, short origin) {
+    }
+
+    @FunctionalInterface
+    private interface TelemetryFacade {
+        void store(short event, short origin);
     }
 }

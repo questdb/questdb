@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,9 +91,8 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
         this.unIndexedNullCount = unIndexedNullCount;
-        TableUtils.txnPartitionConditionally(path, partitionTxn);
         final int plen = path.length();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeout();
 
@@ -160,7 +159,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         }
     }
 
-    protected void updateKeyCount() {
+    public void updateKeyCount() {
         int keyCount;
         final long deadline = clock.getTicks() + spinLockTimeoutUs;
         while (true) {

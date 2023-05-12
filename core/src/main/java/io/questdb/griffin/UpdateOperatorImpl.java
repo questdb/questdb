@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -42,25 +41,37 @@ import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseable, UpdateOperator {
+public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
+    private final CairoConfiguration configuration;
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
+    private final FilesFacade ff;
     private final long fileOpenOpts;
+    private final Path path;
+    private final PurgingOperator purgingOperator;
+    private final int rootLen;
+    private final TableWriter tableWriter;
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private IndexBuilder indexBuilder;
+    private final IntList updateColumnIndexes = new IntList();
 
     public UpdateOperatorImpl(
             CairoConfiguration configuration,
-            MessageBus messageBus,
             TableWriter tableWriter,
             Path path,
-            int rootLen
+            int rootLen,
+            PurgingOperator purgingOperator
     ) {
-        super(LOG, configuration, messageBus, tableWriter, path, rootLen);
+        this.tableWriter = tableWriter;
+        this.rootLen = rootLen;
+        this.purgingOperator = purgingOperator;
         this.indexBuilder = new IndexBuilder();
         this.dataAppendPageSize = configuration.getDataAppendPageSize();
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
+        this.ff = configuration.getFilesFacade();
+        this.configuration = configuration;
+        this.path = path;
     }
 
     @Override
@@ -78,7 +89,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             final long tableVersion = op.getTableVersion();
             final RecordCursorFactory factory = op.getFactory();
 
-            cleanupColumnVersions.clear();
+            purgingOperator.clear();
 
             if (tableWriter.inTransaction()) {
                 LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
@@ -118,9 +129,6 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             op.forceTestTimeout();
             // Row by row updates for now
             // This should happen parallel per file (partition and column)
-            // TODO: getCursor will open partitions where their path may be a soft link to the partition in
-            //  cold storage, which we want to keep read only. For now updates on such partitions do not fail,
-            //  i.e. they go through and modify the cold storage file system.
             try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                 Record masterRecord = recordCursor.getRecord();
 
@@ -145,6 +153,12 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     final long currentRow = Rows.toLocalRowID(rowId);
 
                     if (rowPartitionIndex != partitionIndex) {
+                        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
+                            throw CairoException.critical(0)
+                                    .put("cannot update read-only partition [table=").put(tableToken.getTableName())
+                                    .put(", partitionTimestamp=").ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                    .put(']');
+                        }
                         if (partitionIndex > -1) {
                             LOG.info()
                                     .$("updating partition [partitionIndex=").$(partitionIndex)
@@ -223,7 +237,15 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                 op.forceTestTimeout();
                 tableWriter.commit();
                 tableWriter.openLastPartition();
-                purgeOldColumnVersions();
+                purgingOperator.purge(
+                        path.trimTo(rootLen),
+                        tableWriter.getTableToken(),
+                        tableWriter.getPartitionBy(),
+                        tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
+                        tableWriter.getMetadata(),
+                        tableWriter.getTruncateVersion(),
+                        tableWriter.getTxn()
+                );
             }
 
             LOG.info().$("update finished [table=").$(tableToken)
@@ -402,6 +424,8 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
                     break;
                 case ColumnType.LONG128:
+                    // fall-through
+                case ColumnType.UUID:
                     dstFixMem.putLong(masterRecord.getLong128Lo(i));
                     dstFixMem.putLong(masterRecord.getLong128Hi(i));
                     break;
@@ -592,8 +616,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
             path.trimTo(rootLen);
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
             int pathTrimToLen = path.length();
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);
@@ -607,7 +630,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     if (columnTop > -1) {
                         // columnTop == -1 means column did not exist at the partition
-                        cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                        purgingOperator.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
                     }
                 }
 

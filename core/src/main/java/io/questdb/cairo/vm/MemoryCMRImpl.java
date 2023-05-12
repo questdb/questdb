@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             size = 0;
             pageAddress = 0;
         }
-        if (ff != null && ff.closeChecked(fd)) {
+        if (ff != null && ff.close(fd)) {
             LOG.debug().$("closed [fd=").$(fd).I$();
             fd = -1;
         }

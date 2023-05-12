@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -262,6 +263,10 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.putTimestamp(colIndex, buffer.readLong(offset));
                         offset += Long.BYTES;
                         break;
+                    case LineTcpParser.ENTITY_TYPE_UUID:
+                        row.putLong128(colIndex, buffer.readLong(offset), buffer.readLong(offset + Long.BYTES));
+                        offset += Long.BYTES * 2;
+                        break;
                     case ENTITY_TYPE_NULL:
                         // ignored, default nulls is used
                         break;
@@ -286,6 +291,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createMeasurementEvent(
+            SecurityContext securityContext,
             TableUpdateDetails tud,
             LineTcpParser parser,
             int workerId
@@ -319,14 +325,15 @@ class LineTcpMeasurementEvent implements Closeable {
                 colType = localDetails.getColumnType(columnWriterIndex);
             } else if (columnWriterIndex == COLUMN_NOT_FOUND) {
                 // send column by name
-                final String columnName = localDetails.getColName();
-                if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxColumnNameLength)) {
-                    offset = buffer.addColumnName(offset, columnName);
-                    colType = localDetails.getColumnType(columnName, entityType);
+                final String colNameUtf16 = localDetails.getColNameUtf16();
+                if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
+                    securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
+                    offset = buffer.addColumnName(offset, colNameUtf16);
+                    colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
                 } else if (!autoCreateNewColumns) {
-                    throw newColumnsNotAllowed(tableUpdateDetails, columnName);
+                    throw newColumnsNotAllowed(tableUpdateDetails, colNameUtf16);
                 } else {
-                    throw invalidColNameError(tableUpdateDetails, columnName);
+                    throw invalidColNameError(tableUpdateDetails, colNameUtf16);
                 }
             } else {
                 // duplicate column, skip
@@ -338,7 +345,12 @@ class LineTcpMeasurementEvent implements Closeable {
             switch (entityType) {
                 case LineTcpParser.ENTITY_TYPE_TAG: {
                     if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                        offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                        offset = buffer.addSymbol(
+                                offset,
+                                entity.getValue(),
+                                parser.hasNonAsciiChars(),
+                                localDetails.getSymbolLookup(columnWriterIndex)
+                        );
                     } else {
                         throw castError("tag", columnWriterIndex, colType, entity.getName());
                     }
@@ -400,7 +412,12 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                            offset = buffer.addSymbol(
+                                    offset,
+                                    entity.getValue(),
+                                    parser.hasNonAsciiChars(),
+                                    localDetails.getSymbolLookup(columnWriterIndex)
+                            );
                             break;
 
                         default:
@@ -419,7 +436,11 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                            offset = buffer.addSymbol(
+                                    offset,
+                                    entity.getValue(),
+                                    parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex)
+                            );
                             break;
 
                         default:
@@ -452,7 +473,20 @@ class LineTcpMeasurementEvent implements Closeable {
                                 break;
 
                             case ColumnType.SYMBOL:
-                                offset = buffer.addSymbol(offset, entityValue, parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entityValue,
+                                        parser.hasNonAsciiChars(),
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                                break;
+
+                            case ColumnType.UUID:
+                                try {
+                                    offset = buffer.addUuid(offset, entityValue);
+                                } catch (NumericException e) {
+                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                }
                                 break;
 
                             default:
@@ -470,7 +504,12 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                            offset = buffer.addSymbol(
+                                    offset,
+                                    entity.getValue(),
+                                    parser.hasNonAsciiChars(),
+                                    localDetails.getSymbolLookup(columnWriterIndex)
+                            );
                             break;
 
                         default:
@@ -510,7 +549,12 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                            offset = buffer.addSymbol(
+                                    offset,
+                                    entity.getValue(),
+                                    parser.hasNonAsciiChars(),
+                                    localDetails.getSymbolLookup(columnWriterIndex)
+                            );
                             break;
 
                         default:
@@ -529,7 +573,12 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                            offset = buffer.addSymbol(
+                                    offset,
+                                    entity.getValue(),
+                                    parser.hasNonAsciiChars(),
+                                    localDetails.getSymbolLookup(columnWriterIndex)
+                            );
                             break;
 
                         default:
@@ -539,7 +588,12 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
                 case LineTcpParser.ENTITY_TYPE_SYMBOL: {
                     if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                        offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                        offset = buffer.addSymbol(
+                                offset,
+                                entity.getValue(),
+                                parser.hasNonAsciiChars(),
+                                localDetails.getSymbolLookup(columnWriterIndex)
+                        );
                     } else {
                         throw castError("symbol", columnWriterIndex, colType, entity.getName());
                     }

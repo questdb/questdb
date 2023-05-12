@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import org.jetbrains.annotations.NotNull;
 
 public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
     @Override
@@ -47,12 +48,12 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     }
 
     @Override
-    public MillisecondClock getClock() {
+    public @NotNull MillisecondClock getClock() {
         return MillisecondClockImpl.INSTANCE;
     }
 
     @Override
-    public NetworkFacade getNetworkFacade() {
+    public @NotNull NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,14 +26,15 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.AbstractLockable;
 
-public class O3CallbackTask extends AbstractLockable {
+public class O3CallbackTask {
     private int columnIndex;
     private int columnType;
     private CountDownLatchSPI countDownLatchSPI;
     private long mergedTimestampsAddr;
-    private long valueCount;
+    private long row1Count;
+    private long row2Hi;
+    private long row2Lo;
     private TableWriter.O3ColumnUpdateMethod writerCallbackMethod;
 
     public int getColumnIndex() {
@@ -52,8 +53,16 @@ public class O3CallbackTask extends AbstractLockable {
         return mergedTimestampsAddr;
     }
 
-    public long getValueCount() {
-        return valueCount;
+    public long getRow1Count() {
+        return row1Count;
+    }
+
+    public long getRow2Hi() {
+        return row2Hi;
+    }
+
+    public long getRow2Lo() {
+        return row2Lo;
     }
 
     public TableWriter.O3ColumnUpdateMethod getWriterCallbackMethod() {
@@ -65,15 +74,18 @@ public class O3CallbackTask extends AbstractLockable {
             int columnIndex,
             int columnType,
             long mergedTimestampsAddr,
-            long rowCount,
+            long row1Count,
+            long row2Lo,
+            long row2Hi,
             TableWriter.O3ColumnUpdateMethod writerCallbackMethod
     ) {
-        of(columnIndex);
         this.countDownLatchSPI = countDownLatchSPI;
         this.columnIndex = columnIndex;
         this.columnType = columnType;
         this.mergedTimestampsAddr = mergedTimestampsAddr;
-        this.valueCount = rowCount;
+        this.row1Count = row1Count;
+        this.row2Lo = row2Lo;
+        this.row2Hi = row2Hi;
         this.writerCallbackMethod = writerCallbackMethod;
     }
 }

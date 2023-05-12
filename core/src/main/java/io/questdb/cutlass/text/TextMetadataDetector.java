@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -285,7 +285,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         for (int i = 0; i < hi; i++) {
             DirectByteCharSequence value = values.getQuick(i);
             utf8Sink.clear();
-            if (Chars.utf8Decode(value.getLo(), value.getHi(), utf8Sink)) {
+            if (Chars.utf8toUtf16(value.getLo(), value.getHi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();

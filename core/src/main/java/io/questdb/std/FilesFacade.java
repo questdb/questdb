@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,29 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
 
     boolean allocate(int fd, long size);
 
+    boolean allowMixedIO(CharSequence root);
+
     long append(int fd, long buf, int len);
 
     boolean close(int fd);
-
-    default boolean closeChecked(int fd) {
-        return Files.closeChecked(fd) == 0;
-    }
 
     boolean closeRemove(int fd, LPSZ path);
 
     int copy(LPSZ from, LPSZ to);
 
     long copyData(int srcFd, int destFd, long offsetSrc, long length);
+
+    long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length);
 
     int copyRecursive(Path src, Path dst, int dirMode);
 
@@ -68,7 +70,9 @@ public interface FilesFacade {
 
     int fsync(int fd);
 
-    long getDiskSize(LPSZ path);
+    long getDirSize(Path path);
+
+    long getDiskFreeSpace(LPSZ path);
 
     long getLastModified(LPSZ path);
 
@@ -83,6 +87,12 @@ public interface FilesFacade {
     int hardLinkDirRecursive(Path src, Path dst, int dirMode);
 
     boolean isCrossDeviceCopyError(int errno);
+
+    boolean isDirOrSoftLinkDir(LPSZ path);
+
+    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
+
+    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
 
     boolean isRestrictedFileSystem();
 
@@ -120,6 +130,8 @@ public interface FilesFacade {
 
     long read(int fd, long buf, long size, long offset);
 
+    boolean readLink(Path softLink, Path readTo);
+
     byte readNonNegativeByte(int fd, long offset);
 
     int readNonNegativeInt(int fd, long offset);
@@ -140,7 +152,13 @@ public interface FilesFacade {
 
     boolean truncate(int fd, long size);
 
+    int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
+
     int unlink(LPSZ softLink);
+
+    int unlinkOrRemove(Path path, Log LOG);
+
+    int unlinkOrRemove(Path path, int checkedType, Log LOG);
 
     void walk(Path src, FindVisitor func);
 

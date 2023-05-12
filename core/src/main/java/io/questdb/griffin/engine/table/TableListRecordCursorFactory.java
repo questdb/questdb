@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import org.jetbrains.annotations.NotNull;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -64,7 +64,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
-        private final ObjList<TableToken> tableBucket = new ObjList<>();
+        private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
         private CairoEngine engine;
         private int tableIndex = -1;
         private String tableName = null;

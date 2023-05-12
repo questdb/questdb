@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,8 +67,6 @@ public interface SqlExecutionContext extends Closeable {
     @NotNull
     CairoEngine getCairoEngine();
 
-    CairoSecurityContext getCairoSecurityContext();
-
     @NotNull
     SqlExecutionCircuitBreaker getCircuitBreaker();
 
@@ -81,13 +79,11 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     default TableRecordMetadata getMetadata(TableToken tableToken) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getCairoSecurityContext(), tableToken);
+        return getCairoEngine().getMetadata(tableToken);
     }
 
     default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getCairoSecurityContext(), tableToken, structureVersion);
+        return getCairoEngine().getMetadata(tableToken, structureVersion);
     }
 
     long getMicrosecondTimestamp();
@@ -99,29 +95,32 @@ public interface SqlExecutionContext extends Closeable {
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableName, long version) {
-        return getCairoEngine().getReader(getCairoSecurityContext(), tableName, version);
+        return getCairoEngine().getReader(tableName, version);
     }
 
     default TableReader getReader(TableToken tableName) {
-        return getCairoEngine().getReader(getCairoSecurityContext(), tableName);
+        return getCairoEngine().getReader(tableName);
     }
 
     long getRequestFd();
+
+    @NotNull
+    SecurityContext getSecurityContext();
 
     default int getSharedWorkerCount() {
         return getWorkerCount();
     }
 
-    default int getStatus(Path path, TableToken tableName) {
-        return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);
+    default int getTableStatus(Path path, TableToken tableName) {
+        return getCairoEngine().getTableStatus(path, tableName);
     }
 
     default TableToken getTableToken(CharSequence tableName) {
-        return getCairoEngine().getTableToken(tableName);
+        return getCairoEngine().verifyTableName(tableName);
     }
 
     default TableToken getTableToken(CharSequence tableName, int lo, int hi) {
-        return getCairoEngine().getTableToken(tableName, lo, hi);
+        return getCairoEngine().verifyTableName(tableName, lo, hi);
     }
 
     default TableToken getTableTokenIfExists(CharSequence tableName) {
@@ -137,6 +136,8 @@ public interface SqlExecutionContext extends Closeable {
     void initNow();
 
     boolean isColumnPreTouchEnabled();
+
+    boolean isParallelFilterEnabled();
 
     boolean isTimestampRequired();
 
@@ -154,7 +155,14 @@ public interface SqlExecutionContext extends Closeable {
 
     void setNowAndFixClock(long now);
 
+    void setParallelFilterEnabled(boolean parallelFilterEnabled);
+
     void setRandom(Rnd rnd);
 
-    void storeTelemetry(short event, short origin);
+    default void storeTelemetry(short event, short origin) {
+    }
+
+    default boolean isUninterruptible() {
+        return false;
+    }
 }

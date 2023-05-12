@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
@@ -214,6 +214,10 @@ public class TextLoader implements Closeable, Mutable {
         return forceHeaders;
     }
 
+    public boolean isHeaderDetected() {
+        return textMetadataDetector.isHeader();
+    }
+
     public void parse(long lo, long hi, int lineCountLimit, CsvTextLexer.Listener textLexerListener) {
         lexer.parse(lo, hi, lineCountLimit, textLexerListener);
     }
@@ -222,12 +226,12 @@ public class TextLoader implements Closeable, Mutable {
         lexer.parse(lo, hi, lineCountLimit, textWriter.getTextListener());
     }
 
-    public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
-        parseMethods.getQuick(state).parse(lo, hi, cairoSecurityContext);
+    public void parse(long lo, long hi, SecurityContext securityContext) throws TextException {
+        parseMethods.getQuick(state).parse(lo, hi, securityContext);
     }
 
     public void prepareTable(
-            CairoSecurityContext ctx,
+            SecurityContext ctx,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
             Path path,
@@ -292,11 +296,11 @@ public class TextLoader implements Closeable, Mutable {
         }
     }
 
-    private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+    private void parseData(long lo, long hi, SecurityContext securityContext) {
         parse(lo, hi, Integer.MAX_VALUE);
     }
 
-    private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
+    private void parseJsonMetadata(long lo, long hi, SecurityContext securityContext) throws TextException {
         try {
             jsonLexer.parse(lo, hi, textMetadataParser);
         } catch (JsonException e) {
@@ -304,7 +308,7 @@ public class TextLoader implements Closeable, Mutable {
         }
     }
 
-    private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
+    private void parseStructure(long lo, long hi, SecurityContext securityContext) throws TextException {
         if (columnDelimiter > 0) {
             setDelimiter(columnDelimiter);
         } else {
@@ -327,7 +331,7 @@ public class TextLoader implements Closeable, Mutable {
         restart(textMetadataDetector.isHeader());
 
         prepareTable(
-                cairoSecurityContext,
+                securityContext,
                 textMetadataDetector.getColumnNames(),
                 textMetadataDetector.getColumnTypes(),
                 path,
@@ -340,6 +344,6 @@ public class TextLoader implements Closeable, Mutable {
 
     @FunctionalInterface
     protected interface ParserMethod {
-        void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException;
+        void parse(long lo, long hi, SecurityContext securityContext) throws TextException;
     }
 }

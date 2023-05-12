@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -488,4 +488,24 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Timestamp
      */
     void setTimestamp(CharSequence name, long value) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as UUID and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param lo    lower 64 bits of UUID
+     * @param hi    higher 64 bits of UUID
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setUuid(int index, long lo, long hi) throws SqlException;
+
+    /**
+     * Set type of bind variable by name as UUID and provide a value
+     *
+     * @param name of the bind variable
+     * @param lo   lower 64 bits of UUID
+     * @param hi   higher 64 bits of UUID
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setUuid(CharSequence name, long lo, long hi) throws SqlException;
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,12 +41,20 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final int ERRNO_ACCESS_DENIED_WIN = 5;
+    private static final int TABLE_DROPPED = -102;
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
+    private boolean authorizationError = false;
     private boolean cacheable;
     private boolean interruption; // used when a query times out
     private int messagePosition;
+
+    public static CairoException authorization() {
+        CairoException e = nonCritical();
+        e.authorizationError = true;
+        return e;
+    }
 
     public static CairoException critical(int errno) {
         CairoException ex = tlException.get();
@@ -56,6 +64,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         ex.errno = errno;
         ex.cacheable = false;
         ex.interruption = false;
+        ex.authorizationError = false;
         return ex;
     }
 
@@ -105,8 +114,23 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return critical(NON_CRITICAL);
     }
 
+    public static CairoException queryCancelled(int fd) {
+        return nonCritical().put("cancelling statement due to user request [fd=").put(fd).put(']').setInterruption(true);
+    }
+
+    public static CairoException queryTimedOut(int fd) {
+        return nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+    }
+
     public static CairoException tableDoesNotExist(CharSequence tableName) {
         return nonCritical().put("table does not exist [table=").put(tableName).put(']');
+    }
+
+    public static CairoException tableDropped(TableToken tableToken) {
+        return critical(TABLE_DROPPED)
+                .put("table is dropped [dirName=").put(tableToken.getDirName())
+                .put(", tableName=").put(tableToken.getTableName())
+                .put(']');
     }
 
     public boolean errnoReadPathDoesNotExist() {
@@ -140,6 +164,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return result;
     }
 
+    public boolean isAuthorizationError() {
+        return authorizationError;
+    }
+
     public boolean isCacheable() {
         return cacheable;
     }
@@ -150,6 +178,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isInterruption() {
         return interruption;
+    }
+
+    public boolean isTableDropped() {
+        return errno == TABLE_DROPPED;
     }
 
     // logged and skipped by WAL applying code
@@ -179,6 +211,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException put(char c) {
         message.put(c);
+        return this;
+    }
+
+    public CairoException put(boolean value) {
+        message.put(value);
         return this;
     }
 

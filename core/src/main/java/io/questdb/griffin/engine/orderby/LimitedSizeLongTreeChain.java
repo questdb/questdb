@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -233,9 +233,20 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         currentValues++;
     }
 
-    @Override
-    public void reopen() {
-        super.reopen();
+    //remove node and put on freelist (if holds only one value in chain)
+    public void removeAndCache(long node) {
+        if (hasMoreThanOneValue(node)) {
+            removeMostRecentChainValue(node);//don't change minmax
+        } else {
+            long nodeToRemove = super.remove(node);
+            clearBlock(nodeToRemove);
+            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
+
+            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
+            minMaxNode = -1;
+        }
+
+        currentValues--;
     }
 
     @Override
@@ -245,7 +256,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
     private long appendValue(long value, long prevValueOffset) {
         final long offset = valueChain.getAppendOffset();
-        valueChain.putLongLong(value, prevValueOffset);
+        valueChain.putLong128(value, prevValueOffset);
         return offset;
     }
 
@@ -373,22 +384,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     @Override
     protected void putParent(long value) {
         root = allocateBlock(-1, value);
-    }
-
-    //remove node and put on freelist (if holds only one value in chain)
-    protected void removeAndCache(long node) {
-        if (hasMoreThanOneValue(node)) {
-            removeMostRecentChainValue(node);//don't change minmax
-        } else {
-            long nodeToRemove = super.remove(node);
-            clearBlock(nodeToRemove);
-            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
-
-            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
-            minMaxNode = -1;
-        }
-
-        currentValues--;
     }
 
     @FunctionalInterface

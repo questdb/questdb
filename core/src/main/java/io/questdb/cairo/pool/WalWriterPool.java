@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
@@ -41,12 +42,12 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
 
     @Override
     protected byte getListenerSrc() {
-        return PoolListener.SRC_WRITER;
+        return PoolListener.SRC_WAL_WRITER;
     }
 
     @Override
     protected WalWriterTenant newTenant(TableToken tableToken, Entry<WalWriterTenant> entry, int index) {
-        return new WalWriterTenant(this, entry, index, tableToken, engine.getTableSequencerAPI());
+        return new WalWriterTenant(this, entry, index, tableToken, engine.getTableSequencerAPI(), engine.getMetrics());
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant {
@@ -59,9 +60,10 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 Entry<WalWriterTenant> entry,
                 int index,
                 TableToken tableToken,
-                TableSequencerAPI tableSequencerAPI
+                TableSequencerAPI tableSequencerAPI,
+                Metrics metrics
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, metrics);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -77,8 +79,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                             return;
                         }
                     } else {
-                        super.close();
-                        pool.expelFromPool(this);
+                        try {
+                            super.close();
+                        } finally {
+                            pool.expelFromPool(this);
+                        }
                         return;
                     }
                 }

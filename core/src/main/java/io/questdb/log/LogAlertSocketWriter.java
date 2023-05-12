@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,16 +40,15 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.io.InputStream;
 
 import static io.questdb.log.TemplateParser.TemplateNode;
 
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
+    public static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
+    public static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
     public static final String QDB_VERSION_ENV = "QDB_VERSION";
-    static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
-    static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
@@ -109,6 +108,44 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         this.writeSequence = writeSequence;
         this.level = level & ~(1 << Numbers.msb(LogLevel.ADVISORY)); // switch off ADVISORY
         this.properties = properties;
+    }
+
+    @TestOnly
+    public static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
+        int templateFd = -1;
+        try (Path path = new Path()) {
+            // Paths for logger are typically derived from resources.
+            // They may start with `/C:` on Windows OS, which is Java way of emphasising absolute path.
+            // We have to remove `/` in that path before calling native methods.
+            if (Os.isWindows() && location.charAt(0) == '/') {
+                path.of(location, 1, location.length());
+            } else {
+                path.of(location);
+            }
+            templateFd = ff.openRO(path.$());
+            if (templateFd == -1) {
+                throw new LogError(String.format(
+                        "Cannot read %s [errno=%d]",
+                        location,
+                        ff.errno()
+                ));
+            }
+            long size = ff.length(templateFd);
+            if (size > addressSize) {
+                throw new LogError("Template file is too big");
+            }
+            if (size < 0 || size != ff.read(templateFd, address, size, 0)) {
+                throw new LogError(String.format(
+                        "Cannot read %s [errno=%d, size=%d]",
+                        location,
+                        ff.errno(),
+                        size
+                ));
+            }
+            Chars.utf8toUtf16(address, address + size, sink);
+        } finally {
+            ff.close(templateFd);
+        }
     }
 
     @Override
@@ -171,9 +208,106 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         Misc.free(socket);
     }
 
+    @TestOnly
+    public HttpLogRecordSink getAlertSink() {
+        return alertSink;
+    }
+
+    @TestOnly
+    public String getAlertTargets() {
+        return socket.getAlertTargets();
+    }
+
+    @TestOnly
+    public String getDefaultAlertHost() {
+        return socket.getDefaultAlertHost();
+    }
+
+    @TestOnly
+    public int getDefaultAlertPort() {
+        return socket.getDefaultAlertPort();
+    }
+
+    @TestOnly
+    public int getInBufferSize() {
+        return socket.getInBufferSize();
+    }
+
+    @TestOnly
+    public String getLocation() {
+        return location;
+    }
+
+    @TestOnly
+    public int getOutBufferSize() {
+        return socket.getOutBufferSize();
+    }
+
+    @TestOnly
+    public long getReconnectDelay() {
+        return socket.getReconnectDelay();
+    }
+
+    @TestOnly
+    public void onLogRecord(LogRecordSink logRecord) {
+        final int len = logRecord.length();
+        if ((logRecord.getLevel() & level) != 0 && len > 0) {
+            alertTemplate.setDateValue(clock.getTicks());
+            alertSink.rewindToMark();
+            for (int i = 0; i < alertTemplateNodesLen; i++) {
+                TemplateNode comp = alertTemplateNodes.getQuick(i);
+                if (comp.isEnv(MESSAGE_ENV)) {
+                    alertSink.put(logRecord);
+                } else {
+                    alertSink.put(comp);
+                }
+            }
+            sink.clear();
+            sink.put(logRecord);
+            sink.clear(sink.length() - Misc.EOL.length());
+            log.info().$("Sending: ").$(sink).$();
+            socket.send(alertSink.$());
+        }
+    }
+
     @Override
     public boolean runSerially() {
         return writeSequence.consumeAll(alertsSourceQueue, alertsProcessor);
+    }
+
+    @TestOnly
+    public void setAlertTargets(String alertTargets) {
+        this.alertTargets = alertTargets;
+    }
+
+    @TestOnly
+    public void setDefaultAlertHost(String defaultAlertHost) {
+        this.defaultAlertHost = defaultAlertHost;
+    }
+
+    @TestOnly
+    public void setDefaultAlertPort(String defaultAlertPort) {
+        this.defaultAlertPort = defaultAlertPort;
+    }
+
+    @TestOnly
+    public void setInBufferSize(String inBufferSize) {
+        this.inBufferSize = inBufferSize;
+    }
+
+    @TestOnly
+    public void setLocation(String location) {
+        this.location = location;
+    }
+
+    @TestOnly
+    public void setOutBufferSize(String outBufferSize) {
+        this.outBufferSize = outBufferSize;
+    }
+
+    @TestOnly
+    public void setReconnectDelay(String reconnectDelay) {
+        this.reconnectDelay = reconnectDelay;
     }
 
     private void loadLogAlertTemplate() {
@@ -193,7 +327,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 alertTemplate.parse(template, now, properties);
                 needsReading = false;
             }
-        } catch (IOException e) {
+        } catch (Throwable e) {
             // it was not a resource ("/resource_name")
         }
         if (needsReading) {
@@ -215,134 +349,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
         alertTemplateNodes = alertTemplate.getTemplateNodes();
         alertTemplateNodesLen = alertTemplateNodes.size();
-    }
-
-    @TestOnly
-    static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
-        int templateFd = -1;
-        try (Path path = new Path()) {
-            path.of(location);
-            templateFd = ff.openRO(path.$());
-            if (templateFd == -1) {
-                throw new LogError(String.format(
-                        "Cannot read %s [errno=%d]",
-                        location,
-                        ff.errno()
-                ));
-            }
-            long size = ff.length(templateFd);
-            if (size > addressSize) {
-                throw new LogError("Template file is too big");
-            }
-            if (size < 0 || size != ff.read(templateFd, address, size, 0)) {
-                throw new LogError(String.format(
-                        "Cannot read %s [errno=%d, size=%d]",
-                        location,
-                        ff.errno(),
-                        size
-                ));
-            }
-            Chars.utf8Decode(address, address + size, sink);
-        } finally {
-            ff.closeChecked(templateFd);
-        }
-    }
-
-    @TestOnly
-    HttpLogRecordSink getAlertSink() {
-        return alertSink;
-    }
-
-    @TestOnly
-    String getAlertTargets() {
-        return socket.getAlertTargets();
-    }
-
-    @TestOnly
-    String getDefaultAlertHost() {
-        return socket.getDefaultAlertHost();
-    }
-
-    @TestOnly
-    int getDefaultAlertPort() {
-        return socket.getDefaultAlertPort();
-    }
-
-    @TestOnly
-    int getInBufferSize() {
-        return socket.getInBufferSize();
-    }
-
-    @TestOnly
-    String getLocation() {
-        return location;
-    }
-
-    @TestOnly
-    int getOutBufferSize() {
-        return socket.getOutBufferSize();
-    }
-
-    @TestOnly
-    long getReconnectDelay() {
-        return socket.getReconnectDelay();
-    }
-
-    @TestOnly
-    void onLogRecord(LogRecordSink logRecord) {
-        final int len = logRecord.length();
-        if ((logRecord.getLevel() & level) != 0 && len > 0) {
-            alertTemplate.setDateValue(clock.getTicks());
-            alertSink.rewindToMark();
-            for (int i = 0; i < alertTemplateNodesLen; i++) {
-                TemplateNode comp = alertTemplateNodes.getQuick(i);
-                if (comp.isEnv(MESSAGE_ENV)) {
-                    alertSink.put(logRecord);
-                } else {
-                    alertSink.put(comp);
-                }
-            }
-            sink.clear();
-            sink.put(logRecord);
-            sink.clear(sink.length() - Misc.EOL.length());
-            log.info().$("Sending: ").$(sink).$();
-            socket.send(alertSink.$());
-        }
-    }
-
-    @TestOnly
-    void setAlertTargets(String alertTargets) {
-        this.alertTargets = alertTargets;
-    }
-
-    @TestOnly
-    void setDefaultAlertHost(String defaultAlertHost) {
-        this.defaultAlertHost = defaultAlertHost;
-    }
-
-    @TestOnly
-    void setDefaultAlertPort(String defaultAlertPort) {
-        this.defaultAlertPort = defaultAlertPort;
-    }
-
-    @TestOnly
-    void setInBufferSize(String inBufferSize) {
-        this.inBufferSize = inBufferSize;
-    }
-
-    @TestOnly
-    void setLocation(String location) {
-        this.location = location;
-    }
-
-    @TestOnly
-    void setOutBufferSize(String outBufferSize) {
-        this.outBufferSize = outBufferSize;
-    }
-
-    @TestOnly
-    void setReconnectDelay(String reconnectDelay) {
-        this.reconnectDelay = reconnectDelay;
     }
 
     static {

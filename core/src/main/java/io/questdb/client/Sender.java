@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ package io.questdb.client;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
@@ -499,7 +499,7 @@ public interface Sender extends Closeable {
              */
             public LineSenderBuilder authToken(String token) {
                 try {
-                    LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
+                    LineSenderBuilder.this.privateKey = AuthUtils.toPrivateKey(token);
                 } catch (IllegalArgumentException e) {
                     throw new LineSenderException("could not import token", e);
                 }

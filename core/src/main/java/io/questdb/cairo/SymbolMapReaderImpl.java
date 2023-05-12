@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -159,7 +159,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index reader is used to identify attempts to store duplicate symbol value
-            this.indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, 0, -1);
+            this.indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, 0);
 
             // this is the place where symbol values are stored
             this.charMem.wholeFile(ff, charFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
@@ -170,7 +170,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // we use index hash maximum equals to half of symbol capacity, which
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
-            this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
+            this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
             if (cached) {
                 this.cache.setPos(symbolCapacity);
             }
@@ -199,7 +199,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.symbolCount = symbolCount;
         }
         // Refresh index reader to avoid memory remapping on keyOf() calls.
-        this.indexReader.of(configuration, path, columnNameSink, columnNameTxn, 0, -1);
+        this.indexReader.of(configuration, path, columnNameSink, columnNameTxn, 0);
     }
 
     @Override
@@ -246,7 +246,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @TestOnly
-    int getCacheSize() {
+    public int getCacheSize() {
         return cache.size();
     }
 

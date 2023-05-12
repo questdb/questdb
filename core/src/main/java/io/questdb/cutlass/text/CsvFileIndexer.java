@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -169,7 +169,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         closeOutputFiles();
         closeSortBuffer();
 
-        if (ff.closeChecked(fd)) {
+        if (ff.close(fd)) {
             fd = -1;
         }
 
@@ -547,7 +547,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
         }
 
-        path.chop$().put(index);
+        path.put(index);
 
         return new IndexOutputFile(ff, path, partitionKey);
     }
@@ -694,7 +694,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         void putEntry(long timestamp, long offset, long length) {
-            memory.putLongLong(timestamp, offset);
+            memory.putLong128(timestamp, offset);
             indexChunkSize += INDEX_ENTRY_SIZE;
             dataSize += length;
         }

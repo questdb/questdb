@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -40,7 +39,6 @@ public final class SerialCsvFileImporter implements Closeable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final CharSequence inputRoot;
-    private final CairoSecurityContext securityContext;
     private int atomicity;
     private ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
@@ -59,7 +57,6 @@ public final class SerialCsvFileImporter implements Closeable {
         this.inputFilePath = new Path();
         this.ff = configuration.getFilesFacade();
         this.textLoader = new TextLoader(cairoEngine);
-        this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
         this.cairoEngine = cairoEngine;
     }
 
@@ -91,14 +88,14 @@ public final class SerialCsvFileImporter implements Closeable {
         inputFilePath.of(inputRoot).concat(inputFileName).$();
     }
 
-    public void process() throws TextImportException {
+    public void process(SecurityContext securityContext) throws TextImportException {
         LOG.info()
                 .$("started [importId=").$hexPadded(importId)
                 .$(", file=`").$(inputFilePath).$('`').I$();
 
         final long startMs = getCurrentTimeMs();
 
-        updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+        updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
         setupTextLoaderFromModel();
 
         final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
@@ -119,13 +116,13 @@ public final class SerialCsvFileImporter implements Closeable {
                 int read;
                 while (n < fileLen) {
                     if (circuitBreaker.checkIfTripped()) {
-                        TextImportException ex = TextImportException.instance(TextImportTask.NO_PHASE, "import was cancelled");
+                        TextImportException ex = TextImportException.instance(CopyTask.NO_PHASE, "import was cancelled");
                         ex.setCancelled(true);
                         throw ex;
                     }
                     read = (int) ff.read(fd, buf, sqlCopyBufferSize, n);
                     if (read < 1) {
-                        throw TextImportException.instance(TextImportTask.NO_PHASE, "could not read file [errno=").put(ff.errno()).put(']');
+                        throw TextImportException.instance(CopyTask.NO_PHASE, "could not read file [errno=").put(ff.errno()).put(']');
                     }
                     textLoader.parse(buf, buf + read, securityContext);
                     n += read;
@@ -137,7 +134,7 @@ public final class SerialCsvFileImporter implements Closeable {
                 for (int i = 0, size = columnErrorCounts.size(); i < size; i++) {
                     errorCount += columnErrorCounts.get(i);
                 }
-                updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
+                updateImportStatus(CopyTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
 
                 long endMs = getCurrentTimeMs();
                 LOG.info()
@@ -147,11 +144,11 @@ public final class SerialCsvFileImporter implements Closeable {
                         .I$();
             }
         } catch (TextException e) {
-            throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage());
+            throw TextImportException.instance(CopyTask.NO_PHASE, e.getFlyweightMessage());
         } catch (CairoException e) {
-            throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
+            throw TextImportException.instance(CopyTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
         } finally {
-            ff.closeChecked(fd);
+            ff.close(fd);
             textLoader.clear();
             Unsafe.free(buf, sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         }
@@ -163,7 +160,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
     public void updateImportStatus(byte status, long rowsHandled, long rowsImported, long errors) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(TextImportTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
+            this.statusReporter.report(CopyTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
         }
     }
 

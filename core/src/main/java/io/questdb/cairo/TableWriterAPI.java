@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -132,5 +132,19 @@ public interface TableWriterAPI extends Closeable {
      */
     boolean supportsMultipleWriters();
 
+    /**
+     * Truncates non-WAL table. This method has to be called when the
+     * {@link CairoEngine#lockReaders(TableToken)} lock is held, i.e. when there are no readers reading from the table.
+     *
+     * @throws UnsupportedOperationException when called a WAL table.
+     */
     void truncate();
+
+    /**
+     * Truncates table, but keeps symbol tables, i.e. internal symbol string to symbol int code maps.
+     * Sometimes the symbols should be kept to make sure that DETACH/ATTACH PARTITION does not lose data
+     * for symbol columns. For non-WAL tables, this method has to be called when the
+     * {@link CairoEngine#lockReaders(TableToken)} lock is held, i.e. when there are no readers reading from the table.
+     */
+    void truncateSoft();
 }

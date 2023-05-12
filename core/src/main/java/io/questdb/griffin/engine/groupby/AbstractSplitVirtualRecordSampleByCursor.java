@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
                 offsetFunc,
                 offsetFuncPos
         );
-        this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
+        record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();
         final TimestampFunc timestampFunc = new TimestampFunc();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {

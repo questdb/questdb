@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,8 +53,8 @@ public class RecordSinkFactory {
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
         final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
+        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
         final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
@@ -69,12 +69,13 @@ public class RecordSinkFactory {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
+
         //
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
         final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
-        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128LittleEndian", "(JJ)V");
+        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(JJ)V");
         final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
         final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
         final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
@@ -98,7 +99,7 @@ public class RecordSinkFactory {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 5, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 7, 5);
 
         int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
@@ -210,18 +211,6 @@ public class RecordSinkFactory {
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeInterface(wPutLong256, 1);
                     break;
-                case ColumnType.LONG128:
-                    asm.aload(2);
-                    asm.aload(1);
-                    asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetLong128Hi, 1);
-
-                    asm.aload(1);
-                    asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetLong128Lo, 1);
-
-                    asm.invokeInterface(wPutLong128, 4);
-                    break;
                 case ColumnType.RECORD:
                     asm.aload(2);
                     asm.aload(1);
@@ -266,6 +255,22 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetGeoLong, 1);
                     asm.invokeInterface(wPutLong, 2);
+                    break;
+                case ColumnType.LONG128:
+                    // fall though
+                case ColumnType.UUID:
+                    int skewedIndex = getSkewedIndex(index, skewIndex);
+                    asm.aload(2);
+
+                    asm.aload(1);
+                    asm.iconst(skewedIndex);
+                    asm.invokeInterface(rGetLong128Lo, 1);
+
+                    asm.aload(1);
+                    asm.iconst(skewedIndex);
+                    asm.invokeInterface(rGetLong128Hi, 1);
+
+                    asm.invokeInterface(wPutLong128, 4);
                     break;
                 default:
                     break;

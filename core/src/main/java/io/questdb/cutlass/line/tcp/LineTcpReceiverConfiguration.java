@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.FactoryProvider;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -34,14 +34,11 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
-
-    String getAuthDbPath();
-
     boolean getAutoCreateNewColumns();
 
     boolean getAutoCreateNewTables();
 
-    CairoSecurityContext getCairoSecurityContext();
+    long getCommitInterval();
 
     long getCommitIntervalDefault();
 
@@ -58,6 +55,10 @@ public interface LineTcpReceiverConfiguration {
     boolean getDisconnectOnError();
 
     IODispatcherConfiguration getDispatcherConfiguration();
+
+    FilesFacade getFilesFacade();
+
+    String getAuthDB();
 
     WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
@@ -81,8 +82,6 @@ public interface LineTcpReceiverConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    FilesFacade getFilesFacade();
-
     long getSymbolCacheWaitUsBeforeReload();
 
     LineProtoTimestampAdapter getTimestampAdapter();
@@ -100,4 +99,8 @@ public interface LineTcpReceiverConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isSymbolAsFieldSupported();
+
+    boolean readOnlySecurityContext();
+
+    FactoryProvider getFactoryProvider();
 }

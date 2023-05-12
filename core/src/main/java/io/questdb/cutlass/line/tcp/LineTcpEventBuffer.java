@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,12 +27,8 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
@@ -193,7 +189,7 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putLong(address, structureVersion);
     }
 
-    public long addSymbol(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolLookup symbolLookup) {
+    public long addSymbol(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, DirectByteSymbolLookup symbolLookup) {
         final int maxLen = 2 * value.length();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
         final long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length
@@ -201,10 +197,7 @@ public class LineTcpEventBuffer {
         // via temp string the utf8 decoder will be writing directly to our buffer
         tempSink.of(strPos, strPos + maxLen);
 
-        // this method will write column name to the buffer if it has to be utf8 decoded
-        // otherwise it will write nothing.
-        CharSequence columnValue = utf8ToUtf16(value, tempSink, hasNonAsciiChars);
-        final int symIndex = symbolLookup.keyOf(columnValue);
+        final int symIndex = symbolLookup.keyOf(value);
         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
             // We know the symbol int value
             // Encode the int
@@ -215,7 +208,9 @@ public class LineTcpEventBuffer {
             // Symbol value cannot be resolved at this point
             // Encode whole string value into the message
             if (!hasNonAsciiChars) {
-                tempSink.put(columnValue);
+                tempSink.put(value);
+            } else {
+                utf8ToUtf16(value, tempSink, true);
             }
             final int length = tempSink.length();
             Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_TAG);
@@ -229,6 +224,30 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_TIMESTAMP);
         Unsafe.getUnsafe().putLong(address + Byte.BYTES, value);
         return address + Long.BYTES + Byte.BYTES;
+    }
+
+    /**
+     * Add UUID encoded as a string to the buffer.
+     * <p>
+     * Technically, DirectByteCharSequence is UTF-8 encoded, but any non-ASCII character will cause the UUID
+     * to be rejected by the parser. Hence, we do not have to bother with UTF-8 decoding.
+     *
+     * @param offset offset in the buffer to write to
+     * @param value  value to write
+     * @return new offset
+     * @throws NumericException if the value is not a valid UUID string
+     */
+    public long addUuid(long offset, DirectByteCharSequence value) throws NumericException {
+        checkCapacity(offset, Byte.BYTES + 2 * Long.BYTES);
+        Uuid.checkDashesAndLength(value);
+        long hi = Uuid.parseHi(value);
+        long lo = Uuid.parseLo(value);
+        Unsafe.getUnsafe().putByte(offset, LineTcpParser.ENTITY_TYPE_UUID);
+        offset += Byte.BYTES;
+        Unsafe.getUnsafe().putLong(offset, lo);
+        offset += Long.BYTES;
+        Unsafe.getUnsafe().putLong(offset, hi);
+        return offset + Long.BYTES;
     }
 
     public long columnValueLength(byte entityType, long offset) {
@@ -261,6 +280,8 @@ public class LineTcpEventBuffer {
                 return Float.BYTES;
             case LineTcpParser.ENTITY_TYPE_DOUBLE:
                 return Double.BYTES;
+            case LineTcpParser.ENTITY_TYPE_UUID:
+                return Long128.BYTES;
             case ENTITY_TYPE_NULL:
                 return 0;
             default:

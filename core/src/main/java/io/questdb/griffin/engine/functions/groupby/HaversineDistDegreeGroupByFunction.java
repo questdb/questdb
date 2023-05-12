@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -113,14 +113,13 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
             long boundaryTimestamp,
             boolean isEndOfBoundary
     ) {
-
         double distance = calculateHaversineDistance(value1, value2);
-        //interpolate
+        // interpolate
         long ts1 = getLastTimestamp(value1);
         long ts2 = getFirstTimestamp(value2);
         long boundaryLength = isEndOfBoundary ? boundaryTimestamp - ts1 : ts2 - boundaryTimestamp;
         double interpolatedBoundaryDistance = (boundaryLength * distance) / (ts2 - ts1);
-        //save
+        // save
         MapValue result = isEndOfBoundary ? value1 : value2;
         saveDistance(interpolatedBoundaryDistance, result, getDistance(result));
     }
@@ -132,15 +131,18 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
             MapValue value2,
             long gapSize
     ) {
-
         double distance = calculateHaversineDistance(value1, value2);
-
-        //interpolate
+        // interpolate
         long ts1 = getLastTimestamp(value1);
         long ts2 = getFirstTimestamp(value2);
         double interpolatedGapDistance = (gapSize * distance) / (ts2 - ts1);
-
+        // save
         saveDistance(result, interpolatedGapDistance);
+    }
+
+    @Override
+    public boolean isInterpolationSupported() {
+        return true;
     }
 
     @Override

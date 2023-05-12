@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,10 +33,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
-    static final int SCAN_DOWN = 1;
-    static final int SCAN_UP = -1;
+    public static final int SCAN_DOWN = 1;
+    public static final int SCAN_UP = -1;
+
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
     protected final int timestampIndex;
@@ -61,6 +64,10 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         assert timestampIndex > -1;
         this.intervalsModel = intervals;
         this.timestampIndex = timestampIndex;
+    }
+
+    public static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
+        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
     }
 
     @Override
@@ -94,6 +101,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return this;
     }
 
+    @TestOnly
     @Override
     public boolean reload() {
         if (reader != null && reader.reload()) {
@@ -135,6 +143,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         }
     }
 
+    /**
+     * Best effort size calculation.
+     */
     private long computeSize() {
         int intervalsLo = this.intervalsLo;
         int intervalsHi = this.intervalsHi;
@@ -146,13 +157,19 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
-            long rowCount = reader.openPartition(partitionLo);
+            long rowCount;
+            try {
+                rowCount = reader.openPartition(partitionLo);
+            } catch (DataUnavailableException e) {
+                // The data is in cold storage, close the event and give up on size calculation.
+                Misc.free(e.getEvent());
+                return -1;
+            }
             if (rowCount > 0) {
 
                 final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
-
 
                 final long partitionTimestampLo = column.getLong(0);
                 // interval is wholly above partition, skip interval
@@ -170,18 +187,17 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 }
 
                 // calculate intersection
-
                 long lo;
-                if (partitionTimestampLo == intervalLo) {
+                if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = search(column, intervalLo, partitionLimit, rowCount, AbstractIntervalDataFrameCursor.SCAN_UP);
+                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, SCAN_UP);
                     if (lo < 0) {
                         lo = -lo - 1;
                     }
                 }
 
-                long hi = search(column, intervalHi, lo, rowCount, AbstractIntervalDataFrameCursor.SCAN_DOWN);
+                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, SCAN_DOWN);
 
                 if (hi < 0) {
                     hi = -hi - 1;
@@ -192,7 +208,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 }
 
                 if (lo < hi) {
-
                     size += (hi - lo);
 
                     // we do have whole partition of fragment?
@@ -230,20 +245,23 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         // normalise interval index
         this.initialIntervalsLo = intervalsLo / 2;
 
-        int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
         if (reader.getMaxTimestamp() == intervals.getQuick(intervals.size() - 1)) {
-            this.initialIntervalsHi = intervals.size() - 1;
-        }
-        if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
+            this.initialIntervalsHi = intervals.size() / 2;
+        } else if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
             this.initialIntervalsHi = 1;
-        }
-        if (intervalsHi < 0) {
-            intervalsHi = -intervalsHi - 1;
-            // when interval index is "even" we scored just between two interval
-            // in which case we chose previous interval
-            if (intervalsHi % 2 == 0) {
-                this.initialIntervalsHi = intervalsHi / 2;
-            } else {
+        } else {
+            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
+            if (intervalsHi < 0) {//negative value means inexact match 
+                intervalsHi = -intervalsHi - 1;
+
+                // when interval index is "even" we scored just between two interval
+                // in which case we chose previous interval
+                if (intervalsHi % 2 == 0) {
+                    this.initialIntervalsHi = intervalsHi / 2;
+                } else {
+                    this.initialIntervalsHi = intervalsHi / 2 + 1;
+                }
+            } else {//positive value means exact match
                 this.initialIntervalsHi = intervalsHi / 2 + 1;
             }
         }
@@ -260,27 +278,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
-    }
-
-    protected static long search(MemoryR column, long value, long low, long high, int increment) {
-        while (low < high) {
-            long mid = (low + high - 1) >>> 1;
-            long midVal = column.getLong(mid * 8);
-
-            if (midVal < value)
-                low = mid + 1;
-            else if (midVal > value)
-                high = mid;
-            else {
-                // In case of multiple equal values, find the first
-                mid += increment;
-                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
-                    mid += increment;
-                }
-                return mid - increment;
-            }
-        }
-        return -(low + 1);
     }
 
     protected class IntervalDataFrame implements DataFrame {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,16 +27,20 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -48,6 +52,7 @@ public class SqlUtil {
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
     private static final int DATE_FORMATS_SIZE;
+    private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
             QueryModel model,
@@ -62,6 +67,76 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     public static long dateToTimestamp(long millis) {
         return millis != Numbers.LONG_NaN ? millis * 1000L : millis;
+    }
+
+    public static long expectMicros(CharSequence tok, int position) throws SqlException {
+        int k = -1;
+
+        final int len = tok.length();
+
+        // look for end of digits
+        for (int i = 0; i < len; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
+        }
+
+        try {
+            long interval = Numbers.parseLong(tok, 0, k);
+            int nChars = len - k;
+            if (nChars > 2) {
+                throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
+            }
+
+            switch (tok.charAt(k)) {
+                case 's':
+                    if (nChars == 1) {
+                        // seconds
+                        return interval * Timestamps.SECOND_MICROS;
+                    }
+                    break;
+                case 'm':
+                    if (nChars == 1) {
+                        // minutes
+                        return interval * Timestamps.MINUTE_MICROS;
+                    } else {
+                        if (tok.charAt(k + 1) == 's') {
+                            // millis
+                            return interval * Timestamps.MILLI_MICROS;
+                        }
+                    }
+                    break;
+                case 'h':
+                    if (nChars == 1) {
+                        // hours
+                        return interval * Timestamps.HOUR_MICROS;
+                    }
+                    break;
+                case 'd':
+                    if (nChars == 1) {
+                        // days
+                        return interval * Timestamps.DAY_MICROS;
+                    }
+                    break;
+                case 'u':
+                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
+                        return interval;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        } catch (NumericException ex) {
+            // Ignored
+        }
+
+        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
     }
 
     /**
@@ -433,6 +508,20 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
+    public static Long256Constant implicitCastStrAsLong256(CharSequence value) {
+        if (value == null || value.length() == 0) {
+            return Long256NullConstant.INSTANCE;
+        }
+        int start = 0;
+        int end = value.length();
+        if (end > 2 && value.charAt(start) == '0' && (value.charAt(start + 1) | 32) == 'x') {
+            start += 2;
+        }
+        Long256ConstantFactory factory = LONG256_FACTORY.get();
+        Long256FromCharSequenceDecoder.decode(value, start, end, factory);
+        return factory.pop();
+    }
+
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
         if (value != null) {
             Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
@@ -479,6 +568,26 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NaN;
+    }
+
+    public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
+        if (str == null || str.length() == 0) {
+            uuid.ofNull();
+            return;
+        }
+        try {
+            uuid.of(str);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
+        }
+    }
+
+    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
+        if (Uuid.isNull(lo, hi)) {
+            return false;
+        }
+        Numbers.appendUuid(lo, hi, sink);
+        return true;
     }
 
     /**
@@ -552,76 +661,6 @@ public class SqlUtil {
         }
     }
 
-    static long expectMicros(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
-        final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
-
-        try {
-            long interval = Numbers.parseLong(tok, 0, k);
-            int nChars = len - k;
-            if (nChars > 2) {
-                throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
-            }
-
-            switch (tok.charAt(k)) {
-                case 's':
-                    if (nChars == 1) {
-                        // seconds
-                        return interval * Timestamps.SECOND_MICROS;
-                    }
-                    break;
-                case 'm':
-                    if (nChars == 1) {
-                        // minutes
-                        return interval * Timestamps.MINUTE_MICROS;
-                    } else {
-                        if (tok.charAt(k + 1) == 's') {
-                            // millis
-                            return interval * Timestamps.MILLI_MICROS;
-                        }
-                    }
-                    break;
-                case 'h':
-                    if (nChars == 1) {
-                        // hours
-                        return interval * Timestamps.HOUR_MICROS;
-                    }
-                    break;
-                case 'd':
-                    if (nChars == 1) {
-                        // days
-                        return interval * Timestamps.DAY_MICROS;
-                    }
-                    break;
-                case 'u':
-                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
-                        return interval;
-                    }
-                    break;
-                default:
-                    break;
-            }
-        } catch (NumericException ex) {
-            // Ignored
-        }
-
-        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
-    }
-
     static QueryColumn nextColumn(
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> sqlNodePool,
@@ -633,6 +672,22 @@ public class SqlUtil {
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
+    }
+
+    private static class Long256ConstantFactory implements Long256Acceptor {
+        private Long256Constant long256;
+
+        @Override
+        public void setAll(long l0, long l1, long l2, long l3) {
+            assert long256 == null;
+            long256 = new Long256Constant(l0, l1, l2, l3);
+        }
+
+        Long256Constant pop() {
+            Long256Constant v = long256;
+            long256 = null;
+            return v;
+        }
     }
 
     static {
@@ -661,6 +716,5 @@ public class SqlUtil {
         };
 
         DATE_FORMATS_FOR_TIMESTAMP_SIZE = DATE_FORMATS_FOR_TIMESTAMP.length;
-
     }
 }

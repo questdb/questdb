@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,11 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
 
@@ -36,10 +39,14 @@ public class FilesFacadeImpl implements FilesFacade {
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
 
-
     @Override
     public boolean allocate(int fd, long size) {
         return Files.allocate(fd, size);
+    }
+
+    @Override
+    public boolean allowMixedIO(CharSequence root) {
+        return !Os.isWindows();
     }
 
     @Override
@@ -68,6 +75,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
         return Files.copyData(srcFd, destFd, offsetSrc, length);
+    }
+
+    @Override
+    public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+        return Files.copyDataToOffset(srcFd, destFd, offsetSrc, destOffset, length);
     }
 
     @Override
@@ -139,8 +151,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long getDiskSize(LPSZ path) {
-        return Files.getDiskSize(path);
+    public long getDirSize(Path path) {
+        return Files.getDirSize(path);
+    }
+
+    @Override
+    public long getDiskFreeSpace(LPSZ path) {
+        return Files.getDiskFreeSpace(path);
     }
 
     @Override
@@ -182,8 +199,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean isDirOrSoftLinkDir(LPSZ path) {
+        return Files.isDirOrSoftLinkDir(path);
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type);
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
+    }
+
+    @Override
     public boolean isRestrictedFileSystem() {
-        return Os.type == Os.WINDOWS;
+        return Os.isWindows();
     }
 
     @Override
@@ -291,6 +323,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean readLink(Path softLink, Path readTo) {
+        return Files.readLink(softLink, readTo);
+    }
+
+    @Override
     public byte readNonNegativeByte(int fd, long offset) {
         return Files.readNonNegativeByte(fd, offset);
     }
@@ -341,31 +378,47 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+        return Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
+    }
+
+    @Override
     public int unlink(LPSZ softLink) {
         return Files.unlink(softLink);
     }
 
-    public void walk(Path path, FindVisitor func) {
-        int len = path.length();
-        long p = findFirst(path);
-        if (p > 0) {
-            try {
-                do {
-                    long name = findName(p);
-                    if (Files.notDots(name)) {
-                        int type = findType(p);
-                        path.trimTo(len);
-                        if (type == Files.DT_FILE) {
-                            func.onFind(name, type);
-                        } else {
-                            walk(path.concat(name).$(), func);
-                        }
-                    }
-                } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
+    @Override
+    public int unlinkOrRemove(Path path, Log LOG) {
+        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        return unlinkOrRemove(path, checkedType, LOG);
+    }
+
+    @Override
+    public int unlinkOrRemove(Path path, int checkedType, Log LOG) {
+        if (checkedType == Files.DT_LNK) {
+            // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+            if (unlink(path) == 0) {
+                LOG.info().$("removed by unlink [path=").utf8(path).I$();
+                return 0;
+            } else {
+                LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
             }
         }
+
+        int errno;
+        if ((errno = rmdir(path)) == 0) {
+            LOG.info().$("removed [path=").utf8(path).I$();
+        } else {
+            LOG.error().$("cannot remove [path=").utf8(path).$(", errno=").$(errno).I$();
+        }
+        return errno;
+    }
+
+    public void walk(Path path, FindVisitor func) {
+        Files.walk(path, func);
     }
 
     @Override
@@ -391,12 +444,10 @@ public class FilesFacadeImpl implements FilesFacade {
         int srcLen = src.length();
         int len = src.length();
         long p = findFirst(src.$());
-        src.chop$();
 
         if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
             return -1;
         }
-        dst.chop$();
 
         if (p > 0) {
             try {
@@ -417,7 +468,6 @@ public class FilesFacadeImpl implements FilesFacade {
                             // Ignore if subfolder already exists
                             mkdir(dst.$(), dirMode);
 
-                            dst.chop$();
                             if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
                                 return res;
                             }

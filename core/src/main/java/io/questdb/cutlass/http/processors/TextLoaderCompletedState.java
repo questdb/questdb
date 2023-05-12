@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.std.LongList;
@@ -38,11 +37,9 @@ public class TextLoaderCompletedState {
         // Some values are come from TableWriter and has to be copied
         // in order to release TableWriter back to the Engine
         this.writtenLineCount = textLoader.getWrittenLineCount();
-        this.metadata = textLoader.getMetadata() != null
-                ? GenericRecordMetadata.copyOf(textLoader.getMetadata())
-                : null;
         // Some values are safe to get from TextLoader
         this.textLoader = textLoader;
+        this.metadata = textLoader.getMetadata();
     }
 
     public LongList getColumnErrorCounts() {
@@ -83,5 +80,9 @@ public class TextLoaderCompletedState {
 
     public boolean isForceHeaders() {
         return textLoader.isForceHeaders();
+    }
+
+    public boolean isHeaderDetected() {
+        return textLoader.isHeaderDetected();
     }
 }

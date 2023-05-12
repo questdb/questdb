@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
             context.simpleResponse().sendStatus(200, "table name missing");
         } else {
             TableToken tableToken = cairoEngine.getTableTokenIfExists(tableName);
-            int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableToken);
+            int check = cairoEngine.getTableStatus(path, tableToken);
             if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");

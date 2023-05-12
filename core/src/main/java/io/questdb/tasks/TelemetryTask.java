@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,52 +24,79 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.ObjectFactory;
 
-public final class TelemetryTask {
-    public long created;
-    public short event;
-    public CharSequence id;
-    public short origin;
+public class TelemetryTask implements AbstractTelemetryTask {
+    public static final String TABLE_NAME = "telemetry";
 
-    public static void doStoreTelemetry(CairoEngine engine, short event, short origin) {
-        Sequence telemetryPubSeq = engine.getTelemetryPubSequence();
-        if (null != telemetryPubSeq) {
-            MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
-            RingQueue<TelemetryTask> telemetryQueue = engine.getTelemetryQueue();
-            store(telemetryQueue, telemetryPubSeq, event, origin, clock);
+    private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = configuration -> new Telemetry.TelemetryType<TelemetryTask>() {
+        private final TelemetryTask systemStatusTask = new TelemetryTask();
+
+        @Override
+        public SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder) {
+            return builder
+                    .$("CREATE TABLE IF NOT EXISTS \"")
+                    .$(TABLE_NAME)
+                    .$("\" (" +
+                            "created timestamp, " +
+                            "event short, " +
+                            "origin short" +
+                            ") timestamp(created)"
+                    );
+        }
+
+        @Override
+        public String getTableName() {
+            return TABLE_NAME;
+        }
+
+        @Override
+        public ObjectFactory<TelemetryTask> getTaskFactory() {
+            return TelemetryTask::new;
+        }
+
+        @Override
+        public void logStatus(TableWriter writer, short systemStatus, long micros) {
+            systemStatusTask.origin = TelemetryOrigin.INTERNAL;
+            systemStatusTask.event = systemStatus;
+            systemStatusTask.writeTo(writer, micros);
+            writer.commit();
+        }
+    };
+    private short event;
+    private short origin;
+
+    private TelemetryTask() {
+    }
+
+    public static void store(Telemetry<TelemetryTask> telemetry, short origin, short event) {
+        final TelemetryTask task = telemetry.nextTask();
+        if (task != null) {
+            task.origin = origin;
+            task.event = event;
+            telemetry.store();
         }
     }
 
-    public static void store(
-            RingQueue<TelemetryTask> telemetryQueue,
-            Sequence telemetryPubSeq,
-            short event,
-            short origin,
-            MicrosecondClock clock
-    ) {
-        long cursor = telemetryPubSeq.next();
-        while (cursor == -2) {
-            Os.pause();
-            cursor = telemetryPubSeq.next();
+    @Override
+    public void writeTo(TableWriter writer, long timestamp) {
+        try {
+            final TableWriter.Row row = writer.newRow(timestamp);
+            row.putShort(1, event);
+            row.putShort(2, origin);
+            row.append();
+        } catch (CairoException e) {
+            LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(']').$();
         }
-
-        if (cursor > -1) {
-            TelemetryTask row = telemetryQueue.get(cursor);
-
-            row.created = clock.getTicks();
-            row.event = event;
-            row.origin = origin;
-            telemetryPubSeq.done(cursor);
-        }
-    }
-
-    @FunctionalInterface
-    public interface TelemetryMethod {
-        void store(short event, short origin);
     }
 }

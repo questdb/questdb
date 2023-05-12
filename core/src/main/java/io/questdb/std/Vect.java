@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,11 +32,14 @@ public final class Vect {
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
 
+    // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
+    // Note: high is inclusive!
     public static native long binarySearchIndexT(long pData, long value, long low, long high, int scanDirection);
 
     public static long boundedBinarySearch64Bit(long pData, long value, long low, long high, int scanDirection) {
+        // Note: high is inclusive!
         long index = binarySearch64Bit(pData, value, low, high, scanDirection);
         if (index < 0) {
             return (-index - 1) - 1;
@@ -45,6 +48,11 @@ public final class Vect {
     }
 
     public static long boundedBinarySearchIndexT(long pData, long value, long low, long high, int scanDirection) {
+        // Negative values are not supported in timestamp index.
+        if (value < 0) {
+            return low - 1;
+        }
+        // Note: high is inclusive!
         long index = binarySearchIndexT(pData, value, low, high, scanDirection);
         if (index < 0) {
             return (-index - 1) - 1;
@@ -53,6 +61,12 @@ public final class Vect {
     }
 
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
+
+    public static native long countDouble(long pDouble, long count);
+
+    public static native long countInt(long pLong, long count);
+
+    public static native long countLong(long pLong, long count);
 
     public static native void flattenIndex(long pIndex, long count);
 
@@ -184,6 +198,8 @@ public final class Vect {
     );
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
+
+    public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);
 
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,8 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.validateMetaVersion;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
@@ -61,28 +62,50 @@ public class WalEventReader implements Closeable {
     public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
         int trimTo = path.length();
         try {
-            final int fd = openRO(ff, path.concat(EVENT_FILE_NAME).$(), LOG);
+            final int pathLen = path.length();
 
-            // read event file size to map to correct length.
-            long size;
-            try {
-                size = ff.readNonNegativeLong(fd, WALE_SIZE_OFFSET);
-            } finally {
-                ff.close(fd);
+            path.concat(EVENT_FILE_NAME).$();
+            eventMem.of(
+                    ff,
+                    path,
+                    ff.getPageSize(),
+                    WALE_HEADER_SIZE + Integer.BYTES,
+                    MemoryTag.MMAP_TABLE_WAL_READER,
+                    CairoConfiguration.O_NONE,
+                    -1
+            );
+
+            if (segmentTxn > -1) {
+                // Read record offset and size
+                int fdi = openRO(ff, path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), LOG);
+                try {
+                    int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
+                    long offset = ff.readNonNegativeLong(fdi, segmentTxn << 3);
+                    long size = ff.readNonNegativeLong(fdi, (maxTxn + 1L) << 3);
+                    if (offset < 0 || size < WALE_HEADER_SIZE + Integer.BYTES || offset >= size) {
+                        int errno = offset < 0 || size < 0 ? ff.errno() : 0;
+                        long fileSize = ff.length(fdi);
+                        throw CairoException.critical(errno).put("segment ")
+                                .put(path).put(" does not have txn with id ").put(segmentTxn)
+                                .put(", offset=").put(offset)
+                                .put(", indexFileSize=").put(fileSize)
+                                .put(", maxTxn=").put(maxTxn)
+                                .put(", size=").put(size);
+                    }
+
+                    // WAL-E file has record indicator for the next record always present
+                    // so file size is the size read + 4 bytes
+                    eventMem.extend(size + Integer.BYTES);
+                    eventCursor.openOffset(offset);
+                } finally {
+                    ff.close(fdi);
+                }
+            } else {
+                eventCursor.openOffset(-1);
             }
 
-            if (size < WALE_HEADER_SIZE + Integer.BYTES) {
-                // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
-                throw CairoException.critical(0).put("File is too small, size=").put(size).put(", required=").put(WALE_HEADER_SIZE);
-            }
-            eventMem.of(ff, path, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_WAL_READER, CairoConfiguration.O_NONE, -1);
-            validateMetaVersion(eventMem, WAL_FORMAT_OFFSET, expectedVersion);
-
-            if (eventCursor.setPosition(segmentTxn)) {
-                return eventCursor;
-            }
-
-            throw CairoException.critical(0).put("segment does not have txn with id ").put(segmentTxn);
+            validateMetaVersion(eventMem, WAL_FORMAT_OFFSET_32, expectedVersion);
+            return eventCursor;
         } catch (Throwable e) {
             close();
             throw e;

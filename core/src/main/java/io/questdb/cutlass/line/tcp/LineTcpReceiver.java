@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,22 +26,17 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 
 public class LineTcpReceiver implements Closeable {
-    private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final Metrics metrics;
     private LineTcpMeasurementScheduler scheduler;
@@ -55,16 +50,9 @@ public class LineTcpReceiver implements Closeable {
         this.scheduler = null;
         this.metrics = engine.getMetrics();
         ObjectFactory<LineTcpConnectionContext> factory;
-        if (null == configuration.getAuthDbPath()) {
-            LOG.info().$("using default context").$();
-            factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
-        } else {
-            LOG.info().$("using authenticating context").$();
-            AuthDb authDb = new AuthDb(configuration);
-            factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
-        }
+        factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
 
-        MutableIOContextFactory<LineTcpConnectionContext> contextFactory = new MutableIOContextFactory<>(
+        IOContextFactoryImpl<LineTcpConnectionContext> contextFactory = new IOContextFactoryImpl<>(
                 factory,
                 configuration.getConnectionPoolInitialCapacity()
         );
@@ -86,15 +74,5 @@ public class LineTcpReceiver implements Closeable {
     public void close() {
         Misc.free(scheduler);
         Misc.free(dispatcher);
-    }
-
-    @TestOnly
-    void setSchedulerListener(SchedulerListener listener) {
-        scheduler.setListener(listener);
-    }
-
-    @FunctionalInterface
-    public interface SchedulerListener {
-        void onEvent(TableToken tableToken, int event);
     }
 }

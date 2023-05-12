@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,19 @@ public class CaseCommon {
     }
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
+        if (ColumnType.isGeoHash(returnType)) {
+            switch (ColumnType.tagOf(returnType)) {
+                case ColumnType.GEOBYTE:
+                    return new GeoByteCaseFunction(returnType, picker, args);
+                case ColumnType.GEOSHORT:
+                    return new GeoShortCaseFunction(returnType, picker, args);
+                case ColumnType.GEOINT:
+                    return new GeoIntCaseFunction(returnType, picker, args);
+                default:
+                    return new GeoLongCaseFunction(returnType, picker, args);
+            }
+        }
+
         return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);
     }
 
@@ -68,7 +81,7 @@ public class CaseCommon {
         }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));
         if (keyIndex < 0) {
-            FunctionFactory fact = castFactories.valueAt(keyIndex);
+            FunctionFactory factory = castFactories.valueAt(keyIndex);
             ObjList<Function> args = tlArgs.get();
             args.clear();
             args.add(arg);
@@ -76,7 +89,7 @@ public class CaseCommon {
             IntList argPositions = tlArgPositions.get();
             argPositions.clear();
             argPositions.add(argPosition);
-            return fact.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
+            return factory.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
         }
 
         return arg;
@@ -129,6 +142,7 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.LONG256), new CastBooleanToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.STRING), new CastLong256ToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.SYMBOL), new CastLong256ToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.STRING), new CastUuidToStrFunctionFactory());
     }
 
     static {
@@ -145,6 +159,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.BYTE), ColumnType.CHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.BOOLEAN), ColumnType.CHAR);
@@ -159,6 +174,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.BYTE), ColumnType.SHORT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.BOOLEAN), ColumnType.SHORT);
@@ -173,6 +189,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.BYTE), ColumnType.INT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.BOOLEAN), ColumnType.INT);
@@ -187,6 +204,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.BYTE), ColumnType.LONG);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.BOOLEAN), ColumnType.LONG);
@@ -201,6 +219,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.BYTE), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.BOOLEAN), ColumnType.FLOAT);
@@ -215,6 +234,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.TIMESTAMP), ColumnType.DATE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.BYTE), ColumnType.DOUBLE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.BOOLEAN), ColumnType.DOUBLE);
@@ -229,6 +249,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.TIMESTAMP), ColumnType.DOUBLE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.BYTE), ColumnType.DATE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.BOOLEAN), ColumnType.DATE);
@@ -243,6 +264,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.BYTE), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.BOOLEAN), ColumnType.TIMESTAMP);
@@ -257,6 +279,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.BYTE), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.BOOLEAN), ColumnType.STRING);
@@ -271,6 +294,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.TIMESTAMP), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.SYMBOL), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BYTE), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BOOLEAN), ColumnType.STRING);
@@ -285,6 +309,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.TIMESTAMP), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.BYTE), ColumnType.BYTE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.BOOLEAN), ColumnType.BOOLEAN);
@@ -299,6 +324,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.BYTE), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.BOOLEAN), ColumnType.LONG256);
@@ -313,6 +339,22 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.TIMESTAMP), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.SYMBOL), ColumnType.SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.UUID), ColumnType.STRING);
+
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.BYTE), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.BOOLEAN), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.CHAR), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.SHORT), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.INT), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.LONG), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.LONG256), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.FLOAT), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.DOUBLE), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.DATE), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.TIMESTAMP), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.STRING), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.SYMBOL), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.UUID), ColumnType.UUID);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BINARY, ColumnType.BINARY), ColumnType.BINARY);
     }
@@ -334,5 +376,6 @@ public class CaseCommon {
         constructors.extendAndSet(ColumnType.TIMESTAMP, (position, picker, args) -> new TimestampCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.LONG128, (position, picker, args) -> new Long128CaseFunction(picker, args));
+        constructors.extendAndSet(ColumnType.UUID, (position, picker, args) -> new UuidCaseFunction(picker, args));
     }
 }

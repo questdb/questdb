@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -94,7 +94,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             try {
                 transientState.lo = lo;
                 transientState.hi = hi;
-                transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());
+                transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
@@ -293,7 +293,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final RecordMetadata metadata = completeState.getMetadata();
         final LongList errors = completeState.getColumnErrorCounts();
 
-
         switch (state.responseState) {
             case RESPONSE_PREFIX:
                 long totalRows = completeState.getParsedLineCount();
@@ -303,7 +302,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         .putQuoted("location").put(':').encodeUtf8AndQuote(completeState.getTableName()).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + completeState.getErrorLineCount()).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
-                        .putQuoted("header").put(':').put(completeState.isForceHeaders()).put(',');
+                        .putQuoted("header").put(':').put(completeState.isHeaderDetected()).put(',')
+                        .putQuoted("partitionBy").put(':').putQuoted(PartitionBy.toString(completeState.getPartitionBy())).put(',');
+
+                int tsIdx = metadata.getTimestampIndex();
+                if (tsIdx != -1) {
+                    socket.putQuoted("timestamp").put(':').encodeUtf8AndQuote(metadata.getColumnName(tsIdx)).put(',');
+                }
                 if (completeState.getWarnings() != TextLoadWarning.NONE) {
                     final int warningFlags = completeState.getWarnings();
                     socket.putQuoted("warnings").put(':').put('[');
@@ -358,7 +363,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final TextLoaderCompletedState textLoaderCompletedState = state.completeState;
         final RecordMetadata metadata = textLoaderCompletedState.getMetadata();
         LongList errors = textLoaderCompletedState.getColumnErrorCounts();
-
 
         switch (state.responseState) {
             case RESPONSE_PREFIX:

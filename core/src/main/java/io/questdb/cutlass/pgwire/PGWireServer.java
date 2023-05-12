@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -51,6 +52,7 @@ public class PGWireServer implements Closeable {
 
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
+    private final CircuitBreakerRegistry registry;
     private final WorkerPool workerPool;
 
     public PGWireServer(
@@ -59,7 +61,8 @@ public class PGWireServer implements Closeable {
             WorkerPool workerPool,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
-            PGConnectionContextFactory contextFactory
+            PGConnectionContextFactory contextFactory,
+            CircuitBreakerRegistry registry
     ) {
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
@@ -67,6 +70,7 @@ public class PGWireServer implements Closeable {
         );
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
+        this.registry = registry;
 
         workerPool.assign(dispatcher);
 
@@ -80,6 +84,10 @@ public class PGWireServer implements Closeable {
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
+                        if (operation == IOOperation.HEARTBEAT) {
+                            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+                            return false;
+                        }
                         jobContext.handleClientOperation(context, operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                         return true;
@@ -109,7 +117,7 @@ public class PGWireServer implements Closeable {
                 };
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     long seq = queryCacheEventSubSeq.next();
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.
@@ -135,6 +143,7 @@ public class PGWireServer implements Closeable {
     @Override
     public void close() {
         Misc.free(dispatcher);
+        Misc.free(registry);
     }
 
     public int getPort() {
@@ -146,16 +155,19 @@ public class PGWireServer implements Closeable {
         return workerPool;
     }
 
-    public static class PGConnectionContextFactory extends MutableIOContextFactory<PGConnectionContext> {
+    public static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
+
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,
+                CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
             super(() -> new PGConnectionContext(
                     engine,
                     configuration,
-                    executionContextObjectFactory.newInstance()
+                    executionContextObjectFactory.newInstance(),
+                    registry
             ), configuration.getConnectionPoolInitialCapacity());
         }
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -97,12 +97,12 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("count(").val(valueOffset).val(')');
+        sink.val("count(*)");
     }
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return true;
+        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum() > 0 ? count.sum() : -1);
     }
 
     @FunctionalInterface

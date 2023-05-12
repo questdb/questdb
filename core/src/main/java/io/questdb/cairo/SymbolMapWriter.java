@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private final BitmapIndexWriter indexWriter;
     private final int maxHash;
     private final MemoryMARW offsetMem;
+    private final int symbolCapacity;
     private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
     private int symbolIndexInTxWriter;
@@ -94,7 +95,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     configuration.getWriterFileOpenOpts()
             );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
-            final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+            this.symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             assert symbolCapacity > 0;
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
@@ -128,7 +129,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
 
             if (useCache) {
-                this.cache = new CharSequenceIntHashMap(symbolCapacity);
+                this.cache = new CharSequenceIntHashMap(symbolCapacity, 0.3, CharSequenceIntHashMap.NO_ENTRY_VALUE);
             } else {
                 this.cache = null;
             }
@@ -137,7 +138,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.valueCountCollector = valueCountCollector;
             LOG.debug()
                     .$("open [name=").$(path.trimTo(plen).concat(name).$())
-                    .$(", fd=").$(this.offsetMem.getFd())
+                    .$(", fd=").$(offsetMem.getFd())
                     .$(", cache=").$(cache != null)
                     .$(", capacity=").$(symbolCapacity)
                     .I$();
@@ -172,8 +173,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public void close() {
         Misc.free(indexWriter);
         Misc.free(charMem);
-        if (this.offsetMem != null) {
-            int fd = this.offsetMem.getFd();
+        if (offsetMem != null) {
+            int fd = offsetMem.getFd();
             Misc.free(offsetMem);
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
@@ -183,6 +184,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public boolean getNullFlag() {
         return offsetMem.getBool(HEADER_NULL_FLAG);
+    }
+
+    @Override
+    public int getSymbolCapacity() {
+        return symbolCapacity;
     }
 
     public int getSymbolCount() {
@@ -263,9 +269,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
-            this.charMem.jumpTo(this.offsetMem.getLong(keyToOffset(symbolCount)));
+            charMem.jumpTo(offsetMem.getLong(keyToOffset(symbolCount)));
         } else {
-            this.charMem.jumpTo(0);
+            charMem.jumpTo(0);
         }
     }
 
@@ -282,8 +288,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int lookupPutAndCache(int index, CharSequence symbol, SymbolValueCountCollector countCollector) {
-        int result;
-        result = lookupAndPut(symbol, countCollector);
+        final int result = lookupAndPut(symbol, countCollector);
         cache.putAt(index, symbol.toString(), result);
         return result;
     }

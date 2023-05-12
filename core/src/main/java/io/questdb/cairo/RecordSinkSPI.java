@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public interface RecordSinkSPI {
 
     void putLong(long value);
 
-    void putLong128LittleEndian(long hi, long lo);
+    void putLong128(long lo, long hi);
 
     void putLong256(Long256 value);
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,16 +26,19 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 
 import java.util.Objects;
 
-public class QueryColumn implements Mutable {
+public class QueryColumn implements Mutable, Sinkable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
     private ExpressionNode ast;
+    private int columnType;
     private boolean includeIntoWildcard = true;
 
-    protected QueryColumn() {
+    public QueryColumn() {
     }
 
     @Override
@@ -43,6 +46,7 @@ public class QueryColumn implements Mutable {
         alias = null;
         ast = null;
         includeIntoWildcard = true;
+        columnType = -1;
     }
 
     @Override
@@ -59,6 +63,10 @@ public class QueryColumn implements Mutable {
 
     public ExpressionNode getAst() {
         return ast;
+    }
+
+    public int getColumnType() {
+        return columnType;
     }
 
     public CharSequence getName() {
@@ -79,13 +87,23 @@ public class QueryColumn implements Mutable {
     }
 
     public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
+        return of(alias, ast, includeIntoWildcard, -1);
+    }
+
+    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard, int type) {
         this.alias = alias;
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
+        this.columnType = type;
         return this;
     }
 
     public void setAlias(CharSequence alias) {
         this.alias = alias;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(ast).put(" as ").put(alias);
     }
 }

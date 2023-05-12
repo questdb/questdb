@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import java.util.Iterator;
 public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
-    private final int initialCapacity;
     private final EntryIterator iterator = new EntryIterator();
     private final double loadFactor;
     private final int noKeyValue;
@@ -54,7 +53,6 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
         assert loadFactor > 0 && loadFactor < 1.0;
         this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
-        this.initialCapacity = capacity;
         this.loadFactor = loadFactor;
         this.noKeyValue = noKeyValue;
         keys = createKeys();
@@ -120,18 +118,6 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
             return true;
         }
         return false;
-    }
-
-    public void reset() {
-        if (capacity == initialCapacity) {
-            clear();
-        } else {
-            free = capacity = initialCapacity;
-            keys = createKeys();
-            values = new int[keys.length];
-            mask = keys.length - 1;
-            Arrays.fill(keys, noEntryValue);
-        }
     }
 
     public int size() {

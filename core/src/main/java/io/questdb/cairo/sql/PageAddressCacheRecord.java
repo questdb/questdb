@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -186,21 +186,21 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public long getLong128Hi(int columnIndex) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+    public long getLong128Hi(int col) {
+        long address = pageAddressCache.getPageAddress(frameIndex, col);
         if (address == 0) {
-            return Numbers.LONG_NaN;
+            return NullMemoryMR.INSTANCE.getLong128Hi(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2 + 8);
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long128.BYTES + Long.BYTES);
     }
 
     @Override
-    public long getLong128Lo(int columnIndex) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+    public long getLong128Lo(int col) {
+        long address = pageAddressCache.getPageAddress(frameIndex, col);
         if (address == 0) {
-            return Numbers.LONG_NaN;
+            return NullMemoryMR.INSTANCE.getLong128Lo(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2);
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long128.BYTES);
     }
 
     @Override

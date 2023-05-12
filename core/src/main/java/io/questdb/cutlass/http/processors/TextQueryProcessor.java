@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
-import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -82,7 +82,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
+        this.compiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
@@ -108,7 +108,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
-                    context.getCairoSecurityContext(),
+                    context.getSecurityContext(),
                     null,
                     null,
                     context.getFd(),
@@ -116,22 +116,22 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             );
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                if (cc.getType() == CompiledQuery.SELECT) {
+                if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                     state.recordCursorFactory = cc.getRecordCursorFactory();
                 } else if (isExpRequest) {
                     throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                 }
-                info(state).$("execute-new [q=`").utf8(state.query).
-                        $("`, skip: ").$(state.skip).
-                        $(", stop: ").$(state.stop).
-                        $(']').$();
-                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_TEXT);
+                info(state).$("execute-new [q=`").utf8(state.query)
+                        .$("`, skip: ").$(state.skip)
+                        .$(", stop: ").$(state.stop)
+                        .I$();
+                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
             } else {
-                info(state).$("execute-cached [q=`").utf8(state.query).
-                        $("`, skip: ").$(state.skip).
-                        $(", stop: ").$(state.stop).
-                        $(']').$();
-                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_TEXT);
+                info(state).$("execute-cached [q=`").utf8(state.query)
+                        .$("`, skip: ").$(state.skip)
+                        .$(", stop: ").$(state.stop)
+                        .I$();
+                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
             }
 
             if (state.recordCursorFactory != null) {
@@ -160,9 +160,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
-                    internalError(context.getChunkedResponseSocket(), e, state);
+                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
                 } catch (CairoError e) {
-                    internalError(context.getChunkedResponseSocket(), e, state);
+                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
                 }
             } else {
                 headerNoContentDisposition(context.getChunkedResponseSocket());
@@ -173,7 +173,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             syntaxError(context.getChunkedResponseSocket(), state, e);
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
-            internalError(context.getChunkedResponseSocket(), e, state);
+            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
             readyForNextRequest(context);
         }
     }
@@ -256,9 +256,18 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
+    private static void putUuidOrNull(HttpChunkedResponseSocket socket, long lo, long hi) {
+        if (Uuid.isNull(lo, hi)) {
+            return;
+        }
+        Numbers.appendUuid(lo, hi, socket);
+    }
+
     private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
-                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
+        LOG.info().$("all sent [fd=").$(context.getFd())
+                .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
+                .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
     private LogRecord critical(TextQueryProcessorState state) {
@@ -274,8 +283,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
-        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
+        sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
+        LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
         if (!state.pausedQuery) {
             context.resumeResponseSend();
@@ -382,23 +391,58 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
+    private LogRecord error(TextQueryProcessorState state) {
+        return LOG.error().$('[').$(state.getFd()).$("] ");
+    }
+
     private LogRecord info(TextQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
 
     private void internalError(
             HttpChunkedResponseSocket socket,
+            long bytesSent,
             Throwable e,
             TextQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         logInternalError(e, state);
+        if (bytesSent > 0) {
+            // We already sent a partial response to the client.
+            // Give up and close the connection.
+            throw ServerDisconnectException.INSTANCE;
+        }
         sendException(socket, 0, e.getMessage(), state);
     }
 
     private void logInternalError(Throwable e, TextQueryProcessorState state) {
-        critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
-        // This is a critical error, so we treat it as an unhandled one.
-        metrics.health().incrementUnhandledErrors();
+        if (e instanceof CairoException) {
+            CairoException ce = (CairoException) e;
+            if (ce.isInterruption()) {
+                info(state).$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
+                        .$("`, q=`").utf8(state.query)
+                        .$("`]").$();
+            } else if (ce.isCritical()) {
+                critical(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                        .$("`, errno=").$(ce.getErrno())
+                        .$("`, q=`").utf8(state.query)
+                        .$("`]").$();
+            } else {
+                error(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                        .$("`, errno=").$(ce.getErrno())
+                        .$("`, q=`").utf8(state.query)
+                        .$("`]").$();
+            }
+        } else if (e instanceof HttpException) {
+            error(state).$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
+                    .$("`, q=`").utf8(state.query)
+                    .$("`]").$();
+        } else {
+            critical(state).$("internal error [ex=").$(e)
+                    .$(", q=`").utf8(state.query)
+                    .$("`]").$();
+            // This is a critical error, so we treat it as an unhandled one.
+            metrics.health().incrementUnhandledErrors();
+        }
     }
 
     private boolean parseUrl(
@@ -414,7 +458,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             return false;
         }
 
-        // Url Params.
+        // URL params.
         long skip = 0;
         long stop = Long.MAX_VALUE;
 
@@ -448,7 +492,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
         state.query.clear();
         try {
-            TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
+            TextUtil.utf8ToUtf16(query.getLo(), query.getHi(), state.query);
         } catch (Utf8Exception e) {
             info(state).$("Bad UTF8 encoding").$();
             sendException(socket, 0, "Bad UTF8 encoding in query text", state);
@@ -553,6 +597,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.GEOLONG:
                 putGeoHashStringValue(socket, rec.getGeoLong(col), type);
                 break;
+            case ColumnType.UUID:
+                putUuidOrNull(socket, rec.getLong128Lo(col), rec.getLong128Hi(col));
+                break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
             default:
@@ -583,7 +630,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence message,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, state, 400);
+        headerJsonError(socket);
         JsonQueryProcessorState.prepareExceptionJson(socket, position, message, state.query);
     }
 
@@ -592,22 +639,29 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state)
-                .$("syntax-error [q=`").utf8(state.query)
+        info(state).$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(container.getPosition())
-                .$(", message=`").$(container.getFlyweightMessage()).$('`')
-                .$(']').$();
+                .$(", message=`").$(container.getFlyweightMessage()).$('`').I$();
         sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
     }
 
-    protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(status_code, "text/csv; charset=utf-8");
+    protected void header(
+            HttpChunkedResponseSocket socket,
+            TextQueryProcessorState state,
+            int statusCode
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(statusCode, "text/csv; charset=utf-8");
         if (state.fileName != null && state.fileName.length() > 0) {
             socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
         } else {
             socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
         }
+        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        socket.sendHeader();
+    }
 
+    protected void headerJsonError(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(400, "application/json; charset=utf-8");
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }

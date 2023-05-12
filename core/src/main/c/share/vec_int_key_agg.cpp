@@ -7,7 +7,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -311,6 +311,56 @@ static jboolean kIntMinDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong
     return JNI_TRUE;
 }
 
+static jboolean kIntCountLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pl = reinterpret_cast<jlong *>(pLong);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        const int32_t key = to_int(pKeys, i);
+        const jlong val = pl[i];
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = key;
+            if (PREDICT_FALSE(val == L_MIN)) {
+                *reinterpret_cast<jlong *>(dest + value_offset) = 0;
+            } else {
+                *reinterpret_cast<jlong *>(dest + value_offset) = 1;
+            }
+        } else {
+            if (PREDICT_TRUE(val > L_MIN)) {
+                *reinterpret_cast<jlong *>(dest + value_offset) += 1;
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+static jboolean kIntCountWrapUp(jlong pRosti, jint valueOffset, jlong valueAtNull) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto value_offset = map->value_offsets_[valueOffset];
+
+    if (valueAtNull > -1) {
+        auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
+        auto res = find(map, nullKey);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = nullKey;
+            *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
+        } else {
+            *reinterpret_cast<jlong *>(dest + value_offset) += valueAtNull;
+        }
+    }
+    return JNI_TRUE;
+}
+
+
 template <typename T>
 static jboolean kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong count, jint valueOffset) {
     constexpr auto count_idx = sizeof(T) == 8 ? 1 : 2;
@@ -508,6 +558,33 @@ static jboolean kIntNSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlon
     return JNI_TRUE;
 }
 
+static jboolean kIntCountInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<jint *>(pInt);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pi + i + 16);
+        const int32_t key = to_int(pKeys, i);
+        const jint val = pi[i];
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = key;
+            if (PREDICT_FALSE(val == I_MIN)) {
+                *reinterpret_cast<jlong *>(dest + value_offset) = 0;
+            } else {
+                *reinterpret_cast<jlong *>(dest + value_offset) = 1;
+            }
+        } else if (PREDICT_TRUE(val > I_MIN)) {
+            *reinterpret_cast<jlong *>(dest + value_offset) += 1;
+        }
+    }
+    return JNI_TRUE;
+}
+
 static jboolean kIntSumInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong count, jint valueOffset) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto *pi = reinterpret_cast<jint *>(pInt);
@@ -554,6 +631,30 @@ static jboolean kIntDistinct(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
     }
     return JNI_TRUE;
 }
+
+static jboolean kIntCountDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pd = reinterpret_cast<jdouble *>(pDouble);
+    const auto count_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pd + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const jdouble d = pd[i];
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = key;
+            *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
+        } else {
+            *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
+        }
+    }
+    return JNI_TRUE;
+}
+
 
 static jboolean kIntSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong count, jint valueOffset) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
@@ -769,6 +870,20 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
 }
 
 extern "C" {
+
+//COUNT double
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntCountDouble(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pDouble,
+                                            jlong count, jint valueOffset) {
+    return kIntCountDouble(to_int, pRosti, pKeys, pDouble, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedHourCountDouble(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pDouble,
+                                             jlong count, jint valueOffset) {
+    return kIntCountDouble(int64_to_hour, pRosti, pKeys, pDouble, count, valueOffset);
+}
 
 // SUM double
 
@@ -1392,8 +1507,20 @@ Java_io_questdb_std_Rosti_keyedIntAvgLongLongWrapUp(JNIEnv *env, jclass cl, jlon
     return kIntAvgLongWrapUp<accumulator_t>(pRosti, valueOffset, valueAtNull, valueAtNullCount);
 }
 
-// SUM int
+//COUNT int
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntCountInt(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                         jlong count, jint valueOffset) {
+    return kIntCountInt(to_int, pRosti, pKeys, pInt, count, valueOffset);
+}
 
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedHourCountInt(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                          jlong count, jint valueOffset) {
+    return kIntCountInt(int64_to_hour, pRosti, pKeys, pInt, count, valueOffset);
+}
+
+// SUM int
 JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_Rosti_keyedIntSumInt(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
                                          jlong count, jint valueOffset) {
@@ -1582,8 +1709,26 @@ Java_io_questdb_std_Rosti_keyedIntMaxIntMerge(JNIEnv *env, jclass cl, jlong pRos
     return JNI_TRUE;
 }
 
-// SUM long
+//COUNT long
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntCountLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                          jlong count, jint valueOffset) {
+    return kIntCountLong(to_int, pRosti, pKeys, pLong, count, valueOffset);
+}
 
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedHourCountLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                           jlong count, jint valueOffset) {
+    return kIntCountLong(int64_to_hour, pRosti, pKeys, pLong, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntCountWrapUp(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset,
+                                                jlong valueAtNull) {
+    return kIntCountWrapUp(pRosti, valueOffset, valueAtNull);
+}
+
+// SUM long
 JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_Rosti_keyedIntSumLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
                                           jlong count, jint valueOffset) {

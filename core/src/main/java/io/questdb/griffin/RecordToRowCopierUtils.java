@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 
 public class RecordToRowCopierUtils {
     private RecordToRowCopierUtils() {
@@ -50,13 +52,26 @@ public class RecordToRowCopierUtils {
         int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/rowcopier"));
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
+        // Character        Type        Interpretation
+        // B                byte        signed byte
+        // C                char        Unicode character code point in the Basic Multilingual Plane, encoded with UTF-16
+        // D                double      double-precision floating-point value
+        // F                float       single-precision floating-point value
+        // I                int         integer
+        // J                long        long integer
+        // L ClassName ;    reference   an instance of class ClassName
+        // S                short       signed short
+        // Z                boolean     true or false
+        // [                reference   one array dimension
+
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
         int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
+        int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
+
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         //
@@ -75,7 +90,8 @@ public class RecordToRowCopierUtils {
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
-        int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128LittleEndian", "(IJJ)V");
+        int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
+        int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -97,6 +113,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsChar = asm.poolMethod(SqlUtil.class, "implicitCastStrAsChar", "(Ljava/lang/CharSequence;)C");
         int implicitCastStrAsInt = asm.poolMethod(SqlUtil.class, "implicitCastStrAsInt", "(Ljava/lang/CharSequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
+        int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsTimestamp = asm.poolMethod(SqlUtil.class, "implicitCastStrAsTimestamp", "(Ljava/lang/CharSequence;)J");
         int implicitCastDateAsTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
@@ -122,6 +139,7 @@ public class RecordToRowCopierUtils {
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int implicitCastGeoHashAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastGeoHashAsGeoHash", "(JII)J");
+        int transferUuidToStrCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferUuidToStrCol", "(Lio/questdb/cairo/TableWriter$Row;IJJ)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -149,7 +167,7 @@ public class RecordToRowCopierUtils {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 15, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 15, 5);
 
         for (int i = 0; i < n; i++) {
 
@@ -622,6 +640,13 @@ public class RecordToRowCopierUtils {
                         case ColumnType.STRING:
                             asm.invokeInterface(wPutStr, 2);
                             break;
+                        case ColumnType.UUID:
+                            asm.invokeInterface(wPutUuidStr, 2);
+                            break;
+                        case ColumnType.LONG256:
+                            asm.invokeStatic(implicitCastStrAsLong256);
+                            asm.invokeInterface(wPutLong256, 2);
+                            break;
                         default:
                             assert false;
                             break;
@@ -636,14 +661,6 @@ public class RecordToRowCopierUtils {
                     assert toColumnTypeTag == ColumnType.LONG256;
                     asm.invokeInterface(rGetLong256);
                     asm.invokeInterface(wPutLong256, 2);
-                    break;
-                case ColumnType.LONG128:
-                    assert toColumnTypeTag == ColumnType.LONG128;
-                    asm.invokeInterface(rGetLong128Hi);
-                    asm.aload(1);
-                    asm.iconst(i);
-                    asm.invokeInterface(rGetLong128Lo);
-                    asm.invokeInterface(wPutLong128, 5);
                     break;
                 case ColumnType.GEOBYTE:
                     asm.invokeInterface(rGetGeoByte, 1);
@@ -756,8 +773,55 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
-                default:
+                case ColumnType.LONG128:
+                    // fall through
+                case ColumnType.UUID:
+                    switch (ColumnType.tagOf(toColumnType)) {
+                        case ColumnType.LONG128:
+                            // fall through
+                        case ColumnType.UUID:
+                            // Stack: [RowWriter, Record, columnIndex]
+                            asm.invokeInterface(rGetLong128Lo, 1);
+                            // Stack: [RowWriter, lo]
+                            asm.aload(1);  // Push record to the stack.
+                            // Stack: [RowWriter, lo, Record]
+                            asm.iconst(i); // Push column index to a stack
+                            // Stack: [RowWriter, lo, Record, columnIndex]
+                            asm.invokeInterface(rGetLong128Hi, 1);
+                            // Stack: [RowWriter, lo, hi]
+                            asm.invokeInterface(wPutLong128, 5);
+                            // invokeInterface consumes the entire stack. Including the RowWriter as invoke interface receives "this" as the first argument
+                            // The stack is now empty, and we are done with this column
+                            break;
+                        case ColumnType.STRING:
+                            assert fromColumnType == ColumnType.UUID;
+                            // this logic is very similar to the one for ColumnType.UUID above
+                            // There is one major difference: `SqlUtil.implicitCastUuidAsStr()` returns `false` to indicate
+                            // that the UUID value represents null. In this case we won't call the writer and let null value
+                            // to be written by TableWriter/WalWriter NullSetters. However, generating branches via asm is
+                            // complicated as JVM requires jump targets to have stack maps, etc. This would complicate things
+                            // so we rely on an auxiliary method `transferUuidToStrCol()` to do branching job and javac generates
+                            // the stack maps.
+                            // Stack: [RowWriter, Record, columnIndex]
+                            asm.invokeInterface(rGetLong128Lo, 1);
+                            // Stack: [RowWriter, lo]
+                            asm.aload(1);  // Push record to the stack.
+                            // Stack: [RowWriter, lo, Record]
+                            asm.iconst(i); // Push column index to a stack
+                            // Stack: [RowWriter, lo, Record, columnIndex]
+                            asm.invokeInterface(rGetLong128Hi, 1);
+                            // Stack: [RowWriter, lo, hi]
+                            asm.invokeStatic(transferUuidToStrCol);
+                            break;
+                        default:
+                            assert false;
+                            break;
+                    }
                     break;
+                default:
+                    // we don't need to do anything for null as null is already written by TableWriter/WalWriter NullSetters
+                    // every non-null-type is an error
+                    assert fromColumnType == ColumnType.NULL;
             }
         }
 
@@ -767,10 +831,8 @@ public class RecordToRowCopierUtils {
         // exceptions
         asm.putShort(0);
 
-        // we have to add stack map table as branch target
-        // jvm requires it
-
-        // attributes: 0 (void, no stack verification)
+        // we have do not have to add a stack map table because there are no branches
+        // attributes: 0 (void, no branches -> no stack verification)
         asm.putShort(0);
 
         asm.endMethod();
@@ -779,5 +841,13 @@ public class RecordToRowCopierUtils {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    // Called from dynamically generated bytecode
+    public static void transferUuidToStrCol(TableWriter.Row row, int col, long lo, long hi) {
+        StringSink threadLocalBuilder = Misc.getThreadLocalBuilder();
+        if (SqlUtil.implicitCastUuidAsStr(lo, hi, threadLocalBuilder)) {
+            row.putStr(col, threadLocalBuilder);
+        }
     }
 }

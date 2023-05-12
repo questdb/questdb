@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,41 +24,49 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
 
-public class DropIndexOperator extends PurgingOperator {
+public class DropIndexOperator {
     private static final Log LOG = LogFactory.getLog(DropIndexOperator.class);
+    private final FilesFacade ff;
     private final Path other;
+    private final Path path;
     private final LongList rollbackColumnVersions = new LongList();
+    private final PurgingOperator purgingOperator;
+    private final int rootLen;
+    private final TableWriter tableWriter;
 
     public DropIndexOperator(
             CairoConfiguration configuration,
-            MessageBus messageBus,
             TableWriter tableWriter,
             Path path,
             Path other,
-            int rootLen
+            int rootLen,
+            PurgingOperator purgingOperator
     ) {
-        super(LOG, configuration, messageBus, tableWriter, path, rootLen);
         this.other = other;
+        this.tableWriter = tableWriter;
+        this.rootLen = rootLen;
+        this.purgingOperator = purgingOperator;
+        this.path = path;
+        this.ff = configuration.getFilesFacade();
     }
 
     public void executeDropIndex(CharSequence columnName, int columnIndex) {
         int partitionBy = tableWriter.getPartitionBy();
         int partitionCount = tableWriter.getPartitionCount();
         try {
-            updateColumnIndexes.clear();
-            cleanupColumnVersions.clear();
+            purgingOperator.clear();
             rollbackColumnVersions.clear();
             for (int pIndex = 0; pIndex < partitionCount; pIndex++) {
                 long pTimestamp = tableWriter.getPartitionTimestamp(pIndex);
@@ -84,15 +92,13 @@ public class DropIndexOperator extends PurgingOperator {
                     }
 
                     // add to cleanup tasks, the index will be removed in due time
-                    updateColumnIndexes.add(columnIndex);
-                    cleanupColumnVersions.add(columnIndex, columnVersion, pTimestamp, pVersion);
+                    purgingOperator.add(columnIndex, columnVersion, pTimestamp, pVersion);
                     rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
                 }
             }
         } catch (Throwable th) {
             LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
-            updateColumnIndexes.clear();
-            cleanupColumnVersions.clear();
+            purgingOperator.clear();
 
             // cleanup successful links prior to the failed link operation
             int limit = rollbackColumnVersions.size();
@@ -124,8 +130,7 @@ public class DropIndexOperator extends PurgingOperator {
             long columnNameTxn
     ) {
         TableUtils.setPathForPartition(
-                path,
-                rootLen,
+                path.trimTo(rootLen),
                 partitionBy,
                 partitionTimestamp,
                 partitionNameTxn

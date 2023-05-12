@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -37,7 +38,7 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.griffin.engine.functions.constants.Long128Constant;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -46,16 +47,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.SingleCharCharSequence;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class WalWriter implements TableWriterAPI {
@@ -75,6 +72,7 @@ public class WalWriter implements TableWriterAPI {
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
+    private final Metrics metrics;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final Path path;
@@ -86,7 +84,8 @@ public class WalWriter implements TableWriterAPI {
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
-    private final ObjList<DirectByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
+    private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
+    private final Uuid uuid = new Uuid();
     private final int walId;
     private final String walName;
     private int columnCount;
@@ -106,7 +105,12 @@ public class WalWriter implements TableWriterAPI {
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
 
-    public WalWriter(CairoConfiguration configuration, TableToken tableToken, TableSequencerAPI tableSequencerAPI) {
+    public WalWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            TableSequencerAPI tableSequencerAPI,
+            Metrics metrics
+    ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
@@ -118,6 +122,7 @@ public class WalWriter implements TableWriterAPI {
         this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(tableToken).concat(walName);
         this.rootLen = path.length();
+        this.metrics = metrics;
         this.open = true;
 
         try {
@@ -227,7 +232,10 @@ public class WalWriter implements TableWriterAPI {
     public void close() {
         if (isOpen()) {
             try {
-                rollback();
+                // If distressed, no need to rollback, WalWriter will not be used anymore
+                if (!distressed) {
+                    rollback();
+                }
             } finally {
                 doClose(true);
             }
@@ -240,19 +248,23 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction()) {
-                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
+                final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
+                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                        .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
+                        .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
+                metrics.getWalMetrics().addRowsWritten(rowsToCommit);
                 return seqTxn;
             }
         } catch (CairoException ex) {
             distressed = true;
             throw ex;
         } catch (Throwable th) {
+            // If distressed, no need to rollback, WalWriter will not be used anymore
             if (!isDistressed()) {
-                // If distressed, not point to rollback, WalWriter will be not re-used anymore.
                 rollback();
             }
             throw th;
@@ -306,6 +318,10 @@ public class WalWriter implements TableWriterAPI {
             return 0;
         }
         return initialSymbolCounts.get(columnIndex);
+    }
+
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
     }
 
     public TableToken getTableToken() {
@@ -386,11 +402,20 @@ public class WalWriter implements TableWriterAPI {
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLongLong(timestamp, segmentRowCount);
+                primaryColumn.putLong128(timestamp, segmentRowCount);
                 setRowValueNotNull(timestampIndex);
                 row.timestamp = timestamp;
             }
             return row;
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
+    public void rollSegment() {
+        try {
+            openNewSegment();
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -414,7 +439,8 @@ public class WalWriter implements TableWriterAPI {
             try {
                 final int timestampIndex = metadata.getTimestampIndex();
                 LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                        .$(path).$(Files.SEPARATOR).$(newSegmentId)
+                        .$(path).$(Files.SEPARATOR).$(segmentId)
+                        .$(", newSegment=").$(newSegmentId)
                         .$(", rowCount=").$(uncommittedRows).I$();
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -487,6 +513,11 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public void truncate() {
+        throw new UnsupportedOperationException("cannot truncate symbol tables on WAL table");
+    }
+
+    @Override
+    public void truncateSoft() {
         try {
             lastSegmentTxn = events.truncate();
             getSequencerTxn();
@@ -551,7 +582,9 @@ public class WalWriter implements TableWriterAPI {
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128LittleEndian(Long128Constant.NULL_HI, Long128Constant.NULL_LO));
+                // fall through
+            case ColumnType.UUID:
+                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -691,7 +724,7 @@ public class WalWriter implements TableWriterAPI {
         int halfRecord = NEW_COL_RECORD_SIZE / 2;
         for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += halfRecord) {
             final int fd = (int) newColumnFiles.get(fdIndex);
-            ff.closeChecked(fd);
+            ff.close(fd);
         }
     }
 
@@ -724,7 +757,7 @@ public class WalWriter implements TableWriterAPI {
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
-        utf8SymbolMaps.extendAndSet(columnWriterIndex, new DirectByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
     private void configureSymbolMapWriter(
@@ -813,7 +846,7 @@ public class WalWriter implements TableWriterAPI {
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
-        utf8SymbolMaps.extendAndSet(columnWriterIndex, new DirectByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
@@ -1009,7 +1042,7 @@ public class WalWriter implements TableWriterAPI {
             mem1.close(true, Vm.TRUNCATE_TO_POINTER);
             mem1.of(ff,
                     dFile(path.trimTo(pathTrimToLen), name),
-                    configuration.getDataAppendPageSize(),
+                    configuration.getWalDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts(),
@@ -1021,7 +1054,7 @@ public class WalWriter implements TableWriterAPI {
                 mem2.close(true, Vm.TRUNCATE_TO_POINTER);
                 mem2.of(ff,
                         iFile(path.trimTo(pathTrimToLen), name),
-                        configuration.getDataAppendPageSize(),
+                        configuration.getWalDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
@@ -1071,13 +1104,13 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void releaseSegmentLock() {
-        if (ff.closeChecked(segmentLockFd)) {
+        if (ff.close(segmentLockFd)) {
             segmentLockFd = -1;
         }
     }
 
     private void releaseWalLock() {
-        if (ff.closeChecked(walLockFd)) {
+        if (ff.close(walLockFd)) {
             walLockFd = -1;
         }
     }
@@ -1130,7 +1163,7 @@ public class WalWriter implements TableWriterAPI {
                 symbolMap.clear();
             }
 
-            final DirectByteCharSequenceIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
+            final ByteCharSequenceIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
             if (dbcsSymbolMap != null) {
                 dbcsSymbolMap.clear();
             }
@@ -1314,19 +1347,6 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
-    }
-
-    void rollSegment() {
-        try {
-            openNewSegment();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
-        }
-    }
-
     private class MetadataValidatorService implements MetadataServiceStub {
         public long structureVersion;
 
@@ -1452,7 +1472,7 @@ public class WalWriter implements TableWriterAPI {
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
+                    LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");
@@ -1460,7 +1480,7 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
                     // TODO: this should be some kind of warning probably that different wals adding the same column concurrently
-                    LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").$(columnName).I$();
+                    LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
@@ -1508,7 +1528,7 @@ public class WalWriter implements TableWriterAPI {
                             removeSymbolMapReader(index);
                         }
                         markColumnRemoved(index);
-                        LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").$(columnName).I$();
+                        LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
@@ -1551,7 +1571,7 @@ public class WalWriter implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
+                        LOG.info().$("renamed column in WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
@@ -1650,7 +1670,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
+        public void putLong128(int columnIndex, long lo, long hi) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
@@ -1732,7 +1752,7 @@ public class WalWriter implements TableWriterAPI {
             // otherwise it will write nothing.
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
             if (symbolMapReader != null) {
-                DirectByteCharSequenceIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
+                ByteCharSequenceIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
                 int index = utf8Map.keyIndex(value);
                 if (index < 0) {
                     getPrimaryColumn(columnIndex).putInt(utf8Map.valueAt(index));
@@ -1741,13 +1761,19 @@ public class WalWriter implements TableWriterAPI {
                     // slow path, symbol is not in utf8 cache
                     utf8Map.putAt(
                             index,
-                            utf8BytesToString(value, tempSink),
+                            ByteCharSequence.newInstance(value),
                             putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader)
                     );
                 }
             } else {
                 throw new UnsupportedOperationException();
             }
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuidStr) {
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
@@ -1759,10 +1785,10 @@ public class WalWriter implements TableWriterAPI {
         }
 
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
-            final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
             int key;
             if (utf16Value != null) {
-                int index = utf16Map.keyIndex(utf16Value);
+                final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
+                final int index = utf16Map.keyIndex(utf16Value);
                 if (index > -1) {
                     key = symbolMapReader.keyOf(utf16Value);
                     if (key == SymbolTable.VALUE_NOT_FOUND) {

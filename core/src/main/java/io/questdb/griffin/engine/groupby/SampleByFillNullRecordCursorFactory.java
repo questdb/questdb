@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final AbstractNoRecordSampleByCursor cursor;
+    private final SampleByFillValueRecordCursor cursor;
 
     public SampleByFillNullRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -72,7 +72,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         );
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            this.cursor = new SampleByFillValueRecordCursor(
+            cursor = new SampleByFillValueRecordCursor(
                     map,
                     mapSink,
                     groupByFunctions,
@@ -129,6 +129,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 return GeoIntConstant.NULL;
             case ColumnType.GEOLONG:
                 return GeoLongConstant.NULL;
+            case ColumnType.UUID:
+                return UuidConstant.NULL;
             default:
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }

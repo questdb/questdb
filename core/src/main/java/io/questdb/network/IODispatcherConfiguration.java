@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ public interface IODispatcherConfiguration {
     int getLimit();
 
     default int getListenBacklog() {
-        if (Os.type == Os.WINDOWS && getHint()) {
+        if (Os.isWindows() && getHint()) {
             // Windows OS might have a limit of 200 concurrent connections. To overcome
             // this limit we set backlog value to a hint as described here:
             /// https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-listen
@@ -94,4 +94,6 @@ public interface IODispatcherConfiguration {
     int getTestConnectionBufferSize();
 
     long getTimeout();
+
+    long getHeartbeatInterval();
 }

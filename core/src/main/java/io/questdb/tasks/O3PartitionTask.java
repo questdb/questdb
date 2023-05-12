@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3PartitionTask {
-    private long colTopSinkAddr;
+    private long partitionUpdateSinkAddr;
     private AtomicInteger columnCounter;
     private ObjList<MemoryMA> columns;
     private boolean last;
@@ -56,8 +56,8 @@ public class O3PartitionTask {
     private TableWriter tableWriter;
     private long txn;
 
-    public long getColTopSinkAddr() {
-        return colTopSinkAddr;
+    public long getPartitionUpdateSinkAddr() {
+        return partitionUpdateSinkAddr;
     }
 
     public AtomicInteger getColumnCounter() {
@@ -156,7 +156,7 @@ public class O3PartitionTask {
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
-            long colTopSinkAddr
+            long partitionUpdateSinkAddr
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -177,6 +177,6 @@ public class O3PartitionTask {
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
         this.o3Basket = o3Basket;
-        this.colTopSinkAddr = colTopSinkAddr;
+        this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
     }
 }

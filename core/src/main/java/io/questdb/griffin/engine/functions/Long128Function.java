@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -103,12 +103,6 @@ public abstract class Long128Function implements ScalarFunction {
     public final long getLong(Record rec) {
         return getLong256A(rec).getLong0();
     }
-
-    @Override
-    public abstract long getLong128Hi(Record rec);
-
-    @Override
-    public abstract long getLong128Lo(Record rec);
 
     @Override
     public final void getLong256(Record rec, CharSink sink) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.std.str.CharSink;
 
 /**
  * Instances of DateFormat do not have state. They are thread-safe. In that multiple threads can use
- * same DateFormat instance without disk of data corruption.
+ * same DateFormat instance without risk of data corruption.
  */
 public interface DateFormat {
 

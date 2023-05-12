@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,10 +65,10 @@ import java.util.Iterator;
  * closed.
  */
 public class WriterPool extends AbstractPool {
+    public static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
     public static final String OWNERSHIP_REASON_RELEASED = "released";
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
-    static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
@@ -97,6 +97,19 @@ public class WriterPool extends AbstractPool {
         this.root = configuration.getRoot();
         this.metrics = metrics;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
+    }
+
+    public int countFreeWriters() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            final long owner = e.owner;
+            if (owner == UNALLOCATED) {
+                count++;
+            } else {
+                LOG.info().$("'").utf8(e.writer.getTableToken().getDirName()).$("' is still busy [owner=").$(owner).$(']').$();
+            }
+        }
+        return count;
     }
 
     /**
@@ -216,10 +229,6 @@ public class WriterPool extends AbstractPool {
         return entries.size();
     }
 
-    public void unlock(TableToken tableToken) {
-        unlock(tableToken, null, false);
-    }
-
     public void unlock(TableToken tableToken, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().getId();
 
@@ -274,6 +283,10 @@ public class WriterPool extends AbstractPool {
             notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.critical(0).put("Not lock owner of ").put(tableToken.getDirName());
         }
+    }
+
+    public void unlock(TableToken tableToken) {
+        unlock(tableToken, null, false);
     }
 
     private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
@@ -428,11 +441,15 @@ public class WriterPool extends AbstractPool {
                 }
 
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
-                LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
-                        .$("`, owner=").$(owner)
-                        .$(", thread=").$(thread)
-                        .$(", reason=").$(reason)
-                        .I$();
+
+                if (!tableToken.isWal()) {
+                    // Don't log busy for WAL table it's BAU.
+                    LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
+                            .$("`, owner=").$(owner)
+                            .$(", thread=").$(thread)
+                            .$(", reason=").$(reason)
+                            .I$();
+                }
                 throw EntryUnavailableException.instance(reason);
             }
         }
@@ -529,19 +546,6 @@ public class WriterPool extends AbstractPool {
     protected void closePool() {
         super.closePool();
         LOG.info().$("closed").$();
-    }
-
-    int countFreeWriters() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            final long owner = e.owner;
-            if (owner == UNALLOCATED) {
-                count++;
-            } else {
-                LOG.info().$("'").utf8(e.writer.getTableToken().getDirName()).$("' is still busy [owner=").$(owner).$(']').$();
-            }
-        }
-        return count;
     }
 
     @Override

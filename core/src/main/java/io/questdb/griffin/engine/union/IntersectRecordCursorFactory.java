@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,16 +53,21 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
         Map map = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         if (castFunctionsA == null && castFunctionsB == null) {
-            this.cursor = new IntersectRecordCursor(map, recordSink);
+            cursor = new IntersectRecordCursor(map, recordSink);
         } else {
             assert castFunctionsA != null && castFunctionsB != null;
-            this.cursor = new IntersectCastRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
+            cursor = new IntersectCastRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
         }
     }
 
     @Override
+    public int getScanDirection() {
+        return factoryA.getScanDirection();
+    }
+
+    @Override
     protected void _close() {
-        Misc.free(this.cursor);
+        Misc.free(cursor);
         super._close();
     }
 

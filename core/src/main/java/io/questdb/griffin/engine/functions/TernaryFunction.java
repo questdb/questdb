@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,6 +50,13 @@ public interface TernaryFunction extends Function {
         getLeft().init(symbolTableSource, executionContext);
         getCenter().init(symbolTableSource, executionContext);
         getRight().init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    default void initCursor() {
+        getLeft().initCursor();
+        getCenter().initCursor();
+        getRight().initCursor();
     }
 
     @Override

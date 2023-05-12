@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public final class Timestamps {
 
-    public static final long DAY_MICROS = 86400000000L;
+    public static final long DAY_MICROS = 86400000000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
     public static final long MILLI_MICROS = 1000;
@@ -50,7 +50,7 @@ public final class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_SIGN = 7;
     public static final int STATE_UTC = 1;
-    public static final long WEEK_MICROS = 604800000000L;
+    public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
     private static final char AFTER_NINE = '9' + 1;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
@@ -227,7 +227,11 @@ public final class Timestamps {
     }
 
     public static long floorDD(long micros) {
-        long result = micros - getTimeMicros(micros);
+        return floorDD(micros, 1);
+    }
+
+    public static long floorDD(long micros, int stride) {
+        long result = micros - getTimeMicros(micros, stride);
         return Math.min(result, micros);
     }
 
@@ -262,15 +266,19 @@ public final class Timestamps {
     }
 
     public static long floorHH(long micros) {
-        return micros - micros % HOUR_MICROS;
+        return floorHH(micros, 1);
     }
 
-    public static long floorWW(long micros) {
-        return (micros - micros % WEEK_MICROS) + getIsoWeekMicrosOffset(micros);
+    public static long floorHH(long micros, int stride) {
+        return micros - micros % (stride * HOUR_MICROS);
     }
 
     public static long floorMI(long micros) {
-        return micros - micros % MINUTE_MICROS;
+        return floorMI(micros, 1);
+    }
+
+    public static long floorMI(long micros, int stride) {
+        return micros - micros % (stride * MINUTE_MICROS);
     }
 
     public static long floorMM(long micros) {
@@ -279,8 +287,21 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    public static long floorMM(long micros, int stride) {
+        final int origin = getYear(0);
+        long m = (getMonthsBetween(0, micros) / stride) * stride;
+        int y = (int) (origin + m / 12);
+        int mm = (int) (m % 12);
+        boolean l = isLeapYear(y);
+        return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
+    }
+
     public static long floorMS(long micros) {
-        return micros - micros % MILLI_MICROS;
+        return floorMS(micros, 1);
+    }
+
+    public static long floorMS(long micros, int stride) {
+        return micros - micros % (stride * MILLI_MICROS);
     }
 
     /**
@@ -318,12 +339,39 @@ public final class Timestamps {
     }
 
     public static long floorSS(long micros) {
-        return micros - micros % SECOND_MICROS;
+        return floorSS(micros, 1);
+    }
+
+    public static long floorSS(long micros, int stride) {
+        return micros - micros % (stride * SECOND_MICROS);
+    }
+
+    public static long floorWW(long micros) {
+        return floorWW(micros, 1);
+    }
+
+    public static long floorWW(long micros, int stride) {
+        // Epoch 1 Jan 1970 is a Thursday.
+        // Shift 3 days to find offset in the week.
+        long weekOffset = (micros + Timestamps.DAY_MICROS * 3) % (stride * WEEK_MICROS);
+        if (weekOffset < 0) {
+            // Floor value must be always below or equal to the original value.
+            // If offset is negative, we need to add stride to it so that the result is
+            // Monday before the original value.
+            weekOffset += stride * WEEK_MICROS;
+        }
+        return micros - weekOffset;
     }
 
     public static long floorYYYY(long micros) {
         int y;
         return yearMicros(y = getYear(micros), isLeapYear(y));
+    }
+
+    public static long floorYYYY(long micros, int stride) {
+        final int origin = getYear(0);
+        int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        return yearMicros(y, isLeapYear(y));
     }
 
     public static int getCentury(long micros) {
@@ -425,16 +473,6 @@ public final class Timestamps {
 
     public static long getHoursBetween(long a, long b) {
         return Math.abs(a - b) / HOUR_MICROS;
-    }
-
-    /**
-     * Due to epoch starting on Thursday while ISO week starts on Monday, there is an offset between epoch and ISO week micros when flooring.
-     *
-     * @param micros epoch microseconds
-     * @return 4 days micros offset for Monday through Wednesday and -3 days micros offset for Thursday through Sunday
-     */
-    public static long getIsoWeekMicrosOffset(long micros) {
-        return ((getDayOfWeek(micros) <= 3) ? 4 : -3) * DAY_MICROS;
     }
 
     // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,
@@ -1024,6 +1062,11 @@ public final class Timestamps {
 
     private static long getTimeMicros(long micros) {
         return micros < 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;
+    }
+
+    private static long getTimeMicros(long micros, int stride) {
+        final long us = stride * DAY_MICROS;
+        return micros < 0 ? us - 1 + (micros % us) : micros % us;
     }
 
     private static boolean isDigit(char c) {

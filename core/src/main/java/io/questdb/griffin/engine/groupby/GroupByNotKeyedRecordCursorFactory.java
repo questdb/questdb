@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     public GroupByNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
-
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
@@ -108,10 +107,16 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
+        private static final int INIT_DONE = 2;
+        private static final int INIT_FIRST_RECORD_DONE = 1;
+        private static final int INIT_PENDING = 0;
+
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // hold on to reference of base cursor here
         // because we use it as symbol table source for the functions
         private RecordCursor baseCursor;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private int initState;
         private int recordsRemaining = 1;
 
         public GroupByNotKeyedRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater) {
@@ -120,7 +125,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void close() {
-            this.baseCursor = Misc.free(baseCursor);
+            baseCursor = Misc.free(baseCursor);
             Misc.clearObjList(groupByFunctions);
         }
 
@@ -136,6 +141,23 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public boolean hasNext() {
+            if (initState != INIT_DONE) {
+                final Record baseRecord = baseCursor.getRecord();
+                if (initState != INIT_FIRST_RECORD_DONE) {
+                    if (baseCursor.hasNext()) {
+                        groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord);
+                    } else {
+                        groupByFunctionsUpdater.updateEmpty(simpleMapValue);
+                    }
+                    initState = INIT_FIRST_RECORD_DONE;
+                }
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
+                }
+                toTop();
+                initState = INIT_DONE;
+            }
             return recordsRemaining-- > 0;
         }
 
@@ -157,23 +179,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
-            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-            final Record baseRecord = baseCursor.getRecord();
+            circuitBreaker = executionContext.getCircuitBreaker();
+            initState = INIT_PENDING;
             Function.init(groupByFunctions, baseCursor, executionContext);
-
-            if (baseCursor.hasNext()) {
-                groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord);
-
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
-                }
-            } else {
-                groupByFunctionsUpdater.updateEmpty(simpleMapValue);
-            }
-
-            toTop();
             return this;
         }
     }

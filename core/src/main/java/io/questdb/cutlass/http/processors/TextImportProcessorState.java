@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,8 +32,6 @@ import io.questdb.std.Mutable;
 import java.io.Closeable;
 
 class TextImportProcessorState implements Mutable, Closeable {
-    //    public static final int STATE_INVALID_FORMAT = 1;
-    public static final int STATE_DATA_ERROR = 2;
     public static final int STATE_OK = 0;
     public int columnIndex = 0;
     public TextLoaderCompletedState completeState;

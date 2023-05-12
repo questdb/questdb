@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
@@ -115,6 +116,12 @@ public class ConcatFunctionFactory implements FunctionFactory {
         sink.put(function.getTimestamp(record));
     }
 
+    private static void sinkUuid(CharSink sink, Function function, Record record) {
+        long lo = function.getLong128Lo(record);
+        long hi = function.getLong128Hi(record);
+        SqlUtil.implicitCastUuidAsStr(lo, hi, sink);
+    }
+
     @FunctionalInterface
     private interface TypeAdapter {
         void sink(CharSink sink, Function function, Record record);
@@ -183,6 +190,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         adapterReferences.extendAndSet(ColumnType.BINARY, ConcatFunctionFactory::sinkBin);
         adapterReferences.extendAndSet(ColumnType.DATE, ConcatFunctionFactory::sinkDate);
         adapterReferences.extendAndSet(ColumnType.TIMESTAMP, ConcatFunctionFactory::sinkTimestamp);
+        adapterReferences.extendAndSet(ColumnType.UUID, ConcatFunctionFactory::sinkUuid);
         adapterReferences.extendAndSet(ColumnType.NULL, ConcatFunctionFactory::sinkNull);
     }
 }

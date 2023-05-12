@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,35 +39,29 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
-import java.util.PrimitiveIterator;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
-    private final TableSequencerAPI.RegisteredTable broadSweepIter;
+    private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final StringSink debugBuffer = new StringSink();
-    private final IntHashSet discoveredWalIds = new IntHashSet();
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final IntHashSet lockedWalIDSet = new IntHashSet();
     private final MillisecondClock millisecondClock;
+    private final LongList onDiskWalIDSegmentIDPairs = new LongList();
+    private final IntHashSet onDiskWalIDSet = new IntHashSet();
     private final Path path = new Path();
     private final SimpleWaitingLock runLock = new SimpleWaitingLock();
-    private final NativeLPSZ segmentName = new NativeLPSZ();
+    private final LongList sequencerWalIDSegmentIDPairs = new LongList();
     private final long spinLockTimeout;
-    private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+    private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
-    private final WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
     private final NativeLPSZ walName = new NativeLPSZ();
-    private final IntHashSet walsInUse = new IntHashSet();
     private long last = 0;
     private TableToken tableToken;
-    private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
-    private int walId;
-    private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
-    private int walsLatestSegmentId;
-    private final FindVisitor deleteUnreachableSegmentsIterFunc = this::deleteUnreachableSegmentsIter;
 
     public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
         this.engine = engine;
@@ -77,7 +71,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         this.millisecondClock = engine.getConfiguration().getMillisecondClock();
         this.spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         this.txReader = new TxReader(ff);
-        this.broadSweepIter = this::broadSweep;
+        this.broadSweepRef = this::broadSweep;
 
         // some code here assumes that WAL_NAME_BASE is "wal", this is to fail the tests if it is not
         //noinspection ConstantConditions
@@ -147,22 +141,39 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void accumDebugState() {
         debugBuffer.clear();
         debugBuffer.put("table=").put(tableToken.getDirName())
-                .put(", discoveredWalIds=[");
-        for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
-            final int walId = it.nextInt();
-            debugBuffer.put(walId);
-            if (walsInUse.contains(walId)) {
-                debugBuffer.put("(locked)");
+                .put(", discovered=[");
+
+        for (int i = 0, n = onDiskWalIDSegmentIDPairs.size(); i < n; i++) {
+            long walSegment = onDiskWalIDSegmentIDPairs.getQuick(i);
+            int segmentId = Numbers.decodeLowInt(walSegment);
+            int walId = Numbers.decodeHighInt(walSegment);
+            if (segmentId < Integer.MAX_VALUE) {
+                debugBuffer.put('(').put(walId).put(',').put(segmentId >> 1);
+                if ((segmentId & 1) == 1) {
+                    debugBuffer.put(":locked");
+                }
+                debugBuffer.put(')');
+            } else {
+                debugBuffer.put("(wal").put(walId);
+                if (lockedWalIDSet.contains(walId)) {
+                    debugBuffer.put(":locked");
+                }
+                debugBuffer.put(')');
             }
-            if (it.hasNext()) {
+
+            if (i < n - 1) {
                 debugBuffer.put(',');
             }
         }
-        debugBuffer.put("], walInfoDataFrame=[");
-        for (int index = 0; index < walInfoDataFrame.size(); ++index) {
-            debugBuffer.put('(').put(walInfoDataFrame.walIds.get(index)).put(',')
-                    .put(walInfoDataFrame.segmentIds.get(index)).put(')');
-            if (index < walInfoDataFrame.size() - 1) {
+
+        debugBuffer.put("], nextToApply=[");
+        for (int i = 0, n = sequencerWalIDSegmentIDPairs.size(); i < n; i++) {
+            long walSegment = sequencerWalIDSegmentIDPairs.getQuick(i);
+            int segmentId = Numbers.decodeLowInt(walSegment) >> 1;
+            int walId = Numbers.decodeHighInt(walSegment);
+
+            debugBuffer.put('(').put(walId).put(',').put(segmentId).put(')');
+            if (i < n - 1) {
                 debugBuffer.put(',');
             }
         }
@@ -174,23 +185,23 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * WAL segments across the database and deletes any which are no longer needed.
      */
     private void broadSweep() {
-        engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, broadSweepIter);
+        engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, broadSweepRef);
     }
 
     private void broadSweep(int tableId, final TableToken tableToken, long lastTxn) {
         try {
             this.tableToken = tableToken;
-            discoveredWalIds.clear();
-            walsInUse.clear();
-            walInfoDataFrame.clear();
+            onDiskWalIDSegmentIDPairs.clear();
+            lockedWalIDSet.clear();
+            onDiskWalIDSet.clear();
+            sequencerWalIDSegmentIDPairs.clear();
 
-            discoverWalDirectories();
-            if (discoveredWalIds.size() != 0) {
+            boolean tableDropped = false;
+            discoverWalSegments();
+            if (onDiskWalIDSegmentIDPairs.size() != 0) {
 
-                populateWalInfoDataFrame();
+                tableDropped = fetchSequencerPairs();
                 accumDebugState();
-
-                deleteUnreachableSegments();
 
                 // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
                 // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
@@ -200,9 +211,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 deleteOutstandingWalDirectories();
             }
 
-            if (lastTxn < 0 && engine.isTableDropped(tableToken)) {
-                // Delete sequencer files
-                deleteTableSequencerFiles(tableToken);
+            if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
 
                 if (
                         TableUtils.exists(
@@ -214,6 +223,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 ) {
                     // Fully deregister the table
                     LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
+                    Path pathToDelete = Path.getThreadLocal(configuration.getRoot()).concat(tableToken).$();
+                    Path symLinkTarget = null;
+                    if (ff.isSoftLink(path)) {
+                        symLinkTarget = Path.getThreadLocal2("");
+                        if (!ff.readLink(pathToDelete, symLinkTarget)) {
+                            symLinkTarget = null;
+                        }
+                    }
+                    ff.rmdir(pathToDelete);
+                    if (symLinkTarget != null) {
+                        ff.rmdir(symLinkTarget);
+                    }
+                    TableUtils.lockName(pathToDelete);
+                    ff.remove(pathToDelete);
                     engine.removeTableToken(tableToken);
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
@@ -225,34 +248,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             LOG.error().$("broad sweep failed [table=").$(tableToken)
                     .$(", msg=").$((Throwable) ce)
                     .$(", errno=").$(ff.errno()).$(']').$();
-        }
-    }
-
-    private boolean couldObtainLock(Path path) {
-        final int lockFd = TableUtils.lock(ff, path, false);
-        if (lockFd != -1) {
-            ff.close(lockFd);
-            return true; // Could lock/unlock.
-        }
-        return false; // Could not obtain lock.
-    }
-
-    private void deleteClosedSegments() {
-        setWalPath(tableToken, walId);
-        ff.iterateDir(path, deleteClosedSegmentsIterFunc);
-    }
-
-    private void deleteClosedSegmentsIter(long pUtf8NameZ, int type) {
-        if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
-            int segmentId;
-            try {
-                segmentId = Numbers.parseInt(segmentName);
-            } catch (NumericException _ne) {
-                return; // Ignore non-segment directory.
-            }
-            if (couldObtainLock(setSegmentLockPath(tableToken, walId, segmentId))) {
-                deleteSegmentDirectory(tableToken, walId, segmentId);
-            }
         }
     }
 
@@ -269,12 +264,47 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void deleteOutstandingWalDirectories() {
-        for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
-            walId = it.nextInt();
-            if (walsInUse.contains(walId)) {
-                deleteClosedSegments();
-            } else {
-                deleteWalDirectory();
+        // Merge join discoveredWalSegments and nextToApplyWalSegments
+        // Both are sorted by WalId and then SegmentId
+        // Delete those segments which are lower than first committed segment
+        // Keep locked segments and all segments higher than first locked segment
+        int committedWalSegmentIndex = -1;
+        int committedSegmentId = -1;
+        int committedWalId = -1;
+        int committedSegmentSize = sequencerWalIDSegmentIDPairs.size();
+
+        for (int i = 0, n = onDiskWalIDSegmentIDPairs.size(); i < n; i++) {
+            long diskPair = onDiskWalIDSegmentIDPairs.get(i);
+            int walId = Numbers.decodeHighInt(diskPair);
+            int segmentKey = Numbers.decodeLowInt(diskPair);
+            int segmentId = segmentKey >> 1;
+            boolean segmentLocked = segmentKey != Integer.MAX_VALUE && (segmentKey & 1) == 1;
+
+            // If the current segment is locked, scroll to next wall id.
+            final int walIdLimit = segmentLocked ? walId + 1 : walId;
+            while (committedWalId < walIdLimit && ++committedWalSegmentIndex < committedSegmentSize) {
+                long sequencerPair = sequencerWalIDSegmentIDPairs.get(committedWalSegmentIndex);
+                committedWalId = Numbers.decodeHighInt(sequencerPair);
+                committedSegmentId = Numbers.decodeLowInt(sequencerPair) >> 1;
+            }
+
+            if (walId == committedWalId) {
+                // WAL is in use, there are committed transactions in Sequencer
+                if (committedSegmentId > segmentId) {
+                    // Segment already applied.
+                    deleteSegmentDirectory(tableToken, walId, segmentId);
+                }
+            } else if (!segmentLocked) {
+                // Nothing in Sequencer for this WAL and no locked segment means WAL can be deleted if it was not locked.
+                if (!lockedWalIDSet.contains(walId)) {
+                    deleteWalDirectory(walId);
+                } else {
+                    // WAL is locked but the segment in it is not in outstanding commits, delete it.
+                    // Segment with ID of Integer.MAX_VALUE is the WAL directory itself, only delete it if it's unlocked.
+                    if (segmentId != (Integer.MAX_VALUE >> 1)) {
+                        deleteSegmentDirectory(tableToken, walId, segmentId);
+                    }
+                }
             }
         }
     }
@@ -289,35 +319,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void deleteTableSequencerFiles(TableToken tableToken) {
-        setTableSequencerPath(tableToken);
-        LOG.info().$("table is dropped, deleting sequencer files [table=").utf8(tableToken.getDirName()).$(']').$();
-        recursiveDelete(path);
-    }
-
-    private void deleteUnreachableSegments() {
-        for (int index = 0; index < walInfoDataFrame.size(); ++index) {
-            walId = walInfoDataFrame.walIds.get(index);
-            walsLatestSegmentId = walInfoDataFrame.segmentIds.get(index);
-            ff.iterateDir(setWalPath(tableToken, walId), deleteUnreachableSegmentsIterFunc);
-        }
-    }
-
-    private void deleteUnreachableSegmentsIter(long pUtf8NameZ, int type) {
-        if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
-            int segmentId;
-            try {
-                segmentId = Numbers.parseInt(segmentName);
-            } catch (NumericException _ne) {
-                return; // Ignore non-segment directory.
-            }
-            if (segmentIsReapable(segmentId, walsLatestSegmentId)) {
-                deleteSegmentDirectory(tableToken, walId, segmentId);
-            }
-        }
-    }
-
-    private void deleteWalDirectory() {
+    private void deleteWalDirectory(int walId) {
         mayLogDebugInfo();
         LOG.info().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
                 .$(", walId=").$(walId).$(']').$();
@@ -326,34 +328,65 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void discoverWalDirectories() {
-        ff.iterateDir(setTablePath(tableToken), discoverWalDirectoriesIterFunc);
-    }
-
-    private void discoverWalDirectoriesIter(long pUtf8NameZ, int type) {
-        if ((type == Files.DT_DIR) && matchesWalNamePattern(walName.of(pUtf8NameZ))) {
-            // We just record the name for now in a set which we'll remove items to know when we're done.
-            int walId;
+    private void discoverWalSegments() {
+        Path path = setTablePath(tableToken);
+        long p = ff.findFirst(path);
+        int rootPathLen = path.length();
+        if (p > 0) {
             try {
-                walId = Numbers.parseInt(walName, 3, walName.length());
-            } catch (NumericException ne) {
-                return;  // Ignore non-wal directory
-            }
-            discoveredWalIds.add(walId);
-            if (walIsInUse(tableToken, walId)) {
-                walsInUse.add(walId);
+                do {
+                    int type = ff.findType(p);
+                    long pUtf8NameZ = ff.findName(p);
+
+                    if (type == Files.DT_DIR && matchesWalNamePattern(walName.of(pUtf8NameZ))) {
+                        // We just record the name for now in a set which we'll remove items to know when we're done.
+                        try {
+                            int walId = Numbers.parseInt(walName, 3, walName.length());
+                            if (walIsInUse(tableToken, walId)) {
+                                lockedWalIDSet.add(walId);
+                            }
+                            onDiskWalIDSet.add(walId);
+                            // SegmentId of Integer.MAX_VALUE is to track WAL directory itself.
+                            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(Integer.MAX_VALUE, walId));
+
+                            // Search for segments.
+                            path.trimTo(rootPathLen).concat(pUtf8NameZ);
+                            int walPathLen = path.length();
+                            long sp = ff.findFirst(path.$());
+
+                            try {
+                                do {
+                                    type = ff.findType(sp);
+                                    pUtf8NameZ = ff.findName(sp);
+
+                                    if (type == Files.DT_DIR && matchesSegmentName(walName.of(pUtf8NameZ))) {
+                                        try {
+                                            int segmentId = Numbers.parseInt(walName);
+                                            Path segmentPath = path.trimTo(walPathLen).slash().put(segmentId);
+                                            TableUtils.lockName(segmentPath);
+                                            boolean unlocked = unlocked(segmentPath.$());
+                                            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts((segmentId << 1) + (unlocked ? 0 : 1), walId));
+                                        } catch (NumericException ne) {
+                                            // Non-Segment directory, ignore.
+                                        }
+                                    }
+                                } while (ff.findNext(sp) > 0);
+                            } finally {
+                                ff.findClose(sp);
+                            }
+                        } catch (NumericException ne) {
+                            // Non-WAL directory, ignore.
+                        }
+                    }
+                } while (ff.findNext(p) > 0);
+                onDiskWalIDSegmentIDPairs.sort();
+            } finally {
+                ff.findClose(p);
             }
         }
     }
 
-    private void mayLogDebugInfo() {
-        if (debugBuffer.length() > 0) {
-            LOG.info().utf8(debugBuffer).$();
-            debugBuffer.clear();
-        }
-    }
-
-    private void populateWalInfoDataFrame() {
+    private boolean fetchSequencerPairs() {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
@@ -363,22 +396,35 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
                 try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, lastAppliedTxn)) {
-                    while (transactionLogCursor.hasNext() && (discoveredWalIds.size() > 0)) {
-                        final int walId = transactionLogCursor.getWalId();
-                        if (discoveredWalIds.contains(walId)) {
-                            walInfoDataFrame.add(walId, transactionLogCursor.getSegmentId());
-                            discoveredWalIds.remove(walId);
+                    while (onDiskWalIDSet.size() > 0 && transactionLogCursor.hasNext()) {
+                        int walId = transactionLogCursor.getWalId();
+                        if (onDiskWalIDSet.remove(walId) != -1) {
+                            int segmentId = transactionLogCursor.getSegmentId();
+                            sequencerWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(segmentId << 1, walId));
                         }
+                    }
+                    sequencerWalIDSegmentIDPairs.sort();
+                } catch (CairoException e) {
+                    if (e.isTableDropped()) {
+                        // there was a race, we lost
+                        return true;
+                    } else {
+                        throw e;
                     }
                 }
             } finally {
                 txReader.close();
             }
-        } else {
-            // Table is dropped, all wals can be deleted.
-            for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
-                walInfoDataFrame.add(it.nextInt(), Integer.MAX_VALUE);
-            }
+        }
+        return false;
+        // If table is dropped, all wals can be deleted.
+        // No need to do anything, all discovered segments / wals will be deleted
+    }
+
+    private void mayLogDebugInfo() {
+        if (debugBuffer.length() > 0) {
+            LOG.info().utf8(debugBuffer).$();
+            debugBuffer.clear();
         }
     }
 
@@ -388,10 +434,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             LOG.error().$("could not delete directory [path=").utf8(path)
                     .$(", errno=").$(errno).$(']').$();
         }
-    }
-
-    private boolean segmentIsReapable(int segmentId, int walsLatestSegmentId) {
-        return segmentId < walsLatestSegmentId;
     }
 
     private Path setSegmentLockPath(TableToken tableName, int walId, int segmentId) {
@@ -409,11 +451,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setTablePath(TableToken tableName) {
         return path.of(configuration.getRoot())
                 .concat(tableName).$();
-    }
-
-    private void setTableSequencerPath(TableToken tableName) {
-        path.of(configuration.getRoot())
-                .concat(tableName).concat(WalUtils.SEQ_DIR).$();
     }
 
     private void setTxnPath(TableToken tableName) {
@@ -434,8 +471,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
     }
 
+    private boolean unlocked(Path path) {
+        final int lockFd = TableUtils.lock(ff, path, false);
+        if (lockFd != -1) {
+            ff.close(lockFd);
+            return true; // Could lock/unlock.
+        }
+        return false; // Could not obtain lock.
+    }
+
     private boolean walIsInUse(TableToken tableName, int walId) {
-        return !couldObtainLock(setWalLockPath(tableName, walId));
+        return !unlocked(setWalLockPath(tableName, walId));
     }
 
     @Override
@@ -454,27 +500,5 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
         return false;
-    }
-
-    /**
-     * Table of columns grouping segment information. One row per walId.
-     */
-    private static class WalInfoDataFrame {
-        public final IntList segmentIds = new IntList();
-        public final IntList walIds = new IntList();
-
-        public void add(int walId, int segmentId) {
-            walIds.add(walId);
-            segmentIds.add(segmentId);
-        }
-
-        public void clear() {
-            walIds.clear();
-            segmentIds.clear();
-        }
-
-        public int size() {
-            return walIds.size();
-        }
     }
 }

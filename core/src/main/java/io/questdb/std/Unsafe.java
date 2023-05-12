@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+// @formatter:off
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -103,6 +104,16 @@ public final class Unsafe {
     public static void arrayPutOrdered(int[] array, int index, int value) {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedInt(array, INT_OFFSET + ((long) index << INT_SCALE), value);
+    }
+
+    public static int byteArrayGetInt(byte[] array, int index) {
+        assert index > -1 && index < array.length - 3;
+        return Unsafe.getUnsafe().getInt(array, BYTE_OFFSET + index);
+    }
+
+    public static long byteArrayGetLong(byte[] array, int index) {
+        assert index > -1 && index < array.length - 7;
+        return Unsafe.getUnsafe().getLong(array, BYTE_OFFSET + index);
     }
 
     public static long calloc(long size, int memoryTag) {
@@ -233,18 +244,6 @@ public final class Unsafe {
         COUNTERS[memoryTag].add(size);
     }
 
-    public static long swapEndianness(long value) {
-        long b0 = value & 0xff;
-        long b1 = (value >> 8) & 0xff;
-        long b2 = (value >> 16) & 0xff;
-        long b3 = (value >> 24) & 0xff;
-        long b4 = (value >> 32) & 0xff;
-        long b5 = (value >> 40) & 0xff;
-        long b6 = (value >> 48) & 0xff;
-        long b7 = (value >> 56) & 0xff;
-        return (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7;
-    }
-
     //#if jdk.version!=8
     private static long AccessibleObject_override_fieldOffset() {
         if (isJava8Or11()) {
@@ -301,7 +300,7 @@ public final class Unsafe {
     }
     //#endif
 
-    //most significant bit
+    // most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

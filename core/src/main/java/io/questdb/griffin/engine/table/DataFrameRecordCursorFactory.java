@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -36,8 +37,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     protected final DataFrameRecordCursor cursor;
@@ -67,15 +67,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             boolean supportsRandomAccess
     ) {
         super(metadata, dataFrameCursorFactory);
+
         this.rowCursorFactory = rowCursorFactory;
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
+        cursor = new DataFrameRecordCursorImpl(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
-        this.pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        this.pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
+        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
+        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
         this.supportsRandomAccess = supportsRandomAccess;
     }
 
@@ -106,8 +107,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return null;
     }
 
-    public boolean hasDescendingOrder() {
-        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
+    @Override
+    public int getScanDirection() {
+        switch (dataFrameCursorFactory.getOrder()) {
+            case ORDER_ASC:
+                return SCAN_DIRECTION_FORWARD;
+            case ORDER_DESC:
+                return SCAN_DIRECTION_BACKWARD;
+            default:
+                throw CairoException.critical(0).put("Unexpected factory order [order=").put(dataFrameCursorFactory.getOrder()).put("]");
+        }
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,10 +49,10 @@ public class MetricsBenchmark {
             "label0", new CharSequence[]{"A", "B", "C"},
             "label1", new CharSequence[]{"X", "Y", "Z"}
     );
-    private static final Gauge gauge = metricsRegistry.newGauge("gauge");
+    private static final LongGauge gauge = metricsRegistry.newLongGauge("gauge");
     private static final MetricsRegistry nullMetricsRegistry = new NullMetricsRegistry();
     private static final Counter nullCounter = nullMetricsRegistry.newCounter("null_counter");
-    private static final Gauge nullGauge = nullMetricsRegistry.newGauge("null_gauge");
+    private static final LongGauge nullGauge = nullMetricsRegistry.newLongGauge("null_gauge");
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -102,6 +102,11 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return base.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -153,7 +158,10 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         private final ObjList<LongTreeChain> orderedSources;
         private final RecordChain recordChain;
         private RecordCursor base;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
+        private boolean isRecordChainBuilt;
+        private long recordChainOffset;
 
         public CachedAnalyticRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
             this.columnIndexes = columnIndexes;
@@ -193,6 +201,10 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public boolean hasNext() {
+            if (!isRecordChainBuilt) {
+                buildRecordChain();
+            }
+            isRecordChainBuilt = true;
             return recordChain.hasNext();
         }
 
@@ -216,21 +228,18 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
             recordChain.toTop();
         }
 
-        private void buildRecordChain(SqlExecutionContext context) {
-            SqlExecutionCircuitBreaker circuitBreaker = context.getCircuitBreaker();
-
+        private void buildRecordChain() {
             // step #1: store source cursor in record list
-            // - add record list' row ids to all trees, which will put these row ids in necessary order
+            // - add record list's row ids to all trees, which will put these row ids in necessary order
             // for this we will be using out comparator, which helps tree compare long values
             // based on record these values are addressing
-            long offset = -1;
             final Record record = base.getRecord();
             final Record chainRecord = recordChain.getRecord();
             final Record chainRightRecord = recordChain.getRecordB();
             if (orderedGroupCount > 0) {
                 while (base.hasNext()) {
-                    offset = recordChain.put(record, offset);
-                    recordChain.recordAt(chainRecord, offset);
+                    recordChainOffset = recordChain.put(record, recordChainOffset);
+                    recordChain.recordAt(chainRecord, recordChainOffset);
                     for (int i = 0; i < orderedGroupCount; i++) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         orderedSources.getQuick(i).put(chainRecord, recordChain, chainRightRecord, comparators.getQuick(i));
@@ -239,15 +248,17 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
             } else {
                 while (base.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    offset = recordChain.put(record, offset);
+                    recordChainOffset = recordChain.put(record, recordChainOffset);
                 }
             }
 
+            // step #2: populate all analytic functions with records in order of respective tree
+            // run pass1 for all ordered functions
+            long offset;
             if (orderedGroupCount > 0) {
                 for (int i = 0; i < orderedGroupCount; i++) {
                     final LongTreeChain tree = orderedSources.getQuick(i);
                     final ObjList<AnalyticFunction> functions = orderedFunctions.getQuick(i);
-                    // step #2: populate all analytic functions with records in order of respective tree
                     final LongTreeChain.TreeCursor cursor = tree.getCursor();
                     final int functionCount = functions.size();
                     while (cursor.hasNext()) {
@@ -278,6 +289,9 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
         private void of(RecordCursor base, SqlExecutionContext context) {
             this.base = base;
+            isRecordChainBuilt = false;
+            recordChainOffset = -1;
+            circuitBreaker = context.getCircuitBreaker();
             if (!isOpen) {
                 recordChain.reopen();
                 recordChain.setSymbolTableResolver(this);
@@ -285,7 +299,6 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                 reopen(allFunctions);
                 isOpen = true;
             }
-            buildRecordChain(context);
         }
 
         private void reopen(ObjList<?> list) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,6 +63,41 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass 
     return func((double *) pDouble, size); \
 }\
 JNIEXPORT jdouble JNICALL JavaCritical_io_questdb_std_Vect_ ## func(jlong pDouble, jlong size) { \
+    return func((double *) pDouble, size); \
+}\
+\
+}
+
+typedef int64_t DoubleLongVecFuncType(double *, int64_t);
+
+#define DOUBLE_LONG_DISPATCHER(func) \
+\
+DoubleLongVecFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+DoubleLongVecFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+int64_t F_DISPATCH(func) (double *d, int64_t count) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(d, count); \
+} \
+\
+inline int64_t func(double *d, int64_t count) { \
+return (*POINTER_NAME(func))(d, count); \
+}\
+\
+extern "C" { \
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pDouble, jlong size) { \
     return func((double *) pDouble, size); \
 }\
 \

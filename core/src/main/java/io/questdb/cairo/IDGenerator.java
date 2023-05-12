@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ public class IDGenerator implements Closeable {
             ff.munmap(uniqueIdMem, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
             uniqueIdMem = 0;
         }
-        if (ff.closeChecked(uniqueIdFd)) {
+        if (ff.close(uniqueIdFd)) {
             uniqueIdFd = -1;
         }
     }
@@ -95,6 +95,7 @@ public class IDGenerator implements Closeable {
     }
 
     long getCurrentId() {
+        assert uniqueIdMem > 0;
         return Unsafe.getUnsafe().getLong(uniqueIdMem);
     }
 }

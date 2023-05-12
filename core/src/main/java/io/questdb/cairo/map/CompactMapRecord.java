@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -117,6 +117,16 @@ public class CompactMapRecord implements MapRecord {
 
     @Override
     public long getLong(int col) {
+        return entries.getLong(getColumnOffset(col));
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        return entries.getLong(getColumnOffset(col) + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
         return entries.getLong(getColumnOffset(col));
     }
 

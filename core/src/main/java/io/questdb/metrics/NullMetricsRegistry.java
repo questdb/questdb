@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,18 +50,23 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
-    public Gauge newGauge(CharSequence name) {
-        return NullGauge.INSTANCE;
+    public DoubleGauge newDoubleGauge(CharSequence name) {
+        return DoubleGauge.INSTANCE;
     }
 
     @Override
-    public Gauge newGauge(int memoryTag) {
-        return NullGauge.INSTANCE;
+    public LongGauge newLongGauge(CharSequence name) {
+        return NullLongGauge.INSTANCE;
     }
 
     @Override
-    public Gauge newVirtualGauge(CharSequence name, VirtualGauge.StatProvider provider) {
-        return NullGauge.INSTANCE;
+    public LongGauge newLongGauge(int memoryTag) {
+        return NullLongGauge.INSTANCE;
+    }
+
+    @Override
+    public LongGauge newVirtualGauge(CharSequence name, VirtualLongGauge.StatProvider provider) {
+        return NullLongGauge.INSTANCE;
     }
 
     @Override

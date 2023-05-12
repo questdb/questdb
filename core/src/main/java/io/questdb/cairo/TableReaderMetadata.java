@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -160,34 +160,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         transitionMeta = Misc.free(transitionMeta);
     }
 
-    public void copy(TableReaderMetadata metadata) {
-        partitionBy = metadata.partitionBy;
-        tableId = metadata.tableId;
-        maxUncommittedRows = metadata.maxUncommittedRows;
-        o3MaxLag = metadata.o3MaxLag;
-        structureVersion = metadata.structureVersion;
-        walEnabled = metadata.walEnabled;
-        path.of(metadata.path);
-        timestampIndex = metadata.timestampIndex;
-        columnCount = metadata.columnCount;
-        columnMetadata.setPos(columnCount);
-        columnNameIndexMap.clear();
-
-        for (int i = 0; i < columnCount; i++) {
-            TableColumnMetadata columnMetadata = metadata.columnMetadata.getQuick(i);
-            this.columnMetadata.setQuick(i, new TableColumnMetadata(
-                    columnMetadata.getName(),
-                    columnMetadata.getType(),
-                    columnMetadata.isIndexed(),
-                    columnMetadata.getIndexValueBlockCapacity(),
-                    columnMetadata.isSymbolTableStatic(),
-                    columnMetadata.getMetadata(),
-                    columnMetadata.getWriterIndex()
-            ));
-            columnNameIndexMap.put(columnMetadata.getName(), i);
-        }
-    }
-
     public long createTransitionIndex(long txnStructureVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getMRInstance();
@@ -254,30 +226,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
-    public void load() {
-        final long timeout = configuration.getSpinLockTimeout();
-        final MillisecondClock millisecondClock = configuration.getMillisecondClock();
-        long deadline = configuration.getMillisecondClock().getTicks() + timeout;
-        this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
-        boolean existenceChecked = false;
-        while (true) {
-            try {
-                load(path);
-                return;
-            } catch (CairoException ex) {
-                if (!existenceChecked) {
-                    path.trimTo(plen).slash$();
-                    if (!ff.exists(path)) {
-                        throw CairoException.tableDoesNotExist(tableToken.getTableName());
-                    }
-                    path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
-                }
-                existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, timeout);
-            }
-        }
-    }
-
     public void load(Path path) {
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
@@ -322,6 +270,30 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         } catch (Throwable e) {
             clear();
             throw e;
+        }
+    }
+
+    public void load() {
+        final long timeout = configuration.getSpinLockTimeout();
+        final MillisecondClock millisecondClock = configuration.getMillisecondClock();
+        long deadline = configuration.getMillisecondClock().getTicks() + timeout;
+        this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
+        boolean existenceChecked = false;
+        while (true) {
+            try {
+                load(path);
+                return;
+            } catch (CairoException ex) {
+                if (!existenceChecked) {
+                    path.trimTo(plen).slash$();
+                    if (!ff.exists(path)) {
+                        throw CairoException.tableDoesNotExist(tableToken.getTableName());
+                    }
+                    path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
+                }
+                existenceChecked = true;
+                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, timeout);
+            }
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -285,10 +285,7 @@ final class FastFloat {
             }
             illegal |= !isDigit(ch);
             do {
-                // Guard against overflow
-                if (expNumber < FastDoubleUtils.MAX_EXPONENT_NUMBER) {
-                    expNumber = 10 * expNumber + ch - '0';
-                }
+                expNumber = 10 * expNumber + ch - '0';
                 ch = ++index < endIndex ? str.charAt(index) : 0;
             } while (isDigit(ch));
             if (neg_exp) {

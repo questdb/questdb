@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -193,7 +193,7 @@ public final class SyncLogger implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        Chars.utf8Decode(lo, hi, this);
+        Chars.utf8toUtf16(lo, hi, this);
         return this;
     }
 

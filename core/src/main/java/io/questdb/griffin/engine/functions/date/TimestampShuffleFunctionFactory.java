@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -51,13 +52,18 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        final long start = args.getQuick(0).getTimestamp(null);
-        final long end = args.getQuick(1).getTimestamp(null);
+    ) throws SqlException {
+        long start = args.getQuick(0).getTimestamp(null);
+        long end = args.getQuick(1).getTimestamp(null);
         if (start == Numbers.LONG_NaN || end == Numbers.LONG_NaN) {
             return TimestampConstant.NULL;
         }
-        return new TimestampShuffleFunction(start, end);
+
+        if (start <= end) {
+            return new TimestampShuffleFunction(start, end);
+        } else {
+            return new TimestampShuffleFunction(end, start);
+        }
     }
 
     private static class TimestampShuffleFunction extends TimestampFunction {

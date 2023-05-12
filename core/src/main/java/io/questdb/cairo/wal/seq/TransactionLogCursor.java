@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public interface TransactionLogCursor extends Closeable {
 
     int getSegmentId();
 
-    long getSegmentTxn();
+    int getSegmentTxn();
 
     long getStructureVersion();
 
@@ -43,4 +43,10 @@ public interface TransactionLogCursor extends Closeable {
     int getWalId();
 
     boolean hasNext();
+
+    boolean setPosition();
+
+    void setPosition(long txn);
+
+    void toTop();
 }

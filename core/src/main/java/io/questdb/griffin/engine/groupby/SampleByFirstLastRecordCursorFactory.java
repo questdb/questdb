@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -75,23 +75,23 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     ) throws SqlException {
         super(groupByMetadata);
         this.base = base;
-        this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
-        this.queryToFrameColumnMapping = new int[columns.size()];
-        this.firstLastIndexByCol = new int[columns.size()];
-        this.isKeyColumn = new boolean[columns.size()];
-        this.crossFrameRow = new LongList(columns.size());
-        this.crossFrameRow.setPos(columns.size());
+        groupBySymbolColIndex = symbolFilter.getColumnIndex();
+        queryToFrameColumnMapping = new int[columns.size()];
+        firstLastIndexByCol = new int[columns.size()];
+        isKeyColumn = new boolean[columns.size()];
+        crossFrameRow = new LongList(columns.size());
+        crossFrameRow.setPos(columns.size());
         this.timestampIndex = timestampIndex;
         buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
-        this.pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
-        this.maxSamplePeriodSize = this.pageSize * 4;
+        pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
+        maxSamplePeriodSize = pageSize * 4;
         int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
-        this.rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
-        this.rowIdOutAddress.setPos(outSize);
-        this.samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
+        rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
+        rowIdOutAddress.setPos(outSize);
+        samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
         this.symbolFilter = symbolFilter;
-        this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
+        sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
                 timestampSampler,
                 timezoneNameFunc,
                 timezoneNameFuncPos,
@@ -269,9 +269,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         public long getNextTimestamp() {
             long lastTimestampLocUtc = localEpoch - tzOffset;
             long nextLastTimestampLoc = timestampSampler.nextTimestamp(localEpoch);
-            if (nextLastTimestampLoc - tzOffset >= nextDstUTC) {
+            if (nextLastTimestampLoc - tzOffset >= nextDstUtc) {
                 tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);
-                nextDstUTC = rules.getNextDST(nextLastTimestampLoc - tzOffset);
+                nextDstUtc = rules.getNextDST(nextLastTimestampLoc - tzOffset);
                 while (nextLastTimestampLoc - tzOffset <= lastTimestampLocUtc) {
                     nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);
                 }
@@ -324,7 +324,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     // we really need UTC timestamp to get offset correctly
                     // this will converge to UTC timestamp
                     tzOffset = rules.getOffset(timestamp + tzOffset);
-                    nextDstUTC = rules.getNextDST(timestamp + tzOffset);
+                    nextDstUtc = rules.getNextDST(timestamp + tzOffset);
                 }
                 if (fixedOffset != Long.MIN_VALUE) {
                     localEpoch = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;
@@ -581,7 +581,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 case 0:
                     crossFrameRow.set(index, Unsafe.getUnsafe().getByte(pageAddress + rowId));
                     break;
-
                 default:
                     throw new CairoException().put("first(), last() cannot be used with column type ").put(ColumnType.nameOf(columnType));
             }
@@ -619,7 +618,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.groupBySymbolKey = groupBySymbolKey;
             toTop();
             parseParams(this, sqlExecutionContext);
-            this.initialized = false;
+            initialized = false;
         }
 
         private class SampleByFirstLastRecord implements Record {
@@ -871,7 +870,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 public long getLong(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                        if (col != timestampIndex) {
+                            return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                        }
+                        // Special case - timestamp the sample by runs on
+                        // Take it from timestampOutBuff instead of column
+                        // It's the value of the beginning of the group, not where the first row found
+                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     } else {
                         return Numbers.LONG_NaN;
                     }
@@ -901,12 +906,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                 @Override
                 public long getTimestamp(int col) {
-                    if (col == timestampIndex) {
-                        // Special case - timestamp the sample by runs on
-                        // Take it from timestampOutBuff instead of column
-                        // It's the value of the beginning of the group, not where the first row found
-                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
-                    }
                     return getLong(col);
                 }
 

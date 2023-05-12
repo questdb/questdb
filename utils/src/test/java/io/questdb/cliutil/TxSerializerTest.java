@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ package io.questdb.cliutil;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
@@ -84,7 +84,7 @@ public class TxSerializerTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
+                        AllowAllSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
@@ -143,7 +143,7 @@ public class TxSerializerTest {
         compiler.compile(createTableSql, sqlExecutionContext);
 
         TxSerializer serializer = new TxSerializer();
-        String txPath = root + "/" + "xxx/_txn";
+        String txPath = root.toString() + Files.SEPARATOR + "xxx" + Files.SEPARATOR + "_txn";
         String json = serializer.toJson(txPath);
         Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 0"));
 
@@ -208,7 +208,7 @@ public class TxSerializerTest {
         engine.releaseAllReaders();
 
         TxSerializer serializer = new TxSerializer();
-        String txPath = root + "/" + "xxx/_txn";
+        String txPath = root.toString() + Files.SEPARATOR + "xxx" + Files.SEPARATOR + "_txn";
         String json = serializer.toJson(txPath);
         serializer.serializeJson(json, txPath);
 
@@ -225,11 +225,9 @@ public class TxSerializerTest {
 
         if (oooSupports) {
             // Insert same records
-            compiler.compile("insert into xxx select * from xxx",
-                    sqlExecutionContext);
+            compiler.compile("insert into xxx select * from xxx", sqlExecutionContext);
         } else {
-            compiler.compile("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx",
-                    sqlExecutionContext);
+            compiler.compile("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx", sqlExecutionContext);
         }
         assertFirstColumnValueLong("select count() from xxx", 20);
         assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);

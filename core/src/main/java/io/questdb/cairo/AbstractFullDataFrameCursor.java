@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     protected final FullTableDataFrame frame = new FullTableDataFrame();
@@ -57,15 +58,16 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
 
     public DataFrameCursor of(TableReader reader) {
         this.reader = reader;
-        this.partitionHi = reader.getPartitionCount();
+        partitionHi = reader.getPartitionCount();
         toTop();
         return this;
     }
 
+    @TestOnly
     @Override
     public boolean reload() {
         boolean moreData = reader.reload();
-        this.partitionHi = reader.getPartitionCount();
+        partitionHi = reader.getPartitionCount();
         toTop();
         return moreData;
     }

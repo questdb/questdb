@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -90,6 +90,10 @@ public class TypeManager implements Mutable {
         timestampAdapterPool.clear();
     }
 
+    public ObjList<TypeAdapter> getAllAdapters() {
+        return probes;
+    }
+
     public InputFormatConfiguration getInputFormatConfiguration() {
         return inputFormatConfiguration;
     }
@@ -126,6 +130,8 @@ public class TypeManager implements Mutable {
                 return nextSymbolAdapter(false);
             case ColumnType.LONG256:
                 return Long256Adapter.INSTANCE;
+            case ColumnType.UUID:
+                return UuidAdapter.INSTANCE;
             case ColumnType.GEOBYTE:
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
@@ -166,9 +172,6 @@ public class TypeManager implements Mutable {
         probes.add(getTypeAdapter(ColumnType.DOUBLE));
         probes.add(getTypeAdapter(ColumnType.BOOLEAN));
         probes.add(getTypeAdapter(ColumnType.LONG256));
-    }
-
-    ObjList<TypeAdapter> getAllAdapters() {
-        return probes;
+        probes.add(getTypeAdapter(ColumnType.UUID));
     }
 }

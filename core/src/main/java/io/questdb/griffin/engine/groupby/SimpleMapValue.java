@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -151,6 +151,16 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public long getLong128Hi(int col) {
+        return values[4 * col + 1];
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return values[4 * col];
+    }
+
+    @Override
     public Long256 getLong256A(int index) {
         final int idx = 4 * index;
         long256.setAll(values[idx], values[idx + 1], values[idx + 2], values[idx + 3]);
@@ -210,6 +220,13 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void putLong(int index, long value) {
         values[4 * index] = value;
+    }
+
+    @Override
+    public void putLong128(int index, long lo, long hi) {
+        final int idx = 4 * index;
+        values[idx] = lo;
+        values[idx + 1] = hi;
     }
 
     @Override

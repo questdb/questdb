@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -72,13 +72,34 @@ struct long_3x {
 #if RADIX_SHUFFLE == 0
 
 template<uint16_t sh, typename T>
-inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, uint64_t size) {
+inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const  uint64_t size) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < size; x++) {
         const auto digit = (src[x] >> sh) & 0xffu;
         dest[counts[digit]] = src[x];
         counts[digit]++;
         MM_PREFETCH_T2(src + x + 64);
+    }
+}
+
+
+template<uint16_t sh>
+inline void radix_shuffle_ab(uint64_t *counts, const uint64_t *srcA, const uint64_t sizeA, const index_t *srcB, const uint64_t sizeB, index_t *dest) {
+    MM_PREFETCH_T0(counts);
+    for (uint64_t x = 0; x < sizeA; x++) {
+        const auto digit = (srcA[x] >> sh) & 0xffu;
+        dest[counts[digit]].ts = srcA[x];
+        dest[counts[digit]].i = x;
+        counts[digit]++;
+        MM_PREFETCH_T2(srcA + x + 64);
+    }
+
+    for (uint64_t x = 0; x < sizeB; x++) {
+        const auto digit = (srcB[x] >> sh) & 0xffu;
+        dest[counts[digit]].ts = srcB[x].ts;
+        dest[counts[digit]].i = x | (1ull << 63);
+        counts[digit]++;
+        MM_PREFETCH_T2(srcB + x + 64);
     }
 }
 
@@ -224,6 +245,97 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     radix_shuffle<40u>(counts.c3, cpy, array, size);
     radix_shuffle<48u>(counts.c2, array, cpy, size);
     radix_shuffle<56u>(counts.c1, cpy, array, size);
+}
+
+void radix_sort_ab_long_index_asc(const uint64_t *arrayA, const uint64_t sizeA, const index_t *arrayB, const uint64_t sizeB, index_t *out, index_t *cpy) {
+    rscounts_t counts;
+    memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
+    uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
+    uint64_t t8, t7, t6, t5, t4, t3, t2, t1;
+    uint64_t x;
+
+    // calculate counts
+    MM_PREFETCH_NTA(counts.c8);
+    for (x = 0; x < sizeA; x++) {
+        t8 = arrayA[x] & 0xffu;
+        t7 = (arrayA[x] >> 8u) & 0xffu;
+        t6 = (arrayA[x] >> 16u) & 0xffu;
+        t5 = (arrayA[x] >> 24u) & 0xffu;
+        t4 = (arrayA[x] >> 32u) & 0xffu;
+        t3 = (arrayA[x] >> 40u) & 0xffu;
+        t2 = (arrayA[x] >> 48u) & 0xffu;
+        t1 = (arrayA[x] >> 56u) & 0xffu;
+        counts.c8[t8]++;
+        counts.c7[t7]++;
+        counts.c6[t6]++;
+        counts.c5[t5]++;
+        counts.c4[t4]++;
+        counts.c3[t3]++;
+        counts.c2[t2]++;
+        counts.c1[t1]++;
+        MM_PREFETCH_T2(arrayA + x + 64);
+    }
+
+    for (x = 0; x < sizeB; x++) {
+        t8 = arrayB[x] & 0xffu;
+        t7 = (arrayB[x] >> 8u) & 0xffu;
+        t6 = (arrayB[x] >> 16u) & 0xffu;
+        t5 = (arrayB[x] >> 24u) & 0xffu;
+        t4 = (arrayB[x] >> 32u) & 0xffu;
+        t3 = (arrayB[x] >> 40u) & 0xffu;
+        t2 = (arrayB[x] >> 48u) & 0xffu;
+        t1 = (arrayB[x] >> 56u) & 0xffu;
+        counts.c8[t8]++;
+        counts.c7[t7]++;
+        counts.c6[t6]++;
+        counts.c5[t5]++;
+        counts.c4[t4]++;
+        counts.c3[t3]++;
+        counts.c2[t2]++;
+        counts.c1[t1]++;
+        MM_PREFETCH_T2(arrayA + x + 64);
+    }
+
+    // convert counts to offsets
+    MM_PREFETCH_T0(&counts);
+    for (x = 0; x < 256; x++) {
+        t8 = o8 + counts.c8[x];
+        t7 = o7 + counts.c7[x];
+        t6 = o6 + counts.c6[x];
+        t5 = o5 + counts.c5[x];
+        t4 = o4 + counts.c4[x];
+        t3 = o3 + counts.c3[x];
+        t2 = o2 + counts.c2[x];
+        t1 = o1 + counts.c1[x];
+        counts.c8[x] = o8;
+        counts.c7[x] = o7;
+        counts.c6[x] = o6;
+        counts.c5[x] = o5;
+        counts.c4[x] = o4;
+        counts.c3[x] = o3;
+        counts.c2[x] = o2;
+        counts.c1[x] = o1;
+        o8 = t8;
+        o7 = t7;
+        o6 = t6;
+        o5 = t5;
+        o4 = t4;
+        o3 = t3;
+        o2 = t2;
+        o1 = t1;
+    }
+
+    // radix
+    radix_shuffle_ab<0u>(counts.c8, arrayA, sizeA, arrayB, sizeB, cpy);
+
+    auto size = sizeA + sizeB;
+    radix_shuffle<8u>(counts.c7, cpy, out, size);
+    radix_shuffle<16u>(counts.c6, out, cpy, size);
+    radix_shuffle<24u>(counts.c5, cpy, out, size);
+    radix_shuffle<32u>(counts.c4, out, cpy, size);
+    radix_shuffle<40u>(counts.c3, cpy, out, size);
+    radix_shuffle<48u>(counts.c2, out, cpy, size);
+    radix_shuffle<56u>(counts.c1, cpy, out, size);
 }
 
 template<typename T>
@@ -527,6 +639,12 @@ Java_io_questdb_std_Vect_quickSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jl
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_radixSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len, jlong pCpy) {
     radix_sort_long_index_asc_in_place<index_t>(reinterpret_cast<index_t *>(pLong), len, reinterpret_cast<index_t *>(pCpy));
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB, jlong countB, jlong pDataOut, jlong pDataCpy) {
+    radix_sort_ab_long_index_asc(reinterpret_cast<uint64_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB),
+                                 countB, reinterpret_cast<index_t *>(pDataOut), reinterpret_cast<index_t *>(pDataCpy));
 }
 
 JNIEXPORT void JNICALL

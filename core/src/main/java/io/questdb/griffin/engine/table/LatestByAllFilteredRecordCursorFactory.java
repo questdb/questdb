@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,9 +53,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
         super(metadata, dataFrameCursorFactory, configuration);
         Map map = MapFactory.createMap(configuration, columnTypes);
         if (filter == null) {
-            this.cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
+            cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
         } else {
-            this.cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
+            cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
         }
     }
 
@@ -73,7 +73,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
 
     @Override
     protected void _close() {
-        this.cursor.close();
+        cursor.close();
         super._close();
     }
 }

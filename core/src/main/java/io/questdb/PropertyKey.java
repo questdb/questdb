@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,9 +29,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public enum PropertyKey {
+public enum PropertyKey implements ConfigProperty {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
+    CAIRO_VOLUMES("cairo.volumes"),
     CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
@@ -48,6 +49,7 @@ public enum PropertyKey {
     CAIRO_DEFAULT_SYMBOL_CAPACITY("cairo.default.symbol.capacity"),
     CAIRO_FILE_OPERATION_RETRY_COUNT("cairo.file.operation.retry.count"),
     CAIRO_IDLE_CHECK_INTERVAL("cairo.idle.check.interval"),
+    CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS("cairo.inactive.reader.max.open.partitions"),
     CAIRO_INACTIVE_READER_TTL("cairo.inactive.reader.ttl"),
     CAIRO_INACTIVE_WRITER_TTL("cairo.inactive.writer.ttl"),
     CAIRO_INDEX_VALUE_BLOCK_SIZE("cairo.index.value.block.size"),
@@ -145,6 +147,7 @@ public enum PropertyKey {
     CAIRO_O3_PARTITION_QUEUE_CAPACITY("cairo.o3.partition.queue.capacity"),
     CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY("cairo.o3.open.column.queue.capacity"),
     CAIRO_O3_COPY_QUEUE_CAPACITY("cairo.o3.copy.queue.capacity"),
+    CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE("cairo.o3.lag.calculation.windows.size"),
     CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY("cairo.o3.upd.partition.size.queue.capacity"),
     CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY("cairo.o3.purge.discovery.queue.capacity"),
     CAIRO_O3_COLUMN_MEMORY_SIZE("cairo.o3.column.memory.size"),
@@ -221,6 +224,7 @@ public enum PropertyKey {
     HTTP_TEXT_ROLL_BUFFER_LIMIT("http.text.roll.buffer.limit"),
     HTTP_TEXT_ROLL_BUFFER_SIZE("http.text.roll.buffer.size"),
     HTTP_TEXT_UTF8_SINK_SIZE("http.text.utf8.sink.size"),
+    HTTP_PESSIMISTIC_HEALTH_CHECK("http.pessimistic.health.check.enabled"),
     HTTP_SECURITY_READONLY("http.security.readonly"),
     HTTP_SECURITY_MAX_RESPONSE_ROWS("http.security.max.response.rows"),
     HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION("http.security.interrupt.on.closed.connection"),
@@ -271,6 +275,7 @@ public enum PropertyKey {
     LINE_TCP_NET_BIND_TO("line.tcp.net.bind.to"),
     LINE_TCP_NET_IDLE_TIMEOUT("line.tcp.net.idle.timeout"),
     LINE_TCP_NET_CONNECTION_TIMEOUT("line.tcp.net.connection.timeout"),
+    LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL("line.tcp.net.connection.heartbeat.interval"),
     LINE_TCP_NET_QUEUED_TIMEOUT("line.tcp.net.queued.timeout"),
     LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT("line.tcp.net.connection.queue.timeout"),
     LINE_TCP_NET_RECV_BUF_SIZE("line.tcp.net.recv.buf.size"),
@@ -377,6 +382,7 @@ public enum PropertyKey {
     CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
     CAIRO_WAL_PURGE_INTERVAL("cairo.wal.purge.interval"),
     CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
+    CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.wal.writer.data.append.page.size"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
@@ -385,10 +391,19 @@ public enum PropertyKey {
     WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
     CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
     CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
+    CAIRO_WAL_APPLY_ENABLED("cairo.wal.apply.enabled"),
+    TABLE_TYPE_CONVERSION_ENABLED("table.type.conversion.enabled"),
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
-    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
+    CAIRO_WAL_INACTIVE_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
+    CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER("cairo.wal.squash.uncommitted.rows.multiplier"),
+    CAIRO_WAL_APPLY_TABLE_TIME_QUOTA("cairo.wal.apply.table.time.quota"),
+    CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
     READ_ONLY_INSTANCE("readonly"),
-    CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency");
+    CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
+    CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
+    CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
+    CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
+    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;
@@ -401,6 +416,7 @@ public enum PropertyKey {
         return Optional.ofNullable(nameMapping.get(name));
     }
 
+    @Override
     public String getPropertyPath() {
         return propertyPath;
     }

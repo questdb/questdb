@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -83,13 +83,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
-
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         try {
+            // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             cursor.of(baseCursor, circuitBreaker);
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
@@ -140,6 +139,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final Map dataMap;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isDataMapBuilt;
         private boolean isOpen;
 
         public GroupByRecordCursor(
@@ -165,14 +166,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    dataMap.reopen();
-                }
-                final Record baseRecord = baseCursor.getRecord();
-                while (baseCursor.hasNext()) {
+        @Override
+        public boolean hasNext() {
+            if (!isDataMapBuilt) {
+                final Record baseRecord = managedCursor.getRecord();
+                while (managedCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     final MapKey key = dataMap.withKey();
                     mapSink.copy(baseRecord, key);
@@ -183,11 +181,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         groupByFunctionsUpdater.updateExisting(value, baseRecord);
                     }
                 }
-                super.of(baseCursor, dataMap.getCursor());
-            } catch (Throwable e) {
-                close();
-                throw e;
+                super.of(dataMap.getCursor());
+                isDataMapBuilt = true;
             }
+            return super.hasNext();
+        }
+
+        public void of(RecordCursor managedCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            if (!isOpen) {
+                isOpen = true;
+                dataMap.reopen();
+            }
+            this.circuitBreaker = circuitBreaker;
+            this.managedCursor = managedCursor;
+            isDataMapBuilt = false;
         }
     }
 }

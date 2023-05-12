@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<ShortBindVariable> shortVarPool;
     private final ObjectPool<StrBindVariable> strVarPool;
     private final ObjectPool<TimestampBindVariable> timestampVarPool;
+    private final ObjectPool<UuidBindVariable> uuidVarPool;
 
     public BindVariableServiceImpl(CairoConfiguration configuration) {
         final int poolSize = configuration.getBindVariablePoolSize();
@@ -67,6 +68,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.strVarPool = new ObjectPool<>(() -> new StrBindVariable(configuration.getFloatToStrCastScale()), poolSize);
         this.charVarPool = new ObjectPool<>(CharBindVariable::new, 8);
         this.long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
+        this.uuidVarPool = new ObjectPool<>(UuidBindVariable::new, 8);
     }
 
     @Override
@@ -137,6 +139,9 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.GEOINT:
             case ColumnType.GEOLONG:
                 setGeoHash(index, type);
+                return type;
+            case ColumnType.UUID:
+                setUuid(index);
                 return type;
             default:
                 throw SqlException.$(position, "bind variable cannot be used [contextType=").put(ColumnType.nameOf(type)).put(", index=").put(index).put(']');
@@ -627,6 +632,35 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    @Override
+    public void setUuid(int index, long lo, long hi) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setUuid(function, lo, hi, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = uuidVarPool.next());
+            ((UuidBindVariable) function).set(lo, hi);
+        }
+    }
+
+    @Override
+    public void setUuid(CharSequence name, long lo, long hi) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final UuidBindVariable function;
+            namedVariables.putAt(index, name, function = uuidVarPool.next());
+            function.set(lo, hi);
+        } else {
+            setUuid(namedVariables.valueAtQuick(index), lo, hi, -1, name);
+        }
+    }
+
+    public void setUuid(int index) throws SqlException {
+        setUuid(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
+    }
+
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {
         if (name == null) {
             throw SqlException.$(0, "bind variable at ").put(index).put(" is defined as ").put(ColumnType.nameOf(function.getType())).put(" and cannot accept ").put(ColumnType.nameOf(srcType));
@@ -986,6 +1020,9 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.LONG256:
                 SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
                 break;
+            case ColumnType.UUID:
+                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+                break;
             default:
                 reportError(function, ColumnType.STRING, index, name);
                 break;
@@ -1024,6 +1061,21 @@ public class BindVariableServiceImpl implements BindVariableService {
                 break;
             default:
                 reportError(function, ColumnType.TIMESTAMP, index, null);
+                break;
+        }
+    }
+
+    private static void setUuid(Function function, long lo, long hi, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = ColumnType.tagOf(function.getType());
+        switch (functionType) {
+            case ColumnType.UUID:
+                ((UuidBindVariable) function).set(lo, hi);
+                break;
+            case ColumnType.STRING:
+                ((StrBindVariable) function).setUuidValue(lo, hi);
+                break;
+            default:
+                reportError(function, ColumnType.UUID, index, name);
                 break;
         }
     }

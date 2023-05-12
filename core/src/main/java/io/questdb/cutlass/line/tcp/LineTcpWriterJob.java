@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,13 +35,14 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 class LineTcpWriterJob implements Job, Closeable {
     private final static Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
     private final ObjList<TableUpdateDetails> assignedTables;
-    private final long commitIntervalDefault;
+    private final long commitInterval;
     private final Metrics metrics;
     private final MillisecondClock millisecondClock;
     private final Path path = new Path();
@@ -56,7 +57,7 @@ class LineTcpWriterJob implements Job, Closeable {
             RingQueue<LineTcpMeasurementEvent> queue,
             Sequence sequence,
             MillisecondClock millisecondClock,
-            long commitIntervalDefault,
+            long commitInterval,
             LineTcpMeasurementScheduler scheduler,
             Metrics metrics,
             ObjList<TableUpdateDetails> assignedTables
@@ -65,7 +66,7 @@ class LineTcpWriterJob implements Job, Closeable {
         this.queue = queue;
         this.sequence = sequence;
         this.millisecondClock = millisecondClock;
-        this.commitIntervalDefault = commitIntervalDefault;
+        this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks();
         this.scheduler = scheduler;
         this.metrics = metrics;
@@ -77,7 +78,7 @@ class LineTcpWriterJob implements Job, Closeable {
         LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
-            if (!run(workerId)) {
+            if (!run(workerId, Job.TERMINATING_STATUS)) {
                 break;
             }
         }
@@ -86,7 +87,7 @@ class LineTcpWriterJob implements Job, Closeable {
     }
 
     @Override
-    public boolean run(int workerId) {
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
         // while ILP is hammering the database via multiple connections the writer
@@ -126,7 +127,7 @@ class LineTcpWriterJob implements Job, Closeable {
                 }
             }
             // if no tables, just use the default commit interval
-            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
+            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitInterval;
         }
     }
 

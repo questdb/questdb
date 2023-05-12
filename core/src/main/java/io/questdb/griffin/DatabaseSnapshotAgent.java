@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
@@ -121,8 +121,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             srcPath.trimTo(snapshotRootLen).$();
             final int snapshotDbLen = srcPath.length();
             ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
-                if (Files.isDir(pUtf8NameZ, type)) {
-                    srcPath.trimTo(snapshotDbLen).concat(pUtf8NameZ);
+                if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
                     int srcPathLen = srcPath.length();
                     int dstPathLen = dstPath.length();
@@ -313,7 +312,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
     public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
         // Windows doesn't support sync() system call.
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             throw SqlException.position(0).put("Snapshots are not supported on Windows");
         }
 
@@ -359,7 +358,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             path.of(configuration.getRoot());
-                            TableToken tableToken = engine.getTableToken(tableName);
+                            TableToken tableToken = engine.verifyTableName(tableName);
                             if (
                                     TableUtils.isValidTableName(tableName, tableName.length())
                                             && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
@@ -368,7 +367,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                                 LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
-                                TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableToken);
+                                TableReader reader = engine.getReaderWithRepair(tableToken);
                                 snapshotReaders.add(reader);
 
                                 path.trimTo(snapshotLen).concat(tableToken);
@@ -448,7 +447,6 @@ public class DatabaseSnapshotAgent implements Closeable {
     }
 
     private void unsafeReleaseReaders() {
-        Misc.freeObjList(snapshotReaders);
-        snapshotReaders.clear();
+        Misc.freeObjListAndClear(snapshotReaders);
     }
 }

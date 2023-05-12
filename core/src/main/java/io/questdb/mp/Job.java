@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,12 @@
 
 package io.questdb.mp;
 
+import org.jetbrains.annotations.NotNull;
+
 public interface Job {
+    RunStatus RUNNING_STATUS = () -> false;
+    RunStatus TERMINATING_STATUS = () -> true;
+
     default void drain(int workerId) {
         while (true) {
             if (!run(workerId)) {
@@ -36,8 +41,23 @@ public interface Job {
     /**
      * Runs and returns true if it should be rescheduled ASAP.
      *
+     * @param workerId  worker id
+     * @param runStatus set to 1 when job is running, 2 when it is halting
+     * @return true if job should be rescheduled ASAP
+     */
+    boolean run(int workerId, @NotNull RunStatus runStatus);
+
+    /**
+     * Runs and returns true if it should be rescheduled ASAP.
+     *
      * @param workerId worker id
      * @return true if job should be rescheduled ASAP
      */
-    boolean run(int workerId);
+    default boolean run(int workerId) {
+        return run(workerId, RUNNING_STATUS);
+    }
+
+    interface RunStatus {
+        boolean isTerminating();
+    }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -290,7 +290,7 @@ public final class Net {
     static {
         Os.init();
         EWOULDBLOCK = getEwouldblock();
-        if (Os.type == Os.LINUX_AMD64) {
+        if (Os.isLinux()) {
             MMSGHDR_SIZE = getMsgHeaderSize();
             MMSGHDR_BUFFER_ADDRESS_OFFSET = getMsgHeaderBufferAddressOffset();
             MMSGHDR_BUFFER_LENGTH_OFFSET = getMsgHeaderBufferLengthOffset();

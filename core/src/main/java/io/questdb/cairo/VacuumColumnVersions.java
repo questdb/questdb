@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
@@ -71,8 +70,7 @@ public class VacuumColumnVersions implements Closeable {
         this.tableFiles = Misc.free(this.tableFiles);
     }
 
-    public void run(SqlExecutionContext executionContext, TableReader reader) {
-        executionContext.getCairoSecurityContext().checkWritePermission();
+    public void run(TableReader reader) {
         LOG.info().$("processing [dirName=").utf8(reader.getTableToken().getDirName()).I$();
         fileNameSink = new StringSink();
 
@@ -192,7 +190,8 @@ public class VacuumColumnVersions implements Closeable {
     private void visitTableFiles(long pUtf8NameZ, int type) {
         if (type != DT_DIR) {
             fileNameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
+            boolean validUtf8 = Chars.utf8ToUtf16Z(pUtf8NameZ, fileNameSink);
+            assert validUtf8 : "invalid UTF-8 in file name";
             if (notDots(fileNameSink)) {
                 int dotIndex = Chars.indexOf(fileNameSink, '.');
                 if (dotIndex > 0) {
@@ -225,8 +224,8 @@ public class VacuumColumnVersions implements Closeable {
     }
 
     private void visitTablePartition(long pUtf8NameZ, int type) {
-        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-            path2.trimTo(tablePathLen);
+        if (ff.isDirOrSoftLinkDirNoDots(path2, tablePathLen, pUtf8NameZ, type, fileNameSink)) {
+            path2.trimTo(tablePathLen).$();
 
             int dotIndex = Chars.indexOf(fileNameSink, '.');
             if (dotIndex < 0) {
