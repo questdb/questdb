@@ -1030,7 +1030,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             createStandardNonWalTable(nonWalTable);
 
             assertAlterTableTypeFail("alter table " + nonWalTable + " resume wal", nonWalTable + " is not a WAL table");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wall", "'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal frol", "'from' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from", "'transaction' or 'txn' expected");

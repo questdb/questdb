@@ -359,7 +359,8 @@ public class SqlCompiler implements Closeable {
             TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
-                tok = expectToken(lexer, "'add', 'alter' or 'drop'");
+                String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
+                tok = expectToken(lexer, expectedTokenDescription);
 
                 if (SqlKeywords.isAddKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableAddColumn(tableToken);
@@ -532,8 +533,16 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
                     }
                     return alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
+                } else if (SqlKeywords.isSquashKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
+                    tok = expectToken(lexer, "'partitions'");
+                    if (SqlKeywords.isPartitionsKeyword(tok)) {
+                        return compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+                    }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription + " expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();

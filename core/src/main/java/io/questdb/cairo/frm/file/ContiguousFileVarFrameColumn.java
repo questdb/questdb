@@ -215,7 +215,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         return COLUMN_CONTIGUOUS_FILE;
     }
 
-    public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
+    public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
         assert fixedFd == -1;
         this.columnType = columnType;
         this.columnTop = columnTop;
@@ -223,16 +223,13 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
         int plen = partitionPath.length();
         try {
-            if (columnTop >= 0) {
+            if (!isEmpty) {
                 dFile(partitionPath, columnName, columnTxn);
                 this.varFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
 
                 partitionPath.trimTo(plen);
                 iFile(partitionPath, columnName, columnTxn);
                 this.fixedFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
-            } else {
-                // Column does not exist in the partition, don't try to open the file
-                this.columnTop = -columnTop;
             }
         } finally {
             partitionPath.trimTo(plen);
@@ -243,7 +240,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         assert fixedFd == -1;
         // Negative col top means column does not exist in the partition.
         // Create it.
-        columnTop = Math.abs(columnTop);
         this.columnType = columnType;
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
