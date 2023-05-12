@@ -231,11 +231,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     public void resumeRecv(HttpConnectionContext context) {
         this.transientContext = context;
         this.transientState = LV.get(context);
-        if (this.transientState == null) {
+        if (transientState == null) {
             LOG.debug().$("new text state").$();
             LV.set(context, this.transientState = new TextImportProcessorState(engine));
-            transientState.json = isJson(context);
         }
+        transientState.json = isJson(context);
     }
 
     @Override
