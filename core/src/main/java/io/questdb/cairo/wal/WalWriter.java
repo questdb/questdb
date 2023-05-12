@@ -1069,10 +1069,11 @@ public class WalWriter implements TableWriterAPI {
 
     private void openNewSegment() {
         try {
-            segmentId++;
+            final int newSegmentId = segmentId + 1;
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
-            final int segmentPathLen = createSegmentDir(segmentId);
+            final int segmentPathLen = createSegmentDir(newSegmentId);
+            segmentId = newSegmentId;
 
             for (int i = 0; i < columnCount; i++) {
                 int type = metadata.getColumnType(i);
