@@ -1359,6 +1359,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void switchColumnsToNewSegment(LongList newColumnFiles) {
+        final int commitMode = configuration.getCommitMode();
+        final boolean async = commitMode == CommitMode.ASYNC;
         for (int i = 0; i < columnCount; i++) {
             int newPrimaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE);
             if (newPrimaryFd > -1) {
@@ -1366,9 +1368,15 @@ public class WalWriter implements TableWriterAPI {
                 long currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 1);
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
-                primaryColumnFile.sync(false);
+
+                if (commitMode != CommitMode.NOSYNC) {
+                    primaryColumnFile.sync(async);
+                }
                 primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
-                primaryColumnFile.sync(false);
+
+                if (commitMode != CommitMode.NOSYNC) {
+                    primaryColumnFile.sync(async);
+                }
 
                 int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1) {
@@ -1376,9 +1384,13 @@ public class WalWriter implements TableWriterAPI {
                     currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
                     newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);
                     secondaryColumnFile.jumpTo(currentOffset);
-                    secondaryColumnFile.sync(false);
+                    if (commitMode != CommitMode.NOSYNC) {
+                        secondaryColumnFile.sync(async);
+                    }
                     secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
-                    secondaryColumnFile.sync(false);
+                    if (commitMode != CommitMode.NOSYNC) {
+                        secondaryColumnFile.sync(async);
+                    }
                 }
             }
         }
