@@ -451,6 +451,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", newSegment=").$(newSegmentId)
                         .$(", rowCount=").$(uncommittedRows).I$();
 
+                final int commitMode = configuration.getCommitMode();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
                     if (columnType > 0) {
@@ -470,7 +471,8 @@ public class WalWriter implements TableWriterAPI {
                                 currentTxnStartRowNum,
                                 uncommittedRows,
                                 newColumnFiles,
-                                columnIndex
+                                columnIndex,
+                                commitMode
                         );
                     } else {
                         rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
@@ -1357,8 +1359,6 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void switchColumnsToNewSegment(LongList newColumnFiles) {
-        final int commitMode = configuration.getCommitMode();
-        final boolean async = commitMode == CommitMode.ASYNC;
         for (int i = 0; i < columnCount; i++) {
             int newPrimaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE);
             if (newPrimaryFd > -1) {
@@ -1367,28 +1367,14 @@ public class WalWriter implements TableWriterAPI {
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
 
-                if (commitMode != CommitMode.NOSYNC) {
-                    primaryColumnFile.sync(async);
-                }
                 primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
-
-                if (commitMode != CommitMode.NOSYNC) {
-                    primaryColumnFile.sync(async);
-                }
-
                 int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1) {
                     MemoryMA secondaryColumnFile = getSecondaryColumn(i);
                     currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
                     newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);
                     secondaryColumnFile.jumpTo(currentOffset);
-                    if (commitMode != CommitMode.NOSYNC) {
-                        secondaryColumnFile.sync(async);
-                    }
                     secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
-                    if (commitMode != CommitMode.NOSYNC) {
-                        secondaryColumnFile.sync(async);
-                    }
                 }
             }
         }

@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
@@ -52,7 +53,8 @@ public class CopyWalSegmentUtils {
             long rowOffset,
             long rowCount,
             LongList newColumnFiles,
-            int columnIndex
+            int columnIndex,
+            int commitMode
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.length();
@@ -71,11 +73,11 @@ public class CopyWalSegmentUtils {
 
         boolean success;
         if (ColumnType.isVariableLength(columnType)) {
-            success = copyVarLenFile(ff, primaryColumn, secondaryColumn, primaryFd, secondaryFd, rowOffset, rowCount, newColumnFiles, columnIndex);
+            success = copyVarLenFile(ff, primaryColumn, secondaryColumn, primaryFd, secondaryFd, rowOffset, rowCount, newColumnFiles, columnIndex, commitMode);
         } else if (columnType > 0) {
-            success = copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, columnType, newColumnFiles, columnIndex);
+            success = copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, columnType, newColumnFiles, columnIndex, commitMode);
         } else {
-            success = copyTimestampFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, newColumnFiles, columnIndex);
+            success = copyTimestampFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, newColumnFiles, columnIndex, commitMode);
         }
 
         if (!success) {
@@ -96,7 +98,8 @@ public class CopyWalSegmentUtils {
             long rowCount,
             int columnType,
             LongList newOffsets,
-            int columnIndex
+            int columnIndex,
+            int commitMode
     ) {
         int shl = ColumnType.pow2SizeOf(columnType);
         long offset = rowOffset << shl;
@@ -106,6 +109,9 @@ public class CopyWalSegmentUtils {
         if (success) {
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);
+        }
+        if (commitMode != CommitMode.NOSYNC) {
+            ff.fsync(primaryFd);
         }
         return success;
     }
@@ -117,19 +123,20 @@ public class CopyWalSegmentUtils {
             long rowOffset,
             long rowCount,
             LongList newOffsets,
-            int columnIndex
+            int columnIndex,
+            int commitMode
     ) {
         // Designated timestamp column is written as 2 long values
-        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex)) {
+        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex, commitMode)) {
             return false;
         }
         long size = rowCount << 4;
         long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);
-        try {
-            Vect.flattenIndex(srcDataTimestampAddr, rowCount);
-        } finally {
-            ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
+        Vect.flattenIndex(srcDataTimestampAddr, rowCount);
+        if (commitMode != CommitMode.NOSYNC) {
+            ff.msync(srcDataTimestampAddr, size, commitMode == CommitMode.ASYNC);
         }
+        ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
         return true;
     }
 
@@ -142,7 +149,8 @@ public class CopyWalSegmentUtils {
             long rowOffset,
             long rowCount,
             LongList newOffsets,
-            int columnIndex
+            int columnIndex,
+            int commitMode
     ) {
         long indexMapSize = (rowOffset + rowCount + 1) * Long.BYTES;
         long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), indexMapSize, MEMORY_TAG);
@@ -153,6 +161,10 @@ public class CopyWalSegmentUtils {
             boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, varStart, varCopyLen) == varCopyLen;
             if (!success) {
                 return false;
+            }
+
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(primaryFd);
             }
 
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, varStart);
@@ -166,6 +178,9 @@ public class CopyWalSegmentUtils {
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, indexLen);
 
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(dstIndexAddr, indexLen, commitMode == CommitMode.ASYNC);
+            }
             // All in memory calls, no need to unmap in finally
             ff.munmap(dstIndexAddr, indexLen, MEMORY_TAG);
             return true;
