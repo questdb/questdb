@@ -25,10 +25,10 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.BuildInformation;
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
@@ -37,12 +37,18 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class CairoConfigurationWrapper implements CairoConfiguration {
+import java.util.function.LongSupplier;
 
+public class CairoConfigurationWrapper implements CairoConfiguration {
     private final CairoConfiguration conf;
 
     public CairoConfigurationWrapper(CairoConfiguration conf) {
         this.conf = conf;
+    }
+
+    @Override
+    public LongSupplier getCopyIDSupplier() {
+        return conf.getCopyIDSupplier();
     }
 
     @Override
@@ -103,11 +109,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return conf.getBuildInformation();
-    }
-
-    @Override
-    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
-        return conf.getCairoSecurityContextFactory();
     }
 
     @Override
@@ -236,6 +237,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return conf.getFactoryProvider();
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return conf.getFileOperationRetryCount();
     }
@@ -308,6 +314,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMaxFileNameLength() {
         return conf.getMaxFileNameLength();
+    }
+
+    @Override
+    public int getO3LastPartitionMaxSplits() {
+        return conf.getO3LastPartitionMaxSplits();
     }
 
     @Override
@@ -431,6 +442,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionO3SplitMinSize() {
+        return conf.getPartitionO3SplitMinSize();
+    }
+
+    @Override
     public int getPartitionPurgeListCapacity() {
         return conf.getPartitionPurgeListCapacity();
     }
@@ -466,7 +482,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getRoot() {
+    public String getRoot() {
         return conf.getRoot();
     }
 
@@ -938,6 +954,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return conf.isWalSupported();
+    }
+
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        return conf.isWriterMixedIOEnabled();
     }
 
     @Override

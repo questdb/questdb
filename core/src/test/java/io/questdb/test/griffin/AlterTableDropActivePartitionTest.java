@@ -28,17 +28,17 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -879,7 +879,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         assertSql(tableName, expectedRows);
         engine.releaseAllWriters();
         try (Path path = new Path().of(root).concat(tableName).concat(LastPartitionTs)) {
-            TableUtils.txnPartitionConditionally(path, txn);
+            TestUtils.txnPartitionConditionally(path, txn);
             path.$();
             Assert.assertFalse(Files.exists(path));
         } finally {

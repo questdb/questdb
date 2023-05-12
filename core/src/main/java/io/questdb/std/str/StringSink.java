@@ -67,6 +67,10 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         return Chars.hashCode(builder);
     }
 
+    public int indexOf(String s) {
+        return builder.indexOf(s);
+    }
+
     @Override
     public int length() {
         return builder.length();

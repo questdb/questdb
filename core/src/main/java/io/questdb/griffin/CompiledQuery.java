@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -48,7 +49,6 @@ public interface CompiledQuery {
     short EXPLAIN = 25;
     short INSERT = 2;
     short INSERT_AS_SELECT = 10;
-    short LOCK = 15;
     short RENAME_TABLE = 12;
     short REPAIR = 5;
     short ROLLBACK = 20;
@@ -60,7 +60,6 @@ public interface CompiledQuery {
     short TABLE_SET_TYPE = 27;
     short TRUNCATE = 3;
     short TYPES_COUNT = TABLE_SET_TYPE;
-    short UNLOCK = 16;
     short UPDATE = 14;
     short VACUUM = 17;
 
@@ -89,6 +88,8 @@ public interface CompiledQuery {
     InsertOperation getInsertOperation();
 
     RecordCursorFactory getRecordCursorFactory();
+
+    TableToken getTableToken();
 
     String getSqlStatement();
 

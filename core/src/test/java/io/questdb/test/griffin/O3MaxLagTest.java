@@ -40,6 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class O3MaxLagTest extends AbstractO3Test {
+
     private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
 
     @Test
@@ -486,8 +487,9 @@ public class O3MaxLagTest extends AbstractO3Test {
                             if (longColIndex > -1) {
                                 row.putLong(longColIndex, timestamp);
                             }
+                            float rndFloat = rnd.nextFloat();
                             if (floatColIndex > -1) {
-                                row.putFloat(floatColIndex, rnd.nextFloat());
+                                row.putFloat(floatColIndex, rndFloat);
                             }
                             if (strColIndex > -1) {
                                 row.putStr(strColIndex, varCol[id % varCol.length]);
@@ -500,7 +502,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                                 row.putLong(longColIndex, timestamp);
                             }
                             if (floatColIndex > -1) {
-                                row.putFloat(floatColIndex, rnd.nextFloat());
+                                row.putFloat(floatColIndex, rndFloat);
                             }
                             if (strColIndex > -1) {
                                 row.putStr(strColIndex, varCol[id % varCol.length]);
@@ -513,9 +515,9 @@ public class O3MaxLagTest extends AbstractO3Test {
                     ordered.commit();
                 }
             }
-            TestUtils.assertEquals(compiler, sqlExecutionContext, "ordered", "o3");
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
             engine.releaseAllWriters();
-            TestUtils.assertEquals(compiler, sqlExecutionContext, "ordered", "o3");
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
 
             engine.releaseAllReaders();
             try (TableWriter o3 = TestUtils.getWriter(engine, "o3")) {

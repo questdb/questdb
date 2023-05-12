@@ -291,14 +291,14 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createMeasurementEvent(
-            CairoSecurityContext securityContext,
+            SecurityContext securityContext,
             TableUpdateDetails tud,
             LineTcpParser parser,
             int workerId
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
-        localDetails.resetStateIfNecessary(securityContext);
+        localDetails.resetStateIfNecessary();
         this.tableUpdateDetails = tud;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
@@ -327,6 +327,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 // send column by name
                 final String colNameUtf16 = localDetails.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
+                    securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16);
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
                 } else if (!autoCreateNewColumns) {
@@ -348,7 +349,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 offset,
                                 entity.getValue(),
                                 parser.hasNonAsciiChars(),
-                                localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                localDetails.getSymbolLookup(columnWriterIndex)
                         );
                     } else {
                         throw castError("tag", columnWriterIndex, colType, entity.getName());
@@ -415,7 +416,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -438,7 +439,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addSymbol(
                                     offset,
                                     entity.getValue(),
-                                    parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -476,7 +477,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                         offset,
                                         entityValue,
                                         parser.hasNonAsciiChars(),
-                                        localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                        localDetails.getSymbolLookup(columnWriterIndex)
                                 );
                                 break;
 
@@ -507,7 +508,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -552,7 +553,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -576,7 +577,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -591,7 +592,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 offset,
                                 entity.getValue(),
                                 parser.hasNonAsciiChars(),
-                                localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                localDetails.getSymbolLookup(columnWriterIndex)
                         );
                     } else {
                         throw castError("symbol", columnWriterIndex, colType, entity.getName());

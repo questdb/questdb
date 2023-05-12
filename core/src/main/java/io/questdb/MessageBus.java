@@ -26,8 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cutlass.text.TextImportRequestTask;
-import io.questdb.cutlass.text.TextImportTask;
+import io.questdb.cutlass.text.CopyRequestTask;
+import io.questdb.cutlass.text.CopyTask;
 import io.questdb.mp.*;
 import io.questdb.tasks.*;
 
@@ -109,11 +109,11 @@ public interface MessageBus extends Closeable {
 
     Sequence getTextImportPubSeq();
 
-    RingQueue<TextImportTask> getTextImportQueue();
+    RingQueue<CopyTask> getTextImportQueue();
 
-    MPSequence getTextImportRequestPubSeq();
+    MPSequence getCopyRequestPubSeq();
 
-    RingQueue<TextImportRequestTask> getTextImportRequestQueue();
+    RingQueue<CopyRequestTask> getTextImportRequestQueue();
 
     Sequence getTextImportRequestSubSeq();
 

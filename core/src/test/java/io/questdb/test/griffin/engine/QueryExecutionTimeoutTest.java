@@ -54,7 +54,7 @@ import org.junit.Test;
 public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         SqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public int getCircuitBreakerThrottle() {
@@ -573,7 +573,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
                 final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+                final SqlExecutionContextImpl sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
         ) {
             sqlExecutionContext.with(circuitBreaker);
             if (pool != null) {

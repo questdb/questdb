@@ -23,6 +23,8 @@
  ******************************************************************************/
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -33,9 +35,9 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 
 public class HttpServerConfigurationBuilder {
     private boolean allowDeflateBeforeSend;
@@ -45,6 +47,7 @@ public class HttpServerConfigurationBuilder {
     private String httpProtocolVersion = "HTTP/1.1 ";
     private long multipartIdleSpinCount = -1;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+    private boolean pessimisticHealthCheck = false;
     private int receiveBufferSize = 1024 * 1024;
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
@@ -74,6 +77,11 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public int getDoubleScale() {
                     return Numbers.MAX_SCALE;
+                }
+
+                @Override
+                public FactoryProvider getFactoryProvider() {
+                    return DefaultFactoryProvider.INSTANCE;
                 }
 
                 @Override
@@ -218,6 +226,11 @@ public class HttpServerConfigurationBuilder {
                     }
                 };
             }
+
+            @Override
+            public boolean isPessimisticHealthCheckEnabled() {
+                return pessimisticHealthCheck;
+            }
         };
     }
 
@@ -253,6 +266,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
+        this.pessimisticHealthCheck = pessimisticHealthCheck;
         return this;
     }
 

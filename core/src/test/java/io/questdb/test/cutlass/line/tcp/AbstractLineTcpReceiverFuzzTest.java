@@ -28,14 +28,14 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.cutlass.line.tcp.load.LineData;
-import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.test.cutlass.line.tcp.load.LineData;
+import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -43,6 +43,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
@@ -116,7 +117,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
         random = new Rnd(s0, s1);
-        getLog().info().$("random seed : ").$(s0).$(", ").$(s1).$();
+        getLog().info().$("random seed : ").$(random.getSeed0()).$(", ").$(random.getSeed1()).$();
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {
@@ -165,7 +166,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         return tagName;
     }
 
-    private void assertTable(TableData table) {
+    private void assertTable(TableData table) throws SqlException {
+        if (table.size() < 1) {
+            return;
+        }
         final CharSequence tableName = tableNames.get(table.getName());
         if (tableName == null) {
             throw new RuntimeException("Table name is missing");
@@ -187,7 +191,12 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     Assert.assertEquals(dataMinTs, txnMinTs);
                     cursor.toTop();
                 }
-                assertCursorTwoPass(expected, cursor, metadata);
+
+                try {
+                    assertCursorTwoPass(expected, cursor, metadata);
+                } catch (AssertionError e) {
+                    throw new AssertionError("Table: " + table.getName(), e);
+                }
             } else {
                 try (
                         SqlCompiler compiler = new SqlCompiler(engine);
@@ -201,8 +210,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                             assertCursorTwoPass(expected, cursor, metadata);
                         }
                     }
-                } catch (SqlException e) {
-                    throw new RuntimeException(e);
                 }
             }
         }
@@ -308,7 +315,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     // return false means data is not in the table yet and should be called again
-    boolean checkTable(TableData table) {
+    boolean checkTable(TableData table) throws SqlException {
         final CharSequence tableName = tableNames.get(table.getName());
         if (tableName == null) {
             getLog().info().$(table.getName()).$(" has not been created yet").$();
@@ -352,8 +359,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     throw ex;
                 }
             }
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
         }
     }
 
@@ -419,10 +424,12 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void ingest(ObjList<Socket> sockets) {
         threadPushFinished.setCount(numOfThreads);
+        AtomicInteger failureCounter = new AtomicInteger();
         for (int i = 0; i < numOfThreads; i++) {
-            startThread(i, sockets.get(i), threadPushFinished);
+            startThread(i, sockets.get(i), threadPushFinished, failureCounter);
         }
         threadPushFinished.await();
+        Assert.assertEquals(0, failureCounter.get());
     }
 
     void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
@@ -546,7 +553,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         this.errorMsg = errorMsg;
     }
 
-    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
+    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
         new Thread(() -> {
             try {
                 for (int n = 0; n < numOfIterations; n++) {
@@ -560,23 +567,25 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     Os.sleep(waitBetweenIterationsMillis);
                 }
             } catch (Exception e) {
+                failureCounter.incrementAndGet();
                 Assert.fail("Data sending failed [e=" + e + "]");
-                throw new RuntimeException(e);
             } finally {
                 threadPushFinished.countDown();
             }
         }).start();
     }
 
-    protected void waitDone(ObjList<Socket> sockets) {
+    protected void waitDone(ObjList<Socket> sockets) throws SqlException {
         for (int i = 0; i < numOfTables; i++) {
             final CharSequence tableName = getTableName(i);
             final TableData table = tables.get(tableName);
-            waitForTable(table);
+            if (table.size() > 0) {
+                waitForTable(table);
+            }
         }
     }
 
-    void waitForTable(TableData table) {
+    void waitForTable(TableData table) throws SqlException {
         // if CI is very slow the table could be released before ingestion stops
         // then acquired again for further data ingestion
         // because of the above we will wait in a loop with a timeout for the data to appear in the table

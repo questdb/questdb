@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.SuspendEvent;
@@ -330,23 +331,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 boolean hasResult = statement.execute("select * from mytable;");
 
                 assertResults(statement, hasResult, data(row(1L)));
-            }
-        });
-    }
-
-    @Test
-    public void testCreateInsertAlterSystemLockAndUnlockWriterSelectFromTableInBlock() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-
-                boolean hasResult = statement.execute(
-                        "CREATE TABLE test(l long, s symbol); " +
-                                "INSERT INTO test VALUES(7,'g'); " +
-                                "ALTER SYSTEM LOCK WRITER test; " +
-                                "ALTER SYSTEM UNLOCK WRITER test; " +
-                                "SELECT l,s from test;");
-                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, Result.ZERO, data(row(7L, "g")));
             }
         });
     }
@@ -673,9 +657,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 boolean hasResult = statement.execute(
                         "CREATE TABLE test(l long,ts timestamp); " +
                                 "INSERT INTO test VALUES(1989, 0); " +
-                                "REPAIR TABLE test; " +
                                 "SELECT l from test;");
-                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1989L)));
+                assertResults(statement, hasResult, Result.ZERO, count(1), data(row(1989L)));
             }
         });
     }
@@ -1590,7 +1573,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute(
                         "SHOW TABLES; SELECT '15';");
-                assertResults(statement, hasResult, Result.EMPTY, data(row(15L)));
+                assertResults(statement, hasResult, data(row(configuration.getSystemTableNamePrefix() + "text_import_log")), data(row(15L)));
             }
         });
     }
@@ -1751,14 +1734,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         final PGWireServer server;
         final Statement statement;
 
-        PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException {
+        PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException, SqlException {
             server = createPGServer(2, queryTimeout);
             server.getWorkerPool().start(LOG);
             connection = getConnection(server.getPort(), useSimpleMode, true);
             statement = connection.createStatement();
         }
 
-        PGTestSetup() throws SQLException {
+        PGTestSetup() throws SQLException, SqlException {
             this(true, Long.MAX_VALUE);
         }
 

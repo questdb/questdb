@@ -24,9 +24,9 @@
 
 package io.questdb.test.cutlass.http;
 
-import java.io.UnsupportedEncodingException;
+import io.questdb.test.tools.TestUtils;
+
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 
 public final class HttpUtils {
 
@@ -34,10 +34,6 @@ public final class HttpUtils {
     }
 
     public static String urlEncodeQuery(String query) {
-        try {
-            return URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
+        return TestUtils.unchecked(() -> URLEncoder.encode(query, "UTF8"));
     }
 }

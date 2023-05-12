@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -106,8 +107,14 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
+    }
+
+    @Override
     public FilesFacade getFilesFacade() {
-        return overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
+        // This method gets called in super constructor, hence the extra null check.
+        return overrides != null && overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
     }
 
     @Override
@@ -163,6 +170,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public long getO3MinLag() {
         return overrides.getO3MinLag() >= 0 ? overrides.getO3MinLag() : super.getO3MinLag();
+    }
+
+    @Override
+    public int getO3LastPartitionMaxSplits() {
+        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
     }
 
     @Override
@@ -307,6 +319,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getPartitionO3SplitMinSize() {
+        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
+    }
+
+    @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
         return overrides.getWriterAsyncCommandBusyWaitTimeout() < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : overrides.getWriterAsyncCommandBusyWaitTimeout();
     }
@@ -354,6 +371,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return true;
+    }
+
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        return overrides.isWriterMixedIOEnabled() != null ? overrides.isWriterMixedIOEnabled() : super.isWriterMixedIOEnabled();
     }
 
     @Override

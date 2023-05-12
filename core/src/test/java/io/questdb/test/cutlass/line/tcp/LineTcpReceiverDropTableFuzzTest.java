@@ -45,6 +45,8 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 
 public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuzzTest {
@@ -110,7 +112,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         throw new IllegalStateException();
     }
 
-    private void startDropThread(final int threadId, SOCountDownLatch dropsDone) {
+    private void startDropThread(final int threadId, SOCountDownLatch dropsDone, AtomicInteger failureCounter) {
         // use different random
         final Rnd rnd = TestUtils.generateRandom(LOG);
         new Thread(() -> {
@@ -131,8 +133,8 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
                 }
             } catch (Exception e) {
                 e.printStackTrace();
+                failureCounter.incrementAndGet();
                 Assert.fail("Drop table failed [e=" + e + ", sql=" + sql + "]");
-                throw new RuntimeException(e);
             } finally {
                 Path.clearThreadLocals();
                 dropsDone.countDown();
@@ -151,24 +153,22 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
     }
 
     @Override
-    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
-        super.startThread(threadId, socket, threadPushFinished);
+    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
+        super.startThread(threadId, socket, threadPushFinished, failureCounter);
         while (numOfDropThreads-- > 0) {
-            startDropThread(numOfDropThreads, dropsDone);
+            startDropThread(numOfDropThreads, dropsDone, failureCounter);
         }
     }
 
     @Override
-    protected void waitDone(ObjList<Socket> sockets) {
-        for (int i = 0; i < numOfThreads; i++) {
-            try {
+    protected void waitDone(ObjList<Socket> sockets) throws SqlException {
+        TestUtils.unchecked(() -> {
+            for (int i = 0; i < numOfThreads; i++) {
                 sockets.get(i).close();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+                final Socket socket = newSocket();
+                sockets.set(i, socket);
             }
-            final Socket socket = newSocket();
-            sockets.set(i, socket);
-        }
+        });
 
         // wait for drop threads to finish
         dropsDone.await();

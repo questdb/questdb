@@ -29,10 +29,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -103,14 +100,14 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void forAllWalTables(ObjList<TableToken> tableTokenBucket, boolean includeDropped, TableSequencerCallback callback) {
+    public void forAllWalTables(ObjHashSet<TableToken> tableTokenBucket, boolean includeDropped, TableSequencerCallback callback) {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.PATH.get();
 
         engine.getTableTokens(tableTokenBucket, includeDropped);
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-            TableToken tableToken = tableTokenBucket.getQuick(i);
+            TableToken tableToken = tableTokenBucket.get(i);
 
             // Exclude locked entries.
             // Use includeDropped argument to decide whether to include dropped tables.
@@ -323,7 +320,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
 
-    public void resumeTable(CairoSecurityContext cairoSecurityContext, TableToken tableToken, long resumeFromTxn) {
+    public void resumeTable(TableToken tableToken, long resumeFromTxn) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 if (!sequencer.isSuspended()) {
@@ -335,7 +332,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 }
                 // resume from the latest on negative value
                 if (resumeFromTxn > 0) {
-                    try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableToken, WAL_2_TABLE_RESUME_REASON)) {
+                    try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
                         long seqTxn = tableWriter.getAppliedSeqTxn();
                         if (resumeFromTxn - 1 > seqTxn) {
                             // including resumeFromTxn 

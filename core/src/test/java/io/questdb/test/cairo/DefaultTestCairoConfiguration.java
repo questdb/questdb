@@ -74,4 +74,9 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     public boolean mangleTableDirNames() {
         return true;
     }
+
+    @Override
+    public long getPartitionO3SplitMinSize() {
+        return 512 * (1L << 10); // 512KiB
+    }
 }

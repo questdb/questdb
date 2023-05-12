@@ -29,10 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.tasks.O3CopyTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -74,7 +71,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long partitionTimestamp, // <-- this is used to determine if partition is last or not as well as partition dir
             int dstFixFd,
             long dstFixAddr,
@@ -96,10 +92,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long partitionUpdateSinkAddr
     ) {
-        final boolean directIoFlag = tableWriter.preferDirectIO();
+        final boolean mixedIOFlag = tableWriter.allowMixedIO();
         LOG.debug().$("o3 copy [blockType=").$(blockType)
                 .$(", columnType=").$(columnType)
                 .$(", dstFixFd=").$(dstFixFd)
@@ -116,7 +115,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .$(", srcOooMax=").$(srcOooMax)
                 .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
                 .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
-                .$(", directIoFlag=").$(directIoFlag)
+                .$(", mixedIOFlag=").$(mixedIOFlag)
                 .I$();
 
         try {
@@ -159,7 +158,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             dstVarOffset,
                             dstVarAdjust,
                             dstVarSize,
-                            directIoFlag
+                            mixedIOFlag
                     );
                     break;
                 case O3_BLOCK_DATA:
@@ -178,7 +177,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             dstVarOffset,
                             dstVarAdjust,
                             dstVarSize,
-                            directIoFlag
+                            mixedIOFlag
                     );
                     break;
                 default:
@@ -214,12 +213,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcDataVarFd,
                 srcDataVarAddr,
                 srcDataVarSize,
-                srcDataMax,
                 srcOooMax,
-                srcOooPartitionLo,
                 srcOooPartitionHi,
                 timestampMin,
-                timestampMax,
                 partitionTimestamp,
                 dstFixFd,
                 dstFixAddr,
@@ -236,8 +232,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampAddr,
                 srcTimestampSize,
                 partitionMutates,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
-                indexWriter
+                indexWriter,
+                partitionUpdateSinkAddr
         );
     }
 
@@ -268,7 +267,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcOooPartitionLo = task.getSrcOooPartitionLo();
         final long srcOooPartitionHi = task.getSrcOooPartitionHi();
         final long timestampMin = task.getTimestampMin();
-        final long timestampMax = task.getTimestampMax();
         final long partitionTimestamp = task.getPartitionTimestamp();
         final int dstFixFd = task.getDstFixFd();
         final long dstFixAddr = task.getDstFixAddr();
@@ -290,8 +288,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcTimestampAddr = task.getSrcTimestampAddr();
         final long srcTimestampSize = task.getSrcTimestampSize();
         final boolean partitionMutates = task.isPartitionMutates();
+        final long newPartitionSize = task.getNewPartitionSize();
+        final long oldPartitionSize = task.getOldPartitionSize();
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
+        final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
 
         subSeq.done(cursor);
 
@@ -322,7 +323,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcOooPartitionLo,
                 srcOooPartitionHi,
                 timestampMin,
-                timestampMax,
                 partitionTimestamp,
                 dstFixFd,
                 dstFixAddr,
@@ -344,8 +344,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampAddr,
                 srcTimestampSize,
                 partitionMutates,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
-                indexWriter
+                indexWriter,
+                partitionUpdateSinkAddr
         );
     }
 
@@ -364,7 +367,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
@@ -383,7 +386,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarOffset,
                         dstVarAdjust,
                         dstVarSize,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             default:
@@ -396,7 +399,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         ColumnType.pow2SizeOf(Math.abs(columnType)),
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
         }
@@ -411,11 +414,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixFileOffset,
             int dstFd,
             final int shl,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         final long len = (srcHi - srcLo + 1) << shl;
         final long fromAddress = src + (srcLo << shl);
-        if (directIoFlag) {
+        if (mixedIOFlag) {
             if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
                 throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
                         .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
@@ -436,12 +439,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
-            long srcDataMax,
             long srcOooMax,
-            long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long partitionTimestamp,
             int dstFixFd,
             long dstFixAddr,
@@ -458,8 +458,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long partitionUpdateSinkAddr
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
             final FilesFacade ff = tableWriter.getFilesFacade();
@@ -508,17 +511,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updatePartition(
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
-                        srcDataMax,
                         srcOooMax,
-                        srcOooPartitionLo,
                         srcOooPartitionHi,
                         timestampMin,
-                        timestampMax,
                         partitionTimestamp,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
+                        partitionUpdateSinkAddr,
                         tableWriter
                 );
             }
@@ -539,7 +542,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo);
         assert lo >= 0;
@@ -549,7 +552,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long len = hi - lo;
         assert len <= Math.abs(dstVarSize) - dstVarOffset;
         final long offset = dstVarOffset + dstVarAdjust;
-        if (directIoFlag) {
+        if (mixedIOFlag) {
             if (ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset) != len) {
                 throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstVarFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
             }
@@ -566,7 +569,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstFixFileOffset,
                     dstFixFd,
                     3,
-                    directIoFlag
+                    mixedIOFlag
             );
         } else {
             O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr);
@@ -743,7 +746,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         for (; row < count; row++) {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
-        w.setMaxValue(count - 1);
+        w.setMaxValue(row + rowAdjust);
     }
 
     // lowest timestamp of partition where data is headed
@@ -751,17 +754,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void updatePartition(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataMax,
             long srcOooMax,
-            long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long partitionTimestamp,
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
+            long partitionUpdateSinkAddr,
             TableWriter tableWriter
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
@@ -770,15 +773,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             try {
                 O3Utils.close(ff, srcTimestampFd);
             } finally {
-                tableWriter.o3NotifyPartitionUpdate(
+                o3NotifyPartitionUpdate(
+                        tableWriter,
+                        partitionUpdateSinkAddr,
                         timestampMin,
-                        timestampMax,
                         partitionTimestamp,
-                        srcOooPartitionLo,
-                        srcOooPartitionHi,
+                        newPartitionSize,
+                        oldPartitionSize,
                         partitionMutates,
-                        srcOooMax,
-                        srcDataMax
+                        srcOooPartitionHi + 1 == srcOooMax
                 );
             }
         } finally {
@@ -947,7 +950,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
@@ -969,7 +972,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarOffset,
                         dstVarAdjust,
                         dstVarSize,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.BOOLEAN:
@@ -984,7 +987,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         0,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.CHAR:
@@ -999,7 +1002,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         1,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.INT:
@@ -1015,7 +1018,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         2,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.LONG:
@@ -1031,7 +1034,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         3,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.TIMESTAMP:
@@ -1048,7 +1051,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             dstFixFileOffset,
                             dstFixFd,
                             3,
-                            directIoFlag
+                            mixedIOFlag
                     );
                 }
                 break;
@@ -1063,7 +1066,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         4,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.LONG256:
@@ -1076,13 +1079,33 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         5,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             default:
                 // we have exhausted all supported types in "case" clauses
                 break;
         }
+    }
+
+    static void o3NotifyPartitionUpdate(
+            TableWriter tableWriter,
+            final long partitionUpdateSinkAddr,
+            long timestampMin,
+            long partitionTimestamp,
+            final long newPartitionSize,
+            final long oldPartitionSize,
+            boolean partitionMutates,
+            boolean isLastWrittenPartition
+    ) {
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+        long flags = Numbers.encodeLowHighInts(partitionMutates ? 1 : 0, isLastWrittenPartition ? 1 : 0);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, flags);
+
+        tableWriter.o3ClockDownPartitionUpdateCount();
     }
 
     @Override

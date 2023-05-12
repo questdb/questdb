@@ -163,6 +163,12 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
+    public PlanSink valISODate(long l) {
+        sink.putISODate(l);
+        return this;
+    }
+
     static class EscapingStringSink extends StringSink {
         @Override
         public CharSink put(CharSequence cs) {

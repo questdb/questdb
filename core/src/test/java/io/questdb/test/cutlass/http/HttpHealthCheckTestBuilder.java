@@ -26,17 +26,17 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.BrokenBarrierException;
@@ -49,6 +49,7 @@ public class HttpHealthCheckTestBuilder {
     private static final Log LOG = LogFactory.getLog(HttpHealthCheckTestBuilder.class);
     private boolean injectUnhandledError;
     private Metrics metrics;
+    private boolean pessimisticHealthCheck = false;
     private TemporaryFolder temp;
 
     public void run(HttpClientCode code) throws Exception {
@@ -56,6 +57,7 @@ public class HttpHealthCheckTestBuilder {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
+                    .withPessimisticHealthCheck(pessimisticHealthCheck)
                     .build();
             if (metrics == null) {
                 metrics = Metrics.enabled();
@@ -107,6 +109,11 @@ public class HttpHealthCheckTestBuilder {
 
     public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
         this.metrics = metrics;
+        return this;
+    }
+
+    public HttpHealthCheckTestBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
+        this.pessimisticHealthCheck = pessimisticHealthCheck;
         return this;
     }
 

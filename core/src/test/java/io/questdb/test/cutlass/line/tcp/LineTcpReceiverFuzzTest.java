@@ -66,6 +66,13 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
+    public void testAllMixedSplitPart() throws Exception {
+        initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 1, 50);
+        initFuzzParameters(-1, -1, -1, 10, -1, false, true, false, false);
+        runTest();
+    }
+
+    @Test
     public void testDuplicatesReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true, true, false, false);
@@ -128,7 +135,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
             });
 
             // Assert all data went into WAL1 and WAL2 does not exist
-            TableToken token = engine.getTableToken("table");
+            TableToken token = engine.verifyTableName("table");
             Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.WAL_NAME_BASE).put("2");
             Assert.assertFalse(engine.getConfiguration().getFilesFacade().exists(path.slash$()));
         });

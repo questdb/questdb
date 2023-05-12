@@ -92,7 +92,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 final int N = 1000;
 
                 // home path at txn file
-                TableToken tableToken = engine.getTableToken(x);
+                TableToken tableToken = engine.verifyTableName(x);
                 path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
                 try (TableWriter w = newTableWriter(configuration, x, metrics)) {

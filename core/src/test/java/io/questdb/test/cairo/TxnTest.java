@@ -71,7 +71,7 @@ public class TxnTest extends AbstractCairoTest {
                 }
 
                 try (Path path = new Path()) {
-                    TableToken tableToken = engine.getTableToken(tableName);
+                    TableToken tableToken = engine.verifyTableName(tableName);
                     path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 3000;
                     try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
@@ -158,7 +158,7 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        TableToken tableToken = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.verifyTableName(tableName);
                         path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
@@ -255,7 +255,7 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        TableToken tableToken = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.verifyTableName(tableName);
                         path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
@@ -358,7 +358,7 @@ public class TxnTest extends AbstractCairoTest {
                     Path path = new Path();
                     TxWriter txWriter = new TxWriter(ff)
             ) {
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 txWriter.ofRW(path, PartitionBy.HOUR);
 

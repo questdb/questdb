@@ -27,25 +27,23 @@ package io.questdb.test.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
 
-public class HttpAlterTableTest {
+public class HttpAlterTableTest extends AbstractTest {
 
     private static final String JSON_DDL_RESPONSE = "0c\r\n" +
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -178,7 +176,7 @@ public class HttpAlterTableTest {
     }
 
     private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        final String baseDir = temp.getRoot().getAbsolutePath();
+        final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
             public int getQueryCacheEventQueueCapacity() {
@@ -187,7 +185,7 @@ public class HttpAlterTableTest {
         };
         new HttpQueryTestBuilder()
                 .withWorkerCount(workerCount)
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)
                 .run(configuration, code);

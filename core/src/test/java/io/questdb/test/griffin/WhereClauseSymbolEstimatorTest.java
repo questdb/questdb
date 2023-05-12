@@ -24,13 +24,15 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.WhereClauseSymbolEstimator;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.std.Misc;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -48,7 +50,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
@@ -68,12 +70,10 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        reader.close();
-        compiler.close();
-        sqlExecutionContext.close();
-        TestUtils.removeTestPath(root);
+    public static void tearDownStatic() throws Exception {
+        reader = Misc.free(reader);
+        metadata = null;
+        AbstractGriffinTest.tearDownStatic();
     }
 
     @Override

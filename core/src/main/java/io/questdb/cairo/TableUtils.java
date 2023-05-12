@@ -163,7 +163,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
-    static final long META_OFFSET_PARTITION_BY = 4;
+    public static final long META_OFFSET_PARTITION_BY = 4;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -180,6 +180,11 @@ public final class TableUtils {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
+    }
+
+    public static void allocateDiskSpaceToPage(FilesFacade ff, int fd, long size) {
+        size = Files.ceilPageSize(size);
+        allocateDiskSpace(ff, fd, size);
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
@@ -752,6 +757,23 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
+    public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
+        // Linux requires the mmap offset to be page aligned
+        long alignedOffset = Files.floorPageSize(offset);
+        long alignedExtraLen = offset - alignedOffset;
+        long mapAddr = rw ?
+                mapRWNoAlloc(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
+                mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
+        ff.madvise(mapAddr, size + alignedExtraLen, rw ? Files.POSIX_MADV_RANDOM : Files.POSIX_MADV_SEQUENTIAL);
+        return mapAddr + alignedExtraLen;
+    }
+
+    public static void mapAppendColumnBufferRelease(FilesFacade ff, long address, long offset, long size, int memoryTag) {
+        long alignedOffset = Files.floorPageSize(offset);
+        long alignedExtraLen = offset - alignedOffset;
+        ff.munmap(address - alignedExtraLen, size + alignedExtraLen, memoryTag);
+    }
+
     public static long mapRO(FilesFacade ff, int fd, long size, int memoryTag) {
         return mapRO(ff, fd, size, 0, memoryTag);
     }
@@ -805,6 +827,22 @@ public final class TableUtils {
         assert fd != -1;
         assert offset % ff.getPageSize() == 0;
         allocateDiskSpace(ff, fd, size + offset);
+        return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
+    }
+
+    /**
+     * Maps a file in read-write mode without allocating the disk space.
+     * <p>
+     * Important note. Linux requires the offset to be page aligned.
+     *
+     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd        file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
+     * @param size      size of the mapped file region
+     * @param offset    offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-write memory address
+     */
+    public static long mapRWNoAlloc(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
         if (addr > -1) {
             return addr;
@@ -1164,49 +1202,33 @@ public final class TableUtils {
      * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
-     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param tableRootLen     Trim to this length to go back to the root path of the table
-     * @param partitionBy      Partitioning scheme
-     * @param timestamp        A timestamp in the partition
-     * @param partitionNameTxn Partition txn suffix
+     * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
      */
-    public static void setPathForPartition(
-            Path tablePath,
-            int tableRootLen,
-            int partitionBy,
-            long timestamp,
-            long partitionNameTxn
-    ) {
-        tablePath.trimTo(tableRootLen);
-        TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);
-        TableUtils.txnPartitionConditionally(tablePath, partitionNameTxn);
+    public static void setPathForPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
     /**
-     * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
+     * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
      *
-     * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param partitionBy           Partitioning scheme
-     * @param timestamp             A timestamp in the partition
-     * @param calculatePartitionMax flag when caller is going to use the return value of this method
-     * @return The last timestamp in the partition
+     * @param sink        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
      */
-    public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
-        return PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);
+    public static void setSinkForPartition(CharSink sink, int partitionBy, long timestamp, long nameTxn) {
+        PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
+        if (nameTxn > -1L) {
+            sink.put('.').put(nameTxn);
+        }
     }
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
-    }
-
-    public static void txnPartition(CharSink path, long txn) {
-        path.put('.').put(txn);
-    }
-
-    public static void txnPartitionConditionally(CharSink path, long txn) {
-        if (txn > -1) {
-            txnPartition(path, txn);
-        }
     }
 
     public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {

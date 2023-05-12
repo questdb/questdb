@@ -69,7 +69,8 @@ io.questdb.griffin.engine.functions.eq.EqUuidStrFunctionFactory
 # nullif
 io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory
-io.questdb.griffin.engine.functions.conditional.NullIfIFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory

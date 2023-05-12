@@ -97,10 +97,10 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return;
         }
         String tableName = telemetryType.getTableName();
-        compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);
-        final TableToken tableToken = engine.getTableToken(tableName);
+        telemetryType.getCreateSql(compiler.query()).compile(sqlExecutionContext);
+        final TableToken tableToken = engine.verifyTableName(tableName);
         try {
-            writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "telemetry");
+            writer = engine.getWriter(tableToken, "telemetry");
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(tableToken.getTableName())
@@ -134,7 +134,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        String getCreateSql();
+        SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder);
 
         String getTableName();
 

@@ -138,7 +138,7 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
                             ByteCharSequence tableName = tableNames.getQuick(rnd.nextInt(tableNames.size()));
                             TableUpdateDetails tud = pool.get(tableName);
                             if (tud == null) {
-                                TableToken token = engine.getTableToken(tableName);
+                                TableToken token = engine.verifyTableName(tableName);
                                 tud = createTud(token, tableName);
                             }
                             pool.put(tableName, tud);
@@ -223,7 +223,7 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
         return new TableUpdateDetails(
                 LINE_TCP_RECEIVER_CONFIGURATION,
                 engine,
-                engine.getTableWriterAPI(securityContext, tableToken, "test"),
+                engine.getTableWriterAPI(tableToken, "test"),
                 -1,
                 new NetworkIOJob[0],
                 DEFAULT_COLUMN_TYPES,

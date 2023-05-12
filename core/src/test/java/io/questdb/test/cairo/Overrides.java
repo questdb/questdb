@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -47,10 +48,13 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    private int o3PartitionSplitMaxCount = -1;
+    private long partitionO3SplitThreshold;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
+    private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
@@ -92,6 +96,7 @@ public class Overrides implements ConfigurationOverrides {
     private long writerAsyncCommandMaxTimeout = -1;
     private int writerCommandQueueCapacity = 4;
     private long writerCommandQueueSlotSize = 2048L;
+    private Boolean writerMixedIOEnabled = null;
 
     @Override
     public String getAttachableDirSuffix() {
@@ -164,6 +169,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return factoryProvider;
+    }
+
+    @Override
     public FilesFacade getFilesFacade() {
         return ff;
     }
@@ -214,6 +224,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getO3PartitionSplitMaxCount() {
+        return o3PartitionSplitMaxCount;
+    }
+
+    @Override
     public int getPageFrameMaxRows() {
         return pageFrameMaxRows;
     }
@@ -231,6 +246,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getParallelImportStatusLogKeepNDays() {
         return parallelImportStatusLogKeepNDays;
+    }
+
+    @Override
+    public long getPartitionO3SplitThreshold() {
+        return partitionO3SplitThreshold;
     }
 
     @Override
@@ -374,6 +394,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public Boolean isWriterMixedIOEnabled() {
+        return writerMixedIOEnabled;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
     }
@@ -398,6 +423,7 @@ public class Overrides implements ConfigurationOverrides {
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         parallelFilterEnabled = null;
+        writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
         queryCacheEventQueueCapacity = -1;
@@ -424,6 +450,7 @@ public class Overrides implements ConfigurationOverrides {
         maxOpenPartitions = -1;
         walApplyTableTimeQuote = -1;
         repeatMigrationsFromVersion = -1;
+        factoryProvider = null;
     }
 
     @Override
@@ -502,6 +529,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setFactoryProvider(FactoryProvider factoryProvider) {
+        this.factoryProvider = factoryProvider;
+    }
+
+    @Override
     public void setFilesFacade(FilesFacade ff) {
         this.ff = ff;
     }
@@ -567,6 +599,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount) {
+        this.o3PartitionSplitMaxCount = o3PartitionSplitMaxCount;
+    }
+
+    @Override
     public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
         this.o3QuickSortEnabled = o3QuickSortEnabled;
     }
@@ -594,6 +631,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         this.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
+    }
+
+    @Override
+    public void setPartitionO3SplitThreshold(long value) {
+        this.partitionO3SplitThreshold = value;
     }
 
     @Override
@@ -708,5 +750,10 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
         this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
+    }
+
+    @Override
+    public void setWriterMixedIOEnabled(Boolean writerMixedIOEnabled) {
+        this.writerMixedIOEnabled = writerMixedIOEnabled;
     }
 }

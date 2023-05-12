@@ -24,20 +24,27 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.str.Path;
+
+import java.io.IOException;
+import java.io.InputStream;
 
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
+
         @Override
         public MillisecondClock getClock() {
             return httpContextConfiguration.getClock();
@@ -51,6 +58,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public int getDoubleScale() {
             return Numbers.MAX_SCALE;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return DefaultFactoryProvider.INSTANCE;
         }
 
         @Override
@@ -108,19 +120,14 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         this(httpContextConfiguration, new DefaultIODispatcherConfiguration());
     }
 
-    public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration, IODispatcherConfiguration ioDispatcherConfiguration) {
-        this(Files.getResourcePath(DefaultHttpServerConfiguration.class.getResource("/io/questdb/site/conf/mime.types")), ioDispatcherConfiguration, httpContextConfiguration);
-    }
-
-    public DefaultHttpServerConfiguration(String mimeTypesFilePath, IODispatcherConfiguration dispatcherConfiguration, HttpContextConfiguration httpContextConfiguration) {
-        String defaultFilePath = mimeTypesFilePath;
-        if (Os.isWindows()) {
-            // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
-            // with OS file open methods.
-            defaultFilePath = defaultFilePath.substring(1);
-        }
-        try (Path path = new Path().of(defaultFilePath).$()) {
-            this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+    public DefaultHttpServerConfiguration(
+            HttpContextConfiguration httpContextConfiguration,
+            IODispatcherConfiguration dispatcherConfiguration
+    ) {
+        try (InputStream inputStream = DefaultHttpServerConfiguration.class.getResourceAsStream("/io/questdb/site/conf/mime.types")) {
+            this.mimeTypesCache = new MimeTypesCache(inputStream);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
         this.httpContextConfiguration = httpContextConfiguration;
         this.dispatcherConfiguration = dispatcherConfiguration;
@@ -194,6 +201,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getWorkerCount() {
         return 2;
+    }
+
+    @Override
+    public boolean isPessimisticHealthCheckEnabled() {
+        return false;
     }
 
     @Override

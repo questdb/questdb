@@ -136,8 +136,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
-            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, nameTxn - 1);
+            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn - 1);
             path.$();
 
             if (rangeUnlocked) {
@@ -166,7 +165,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int lo,
             int hi
     ) {
-        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
+        boolean partitionInTxnFile = txReader.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp) >= 0;
         if (partitionInTxnFile) {
             processPartition0(
                     ff,
@@ -222,8 +221,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 path.trimTo(tableRootLen);
-                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-                TableUtils.txnPartitionConditionally(path, previousNameVersion - 1);
+                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, previousNameVersion - 1);
                 path.$();
 
                 if (rangeUnlocked) {
@@ -288,7 +286,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long currentPartitionTs = partitionList.get(i + 1);
                 if (currentPartitionTs != partitionTimestamp) {
                     if (i > lo + 2 ||
-                            (i > 0 && txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0)) {
+                            (i > 0 && txReader.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp) < 0)) {
                         processPartition(
                                 ff,
                                 path,

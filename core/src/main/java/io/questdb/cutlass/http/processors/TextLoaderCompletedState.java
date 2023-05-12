@@ -81,4 +81,8 @@ public class TextLoaderCompletedState {
     public boolean isForceHeaders() {
         return textLoader.isForceHeaders();
     }
+
+    public boolean isHeaderDetected() {
+        return textLoader.isHeaderDetected();
+    }
 }

@@ -24,17 +24,21 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
-public final class SqlParser {
+public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
     private static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
@@ -586,7 +590,7 @@ public final class SqlParser {
             }
             tok = tok(lexer, "path for volume");
             if (Os.isWindows()) {
-                throw SqlException.position(0).position(lexer.getPosition()).put("'in volume' is not supported on Windows");
+                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
             }
             model.setVolumeAlias(GenericLexer.unquote(tok));
             tok = optTok(lexer);
@@ -673,8 +677,8 @@ public final class SqlParser {
 
     private void parseCreateTableColumns(GenericLexer lexer, CreateTableModel model) throws SqlException {
         while (true) {
-            final int position = lexer.lastTokenPosition();
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
+            final int position = lexer.lastTokenPosition();
             final int type = toColumnType(lexer, notTermTok(lexer));
 
             if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
@@ -1002,7 +1006,7 @@ public final class SqlParser {
         return updateQueryModel;
     }
 
-    //doesn't allow copy, rename  
+    //doesn't allow copy, rename
     private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
@@ -1672,7 +1676,7 @@ public final class SqlParser {
                 throw err(lexer, null, "'from' expected");
             }
 
-            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as 
+            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as
                 lexer.unparseLast();
                 break;
             }
@@ -2082,6 +2086,7 @@ public final class SqlParser {
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
             model.setTimestamp(timestamp);
+            model.setExplicitTimestamp(true);
             tok = optTok(lexer);
         }
         return tok;
@@ -2193,6 +2198,7 @@ public final class SqlParser {
     }
 
     // test only
+    @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
         expressionParser.parseExpr(lexer, listener);
     }

@@ -35,9 +35,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
+import io.questdb.test.fuzz.FuzzTransaction;
+import io.questdb.test.fuzz.FuzzTransactionGenerator;
+import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -131,7 +131,8 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     1, // insert only
                     0,
                     5,
-                    new String[]{"ABC", "CDE", "XYZ"}
+                    new String[]{"ABC", "CDE", "XYZ"},
+                    0
             );
 
             Rnd rnd1 = new Rnd();
