@@ -38,17 +38,17 @@ public class O3BasketTest extends AbstractTest {
         O3Basket basket = new O3Basket();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
 
-        basket.ensureCapacity(configuration,5, 2);
+        basket.ensureCapacity(configuration, 5, 2);
         assertBasket(basket, 5, 2);
         basket.clear();
         assertBasket(basket, 5, 2);
 
         basket.clear();
-        basket.ensureCapacity(configuration,8, 2);
+        basket.ensureCapacity(configuration, 8, 2);
         assertBasket(basket, 8, 2);
 
         basket.clear();
-        basket.ensureCapacity(configuration,8, 4);
+        basket.ensureCapacity(configuration, 8, 4);
         assertBasket(basket, 8, 4);
 
         basket.clear();

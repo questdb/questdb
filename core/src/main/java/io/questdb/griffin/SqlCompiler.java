@@ -2314,10 +2314,13 @@ public class SqlCompiler implements Closeable {
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
 
-        textLoader.configureDestination(model.getTarget().token, false, false,
+        textLoader.configureDestination(
+                model.getTarget().token,
+                false,
                 model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
                 model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
-                model.getTimestampColumnName(), model.getTimestampFormat());
+                model.getTimestampColumnName(), model.getTimestampFormat()
+        );
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {

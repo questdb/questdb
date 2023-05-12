@@ -50,10 +50,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private final MemoryMARW charMem;
     private final BitmapIndexWriter indexWriter;
     private final int maxHash;
-    private final MemoryMARW offsetMem;
     private final int symbolCapacity;
     private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
+    private MemoryMARW offsetMem;
     private int symbolIndexInTxWriter;
 
     public SymbolMapWriter(
@@ -169,7 +169,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         Misc.free(charMem);
         if (offsetMem != null) {
             int fd = offsetMem.getFd();
-            Misc.free(offsetMem);
+            offsetMem = Misc.free(offsetMem);
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;

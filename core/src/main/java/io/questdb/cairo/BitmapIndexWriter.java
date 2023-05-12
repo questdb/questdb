@@ -40,11 +40,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
+    private final FilesFacade ff;
     private final MemoryMARW keyMem = Vm.getMARWInstance();
     private final MemoryMARW valueMem = Vm.getMARWInstance();
     private int blockCapacity;
     private int blockValueCountMod;
-    private final FilesFacade ff;
     private int keyCount = -1;
     private long seekValueBlockOffset;
     private long seekValueCount;
@@ -134,15 +134,19 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     @Override
     public void close() {
-        if (keyMem.isOpen() && keyCount > -1) {
-            keyMem.setSize(keyMemSize());
+        if (keyMem.isOpen()) {
+            if (keyCount > -1) {
+                keyMem.setSize(keyMemSize());
+            }
+            Misc.free(keyMem);
         }
-        Misc.free(keyMem);
 
-        if (valueMem.isOpen() && valueMemSize > -1) {
-            valueMem.setSize(valueMemSize);
+        if (valueMem.isOpen()) {
+            if (valueMemSize > -1) {
+                valueMem.setSize(valueMemSize);
+            }
+            Misc.free(valueMem);
         }
-        Misc.free(valueMem);
     }
 
     public void commit() {
