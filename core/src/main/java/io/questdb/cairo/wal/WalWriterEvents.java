@@ -266,8 +266,8 @@ class WalWriterEvents implements Closeable {
         // Not truncating the files saves from reading complexity.
     }
 
-    void sync(boolean async) {
-        eventMem.sync(async);
+    void sync() {
+        eventMem.sync(false);
         ff.fsync(indexFd);
     }
 

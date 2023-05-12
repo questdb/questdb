@@ -1119,7 +1119,7 @@ public class WalWriter implements TableWriterAPI {
             metadata.switchTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
             if (commitMode != CommitMode.NOSYNC) {
-                events.sync(commitMode == CommitMode.ASYNC);
+                events.sync();
             }
 
             if (dirFd != -1) {
@@ -1211,7 +1211,7 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.length());
         lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-        events.sync(false);
+        events.sync();
     }
 
     private void rolloverSegmentLock() {
@@ -1402,7 +1402,7 @@ public class WalWriter implements TableWriterAPI {
                 column.sync(async);
             }
         }
-        events.sync(async);
+        events.sync();
     }
 
     private class MetadataValidatorService implements MetadataServiceStub {
