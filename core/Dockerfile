@@ -7,7 +7,7 @@ RUN apt-get update \
 RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
     add-apt-repository 'deb https://apt.corretto.aws stable main' && \
     apt-get update && \
-    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:17.0.3.6-1
+    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:17.0.7.7-1
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
 WORKDIR /build
