@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
@@ -55,7 +57,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
 
     @Override
-    public String getAuthDbPath() {
+    public String getAuthDB() {
         return null;
     }
 
@@ -90,7 +92,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public int getConnectionPoolInitialCapacity() {
-        return 64;
+        return 4;
     }
 
     @Override
@@ -164,6 +166,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public long getSymbolCacheWaitUsBeforeReload() {
         return 500_000;
     }
@@ -205,6 +212,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public boolean isSymbolAsFieldSupported() {
+        return false;
+    }
+
+    @Override
+    public boolean readOnlySecurityContext() {
         return false;
     }
 }

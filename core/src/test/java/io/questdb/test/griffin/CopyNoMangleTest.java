@@ -30,19 +30,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.io.IOException;
-
 // Runs some tests from CopyTest, but without mangling private table names
 public class CopyNoMangleTest extends AbstractGriffinTest {
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
-        try {
-            inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractCairoTest.setUpStatic();
         configOverrideMangleTableDirNames(false);
 
@@ -57,7 +51,7 @@ public class CopyNoMangleTest extends AbstractGriffinTest {
         String inputWorkRootTmp = inputWorkRoot;
         inputWorkRoot = temp.getRoot().getAbsolutePath();
 
-        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchImportId("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
 
         CopyTest.CopyRunnable test = () -> assertQuery("message\ncould not remove import work directory because it points to one of main directories\n",

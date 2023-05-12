@@ -57,7 +57,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final LongList sequencerWalIDSegmentIDPairs = new LongList();
     private final long spinLockTimeout;
-    private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+    private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
     private final NativeLPSZ walName = new NativeLPSZ();
     private long last = 0;

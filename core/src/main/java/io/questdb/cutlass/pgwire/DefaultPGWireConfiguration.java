@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -152,6 +154,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getRecvBufferSize() {
         return 1024 * 1024;
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override

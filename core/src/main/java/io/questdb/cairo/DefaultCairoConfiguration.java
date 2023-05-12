@@ -25,8 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -37,20 +35,21 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
-public class DefaultCairoConfiguration implements CairoConfiguration {
+import java.util.function.LongSupplier;
 
+public class DefaultCairoConfiguration implements CairoConfiguration {
+    private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final BuildInformation buildInformation = new BuildInformationHolder();
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
-    private final CharSequence root;
-    private final CairoSecurityContextFactory securityContextFactory = new AllowAllSecurityContextFactory();
+    private final String root;
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
-
+    private final boolean writerMixedIOEnabled;
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
@@ -59,6 +58,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
+        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
+    }
+
+    @Override
+    public LongSupplier getCopyIDSupplier() {
+        return importIDSupplier;
     }
 
     @Override
@@ -119,11 +124,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
-    }
-
-    @Override
-    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
-        return securityContextFactory;
     }
 
     @Override
@@ -252,6 +252,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return 30;
     }
@@ -324,6 +329,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMaxFileNameLength() {
         return 127;
+    }
+
+    @Override
+    public int getO3LastPartitionMaxSplits() {
+        return 15;
     }
 
     @Override
@@ -438,6 +448,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionO3SplitMinSize() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getPartitionPurgeListCapacity() {
         return 64;
     }
@@ -473,7 +488,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getRoot() {
+    public String getRoot() {
         return root;
     }
 
@@ -951,6 +966,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return true;
+    }
+
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        return writerMixedIOEnabled;
     }
 
     @Override

@@ -38,15 +38,15 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
 import java.util.concurrent.CountDownLatch;
@@ -55,10 +55,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder.RequestHeaders;
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
-public class ImportIODispatcherTest {
+public class ImportIODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
     private static final String PostHeader = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
@@ -215,6 +214,27 @@ public class ImportIODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private final String ValidImportResponse1Json = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "\r\n" +
+            "0147\r\n" +
+            "{\"status\":\"OK\"," +
+            "\"location\":\"trips\"," +
+            "\"rowsRejected\":0," +
+            "\"rowsImported\":24," +
+            "\"header\":true," +
+            "\"partitionBy\":\"DAY\"," +
+            "\"timestamp\":\"Pickup_DateTime\"," +
+            "\"columns\":[" +
+            "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
+            "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "]}\r\n" +
+            "00\r\n" +
+            "\r\n";
     private final String ValidImportResponse2 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -237,6 +257,26 @@ public class ImportIODispatcherTest {
             "|              4  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
+            "00\r\n" +
+            "\r\n";
+    private final String ValidImportResponse2Json = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "\r\n" +
+            "012a\r\n" +
+            "{\"status\":\"OK\"," +
+            "\"location\":\"trips\"," +
+            "\"rowsRejected\":0," +
+            "\"rowsImported\":24," +
+            "\"header\":true," +
+            "\"partitionBy\":\"NONE\"," +
+            "\"columns\":[" +
+            "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
+            "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "]}\r\n" +
             "00\r\n" +
             "\r\n";
     private final String WarningValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
@@ -267,12 +307,13 @@ public class ImportIODispatcherTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "0172\r\n" +
+            "0186\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
             "\"rowsImported\":24," +
-            "\"header\":false," +
+            "\"header\":true," +
+            "\"partitionBy\":\"NONE\"," +
             "\"warnings\":[" +
             "\"Existing table timestamp column is used\"," +
             "\"Existing table PartitionBy is used\"]," +
@@ -283,8 +324,6 @@ public class ImportIODispatcherTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -298,7 +337,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportDesignatedTsFromSchema() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -410,7 +449,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportDropReimportDifferentSchema() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -451,7 +490,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportDropReimportDifferentSchemaTextQuery() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -547,7 +586,7 @@ public class ImportIODispatcherTest {
     public void testImportLocksTable() throws Exception {
         final String tableName = "trips";
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -557,7 +596,7 @@ public class ImportIODispatcherTest {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
-                                if (engine.getStatus(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), path, tt) == TableUtils.TABLE_RESERVED) {
+                                if (engine.getTableStatus(path, tt) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
@@ -580,9 +619,27 @@ public class ImportIODispatcherTest {
     }
 
     @Test
+    public void testImportOverSameConnectionWithDifferentFormats() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
+                    String requestJson = ValidImportRequest1
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json HTTP");
+                    new SendAndReceiveRequestBuilder().execute(requestJson, ValidImportResponse2Json);
+
+                    String requestTabular = ValidImportRequest1
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips HTTP");
+                    new SendAndReceiveRequestBuilder().execute(requestTabular, ValidImportResponse1);
+                }));
+    }
+
+    @Test
     public void testImportSymbolIndexedFromSchema() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -695,16 +752,44 @@ public class ImportIODispatcherTest {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testImportWitNocacheSymbols();
-            temp.delete();
-            temp.create();
+            testImportWithNoCacheSymbols();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
+    }
+
+    @Test
+    public void testImportWithTimestampAndPartitionByOverwriteJson() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] ddl = new String[]{DdlCols1, DdlCols2};
+
+                    final String requestTemplate = requests[0];
+                    final String ddlCols = ddl[0];
+
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
+                            "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+
+                    String request = requestTemplate
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=Pickup_DateTime&overwrite=true HTTP");
+
+                    new SendAndReceiveRequestBuilder().execute(request, ValidImportResponse1Json);
+                });
     }
 
     @Test
     public void testImportWithWrongPartitionBy() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -732,7 +817,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportWithWrongPartitionByJson() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -764,8 +849,8 @@ public class ImportIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWithWrongTimestampSpecified();
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -790,7 +875,7 @@ public class ImportIODispatcherTest {
         };
 
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -810,13 +895,13 @@ public class ImportIODispatcherTest {
                     compiler.compile("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", sqlExecutionContext);
 
                     // Here fail expected
-                    new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + RequestHeaders,
+                    new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
                             "8e\r\n" +
                                     "{\"query\":\"select count(*) from xyz where x > 0;\",\"error\":\"File not found: ");
 
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
                     CairoConfiguration configuration = engine.getConfiguration();
-                    TableToken tableToken = engine.getTableToken("xyz");
+                    TableToken tableToken = engine.verifyTableName("xyz");
                     try (
                             Path path = new Path().concat(configuration.getRoot()).concat(tableToken);
                             TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
@@ -862,7 +947,7 @@ public class ImportIODispatcherTest {
 
     private void testImportMisDetectsTimestampColumn(HttpServerConfigurationBuilder serverConfigBuilder, int rowCount) throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(serverConfigBuilder)
                 .withTelemetry(false)
@@ -904,12 +989,12 @@ public class ImportIODispatcherTest {
                 });
     }
 
-    private void testImportWitNocacheSymbols() throws Exception {
+    private void testImportWithNoCacheSymbols() throws Exception {
         final int parallelCount = 2;
         final int insertCount = 1;
         final int importRowCount = 10;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -999,7 +1084,7 @@ public class ImportIODispatcherTest {
         final int parallelCount = 2;
         final int insertCount = 9;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)

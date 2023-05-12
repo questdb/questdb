@@ -29,6 +29,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import org.jetbrains.annotations.NotNull;
 
 public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
     @Override
@@ -47,12 +48,12 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     }
 
     @Override
-    public MillisecondClock getClock() {
+    public @NotNull MillisecondClock getClock() {
         return MillisecondClockImpl.INSTANCE;
     }
 
     @Override
-    public NetworkFacade getNetworkFacade() {
+    public @NotNull NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
     }
 

@@ -26,31 +26,28 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
-import org.junit.rules.TemporaryFolder;
-import org.junit.rules.TestName;
 
 import java.io.File;
 import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
 
-public class TableUtilsTest {
+public class TableUtilsTest extends AbstractTest {
     private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
-
-    @Rule
-    public final TestName testName = new TestName();
 
     private Path path;
 
     @Before
-    public void setUp() throws IOException {
+    public void setUp() {
         path = new Path();
     }
 
@@ -83,8 +80,8 @@ public class TableUtilsTest {
             path.of(dbRoot.getAbsolutePath()).concat(tableName).$();
             TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists [path=" + path.toString() + ']');
         } finally {
-            dbRoot.delete();
-            volumeRoot.delete();
+            TestUtils.removeTestPath(dbRoot.getAbsolutePath());
+            TestUtils.removeTestPath(volumeRoot.getAbsolutePath());
         }
     }
 

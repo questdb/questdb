@@ -46,7 +46,7 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
 public final class Services {
@@ -215,7 +215,7 @@ public final class Services {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor();
+                return new HealthCheckProcessor(configuration.isPessimisticHealthCheckEnabled());
             }
         }, true);
         if (metrics.isEnabled()) {

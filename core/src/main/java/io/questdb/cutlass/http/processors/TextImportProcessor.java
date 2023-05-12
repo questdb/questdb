@@ -94,7 +94,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             try {
                 transientState.lo = lo;
                 transientState.hi = hi;
-                transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());
+                transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
@@ -231,11 +231,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     public void resumeRecv(HttpConnectionContext context) {
         this.transientContext = context;
         this.transientState = LV.get(context);
-        if (this.transientState == null) {
+        if (transientState == null) {
             LOG.debug().$("new text state").$();
             LV.set(context, this.transientState = new TextImportProcessorState(engine));
-            transientState.json = isJson(context);
         }
+        transientState.json = isJson(context);
     }
 
     @Override
@@ -302,7 +302,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         .putQuoted("location").put(':').encodeUtf8AndQuote(completeState.getTableName()).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + completeState.getErrorLineCount()).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
-                        .putQuoted("header").put(':').put(completeState.isForceHeaders()).put(',');
+                        .putQuoted("header").put(':').put(completeState.isHeaderDetected()).put(',')
+                        .putQuoted("partitionBy").put(':').putQuoted(PartitionBy.toString(completeState.getPartitionBy())).put(',');
+
+                int tsIdx = metadata.getTimestampIndex();
+                if (tsIdx != -1) {
+                    socket.putQuoted("timestamp").put(':').encodeUtf8AndQuote(metadata.getColumnName(tsIdx)).put(',');
+                }
                 if (completeState.getWarnings() != TextLoadWarning.NONE) {
                     final int warningFlags = completeState.getWarnings();
                     socket.putQuoted("warnings").put(':').put('[');

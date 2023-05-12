@@ -3561,7 +3561,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tab\n" +
-                            "              intervals: [static=[1669852800000001,9223372036854775807]\n");
+                            "              intervals: [(\"2022-12-01T00:00:00.000001Z\",\"MAX\")]\n");
 
             assertQuery("ts\ts\tfirst\n" +
                             "2022-12-01T01:33:00.000000Z\tB\t3\n" +
@@ -9900,6 +9900,104 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs() throws SqlException {
+        assertQuery("ts\tvalue\n" +
+                        "2023-02-19T00:00:00.000000Z\t0\n" +
+                        "2023-02-20T00:00:00.000000Z\t0\n" +
+                        "2023-02-21T00:00:00.000000Z\t0\n" +
+                        "2023-02-22T00:00:00.000000Z\t0\n" +
+                        "2023-02-23T00:00:00.000000Z\t0\n" +
+                        "2023-02-24T00:00:00.000000Z\t0\n" +
+                        "2023-02-25T00:00:00.000000Z\t0\n" +
+                        "2023-02-26T00:00:00.000000Z\t0\n" +
+                        "2023-02-27T00:00:00.000000Z\t0\n" +
+                        "2023-02-28T00:00:00.000000Z\t0\n" +
+                        "2023-03-01T00:00:00.000000Z\t1\n",
+                "WITH  all_rows    AS (\n" +
+                        "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
+                        "    union all\n" +
+                        "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
+                        "), just_foobar as (\n" +
+                        "    select * from all_rows where address in ('foobar')\n" +
+                        "), ordered as (\n" +
+                        "    select * from just_foobar order by ts asc\n" +
+                        "), timed as (\n" +
+                        "    select * from ordered timestamp(ts)\n" +
+                        "), sampled as (\n" +
+                        "    SELECT ts, sum(value) as value\n" +
+                        "    FROM timed\n" +
+                        "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
+                        ")\n" +
+                        "select * from sampled;", "ts");
+    }
+
+    @Test
+    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs2() throws SqlException {
+        assertQuery("ts\tvalue\n" +
+                        "2023-02-19T00:00:00.000000Z\t0\n" +
+                        "2023-02-20T00:00:00.000000Z\t0\n" +
+                        "2023-02-21T00:00:00.000000Z\t0\n" +
+                        "2023-02-22T00:00:00.000000Z\t0\n" +
+                        "2023-02-23T00:00:00.000000Z\t0\n" +
+                        "2023-02-24T00:00:00.000000Z\t0\n" +
+                        "2023-02-25T00:00:00.000000Z\t0\n" +
+                        "2023-02-26T00:00:00.000000Z\t0\n" +
+                        "2023-02-27T00:00:00.000000Z\t0\n" +
+                        "2023-02-28T00:00:00.000000Z\t0\n" +
+                        "2023-03-01T00:00:00.000000Z\t1\n",
+                "WITH  all_rows    AS (\n" +
+                        "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
+                        "    union all\n" +
+                        "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
+                        "), just_foobar as (\n" +
+                        "    select * from all_rows where address in ('foobar')\n" +
+                        "), ordered as (\n" +
+                        "    select * from just_foobar order by ts asc\n" +
+                        "), timed as (\n" +
+                        "    select * from ordered timestamp(ts)\n" +
+                        "), intermediate as (\n" + //the distance between sample by and model with explicit ts is bigger
+                        "    select * from timed where ts > 0::timestamp \n" +
+                        "), sampled as (\n" +
+                        "    SELECT ts, sum(value) as value\n" +
+                        "    FROM intermediate\n" +
+                        "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
+                        ")\n" +
+                        "select * from sampled;", "ts");
+    }
+
+    @Test
+    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTsNotInSelectList() throws SqlException {
+        assertQuery("value\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n",
+                "WITH  all_rows    AS (\n" +
+                        "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
+                        "    union all\n" +
+                        "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
+                        "), just_foobar as (\n" +
+                        "    select * from all_rows where address in ('foobar')\n " +
+                        "), ordered as (\n" +
+                        "    select * from just_foobar order by ts asc\n" +
+                        "), timed as (\n" +
+                        "    select * from ordered timestamp(ts)\n" +
+                        "), sampled as (\n" +
+                        "    SELECT sum(value) as value\n" + //no ts in select list 
+                        "    FROM timed\n" +
+                        "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
+                        ")\n" +
+                        "select * from sampled;", null);
+    }
+
+    @Test
     public void testTimestampIsNotRequiredInFilterSubQuery() throws Exception {
         // (x union x) is used in sub-query to make sure that the base doesn't have designated timestamp
         assertQuery(
@@ -9918,6 +10016,52 @@ public class SampleByTest extends AbstractGriffinTest {
                 null,
                 false
         );
+    }
+
+    @Test
+    public void testTimestampIsRequiredBeforeSubqueryWithExplicitTs1() throws Exception {
+        assertFailure(
+                "WITH  all_rows    AS (\n" +
+                        "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
+                        "    union all\n" +
+                        "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
+                        "), just_foobar as (\n" +
+                        "    select * from all_rows where address in ('foobar')\n" +
+                        "), ordered as (\n" +
+                        "    select * from just_foobar order by ts asc\n" +
+                        "), intermediate as (\n" +
+                        "    select * from ordered timestamp(ts) " +
+                        "    union all " +
+                        "    select '2023-02-01T00:00:00.000000Z'::timestamp, 'f', 2 \n" +
+                        "), sampled as (\n" +
+                        "    SELECT ts, sum(value) as value\n" +
+                        "    FROM intermediate\n" +
+                        "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
+                        ")\n" +
+                        "select * from sampled;", null, 507, "base query does not provide ASC order over dedicated TIMESTAMP column");
+    }
+
+    @Test
+    public void testTimestampIsRequiredBeforeSubqueryWithExplicitTs2() throws Exception {
+        assertFailure(
+                "WITH  all_rows    AS (\n" +
+                        "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
+                        "    union all\n" +
+                        "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
+                        "), just_foobar as (\n" +
+                        "    select * from all_rows where address in ('foobar')\n" +
+                        "), ordered as (\n" +
+                        "    select * from just_foobar order by ts asc\n" +
+                        "), with_ts as (\n" +
+                        "    select * from ordered timestamp(ts) " +
+                        "), intermediate as (\n" +
+                        "    select * from with_ts order by value " +
+                        "), sampled as (\n" +
+                        "    SELECT ts, sum(value) as value\n" +
+                        "    FROM intermediate\n" +
+                        "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
+                        ")\n" +
+                        "select * from sampled;", null, 489, "base query does not provide ASC order over dedicated TIMESTAMP column");
     }
 
     @Test

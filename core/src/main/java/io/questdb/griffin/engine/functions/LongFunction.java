@@ -73,8 +73,7 @@ public abstract class LongFunction implements ScalarFunction {
 
     @Override
     public float getFloat(Record rec) {
-        final long val = getLong(rec);
-        return val != Numbers.LONG_NaN ? val : Float.NaN;
+        return Numbers.longToFloat(getLong(rec));
     }
 
     @Override

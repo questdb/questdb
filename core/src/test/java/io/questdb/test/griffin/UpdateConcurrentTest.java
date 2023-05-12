@@ -57,7 +57,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 128;
         AbstractGriffinTest.setUpStatic();
     }

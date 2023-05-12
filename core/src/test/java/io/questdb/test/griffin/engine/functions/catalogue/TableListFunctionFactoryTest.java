@@ -91,7 +91,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
 
         FilesFacade filesFacade = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            TableToken tableToken = engine.getTableToken("table1");
+            TableToken tableToken = engine.verifyTableName("table1");
             path.concat(configuration.getRoot()).concat(tableToken).concat(META_FILE_NAME).$();
             filesFacade.remove(path);
         }

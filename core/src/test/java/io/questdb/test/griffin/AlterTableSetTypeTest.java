@@ -103,7 +103,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
     }
 
     private Path assertConvertFileExists(String tableName) {
-        final TableToken token = engine.getTableToken(tableName);
+        final TableToken token = engine.verifyTableName(tableName);
         final Path path = Path.PATH.get().of(configuration.getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
         Assert.assertTrue(Chars.toString(path), Files.exists(path.$()));
         return path;

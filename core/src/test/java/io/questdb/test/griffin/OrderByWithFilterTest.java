@@ -427,7 +427,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: trips\n" +
-                    "                      intervals: [static=[1561852800000000,9223372036854775807]\n");
+                    "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n");
 
             assertQuery("vendor_id\n" +
                     "A1\n" +
@@ -471,7 +471,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [static=[1561852800000000,9223372036854775807]\n" +
+                    "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n" +
                     "                Hash\n" +
                     "                    Async Filter\n" +
                     "                      filter: vendor_id in [A1,A2]\n" +

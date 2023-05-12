@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.RostiAllocFacade;
@@ -60,6 +61,8 @@ public interface ConfigurationOverrides {
 
     int getDefaultTableWriteMode();
 
+    FactoryProvider getFactoryProvider();
+
     FilesFacade getFilesFacade();
 
     int getInactiveReaderMaxOpenPartitions();
@@ -80,6 +83,8 @@ public interface ConfigurationOverrides {
 
     long getO3MinLag();
 
+    int getO3PartitionSplitMaxCount();
+
     int getPageFrameMaxRows();
 
     int getPageFrameReduceQueueCapacity();
@@ -87,6 +92,8 @@ public interface ConfigurationOverrides {
     int getPageFrameReduceShardCount();
 
     int getParallelImportStatusLogKeepNDays();
+
+    long getPartitionO3SplitThreshold();
 
     int getQueryCacheEventQueueCapacity();
 
@@ -144,6 +151,8 @@ public interface ConfigurationOverrides {
 
     Boolean isParallelFilterEnabled();
 
+    Boolean isWriterMixedIOEnabled();
+
     boolean mangleTableDirNames();
 
     void reset();
@@ -178,6 +187,8 @@ public interface ConfigurationOverrides {
 
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
+    void setFactoryProvider(FactoryProvider factoryProvider);
+
     void setFilesFacade(FilesFacade ff);
 
     void setHideTelemetryTable(boolean hideTelemetryTable);
@@ -204,6 +215,8 @@ public interface ConfigurationOverrides {
 
     void setO3MinLag(long minLag);
 
+    void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount);
+
     void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
 
     void setPageFrameMaxRows(int pageFrameMaxRows);
@@ -215,6 +228,8 @@ public interface ConfigurationOverrides {
     void setParallelFilterEnabled(Boolean parallelFilterEnabled);
 
     void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays);
+
+    void setPartitionO3SplitThreshold(long value);
 
     void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity);
 
@@ -261,4 +276,6 @@ public interface ConfigurationOverrides {
     void setWriterCommandQueueCapacity(int writerCommandQueueCapacity);
 
     void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize);
+
+    void setWriterMixedIOEnabled(Boolean writerMixedIOEnabled);
 }

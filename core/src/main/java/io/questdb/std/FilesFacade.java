@@ -34,6 +34,8 @@ public interface FilesFacade {
 
     boolean allocate(int fd, long size);
 
+    boolean allowMixedIO(CharSequence root);
+
     long append(int fd, long buf, int len);
 
     boolean close(int fd);
@@ -128,6 +130,8 @@ public interface FilesFacade {
 
     long read(int fd, long buf, long size, long offset);
 
+    boolean readLink(Path softLink, Path readTo);
+
     byte readNonNegativeByte(int fd, long offset);
 
     int readNonNegativeInt(int fd, long offset);
@@ -139,8 +143,6 @@ public interface FilesFacade {
     int rename(LPSZ from, LPSZ to);
 
     int rmdir(Path name);
-
-    boolean readLink(Path softLink, Path readTo);
 
     int softLink(LPSZ src, LPSZ softLink);
 

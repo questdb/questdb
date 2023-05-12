@@ -25,27 +25,23 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -59,6 +55,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
 public class UpdateTest extends AbstractGriffinTest {
+    private static final long DEFAULT_CIRCUIT_BREAKER_TIMEOUT = 300_000L;
     private final boolean walEnabled;
 
     public UpdateTest(WalMode walMode) {
@@ -70,6 +67,19 @@ public class UpdateTest extends AbstractGriffinTest {
         return Arrays.asList(new Object[][]{
                 {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public boolean checkConnection() {
+                return false;
+            }
+        }, MemoryTag.NATIVE_DEFAULT) {
+        };
+        circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
+        AbstractGriffinTest.setUpStatic();
     }
 
     @Test
@@ -389,7 +399,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 }
 
                 try (TxReader txReader = new TxReader(ff)) {
-                    TableToken tableToken = engine.getTableToken("up");
+                    TableToken tableToken = engine.verifyTableName("up");
                     txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                     txReader.unsafeLoadAll();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
@@ -544,7 +554,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 public Rnd getAsyncRandom() {
                     throw new RuntimeException("test error");
                 }
-            };
+            }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
 
             testUpdateAsyncMode(tableWriter -> {
                     }, "[43] test error",
@@ -1025,6 +1035,9 @@ public class UpdateTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY)) {
                 tml.col("xint", ColumnType.INT).col("xsym", ColumnType.SYMBOL).indexed(true, 256).timestamp("ts");
+                if (walEnabled) {
+                    tml.wal();
+                }
                 createPopulateTable(tml, 10, "2020-01-01", 2);
             }
 
@@ -1104,6 +1117,9 @@ public class UpdateTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY)) {
                 tml.col("xint", ColumnType.INT).col("xsym", ColumnType.SYMBOL).indexed(true, 256).timestamp("ts");
+                if (walEnabled) {
+                    tml.wal();
+                }
                 createPopulateTable(tml, 5, "2020-01-01", 2);
             }
 
@@ -1232,14 +1248,17 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
-            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+                    ReadOnlySecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1
+                    , null
+            );
 
             try {
-                CompiledQuery cq = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
-                try (OperationFuture fut = cq.execute(null)) {
-                    fut.await();
-                    Assert.fail();
-                }
+                compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
+                Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }
@@ -2190,7 +2209,15 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        executeOperation(query, CompiledQuery.UPDATE);
+        try {
+            if (walEnabled) {
+                circuitBreaker.setTimeout(1);
+            }
+            executeOperation(query, CompiledQuery.UPDATE);
+        } finally {
+            circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
+        }
+
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {

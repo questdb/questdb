@@ -25,16 +25,12 @@
 package io.questdb.cliutil;
 
 
-import io.questdb.BuildInformation;
-import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cutlass.json.JsonException;
-import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 
 import java.io.IOException;
-import java.util.Properties;
 
 import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
 import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
@@ -48,14 +44,5 @@ public class RebuildIndex {
             return;
         }
         runColumnRebuild(params, new IndexBuilder());
-    }
-
-    private static PropServerConfiguration readServerConfiguration(
-            final String rootDirectory,
-            final Properties properties,
-            Log log,
-            final BuildInformation buildInformation
-    ) throws ServerConfigurationException, JsonException {
-        return new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 }

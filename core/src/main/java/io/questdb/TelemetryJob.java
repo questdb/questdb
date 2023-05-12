@@ -56,14 +56,14 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         try (final SqlCompiler compiler = new SqlCompiler(engine, functionFactoryCache, null)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             sqlExecutionContext.with(
-                    engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                    engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                     null,
                     null
             );
 
             telemetry.init(engine, compiler, sqlExecutionContext);
             telemetryWal.init(engine, compiler, sqlExecutionContext);
-            telemetryConfigLogger.init(engine, compiler, sqlExecutionContext);
+            telemetryConfigLogger.init(compiler, sqlExecutionContext);
         }
     }
 

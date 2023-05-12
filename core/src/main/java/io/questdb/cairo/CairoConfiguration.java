@@ -25,9 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.BuildInformation;
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -39,6 +39,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 import java.lang.ThreadLocal;
+import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
@@ -81,8 +82,6 @@ public interface CairoConfiguration {
     int getBindVariablePoolSize();
 
     BuildInformation getBuildInformation();
-
-    CairoSecurityContextFactory getCairoSecurityContextFactory();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -168,6 +167,8 @@ public interface CairoConfiguration {
 
     int getMaxFileNameLength();
 
+    int getO3LastPartitionMaxSplits();
+
     int getMaxSwapFileCount();
 
     int getMaxSymbolNotEqualsCount();
@@ -245,6 +246,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    long getPartitionO3SplitMinSize();
+
     int getQueryCacheEventQueueCapacity();
 
     default Rnd getRandom() {
@@ -268,7 +271,7 @@ public interface CairoConfiguration {
 
     int getRndFunctionMemoryPageSize();
 
-    CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
+    String getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     default RostiAllocFacade getRostiAllocFacade() {
         return RostiAllocFacadeImpl.INSTANCE;
@@ -480,6 +483,8 @@ public interface CairoConfiguration {
 
     boolean isWalSupported();
 
+    boolean isWriterMixedIOEnabled();
+
     /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.
      * When it is enabled directory name of table TRADE becomes TRADE~, so that ~ sign is added at the end.
@@ -489,4 +494,8 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    LongSupplier getCopyIDSupplier();
+
+    FactoryProvider getFactoryProvider();
 }
