@@ -57,6 +57,37 @@ public class TableNameRegistryFileStore implements Closeable {
         this.configuration = configuration;
     }
 
+    public static int findLastTablesFileVersion(FilesFacade ff, Path path, StringSink nameSink) {
+        long findPtr = ff.findFirst(path.$());
+        if (findPtr == 0) {
+            throw CairoException.critical(0).put("database root directory does not exist at ").put(path);
+        }
+        try {
+            int lastVersion = 0;
+            do {
+                long pUtf8NameZ = ff.findName(findPtr);
+                if (ff.findType(findPtr) == DT_FILE) {
+                    nameSink.clear();
+                    boolean validUtf8 = Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+                    assert validUtf8 : "invalid UTF-8 in file name";
+                    if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE) && nameSink.length() > TABLE_REGISTRY_NAME_FILE.length() + 1) {
+                        try {
+                            int version = Numbers.parseInt(nameSink, TABLE_REGISTRY_NAME_FILE.length() + 1, nameSink.length());
+                            if (version > lastVersion) {
+                                lastVersion = version;
+                            }
+                        } catch (NumericException ignore) {
+                            // no-op
+                        }
+                    }
+                }
+            } while (ff.findNext(findPtr) > 0);
+            return lastVersion;
+        } finally {
+            ff.findClose(findPtr);
+        }
+    }
+
     public synchronized void appendEntry(final TableToken tableToken) {
         writeEntry(tableToken, OPERATION_ADD);
         tableNameMemory.sync(false);
@@ -166,34 +197,7 @@ public class TableNameRegistryFileStore implements Closeable {
     }
 
     private int findLastTablesFileVersion(FilesFacade ff, Path path) {
-        long findPtr = ff.findFirst(path.$());
-        if (findPtr == 0) {
-            throw CairoException.critical(0).put("database root directory does not exist at ").put(path);
-        }
-        try {
-            int lastVersion = 0;
-            do {
-                long pUtf8NameZ = ff.findName(findPtr);
-                if (ff.findType(findPtr) == DT_FILE) {
-                    nameSink.clear();
-                    boolean validUtf8 = Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
-                    assert validUtf8 : "invalid UTF-8 in file name";
-                    if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE) && nameSink.length() > TABLE_REGISTRY_NAME_FILE.length() + 1) {
-                        try {
-                            int version = Numbers.parseInt(nameSink, TABLE_REGISTRY_NAME_FILE.length() + 1, nameSink.length());
-                            if (version > lastVersion) {
-                                lastVersion = version;
-                            }
-                        } catch (NumericException ignore) {
-                            // no-op
-                        }
-                    }
-                }
-            } while (ff.findNext(findPtr) > 0);
-            return lastVersion;
-        } finally {
-            ff.findClose(findPtr);
-        }
+        return findLastTablesFileVersion(ff, path, nameSink);
     }
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
