@@ -2286,11 +2286,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 nameOffset += Vm.getStorageLength(columnName);
             }
             ddlMem.putStr(name);
-
-            final int commitMode = configuration.getCommitMode();
-            if (commitMode != CommitMode.NOSYNC) {
-                ddlMem.sync(commitMode == CommitMode.ASYNC);
-            }
+            ddlMem.sync(false);
         } finally {
             ddlMem.close();
         }
