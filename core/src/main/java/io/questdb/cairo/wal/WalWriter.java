@@ -923,7 +923,7 @@ public class WalWriter implements TableWriterAPI {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
-        walInitializer.initSegmentDirectory(path);
+        walInitializer.initSegmentDirectory(path, tableToken, walId, segmentId);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
     }

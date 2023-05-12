@@ -24,12 +24,13 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.str.Path;
 
 public class BasicWalInitializer implements WalInitializer {
     public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
 
     @Override
-    public void initSegmentDirectory(Path segmentPath) {
+    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
     }
 }
