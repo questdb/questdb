@@ -688,35 +688,35 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             " -x j," +
                             " rnd_str(5,16,2) as str," +
                             " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
-                            " from long_sequence(60*(23*2-24))" +
+                            " from long_sequence(60*(23*2))" +
                             ") timestamp (ts) partition by DAY " + wal,
                     sqlExecutionContext
             );
             drainWalQueue();
 
-            String sqlPrefix = "insert into x " +
-                    "select" +
-                    " cast(x as int) * 1000000 i," +
-                    " -x - 1000000L as j," +
-                    " rnd_str(5,16,2) as str,";
-            compile(
-                    sqlPrefix +
-                            " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
-                            " from long_sequence(200)",
-                    sqlExecutionContext
-            );
-            drainWalQueue();
-
-            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
-
-            // Partition "2020-02-04" squashed the new update
 
             try (TableReader ignore = getReader("x")) {
+                String sqlPrefix = "insert into x " +
+                        "select" +
+                        " cast(x as int) * 1000000 i," +
+                        " -x - 1000000L as j," +
+                        " rnd_str(5,16,2) as str,";
+                compile(
+                        sqlPrefix +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
+                                " from long_sequence(200)",
+                        sqlExecutionContext
+                );
+                drainWalQueue();
+
+                String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+                assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
+                        "2020-02-04T20:00:00.000000Z\t440\t2020-02-04T195900-000001\n" +
+                        "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n");
+
                 compile(sqlPrefix +
-                                " timestamp_sequence('2020-02-04T18:01', 60*1000000L) ts" +
+                                " timestamp_sequence('2020-02-05T18:01', 60*1000000L) ts" +
                                 " from long_sequence(50)",
                         sqlExecutionContext
                 );
@@ -724,16 +724,18 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1080\t2020-02-04\n" +
-                        "2020-02-04T18:00:00.000000Z\t170\t2020-02-04T175900-000001\n" +
-                        "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
+                        "2020-02-04T20:00:00.000000Z\t440\t2020-02-04T195900-000001\n" +
+                        "2020-02-05T00:00:00.000000Z\t1080\t2020-02-05\n" +
+                        "2020-02-05T18:00:00.000000Z\t290\t2020-02-05T175900-000001\n");
 
                 // should squash partitions
                 compile("alter table x squash partitions");
 
                 drainWalQueue();
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1570\t2020-02-04\n");
+                        "2020-02-04T00:00:00.000000Z\t1640\t2020-02-04\n" +
+                        "2020-02-05T00:00:00.000000Z\t1370\t2020-02-05\n");
             }
         });
     }
