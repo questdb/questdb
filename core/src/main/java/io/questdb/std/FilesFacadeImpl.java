@@ -299,8 +299,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int msync(long addr, long len, boolean async) {
-        return Files.msync(addr, len, async);
+    public void msync(long addr, long len, boolean async) {
+        int res = Files.msync(addr, len, async);
+        if (res == 0) {
+            return;
+        }
+        throw CairoException.critical(errno()).put("could not msync");
     }
 
     @Override

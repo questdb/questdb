@@ -118,7 +118,7 @@ public interface FilesFacade {
 
     long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
-    int msync(long addr, long len, boolean async);
+    void msync(long addr, long len, boolean async);
 
     void munmap(long address, long size, int memoryTag);
 

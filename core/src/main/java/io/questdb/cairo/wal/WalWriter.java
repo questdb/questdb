@@ -124,7 +124,7 @@ public class WalWriter implements TableWriterAPI {
         this.rootLen = path.length();
         this.metrics = metrics;
         this.open = true;
-        this.symbolMapMem = Vm.getMARInstance();
+        this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
 
         try {
             lockWal();
@@ -748,7 +748,7 @@ public class WalWriter implements TableWriterAPI {
     private void configureColumn(int index, int columnType) {
         final int baseIndex = getPrimaryColumnIndex(index);
         if (columnType > 0) {
-            final MemoryMA primary = Vm.getMAInstance();
+            final MemoryMA primary = Vm.getMAInstance(configuration.getCommitMode());
             final MemoryMA secondary = createSecondaryMem(columnType);
             columns.extendAndSet(baseIndex, primary);
             columns.extendAndSet(baseIndex + 1, secondary);
@@ -944,7 +944,7 @@ public class WalWriter implements TableWriterAPI {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                return Vm.getMAInstance();
+                return Vm.getMAInstance(configuration.getCommitMode());
             default:
                 return null;
         }

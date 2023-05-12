@@ -276,7 +276,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
             }
-            this.ddlMem = Vm.getMARInstance();
+            this.ddlMem = Vm.getMARInstance(configuration.getCommitMode());
             this.metaMem = Vm.getMRInstance();
             this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen);
 
@@ -2946,14 +2946,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MemoryCARW oooSecondary2;
 
         if (type > 0) {
-            primary = Vm.getMAInstance();
+            primary = Vm.getMAInstance(configuration.getCommitMode());
             oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
 
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
-                    secondary = Vm.getMAInstance();
+                    secondary = Vm.getMAInstance(configuration.getCommitMode());
                     oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                     oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                     break;

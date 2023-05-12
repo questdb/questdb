@@ -3331,10 +3331,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         final FilesFacade ff = new TestFilesFacade() {
             @Override
-            public int msync(long addr, long len, boolean async) {
+            public void msync(long addr, long len, boolean async) {
                 msyncCallCount.incrementAndGet();
                 Assert.assertFalse(async);
-                return Files.msync(addr, len, false);
+                Files.msync(addr, len, false);
             }
 
             @Override

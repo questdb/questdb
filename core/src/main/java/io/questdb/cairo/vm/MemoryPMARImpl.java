@@ -26,6 +26,7 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
@@ -37,6 +38,7 @@ import org.jetbrains.annotations.TestOnly;
 // paged mapped appendable readable 
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
+    private final int commitMode;
     private int fd = -1;
     private FilesFacade ff;
     private int madviseOpts = -1;
@@ -45,10 +47,12 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @TestOnly
     public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
+        this(CommitMode.NOSYNC);
         of(ff, name, pageSize, 0, memoryTag, opts, -1);
     }
 
-    public MemoryPMARImpl() {
+    public MemoryPMARImpl(int commitMode) {
+        this.commitMode = commitMode;
     }
 
     public final void close(boolean truncate, byte truncateMode) {
@@ -124,8 +128,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public void sync(boolean async) {
-        if (fd != -1) {
-            ff.fsync(fd);
+        if (pageAddress != 0 && commitMode != CommitMode.NOSYNC) {
+            ff.msync(pageAddress, getPageSize(), commitMode == CommitMode.ASYNC);
         }
     }
 
@@ -155,6 +159,9 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     protected void release(long address) {
+        if (commitMode != CommitMode.NOSYNC) {
+            ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+        }
         ff.munmap(address, getPageSize(), memoryTag);
     }
 

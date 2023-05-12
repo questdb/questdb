@@ -41,12 +41,13 @@ import io.questdb.std.str.Path;
  */
 public class IndexBuilder extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(IndexBuilder.class);
-    private final MemoryMAR ddlMem = Vm.getMARInstance();
+    private final MemoryMAR ddlMem;
     private final MemoryMR indexMem = Vm.getMRInstance();
     private final SymbolColumnIndexer indexer;
 
     public IndexBuilder(CairoConfiguration configuration) {
         super(configuration);
+        ddlMem = Vm.getMARInstance(configuration.getCommitMode());
         indexer = new SymbolColumnIndexer(configuration);
         unsupportedColumnMessage = "Column is not indexed";
     }
