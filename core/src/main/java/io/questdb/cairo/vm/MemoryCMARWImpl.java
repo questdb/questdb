@@ -210,9 +210,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void sync(boolean async) {
-        if (fd != -1) {
-            ff.fsync(fd);
-        }
+        ff.msync(pageAddress, size, async);
     }
 
     @Override
