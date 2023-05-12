@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -63,6 +64,34 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem = null;
             roMetaMem = Vm.getMRInstance();
         }
+    }
+
+    public static void syncToMetaFile(
+            MemoryMARW metaMem,
+            long structureVersion,
+            int columnCount,
+            int timestampIndex,
+            int tableId,
+            boolean suspended,
+            RecordMetadata metadata
+    ) {
+        metaMem.jumpTo(0);
+        // Size of metadata
+        metaMem.putInt(0);
+        metaMem.putInt(WAL_FORMAT_VERSION);
+        metaMem.putLong(structureVersion);
+        metaMem.putInt(columnCount);
+        metaMem.putInt(timestampIndex);
+        metaMem.putInt(tableId);
+        metaMem.putBool(suspended);
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            metaMem.putInt(columnType);
+            metaMem.putStr(metadata.getColumnName(i));
+        }
+
+        // update metadata size
+        metaMem.putInt(0, (int) metaMem.getAppendOffset());
     }
 
     @Override
@@ -152,7 +181,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        syncToMetaFile();
+        syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, suspended, this);
     }
 
     private void addColumn0(CharSequence columnName, int columnType) {
@@ -190,25 +219,5 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.close(true, truncateMode);
         }
         Misc.free(roMetaMem);
-    }
-
-    void syncToMetaFile() {
-        metaMem.jumpTo(0);
-        // Size of metadata
-        metaMem.putInt(0);
-        metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putLong(structureVersion);
-        metaMem.putInt(columnCount);
-        metaMem.putInt(timestampIndex);
-        metaMem.putInt(tableId);
-        metaMem.putBool(suspended);
-        for (int i = 0; i < columnCount; i++) {
-            final int columnType = getColumnType(i);
-            metaMem.putInt(columnType);
-            metaMem.putStr(getColumnName(i));
-        }
-
-        // update metadata size
-        metaMem.putInt(0, (int) metaMem.getAppendOffset());
     }
 }
