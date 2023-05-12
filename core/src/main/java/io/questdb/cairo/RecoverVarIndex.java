@@ -51,7 +51,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
-           int partitionBy,
+            int partitionBy,
             int indexValueBlockCapacity
     ) {
         long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
