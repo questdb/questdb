@@ -1258,10 +1258,10 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void setColumnNull(int columnType, int columnIndex, long rowCount) {
+    private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         if (ColumnType.isVariableLength(columnType)) {
-            setVarColumnVarFileNull(columnType, columnIndex, rowCount);
-            setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
+            setVarColumnVarFileNull(columnType, columnIndex, rowCount, commitMode);
+            setVarColumnFixedFileNull(columnType, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
         }
@@ -1324,37 +1324,35 @@ public class WalWriter implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, segmentRowCount);
     }
 
-    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount) {
+    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         MemoryMA fixedSizeColumn = getSecondaryColumn(columnIndex);
         long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
         fixedSizeColumn.jumpTo(fixedSizeColSize);
         if (rowCount > 0) {
             long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
-            try {
-                if (columnType == ColumnType.STRING) {
-                    Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
-                } else {
-                    Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
-                }
-            } finally {
-                ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
+            if (columnType == ColumnType.STRING) {
+                Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
+            } else {
+                Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
             }
-            ff.fsync(fixedSizeColumn.getFd());
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(addressFixed, fixedSizeColSize, commitMode == CommitMode.ASYNC);
+            }
+            ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
         }
     }
 
-    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount) {
+    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         MemoryMA varColumn = getPrimaryColumn(columnIndex);
         long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
         varColumn.jumpTo(varColSize);
         if (rowCount > 0) {
             long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
-            try {
-                Vect.memset(address, varColSize, -1);
-            } finally {
-                ff.munmap(address, varColSize, MEM_TAG);
+            Vect.memset(address, varColSize, -1);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(address, varColSize, commitMode == CommitMode.ASYNC);
             }
-            ff.fsync(varColumn.getFd());
+            ff.munmap(address, varColSize, MEM_TAG);
         }
     }
 
@@ -1530,7 +1528,7 @@ public class WalWriter implements TableWriterAPI {
                     // as part of rolling to a new segment
 
                     if (uncommittedRows > 0) {
-                        setColumnNull(columnType, columnIndex, segmentRowCount);
+                        setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {
