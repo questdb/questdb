@@ -259,6 +259,26 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private final String ValidImportResponse2Json = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "\r\n" +
+            "012a\r\n" +
+            "{\"status\":\"OK\"," +
+            "\"location\":\"trips\"," +
+            "\"rowsRejected\":0," +
+            "\"rowsImported\":24," +
+            "\"header\":true," +
+            "\"partitionBy\":\"NONE\"," +
+            "\"columns\":[" +
+            "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
+            "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "]}\r\n" +
+            "00\r\n" +
+            "\r\n";
     private final String WarningValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -599,6 +619,24 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportOverSameConnectionWithDifferentFormats() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
+                    String requestJson = ValidImportRequest1
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json HTTP");
+                    new SendAndReceiveRequestBuilder().execute(requestJson, ValidImportResponse2Json);
+
+                    String requestTabular = ValidImportRequest1
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips HTTP");
+                    new SendAndReceiveRequestBuilder().execute(requestTabular, ValidImportResponse1);
+                }));
+    }
+
+    @Test
     public void testImportSymbolIndexedFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -714,7 +752,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testImportWitNocacheSymbols();
+            testImportWithNoCacheSymbols();
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }
@@ -951,7 +989,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 });
     }
 
-    private void testImportWitNocacheSymbols() throws Exception {
+    private void testImportWithNoCacheSymbols() throws Exception {
         final int parallelCount = 2;
         final int insertCount = 1;
         final int importRowCount = 10;
