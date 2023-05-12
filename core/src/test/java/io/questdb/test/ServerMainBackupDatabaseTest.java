@@ -207,7 +207,10 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 qdb.start();
                 long totalRows = 0L;
                 for (int i = 0, n = tableTokens.get().size(); i < n; i++) {
-                    totalRows += assertTableExists(tableTokens.get().get(i), partitionBy, isWal, defaultCompiler, defaultContext);
+                    TableToken tableToken = tableTokens.get().get(i);
+                    totalRows += assertTableExists(tableToken, partitionBy, isWal, defaultCompiler, defaultContext);
+                    executeInsertGeneratorStmt(tableToken, 10, defaultCompiler, defaultContext);
+                    drainWalQueue(qdb.getEngine());
                 }
                 Assert.assertTrue(totalRows > (expectedTotalRows.get() * 0.5));
             } finally {

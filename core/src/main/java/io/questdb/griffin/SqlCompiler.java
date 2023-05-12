@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.*;
@@ -59,6 +60,7 @@ import java.util.ServiceLoader;
 
 import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompiler implements Closeable {
@@ -2995,9 +2997,35 @@ public class SqlCompiler implements Closeable {
                             if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
                                 throw CairoException.critical(ff.errno()).put("Cannot create [path=").put(auxPath).put(']');
                             }
+                            int len = auxPath.length();
                             // _wal_index.d
                             mem.smallFile(ff, auxPath.concat(WalUtils.WAL_INDEX_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                             mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putInt(WAL_FORMAT_VERSION);
+                            mem.putLong(0L);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog.meta.i
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME_META_INX).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog.meta.d
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME_META_VAR).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _meta
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            WalWriterMetadata.syncToMetaFile(
+                                    mem,
+                                    metadata.getStructureVersion(),
+                                    metadata.getColumnCount(),
+                                    metadata.getTimestampIndex(),
+                                    metadata.getTableId(),
+                                    false,
+                                    metadata
+                            );
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
                         }
                     } finally {

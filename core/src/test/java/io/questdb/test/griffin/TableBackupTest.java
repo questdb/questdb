@@ -354,6 +354,10 @@ public class TableBackupTest {
             setFinalBackupPath();
             assertTables(token1);
             assertTables(token2);
+            if (partitionBy != PartitionBy.NONE) {
+                executeBackupSqlStmt("INSERT INTO '" + token1.getTableName() + "'(timestamp2) VALUES('2023')");
+                executeBackupSqlStmt("INSERT INTO '" + token2.getTableName() + "'(timestamp2) VALUES('2023')");
+            }
         });
     }
 
@@ -526,8 +530,32 @@ public class TableBackupTest {
         }
     }
 
+    private void executeBackupSqlStmt(String sql) throws SqlException {
+        CairoEngine engine = mainEngine;
+        SqlCompiler compiler = mainCompiler;
+        SqlExecutionContext context = mainSqlExecutionContext;
+        try {
+            engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
+            context = TestUtils.createSqlExecutionCtx(engine);
+            compiler = new SqlCompiler(engine);
+            compiler.compile(sql, context).execute(null).await();
+        } finally {
+            Misc.free(engine);
+            Misc.free(compiler);
+            Misc.free(context);
+        }
+        drainWalQueue();
+    }
+
     private TableToken executeCreateTableStmt(String tableName) throws SqlException {
-        TableToken tableToken = executeCreateTableStmt(testTableName(tableName, "すばらしい"), partitionBy, isWal, 10000, mainCompiler, mainSqlExecutionContext);
+        TableToken tableToken = executeCreateTableStmt(
+                testTableName(tableName, "すばらしい"),
+                partitionBy,
+                isWal,
+                10000,
+                mainCompiler,
+                mainSqlExecutionContext
+        );
         drainWalQueue();
         return tableToken;
     }
