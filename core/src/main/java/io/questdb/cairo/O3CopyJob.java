@@ -497,10 +497,18 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
 
             final int commitMode = tableWriter.getConfiguration().getCommitMode();
-            O3Utils.fsync(ff, srcDataFixFd, commitMode);
-            O3Utils.fsync(ff, srcDataVarFd, commitMode);
-            O3Utils.fsync(ff, dstFixFd, commitMode);
-            O3Utils.fsync(ff, dstVarFd, commitMode);
+            if (commitMode != CommitMode.NOSYNC) {
+                boolean async = commitMode == CommitMode.ASYNC;
+                ff.msync(dstFixAddr, Math.abs(dstFixSize), async);
+                // sync FD in case we wrote data not via mmap
+                ff.fsync(Math.abs(dstFixFd));
+                if (dstVarAddr != 0) {
+                    ff.msync(dstVarAddr, Math.abs(dstVarSize), async);
+                    if (dstVarFd != -1) {
+                        ff.fsync(Math.abs(dstVarFd));
+                    }
+                }
+            }
 
             // unmap memory
             O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);

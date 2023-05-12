@@ -102,12 +102,6 @@ public class O3Utils {
         return result;
     }
 
-    static void fsync(FilesFacade ff, int fd, int commitMode) {
-        if (fd != 0 && fd != -1 && commitMode != CommitMode.NOSYNC) {
-            ff.fsync(Math.abs(fd));
-        }
-    }
-
     static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
         return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
     }

@@ -1436,7 +1436,6 @@ public final class TableUtils {
 
             mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
-            mem.sync(false);
         } finally {
             if (dirFd > 0) {
                 ff.fsyncAndClose(dirFd);
@@ -1447,6 +1446,7 @@ public final class TableUtils {
     private static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
+        mem.sync(false);
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
