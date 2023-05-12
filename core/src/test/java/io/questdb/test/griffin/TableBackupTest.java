@@ -354,10 +354,6 @@ public class TableBackupTest {
             setFinalBackupPath();
             assertTables(token1);
             assertTables(token2);
-            if (partitionBy != PartitionBy.NONE) {
-                executeBackupSqlStmt("INSERT INTO '" + token1.getTableName() + "'(timestamp2) VALUES('2023')");
-                executeBackupSqlStmt("INSERT INTO '" + token2.getTableName() + "'(timestamp2) VALUES('2023')");
-            }
         });
     }
 
@@ -510,6 +506,14 @@ public class TableBackupTest {
         selectAll(tableToken, false, sink1);
         selectAll(tableToken, true, sink2);
         TestUtils.assertEquals(sink1, sink2);
+
+        String sql1 = "INSERT INTO '" + tableToken.getTableName() + "'(timestamp2) VALUES('2123')";
+        executeBackupSqlStmt(sql1);
+        executeSqlStmt(sql1);
+
+        selectAll(tableToken, false, sink1);
+        selectAll(tableToken, true, sink2);
+        TestUtils.assertEquals(sink1, sink2);
     }
 
     private void backupDatabase() throws SqlException {
@@ -521,30 +525,28 @@ public class TableBackupTest {
     }
 
     private void drainWalQueue() {
+        drainWalQueue(mainEngine);
+    }
+
+    private void drainWalQueue(CairoEngine engine) {
         if (isWal) {
-            try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(mainEngine, 1, 1, null)) {
+            try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
                 walApplyJob.drain(0);
-                new CheckWalTransactionsJob(mainEngine).run(0);
+                new CheckWalTransactionsJob(engine).run(0);
                 walApplyJob.drain(0);
             }
         }
     }
 
     private void executeBackupSqlStmt(String sql) throws SqlException {
-        CairoEngine engine = mainEngine;
-        SqlCompiler compiler = mainCompiler;
-        SqlExecutionContext context = mainSqlExecutionContext;
-        try {
-            engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
-            context = TestUtils.createSqlExecutionCtx(engine);
-            compiler = new SqlCompiler(engine);
+        try (
+                CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
+                SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
+                SqlCompiler compiler = new SqlCompiler(engine)
+        ) {
             compiler.compile(sql, context).execute(null).await();
-        } finally {
-            Misc.free(engine);
-            Misc.free(compiler);
-            Misc.free(context);
+            drainWalQueue(engine);
         }
-        drainWalQueue();
     }
 
     private TableToken executeCreateTableStmt(String tableName) throws SqlException {
