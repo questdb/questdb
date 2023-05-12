@@ -289,7 +289,7 @@ public class WalWriter implements TableWriterAPI {
             Misc.free(symbolMapMem);
             freeColumns(truncate);
 
-            releaseSegmentLock();
+            releaseSegmentLock(segmentId, segmentLockFd);
 
             try {
                 releaseWalLock();
@@ -432,26 +432,28 @@ public class WalWriter implements TableWriterAPI {
 
     public void rollUncommittedToNewSegment() {
         final long uncommittedRows = getUncommittedRowCount();
-        final int newSegmentId = segmentId + 1;
-
-        path.trimTo(rootLen);
 
         if (uncommittedRows > 0) {
-            createSegmentDir(newSegmentId);
-            path.trimTo(rootLen);
-            final LongList newColumnFiles = new LongList();
-            newColumnFiles.setPos(columnCount * NEW_COL_RECORD_SIZE);
-            newColumnFiles.fill(0, columnCount * NEW_COL_RECORD_SIZE, -1);
-            rowValueIsNotNull.fill(0, columnCount, -1);
-
+            final int oldSegmentId = segmentId;
+            final int newSegmentId = segmentId + 1;
+            final int oldSegmentLockFd = segmentLockFd;
+            segmentLockFd = -1;
             try {
-                final int timestampIndex = metadata.getTimestampIndex();
-                LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                        .$(path).$(Files.SEPARATOR).$(segmentId)
-                        .$(", newSegment=").$(newSegmentId)
-                        .$(", rowCount=").$(uncommittedRows).I$();
+                createSegmentDir(newSegmentId);
+                path.trimTo(rootLen);
+                final LongList newColumnFiles = new LongList();
+                newColumnFiles.setPos(columnCount * NEW_COL_RECORD_SIZE);
+                newColumnFiles.fill(0, columnCount * NEW_COL_RECORD_SIZE, -1);
+                rowValueIsNotNull.fill(0, columnCount, -1);
 
-                final int commitMode = configuration.getCommitMode();
+                try {
+                    final int timestampIndex = metadata.getTimestampIndex();
+                    LOG.info().$("rolling uncommitted rows to new segment [wal=")
+                            .$(path).$(Files.SEPARATOR).$(segmentId)
+                            .$(", newSegment=").$(newSegmentId)
+                            .$(", rowCount=").$(uncommittedRows).I$();
+
+                    final int commitMode = configuration.getCommitMode();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
                     if (columnType > 0) {
@@ -459,34 +461,37 @@ public class WalWriter implements TableWriterAPI {
                         final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
                         final String columnName = metadata.getColumnName(columnIndex);
 
-                        CopyWalSegmentUtils.rollColumnToSegment(
+                            CopyWalSegmentUtils.rollColumnToSegment(
                                 ff,
-                                configuration.getWriterFileOpenOpts(),
-                                primaryColumn,
-                                secondaryColumn,
-                                path,
-                                newSegmentId,
-                                columnName,
-                                columnIndex == timestampIndex ? -columnType : columnType,
-                                currentTxnStartRowNum,
-                                uncommittedRows,
-                                newColumnFiles,
-                                columnIndex,
+                                    configuration.getWriterFileOpenOpts(),
+                                    primaryColumn,
+                                    secondaryColumn,
+                                    path,
+                                    newSegmentId,
+                                    columnName,
+                                    columnIndex == timestampIndex ? -columnType : columnType,
+                                    currentTxnStartRowNum,
+                                    uncommittedRows,
+                                    newColumnFiles,
+                                    columnIndex,
                                 commitMode
-                        );
-                    } else {
-                        rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
+                            );
+                        } else {
+                            rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
+                        }
                     }
+                } catch (Throwable e) {
+                    closeSegmentSwitchFiles(newColumnFiles);
+                    throw e;
                 }
-            } catch (Throwable e) {
-                closeSegmentSwitchFiles(newColumnFiles);
-                throw e;
+                switchColumnsToNewSegment(newColumnFiles);
+                rollLastWalEventRecord(newSegmentId, uncommittedRows);
+                segmentId = newSegmentId;
+                segmentRowCount = uncommittedRows;
+                currentTxnStartRowNum = 0;
+            } finally {
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
             }
-            switchColumnsToNewSegment(newColumnFiles);
-            rollLastWalEventRecord(newSegmentId, uncommittedRows);
-            segmentId = newSegmentId;
-            segmentRowCount = uncommittedRows;
-            currentTxnStartRowNum = 0;
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;
         }
@@ -612,6 +617,21 @@ public class WalWriter implements TableWriterAPI {
 
     private static int getSecondaryColumnIndex(int index) {
         return getPrimaryColumnIndex(index) + 1;
+    }
+
+    private int acquireSegmentLock() {
+        final int segmentPathLen = path.length();
+        try {
+            lockName(path);
+            final int segmentLockFd = TableUtils.lock(ff, path);
+            if (segmentLockFd == -1) {
+                path.trimTo(segmentPathLen);
+                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
+            }
+            return segmentLockFd;
+        } finally {
+            path.trimTo(segmentPathLen);
+        }
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {
@@ -954,7 +974,7 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(rootLen);
         path.slash().put(segmentId);
         final int segmentPathLen = path.length();
-        rolloverSegmentLock();
+        segmentLockFd = acquireSegmentLock();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
@@ -1085,11 +1105,15 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void openNewSegment() {
+        final int oldSegmentId = segmentId;
+        final int newSegmentId = segmentId + 1;
+        final int oldSegmentLockFd = segmentLockFd;
+        segmentLockFd = -1;
         try {
-            segmentId++;
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
-            final int segmentPathLen = createSegmentDir(segmentId);
+            final int segmentPathLen = createSegmentDir(newSegmentId);
+            segmentId = newSegmentId;
             final int dirFd;
             final int commitMode = configuration.getCommitMode();
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
@@ -1130,13 +1154,18 @@ public class WalWriter implements TableWriterAPI {
             lastSegmentTxn = 0;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
+            releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
             path.trimTo(rootLen);
         }
     }
 
-    private void releaseSegmentLock() {
-        if (ff.close(segmentLockFd)) {
-            segmentLockFd = -1;
+    private void releaseSegmentLock(int segmentId, int segmentLockFd) {
+        if (!ff.close(segmentLockFd)) {
+            LOG.error()
+                    .$("cannot close segment lock fd [walId=").$(walId)
+                    .$(", segmentId=").$(segmentId)
+                    .$(", fd=").$(segmentLockFd)
+                    .$(", errno=").$(ff.errno()).I$();
         }
     }
 
@@ -1214,21 +1243,6 @@ public class WalWriter implements TableWriterAPI {
         events.openEventFile(path, path.length());
         lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
         events.sync();
-    }
-
-    private void rolloverSegmentLock() {
-        releaseSegmentLock();
-        final int segmentPathLen = path.length();
-        try {
-            lockName(path);
-            segmentLockFd = TableUtils.lock(ff, path);
-            if (segmentLockFd == -1) {
-                path.trimTo(segmentPathLen);
-                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
-            }
-        } finally {
-            path.trimTo(segmentPathLen);
-        }
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
