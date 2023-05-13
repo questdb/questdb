@@ -252,6 +252,8 @@ public class SqlCompiler implements Closeable {
                 return;
             }
 
+            engine.getMetrics().pgWire().incQueryStartedCounter();
+
             boolean recompileStale = true;
             for (int retries = 0; recompileStale; retries++) {
                 try {
@@ -272,6 +274,7 @@ public class SqlCompiler implements Closeable {
                     lexer.restart();
                 }
             }
+            engine.getMetrics().pgWire().incQueryCompletedCounter();
         }
     }
 

@@ -26,15 +26,20 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.metrics.Counter;
 
 public class PGWireMetrics {
 
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
+    private final Counter completedQueriesCounter;
+    private final Counter startedQueriesCounter;
 
     public PGWireMetrics(MetricsRegistry metricsRegistry) {
         this.cachedSelectsGauge = metricsRegistry.newLongGauge("pg_wire_select_queries_cached");
         this.cachedUpdatesGauge = metricsRegistry.newLongGauge("pg_wire_update_queries_cached");
+        this.startedQueriesCounter = metricsRegistry.newCounter("pg_wire_started_queries");
+        this.completedQueriesCounter = metricsRegistry.newCounter("pg_wire_completed_queries");
     }
 
     public LongGauge cachedSelectsGauge() {
@@ -44,4 +49,21 @@ public class PGWireMetrics {
     public LongGauge cachedUpdatesGauge() {
         return cachedUpdatesGauge;
     }
+
+    public Counter completedQueriesCounter() {
+        return completedQueriesCounter;
+    }
+
+    public void incQueryCompletedCounter() {
+        completedQueriesCounter.inc();
+    }
+
+    public void incQueryStartedCounter() {
+        startedQueriesCounter.inc();
+    }
+
+    public Counter startedQueriesCounter() {
+        return startedQueriesCounter;
+    }
+
 }
