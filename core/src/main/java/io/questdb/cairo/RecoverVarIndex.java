@@ -31,16 +31,23 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 
 public class RecoverVarIndex extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(RecoverVarIndex.class);
 
+    public RecoverVarIndex(CairoConfiguration configuration) {
+        super(configuration);
+    }
+
     @Override
     protected void doReindex(
+            FilesFacade ff,
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,
             CharSequence columnName,
+
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,

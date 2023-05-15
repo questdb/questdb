@@ -218,7 +218,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TableToken token = engine.verifyTableName("abc");
 
         CairoConfiguration config = engine.getConfiguration();
-        try (TxWriter txWriter = new TxWriter(config.getFilesFacade())) {
+        try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
             Path p = Path.getThreadLocal(config.getRoot());
             txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
 
@@ -227,7 +227,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
             txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
 
-            txWriter.commit(CommitMode.SYNC, new ObjList<>());
+            txWriter.commit(new ObjList<>());
         }
 
         // Run migration

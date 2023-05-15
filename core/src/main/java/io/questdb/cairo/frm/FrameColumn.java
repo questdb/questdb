@@ -28,11 +28,10 @@ import java.io.Closeable;
 
 public interface FrameColumn extends Closeable {
     int COLUMN_CONTIGUOUS_FILE = 0;
-    int COLUMN_CONTIGUOUS_MEM = 1;
 
     void addTop(long value);
 
-    void appendNulls(long offset, long count);
+    void appendNulls(long offset, long count, int commitMode);
 
     void close();
 
@@ -48,5 +47,5 @@ public interface FrameColumn extends Closeable {
 
     int getStorageType();
 
-    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi);
+    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 }

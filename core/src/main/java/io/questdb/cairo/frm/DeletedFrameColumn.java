@@ -33,12 +33,12 @@ public class DeletedFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void appendNulls(long offset, long count) {
+    public void appendNulls(long offset, long count, int commitMode) {
         throw new UnsupportedOperationException();
     }
 

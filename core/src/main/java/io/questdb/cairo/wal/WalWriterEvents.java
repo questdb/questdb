@@ -266,6 +266,11 @@ class WalWriterEvents implements Closeable {
         // Not truncating the files saves from reading complexity.
     }
 
+    void sync() {
+        eventMem.sync(false);
+        ff.fsync(indexFd);
+    }
+
     int truncate() {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
