@@ -55,6 +55,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final LongList onDiskWalIDSegmentIDPairs = new LongList();
     private final IntHashSet onDiskWalIDSet = new IntHashSet();
     private final Path path = new Path();
+    private final IntHashSet pendingWalIDSet = new IntHashSet();
     private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final LongList sequencerWalIDSegmentIDPairs = new LongList();
     private final long spinLockTimeout;
@@ -149,15 +150,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             int segmentId = Numbers.decodeLowInt(walSegment);
             int walId = Numbers.decodeHighInt(walSegment);
             if (segmentId < Integer.MAX_VALUE) {
-                debugBuffer.put('(').put(walId).put(',').put(segmentId >> 1);
+                debugBuffer.put('(').put(walId).put(',').put(segmentId >> 2);
                 if ((segmentId & 1) == 1) {
                     debugBuffer.put(":locked");
+                }
+                if ((segmentId & 2) == 2) {
+                    debugBuffer.put(":tasks");
                 }
                 debugBuffer.put(')');
             } else {
                 debugBuffer.put("(wal").put(walId);
                 if (lockedWalIDSet.contains(walId)) {
                     debugBuffer.put(":locked");
+                }
+                if (pendingWalIDSet.contains(walId)) {
+                    debugBuffer.put(":tasks");
                 }
                 debugBuffer.put(')');
             }
@@ -195,6 +202,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             onDiskWalIDSegmentIDPairs.clear();
             lockedWalIDSet.clear();
             onDiskWalIDSet.clear();
+            pendingWalIDSet.clear();
             sequencerWalIDSegmentIDPairs.clear();
 
             boolean tableDropped = false;
@@ -213,8 +221,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
-
-                if (
+                if (pendingWalIDSet.size() > 0) {
+                    LOG.info().$("table is dropped, but has WALs containing segments with pending tasks ")
+                            .$("[tableDir=").$(tableToken.getDirName()).I$();
+                } else if (
                         TableUtils.exists(
                                 ff,
                                 Path.getThreadLocal(""),
@@ -278,10 +288,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             long diskPair = onDiskWalIDSegmentIDPairs.get(i);
             int walId = Numbers.decodeHighInt(diskPair);
             int segmentKey = Numbers.decodeLowInt(diskPair);
-            int segmentId = segmentKey >> 1;
+            int segmentId = segmentKey >> 2;
             boolean segmentLocked = segmentKey != Integer.MAX_VALUE && (segmentKey & 1) == 1;
+            boolean hasPendingTasks = segmentKey != Integer.MAX_VALUE && (segmentKey & 2) == 2;
 
-            if (segmentHasPendingTasks(walId, segmentId)) {
+            if (hasPendingTasks) {
                 continue;
             }
 
@@ -300,13 +311,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     deleteSegmentDirectory(tableToken, walId, segmentId);
                 }
             } else if (!segmentLocked) {
-                // Nothing in Sequencer for this WAL and no locked segment means WAL can be deleted if it was not locked.
-                if (!lockedWalIDSet.contains(walId)) {
+                // If the sequencer doesn't track any unapplied changes for this walId and the walId is unlocked,
+                // then we can delete the whole segment, unless any of the segments track pending tasks.
+                if (!lockedWalIDSet.contains(walId) && !pendingWalIDSet.contains(walId)) {
                     deleteWalDirectory(walId);
                 } else {
                     // WAL is locked but the segment in it is not in outstanding commits, delete it.
                     // Segment with ID of Integer.MAX_VALUE is the WAL directory itself, only delete it if it's unlocked.
-                    if (segmentId != (Integer.MAX_VALUE >> 1)) {
+                    if (segmentId != (Integer.MAX_VALUE >> 2)) {
                         deleteSegmentDirectory(tableToken, walId, segmentId);
                     }
                 }
@@ -367,10 +379,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                     if (type == Files.DT_DIR && matchesSegmentName(walName.of(pUtf8NameZ))) {
                                         try {
                                             int segmentId = Numbers.parseInt(walName);
+                                            if ((segmentId < WalUtils.SEG_MIN_ID) || (segmentId > WalUtils.SEG_MAX_ID)) {
+                                                throw NumericException.INSTANCE;
+                                            }
                                             Path segmentPath = path.trimTo(walPathLen).slash().put(segmentId);
                                             TableUtils.lockName(segmentPath);
                                             boolean unlocked = unlocked(segmentPath.$());
-                                            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts((segmentId << 1) + (unlocked ? 0 : 1), walId));
+                                            boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
+                                            if (pendingTasks) {
+                                                pendingWalIDSet.add(walId);
+                                            }
+                                            int segmentKey = (segmentId << 2) + (pendingTasks ? 2 : 0) + (unlocked ? 0 : 1);
+                                            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(segmentKey, walId));
                                         } catch (NumericException ne) {
                                             // Non-Segment directory, ignore.
                                         }
@@ -445,7 +465,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * Check if the segment directory has any outstanding ".pending" marker files in a ".pending" directory.
      */
     private boolean segmentHasPendingTasks(int walId, int segmentId) {
-        final Path pendingPath = segSegmentPendingPath(tableToken, walId, segmentId);
+        final Path pendingPath = setSegmentPendingPath(tableToken, walId, segmentId);
         final long p = ff.findFirst(pendingPath);
         if (p > 0) {
             try {
@@ -476,9 +496,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).$();
     }
 
-    private Path segSegmentPendingPath(TableToken tableName, int walId, int segmentId) {
+    private Path setSegmentPendingPath(TableToken tableName, int walId, int segmentId) {
         return path.of(configuration.getRoot())
-                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).put(".pending").$();
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).concat(".pending").slash$();
     }
 
     private Path setTablePath(TableToken tableName) {

@@ -430,6 +430,13 @@ public class WalWriter implements TableWriterAPI {
         if (uncommittedRows > 0) {
             final int oldSegmentId = segmentId;
             final int newSegmentId = segmentId + 1;
+            if (newSegmentId > WalUtils.SEG_MAX_ID) {
+                throw CairoException.critical(0)
+                        .put("cannot roll over to new segment due to SEG_MAX_ID overflow ")
+                        .put("[table=").put(tableToken.getTableName())
+                        .put(", walId=").put(walId)
+                        .put(", segmentId=").put(newSegmentId).put(']');
+            }
             final int oldSegmentLockFd = segmentLockFd;
             segmentLockFd = -1;
             try {
