@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
@@ -56,7 +56,6 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cutlass.NetUtils;
@@ -90,7 +89,6 @@ public class IODispatcherTest extends AbstractTest {
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
     private static final Metrics metrics = Metrics.enabled();
-    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -4554,15 +4552,10 @@ public class IODispatcherTest extends AbstractTest {
                 true
         );
 
-        final String expectedEvent = "100\n" +
-                "1\n" +
-                "101\n";
-        assertColumn(expectedEvent, 1);
-
-        final String expectedOrigin = "1\n" +
-                "2\n" +
-                "1\n";
-        assertColumn(expectedOrigin, 2);
+        final String expectedEvent = "100\t1\n" +
+                "1\t2\n" +
+                "101\t1\n";
+        assertTelemetryEventAndOrigin(expectedEvent);
     }
 
     @Test
@@ -4594,17 +4587,11 @@ public class IODispatcherTest extends AbstractTest {
                 true
         );
 
-        final String expected = "100\n" +
-                "1\n" +
-                "1\n" +
-                "101\n";
-        assertColumn(expected, 1);
-
-        final String expectedOrigin = "1\n" +
-                "2\n" +
-                "2\n" +
-                "1\n";
-        assertColumn(expectedOrigin, 2);
+        final String expected = "100\t1\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "101\t1\n";
+        assertTelemetryEventAndOrigin(expected);
     }
 
     @Test
@@ -7949,24 +7936,6 @@ public class IODispatcherTest extends AbstractTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
-    private void assertColumn(CharSequence expected, int index) {
-        final String baseDir = root;
-        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
-
-        String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false);
-        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
-            final StringSink sink = new StringSink();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-        }
-    }
-
     private void assertMetadataAndData(
             String tableName,
             long expectedO3MaxLag,
@@ -7987,6 +7956,24 @@ public class IODispatcherTest extends AbstractTest {
             Assert.assertEquals(0, expectedImportedRows - reader.size());
             StringSink sink = new StringSink();
             TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+        }
+    }
+
+    private void assertTelemetryEventAndOrigin(CharSequence expected) {
+        final String baseDir = root;
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
+
+        String telemetry = TelemetryTask.TABLE_NAME;
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false);
+        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
+            final StringSink sink = new StringSink();
+            sink.clear();
+            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            TestUtils.assertEquals(expected, sink);
         }
     }
 
@@ -8229,6 +8216,20 @@ public class IODispatcherTest extends AbstractTest {
                 expectedImportedRows,
                 expectedData,
                 false);
+    }
+
+    private void printTelemetryEventAndOrigin(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            final short event = record.getShort(1);
+            if (event < 0) {
+                continue; // skip non-event entries
+            }
+            TestUtils.printColumn(record, metadata, 1, sink, false);
+            sink.put('\t');
+            TestUtils.printColumn(record, metadata, 2, sink, false);
+            sink.put('\n');
+        }
     }
 
     private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
