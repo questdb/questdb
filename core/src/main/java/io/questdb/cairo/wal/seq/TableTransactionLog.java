@@ -93,7 +93,7 @@ public class TableTransactionLog implements Closeable {
         }
     }
 
-    private void syncDiskWrites() {
+    public void sync() {
         txnMetaMemIndex.sync(false);
         txnMetaMem.sync(false);
         txnMem.sync(false);
@@ -118,6 +118,7 @@ public class TableTransactionLog implements Closeable {
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET, maxTxn);
+        txnMem.sync(false);
         // Transactions are 1 based here
         return maxTxn;
     }
@@ -140,7 +141,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     long endMetadataChangeEntry() {
-        syncDiskWrites();
+        sync();
 
         Unsafe.getUnsafe().storeFence();
 

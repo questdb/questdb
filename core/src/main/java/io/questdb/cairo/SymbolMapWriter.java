@@ -50,10 +50,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private final MemoryMARW charMem;
     private final BitmapIndexWriter indexWriter;
     private final int maxHash;
-    private final MemoryMARW offsetMem;
     private final int symbolCapacity;
     private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
+    private MemoryMARW offsetMem;
     private int symbolIndexInTxWriter;
 
     public SymbolMapWriter(
@@ -102,14 +102,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             // index writer is used to identify attempts to store duplicate symbol value
             // symbol table index stores int keys and long values, e.g. value = key * 2 storage size
-            this.indexWriter = new BitmapIndexWriter(
-                    configuration,
-                    path.trimTo(plen),
-                    name,
-                    columnNameTxn,
-                    configuration.getDataIndexKeyAppendPageSize(),
-                    configuration.getDataIndexKeyAppendPageSize() * 2
-            );
+            this.indexWriter = new BitmapIndexWriter(configuration);
+            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
 
             // this is the place where symbol values are stored
             this.charMem = Vm.getWholeMARWInstance(
@@ -175,7 +169,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         Misc.free(charMem);
         if (offsetMem != null) {
             int fd = offsetMem.getFd();
-            Misc.free(offsetMem);
+            offsetMem = Misc.free(offsetMem);
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
@@ -239,6 +233,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
         this.symbolIndexInTxWriter = symbolIndexInTxWriter;
+    }
+
+    @Override
+    public void sync(boolean async) {
+        charMem.sync(async);
+        offsetMem.sync(async);
+        indexWriter.sync(async);
     }
 
     @Override

@@ -24,9 +24,7 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -40,18 +38,18 @@ import static io.questdb.cairo.TableUtils.dFile;
 public class ContiguousFileFixFrameColumn implements FrameColumn {
     public static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WRITER;
     private static final Log LOG = LogFactory.getLog(ContiguousFileFixFrameColumn.class);
-    private final FilesFacade ff;
+    protected final FilesFacade ff;
     private final long fileOpts;
     private int columnIndex;
     private long columnTop;
     private int columnType;
     private int fd = -1;
-    private Pool<ContiguousFileFixFrameColumn> pool;
+    private RecycleBin<ContiguousFileFixFrameColumn> recycleBin;
     private int shl;
 
-    public ContiguousFileFixFrameColumn(FilesFacade ff, long fileOpts) {
-        this.ff = ff;
-        this.fileOpts = fileOpts;
+    public ContiguousFileFixFrameColumn(CairoConfiguration configuration) {
+        this.ff = configuration.getFilesFacade();
+        this.fileOpts = configuration.getWriterFileOpenOpts();
     }
 
     @Override
@@ -61,7 +59,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         if (sourceColumn.getStorageType() == COLUMN_CONTIGUOUS_FILE) {
             sourceLo -= sourceColumn.getColumnTop();
             sourceHi -= sourceColumn.getColumnTop();
@@ -86,6 +84,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                             .put(", srcFileSize=").put(ff.length(sourceFd))
                             .put(']');
                 }
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.fsync(fd);
+                }
             }
         } else {
             throw new UnsupportedOperationException();
@@ -93,7 +94,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void appendNulls(long offset, long count) {
+    public void appendNulls(long offset, long count, int commitMode) {
         offset -= columnTop;
         assert offset >= 0;
         assert count >= 0;
@@ -106,6 +107,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset << shl, count << shl, MEMORY_TAG);
             }
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(fd);
+            }
         }
     }
 
@@ -115,8 +119,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             ff.close(fd);
             fd = -1;
         }
-        if (!pool.isClosed()) {
-            pool.put(this);
+        if (!recycleBin.isClosed()) {
+            recycleBin.put(this);
         }
     }
 
@@ -184,9 +188,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         }
     }
 
-    public void setPool(Pool<ContiguousFileFixFrameColumn> pool) {
-        assert this.pool == null;
-        this.pool = pool;
+    public void setPool(RecycleBin<ContiguousFileFixFrameColumn> recycleBin) {
+        assert this.recycleBin == null;
+        this.recycleBin = recycleBin;
     }
 
     private void of(int columnType, long columnTop, int columnIndex) {

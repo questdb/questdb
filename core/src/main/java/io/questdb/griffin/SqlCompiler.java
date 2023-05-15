@@ -101,7 +101,7 @@ public class SqlCompiler implements Closeable {
     private final QueryBuilder queryBuilder = new QueryBuilder();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final IndexBuilder rebuildIndex = new IndexBuilder();
+    private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path();
     private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -128,6 +128,7 @@ public class SqlCompiler implements Closeable {
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.messageBus = engine.getMessageBus();
+        this.rebuildIndex = new IndexBuilder(configuration);
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
@@ -2263,7 +2264,7 @@ public class SqlCompiler implements Closeable {
             tok = GenericLexer.unquote(tok);
         }
         TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()), configuration);
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
 
         tok = SqlUtil.fetchNext(lexer);
         CharSequence columnName = null;
@@ -2329,10 +2330,13 @@ public class SqlCompiler implements Closeable {
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
 
-        textLoader.configureDestination(model.getTarget().token, false, false,
+        textLoader.configureDestination(
+                model.getTarget().token,
+                false,
                 model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
                 model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
-                model.getTimestampColumnName(), model.getTimestampFormat());
+                model.getTimestampColumnName(), model.getTimestampFormat()
+        );
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
