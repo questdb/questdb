@@ -2436,6 +2436,18 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinInnerFunctionInJoinExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);", sqlExecutionContext);
+            executeInsert("INSERT INTO x VALUES (now(), 42)");
+
+            final String expected = "count\n" +
+                    "1\n";
+            assertQuery(expected, "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()", null, false, true);
+        });
+    }
+
+    @Test
     public void testJoinInnerInnerFilter() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "c\ta\tb\td\tcolumn\n" +
