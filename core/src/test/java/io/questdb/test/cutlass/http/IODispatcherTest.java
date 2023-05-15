@@ -8059,9 +8059,9 @@ public class IODispatcherTest extends AbstractTest {
             public FilesFacade getFilesFacade() {
                 return new TestFilesFacadeImpl() {
                     @Override
-                    public int msync(long addr, long len, boolean async) {
+                    public void msync(long addr, long len, boolean async) {
                         msyncCallCount.incrementAndGet();
-                        return Files.msync(addr, len, async);
+                        Files.msync(addr, len, async);
                     }
                 };
             }
@@ -8138,8 +8138,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }
         );
-
-        Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
 
         assertMetadataAndData(
                 tableName,

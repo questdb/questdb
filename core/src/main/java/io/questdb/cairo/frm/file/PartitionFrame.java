@@ -36,7 +36,7 @@ public class PartitionFrame implements Frame {
     private final FrameColumnPool columnPool;
     private boolean canWrite = false;
     private ColumnVersionReader crv;
-    private Pool<PartitionFrame> framePool;
+    private RecycleBin<PartitionFrame> frameRecycleBin;
     private RecordMetadata metadata;
     private long offset = 0;
     private Path partitionPath = new Path();
@@ -49,8 +49,8 @@ public class PartitionFrame implements Frame {
 
     @Override
     public void close() {
-        if (framePool != null && !framePool.isClosed()) {
-            framePool.put(this);
+        if (frameRecycleBin != null && !frameRecycleBin.isClosed()) {
+            frameRecycleBin.put(this);
         } else {
             free();
         }
@@ -137,7 +137,7 @@ public class PartitionFrame implements Frame {
         partitionPath = Misc.free(partitionPath);
     }
 
-    void setPool(Pool<PartitionFrame> framePool) {
-        this.framePool = framePool;
+    void setRecycleBin(RecycleBin<PartitionFrame> frameRecycleBin) {
+        this.frameRecycleBin = frameRecycleBin;
     }
 }

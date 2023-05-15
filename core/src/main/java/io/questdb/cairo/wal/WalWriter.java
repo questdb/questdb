@@ -80,7 +80,7 @@ public class WalWriter implements TableWriterAPI {
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableSequencerAPI sequencer;
-    private final MemoryMAR symbolMapMem = Vm.getMARInstance();
+    private final MemoryMAR symbolMapMem;
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
@@ -124,6 +124,7 @@ public class WalWriter implements TableWriterAPI {
         this.rootLen = path.length();
         this.metrics = metrics;
         this.open = true;
+        this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
 
         try {
             lockWal();
@@ -250,6 +251,11 @@ public class WalWriter implements TableWriterAPI {
             if (inTransaction()) {
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                // flush disk before getting next txn
+                final int commitMode = configuration.getCommitMode();
+                if (commitMode != CommitMode.NOSYNC) {
+                    sync(commitMode);
+                }
                 final long seqTxn = getSequencerTxn();
                 LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
@@ -275,7 +281,9 @@ public class WalWriter implements TableWriterAPI {
     public void doClose(boolean truncate) {
         if (open) {
             open = false;
-            metadata.close(Vm.TRUNCATE_TO_POINTER);
+            if (metadata != null) {
+                metadata.close(Vm.TRUNCATE_TO_POINTER);
+            }
             Misc.free(events);
             freeSymbolMapReaders();
             Misc.free(symbolMapMem);
@@ -445,14 +453,16 @@ public class WalWriter implements TableWriterAPI {
                             .$(", newSegment=").$(newSegmentId)
                             .$(", rowCount=").$(uncommittedRows).I$();
 
-                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                        final int columnType = metadata.getColumnType(columnIndex);
-                        if (columnType > 0) {
-                            final MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
-                            final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
-                            final String columnName = metadata.getColumnName(columnIndex);
+                    final int commitMode = configuration.getCommitMode();
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    final int columnType = metadata.getColumnType(columnIndex);
+                    if (columnType > 0) {
+                        final MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
+                        final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
+                        final String columnName = metadata.getColumnName(columnIndex);
 
-                            CopyWalSegmentUtils.rollColumnToSegment(ff,
+                            CopyWalSegmentUtils.rollColumnToSegment(
+                                ff,
                                     configuration.getWriterFileOpenOpts(),
                                     primaryColumn,
                                     secondaryColumn,
@@ -463,7 +473,8 @@ public class WalWriter implements TableWriterAPI {
                                     currentTxnStartRowNum,
                                     uncommittedRows,
                                     newColumnFiles,
-                                    columnIndex
+                                    columnIndex,
+                                commitMode
                             );
                         } else {
                             rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
@@ -740,18 +751,24 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
+        int commitMode = configuration.getCommitMode();
+
         // Each record is about primary and secondary file. File descriptor is set every half a record.
         int halfRecord = NEW_COL_RECORD_SIZE / 2;
         for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += halfRecord) {
             final int fd = (int) newColumnFiles.get(fdIndex);
-            ff.close(fd);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsyncAndClose(fd);
+            } else {
+                ff.close(fd);
+            }
         }
     }
 
     private void configureColumn(int index, int columnType) {
         final int baseIndex = getPrimaryColumnIndex(index);
         if (columnType > 0) {
-            final MemoryMA primary = Vm.getMAInstance();
+            final MemoryMA primary = Vm.getMAInstance(configuration.getCommitMode());
             final MemoryMA secondary = createSecondaryMem(columnType);
             columns.extendAndSet(baseIndex, primary);
             columns.extendAndSet(baseIndex + 1, secondary);
@@ -947,7 +964,7 @@ public class WalWriter implements TableWriterAPI {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                return Vm.getMAInstance();
+                return Vm.getMAInstance(configuration.getCommitMode());
             default:
                 return null;
         }
@@ -1097,6 +1114,13 @@ public class WalWriter implements TableWriterAPI {
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
+            final int dirFd;
+            final int commitMode = configuration.getCommitMode();
+            if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
+                dirFd = -1;
+            } else {
+                dirFd = TableUtils.openRO(ff, path, LOG);
+            }
 
             for (int i = 0; i < columnCount; i++) {
                 int type = metadata.getColumnType(i);
@@ -1120,6 +1144,13 @@ public class WalWriter implements TableWriterAPI {
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
+            if (commitMode != CommitMode.NOSYNC) {
+                events.sync();
+            }
+
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
             lastSegmentTxn = 0;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
@@ -1211,6 +1242,7 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.length());
         lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        events.sync();
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
@@ -1242,10 +1274,10 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void setColumnNull(int columnType, int columnIndex, long rowCount) {
+    private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         if (ColumnType.isVariableLength(columnType)) {
-            setVarColumnVarFileNull(columnType, columnIndex, rowCount);
-            setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
+            setVarColumnVarFileNull(columnType, columnIndex, rowCount, commitMode);
+            setVarColumnFixedFileNull(columnType, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
         }
@@ -1299,6 +1331,7 @@ public class WalWriter implements TableWriterAPI {
             } finally {
                 ff.munmap(address, columnFileSize, MEM_TAG);
             }
+            ff.fsync(fixedSizeColumn.getFd());
         }
     }
 
@@ -1307,35 +1340,35 @@ public class WalWriter implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, segmentRowCount);
     }
 
-    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount) {
+    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         MemoryMA fixedSizeColumn = getSecondaryColumn(columnIndex);
         long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
         fixedSizeColumn.jumpTo(fixedSizeColSize);
         if (rowCount > 0) {
             long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
-            try {
-                if (columnType == ColumnType.STRING) {
-                    Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
-                } else {
-                    Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
-                }
-            } finally {
-                ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
+            if (columnType == ColumnType.STRING) {
+                Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
+            } else {
+                Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
             }
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(addressFixed, fixedSizeColSize, commitMode == CommitMode.ASYNC);
+            }
+            ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
         }
     }
 
-    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount) {
+    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         MemoryMA varColumn = getPrimaryColumn(columnIndex);
         long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
         varColumn.jumpTo(varColSize);
         if (rowCount > 0) {
             long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
-            try {
-                Vect.memset(address, varColSize, -1);
-            } finally {
-                ff.munmap(address, varColSize, MEM_TAG);
+            Vect.memset(address, varColSize, -1);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(address, varColSize, commitMode == CommitMode.ASYNC);
             }
+            ff.munmap(address, varColSize, MEM_TAG);
         }
     }
 
@@ -1347,8 +1380,8 @@ public class WalWriter implements TableWriterAPI {
                 long currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 1);
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
-                primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
 
+                primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
                 int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1) {
                     MemoryMA secondaryColumnFile = getSecondaryColumn(i);
@@ -1359,6 +1392,17 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
         }
+    }
+
+    private void sync(int commitMode) {
+        final boolean async = commitMode == CommitMode.ASYNC;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            MemoryMA column = columns.getQuick(i);
+            if (column != null) {
+                column.sync(async);
+            }
+        }
+        events.sync();
     }
 
     private class MetadataValidatorService implements MetadataServiceStub {
@@ -1484,7 +1528,7 @@ public class WalWriter implements TableWriterAPI {
                     // as part of rolling to a new segment
 
                     if (uncommittedRows > 0) {
-                        setColumnNull(columnType, columnIndex, segmentRowCount);
+                        setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {

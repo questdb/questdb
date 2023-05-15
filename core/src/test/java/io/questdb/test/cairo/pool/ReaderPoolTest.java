@@ -43,12 +43,13 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.Assert.fail;
 
 public class ReaderPoolTest extends AbstractCairoTest {
 
@@ -60,6 +61,45 @@ public class ReaderPoolTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
         uTableToken = engine.verifyTableName("u");
+    }
+
+    @Test
+    public void testAllocate() throws Exception {
+
+        assertWithPool(pool -> {
+            // has to be less than the available entries in the pool, default is 160
+            final int numOfThreads = 50;
+
+            final java.util.concurrent.ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+            final CyclicBarrier start = new CyclicBarrier(numOfThreads);
+            final SOCountDownLatch end = new SOCountDownLatch(numOfThreads);
+            final AtomicInteger readerCount = new AtomicInteger();
+
+            for (int i = 0; i < numOfThreads; i++) {
+                final int threadIndex = i;
+                new Thread(() -> {
+                    TestUtils.await(start);
+                    try {
+                        try (TableReader ignored = pool.get(uTableToken)) {
+                            readerCount.incrementAndGet();
+                        }
+                    } catch (Throwable th) {
+                        errors.put(threadIndex, th);
+                    }
+                    end.countDown();
+                }).start();
+            }
+            end.await();
+
+            if (errors.size() > 0) {
+                for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
+                    LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
+                }
+                fail("Error in threads");
+            }
+
+            Assert.assertEquals(numOfThreads, readerCount.get());
+        });
     }
 
     @Test

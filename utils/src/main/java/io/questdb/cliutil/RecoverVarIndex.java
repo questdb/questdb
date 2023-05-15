@@ -24,23 +24,22 @@
 
 package io.questdb.cliutil;
 
-import io.questdb.ServerConfigurationException;
-import io.questdb.cutlass.json.JsonException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.log.LogFactory;
-
-import java.io.IOException;
 
 import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
 import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
 public class RecoverVarIndex {
-    public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
+    public static void main(String[] args)  {
         LogFactory.configureSync();
         RebuildColumnCommandArgs params = parseCommandArgs(args, RecoverVarIndex.class.getName());
         if (params == null) {
             // Invalid params, usage already printed
             return;
         }
-        runColumnRebuild(params, new io.questdb.cairo.RecoverVarIndex());
+        final CairoConfiguration configuration = new DefaultCairoConfiguration("");
+        runColumnRebuild(params, new io.questdb.cairo.RecoverVarIndex(configuration));
     }
 }
