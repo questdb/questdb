@@ -192,7 +192,6 @@ public class ExpressionParser {
         return argStackDepth;
     }
 
-    @SuppressWarnings("ConstantConditions")
     void parseExpr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
         try {
             int paramCount = 0;
