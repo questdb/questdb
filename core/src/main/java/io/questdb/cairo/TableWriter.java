@@ -6845,7 +6845,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (squashCount > 0) {
                 long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
                 TableUtils.setPathForPartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
-                finallong originalSize = txWriter.getPartitionSizeByPartitionTimestamp(targetPartition);
+                final long originalSize = txWriter.getPartitionSizeByPartitionTimestamp(targetPartition);
 
                 boolean rw = !copyTargetFrame;
                 Frame targetFrame = null;
@@ -6858,7 +6858,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.info().$("copying partition to force squash [from=").$(path).$(", to=").$(other).I$();
 
                             targetFrame = partitionFrameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
-                            FrameAlgebra.append(targetFrame, firstPartitionFrame);
+                            FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
                             physicallyWrittenRowsSinceLastCommit.addAndGet(firstPartitionFrame.getSize());
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexLo * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
                             partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
