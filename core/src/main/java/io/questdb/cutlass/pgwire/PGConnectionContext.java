@@ -29,6 +29,7 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -74,10 +75,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final String TAG_UPDATE = "UPDATE";
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
-    private static final int INIT_CANCEL_REQUEST = 80877102;
-    private static final int INIT_GSS_REQUEST = 80877104;
-    private static final int INIT_SSL_REQUEST = 80877103;
-    private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
     private static final int IN_TRANSACTION = 1;
@@ -89,7 +86,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
-    private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_NO_DATA = 'n';
     private static final byte MESSAGE_TYPE_PARAMETER_DESCRIPTION = 't';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -106,7 +102,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
-    private final PgWireAuthenticator authenticator;
+    private final CleartextPasswordPgWireAuthenticator authenticator;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     //stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -128,12 +124,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final NetworkFacade nf;
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
+    private final boolean readOnlyContext;
     private final int recvBufferSize;
     private final CircuitBreakerRegistry registry;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
+    private final SecurityContextFactory securityContextFactory;
     private final IntList selectColumnTypes = new IntList();
     private final int sendBufferSize;
-    private final String serverVersion;
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
     private final TypeManager typeManager;
@@ -144,8 +141,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private IntList activeBindVariableTypes;
     //list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList activeSelectColumnTypes;
-    private boolean authenticationRequired = true;
-    //    private boolean authenticationRequired = true;
     private BindVariableService bindVariableService;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
@@ -163,7 +158,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long recvBuffer;
     private long recvBufferReadOffset = 0;
     private long recvBufferWriteOffset = 0;
-    private boolean requireInitialMessage = true;
     private PGResumeProcessor resumeProcessor;
     private Rnd rnd;
     private long rowCount;
@@ -195,7 +189,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean typesAndUpdateIsCached = false;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
-    private CharSequence username;
     private NamedStatementWrapper wrapper;
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, CircuitBreakerRegistry registry) {
@@ -212,7 +205,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         );
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.serverVersion = configuration.getServerVersion();
 
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
@@ -234,8 +226,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        PgWireAuthenticationFactory pgWireAuthenticationFactory = factoryProvider.getPgWireAuthenticationFactory();
-        this.authenticator = pgWireAuthenticationFactory.getPgWireAuthenticator(responseAsciiSink, configuration);
+        this.authenticator = new CleartextPasswordPgWireAuthenticator(nf, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit, configuration, circuitBreakerId, circuitBreaker, registry);
+        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+        this.readOnlyContext = configuration.readOnlySecurityContext();
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -297,14 +290,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void clear() {
         sendBufferPtr = sendBuffer;
-        requireInitialMessage = true;
-        authenticationRequired = true;
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         responseAsciiSink.reset();
         prepareForNewQuery();
-        authenticator.clear();
-        username = null;
         typeManager.clear();
         clearWriters();
         clearRecvBuffer();
@@ -386,6 +375,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.typesAndUpdateCache = typesAndUpdateCache;
         this.typesAndUpdatePool = typesAndUpdatePool;
 
+        boolean afterAuthentication = handleAuthentication();
+
         try {
             if (isPausedQuery) {
                 isPausedQuery = false;
@@ -403,9 +394,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             OUTER:
             do {
                 if (operation == IOOperation.READ) {
-                    if (recv() == 0) {
+                    if (recv() == 0 && !afterAuthentication) {
+                        // if we are just after authentication we may already have a full message in the receive buffer
                         keepReceiving = false;
                     }
+                    afterAuthentication = false;
                 }
 
                 // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
@@ -447,10 +440,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             } else {
                 reportError(e);
             }
-        } catch (AuthenticationException e) {
-            prepareNonCriticalError(-1, e.getMessage());
-            sendAndReset();
-            clearRecvBuffer();
         }
     }
 
@@ -462,6 +451,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // The context is about to be returned to the pool, so we should release the memory.
             freeBuffers();
             this.circuitBreaker.setSecret(-1);
+            authenticator.init(-1, 0, 0, 0, 0);
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
@@ -473,6 +463,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 this.sendBufferLimit = sendBuffer + sendBufferSize;
             }
             this.circuitBreaker.setSecret(registry.getNewSecret());
+            authenticator.init(fd, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
         }
         return r;
     }
@@ -1536,13 +1527,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void onAfterAuthSuccess() {
-        SecurityContext securityContext = authenticator.getSecurityContext();
-        assert securityContext != null;
+    private boolean handleAuthentication() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
+        if (authenticator.isAuthenticated()) {
+            return false;
+        }
+        authenticator.handleIo();
+        assert authenticator.isAuthenticated();
+        SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), readOnlyContext);
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
         sendRNQ = true;
-        authenticationRequired = false;
-        prepareLoginOk();
+
+        // authenticator may have read some non-auth data left in the buffer
+        recvBufferWriteOffset = authenticator.getRecvBufPos() - recvBuffer;
+        recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
+        return true;
     }
 
     /**
@@ -1554,32 +1552,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long address,
             int len,
             @Transient SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, QueryPausedException, AuthenticationException, SqlException {
-
-        if (requireInitialMessage) {
-            sendRNQ = true;
-            processInitialMessage(address, len);
-            if (requireInitialMessage) {
-                return;
-            }
-            PgWireAuthenticator.AuthenticationResult res = authenticator.onAfterInitMessage();
-            switch (res) {
-                case AUTHENTICATION_FAILED:
-                    throw AuthenticationException.INSTANCE;
-                case AUTHENTICATION_SUCCESS:
-                    onAfterAuthSuccess();
-                    // intentional fall through
-                case NEED_READ:
-                    sendAndReset();
-                    return;
-                default:
-                    assert false;
-            }
-        }
-
-        // this is a type-prefixed message
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, QueryPausedException, SqlException {
         // we will wait until we receive the entire header
-
         if (len < PREFIXED_MESSAGE_HEADER_LEN) {
             // we need to be able to read header and length
             return;
@@ -1619,19 +1593,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset += msgLen + 1;
         final long msgLimit = address + msgLen + 1;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
-
-        if (authenticationRequired) {
-            PgWireAuthenticator.AuthenticationResult res = null;
-            if (authenticator.isAuthenticated() || ((res = authenticator.processMessage(username, msgLo, msgLimit)) == PgWireAuthenticator.AuthenticationResult.AUTHENTICATION_SUCCESS)) {
-                onAfterAuthSuccess();
-            }
-            if (res == PgWireAuthenticator.AuthenticationResult.AUTHENTICATION_FAILED) {
-                throw AuthenticationException.INSTANCE;
-            }
-            assert res == null || res == PgWireAuthenticator.AuthenticationResult.AUTHENTICATION_SUCCESS || res == PgWireAuthenticator.AuthenticationResult.NEED_READ;
-            sendAndReset();
-            return;
-        }
 
         switch (type) {
             case 'P': // parse
@@ -1709,14 +1670,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         LOG.error().$("invalid UTF8 bytes in parse query").$();
         throw BadProtocolException.INSTANCE;
-    }
-
-    //send BackendKeyData message with query cancellation info
-    private void prepareBackendKeyData(ResponseAsciiSink responseAsciiSink) {
-        responseAsciiSink.put('K');
-        responseAsciiSink.putNetworkInt(Integer.BYTES * 3); // length of this message
-        responseAsciiSink.putNetworkInt(circuitBreakerId);//process id
-        responseAsciiSink.putNetworkInt(circuitBreaker.getSecret());//secret key
     }
 
     private void prepareBindComplete() {
@@ -1814,24 +1767,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         characterStore.clear();
     }
 
-    private void prepareGssResponse() {
-        responseAsciiSink.put('N');
-    }
-
-    private void prepareLoginOk() {
-        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
-        responseAsciiSink.putIntDirect(0); // response code
-        prepareParams(responseAsciiSink, "TimeZone", "GMT");
-        prepareParams(responseAsciiSink, "application_name", "QuestDB");
-        prepareParams(responseAsciiSink, "server_version", serverVersion);
-        prepareParams(responseAsciiSink, "integer_datetimes", "on");
-        prepareParams(responseAsciiSink, "client_encoding", "UTF8");
-        prepareBackendKeyData(responseAsciiSink);
-        prepareReadyForQuery();
-        sendRNQ = true;
-    }
-
     private void prepareNoDataMessage() {
         responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
         responseAsciiSink.putIntDirect(INT_BYTES_X);
@@ -1900,10 +1835,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             sink.putNetworkShort(ColumnType.isBinary(columnType) ? 1 : getColumnBinaryFlag(typeFlag)); // format code
         }
         sink.putLen(addr);
-    }
-
-    private void prepareSslResponse() {
-        responseAsciiSink.put('N');
     }
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
@@ -2218,118 +2149,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } else { // this must be an OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
-        }
-    }
-
-    private void processInitialMessage(long address, int len) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
-        int msgLen;
-        long msgLimit;// expect startup request
-        if (len < Long.BYTES) {
-            return;
-        }
-
-        // there is data for length
-        // this is quite specific to message type :(
-        msgLen = getIntUnsafe(address); // postgresql includes length bytes in length of message
-
-        // do we have the rest of the message?
-        if (msgLen > len) {
-            // we have length - get the rest when ready
-            return;
-        }
-
-        // enough to read login request
-        recvBufferReadOffset += msgLen;
-
-        // consume message
-        // process protocol
-        int protocol = getIntUnsafe(address + Integer.BYTES);
-        switch (protocol) {
-            case INIT_SSL_REQUEST:
-                // SSLRequest
-                prepareSslResponse();
-                sendAndReset();
-                return;
-            case INIT_GSS_REQUEST:
-                // GSSENCRequest
-                prepareGssResponse();
-                sendAndReset();
-                return;
-            case INIT_STARTUP_MESSAGE:
-                // StartupMessage
-                // extract properties
-                requireInitialMessage = false;
-                msgLimit = address + msgLen;
-                long lo = address + Long.BYTES;
-                // there is an extra byte at the end, and it has to be 0
-                LOG.info()
-                        .$("protocol [major=").$(protocol >> 16)
-                        .$(", minor=").$((short) protocol)
-                        .$(']').$();
-
-                while (lo < msgLimit - 1) {
-
-                    final long nameLo = lo;
-                    final long nameHi = getStringLength(lo, msgLimit, "malformed property name");
-                    final long valueLo = nameHi + 1;
-                    final long valueHi = getStringLength(valueLo, msgLimit, "malformed property value");
-                    lo = valueHi + 1;
-
-                    // store user
-                    dbcs.of(nameLo, nameHi);
-                    boolean parsed = true;
-                    if (Chars.equals(dbcs, "user")) {
-                        CharacterStoreEntry e = characterStore.newEntry();
-                        e.put(dbcs.of(valueLo, valueHi));
-                        this.username = e.toImmutable();
-                    }
-
-                    // store statement_timeout
-                    if (Chars.equals(dbcs, "options")) {
-                        dbcs.of(valueLo, valueHi);
-                        if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
-                            try {
-                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
-                                if (this.statementTimeout > 0) {
-                                    circuitBreaker.setTimeout(statementTimeout);
-                                }
-                            } catch (NumericException ex) {
-                                parsed = false;
-                            }
-                        } else {
-                            parsed = false;
-                        }
-                    }
-
-                    if (parsed) {
-                        LOG.debug().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
-                    } else {
-                        LOG.info().$("invalid property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
-                    }
-                }
-
-                characterStore.clear();
-
-                assertTrue(this.username != null, "user is not specified");
-                break;
-            case INIT_CANCEL_REQUEST:
-                // From https://www.postgresql.org/docs/current/protocol-flow.html :
-                // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message
-                // that would ordinarily be sent across a new connection. The server will process this request and then close the connection.
-                // For security reasons, no direct reply is made to the cancel request message.
-                int pid = getIntUnsafe(address + 2 * Integer.BYTES);//thread id really
-                int secret = getIntUnsafe(address + 3 * Integer.BYTES);
-                LOG.info().$("cancel request [pid=").$(pid).I$();
-                try {
-                    registry.cancel(pid, secret);
-                } catch (CairoException e) {//error message should not be sent to client
-                    LOG.error().$(e.getMessage()).$();
-                }
-
-                throw PeerDisconnectedException.INSTANCE;
-            default:
-                LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
-                throw BadProtocolException.INSTANCE;
         }
     }
 

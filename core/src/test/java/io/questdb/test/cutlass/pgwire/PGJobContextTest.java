@@ -1247,46 +1247,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    /*
-        use sqlx::postgres::{PgPoolOptions};
-
-        #[tokio::main]
-        async fn main() -> anyhow::Result<()> {
-
-            let pool = PgPoolOptions::new()
-                .max_connections(1)
-                .connect("postgres://admin:quest@localhost:8812/qdb")
-                .await?;
-
-            let result = sqlx::query("SELECT $1 from long_sequence(2)")
-                .bind(1)
-                .execute(&pool).await?;
-
-
-            assert_eq!(result.rows_affected(), 2);
-
-            Ok(())
-        }
-     */
-    public void testSyncAfterLoginSendsRNQ() throws Exception {
-        String script = ">0000000804d2162f\n" +
-                "<4e\n" +
-                ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300330000\n" +
-                "<520000000800000003\n" +
-                ">700000000a717565737400\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                ">5300000004\n" +
-                "<5a0000000549\n" +
-                ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
-                "<3100000004740000000a000100000017540000001b000124310000000000000100000413ffffffffffff00005a0000000549\n" +
-                ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
-                "<3200000004440000000b00010000000131440000000b00010000000131430000000d53454c45435420320033000000045a0000000549\n" +
-                ">5800000004";
-
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
-    }
-
-    @Test
     public void testBadPasswordLength() throws Exception {
         skipOnWalRun();
         assertHexScript(
@@ -2568,7 +2528,7 @@ if __name__ == "__main__":
         });
     }
 
-    @Test// fetch works only in extended query mode 
+    @Test// fetch works only in extended query mode
     public void testFetch10RowsAtaTime() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
             connection.setAutoCommit(false);
@@ -2595,13 +2555,13 @@ if __name__ == "__main__":
     }
 
     /*
-    Tests simple query fetched 1 row at a time, with flush commands in between as done by following node.js code: 
+    Tests simple query fetched 1 row at a time, with flush commands in between as done by following node.js code:
     "use strict"
-    
+
     const { Client, types } = require("pg")
     const QueryStream = require('pg-query-stream')
     const JSONStream = require('JSONStream')
-    
+
     const start = async () => {
         const client = new Client({
             database: "qdb",
@@ -2611,10 +2571,10 @@ if __name__ == "__main__":
             user: "admin",
         })
         await client.connect()
-    
+
         const res = await client.query('SELECT * FROM long_sequence(5)')
         console.log(res.rows)
-    
+
         const query = new QueryStream('SELECT * FROM long_sequence(5)',[],
             {   batchSize: 1,
                 types: {
@@ -2626,16 +2586,16 @@ if __name__ == "__main__":
         )
         const stream = client.query(query)
         stream.pipe(JSONStream.stringify()).pipe(process.stdout)
-    
+
         // release the client when the stream is finished
         const streamEndPromise = deferredPromise()
         stream.on('end', streamEndPromise.resolve)
         stream.on('error', streamEndPromise.reject)
-    
+
         await streamEndPromise
         client.end()
     }
-    
+
     function deferredPromise() {
         let resolve, reject
         const p = new Promise((_resolve, _reject) => {
@@ -2646,10 +2606,10 @@ if __name__ == "__main__":
         p.reject = reject
         return p
     }
-    
+
     start()
         .then(() => console.log('Done'))
-        .catch(console.error)    
+        .catch(console.error)
     */
     @Test
     public void testFetch1RowAtaTimeWithFlushInBetween() throws Exception {
@@ -4593,6 +4553,11 @@ nodejs code:
                         "<!!",
                 new Port0PGWireConfiguration()
         );
+    }
+
+    @Test
+    public void testMetadata() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
     @Test
@@ -6998,22 +6963,25 @@ create table tab as (
         executeInsert("insert into 'tab2' values (0.2);");
         engine.clear();
 
-        final String script = ">0000000804d2162f\n" +
-                "<4e\n" +
-                ">0000003c00030000636c69656e745f656e636f64696e6700277574662d382700757365720078797a00646174616261736500706f7374677265730000\n" +
-                "<520000000800000003\n" +
-                ">70000000076f6800\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                ">50000000675f5f6173796e6370675f73746d745f315f5f000a20202020202020202020202073656c656374202a2066726f6d202774616232272077686572652061203e2024310a2020202020202020202020204c494d4954203130300a20202020202020200000004400000018535f5f6173796e6370675f73746d745f315f5f004800000004\n" +
-                "<3100000004740000000a0001000002bd540000001a00016100000000000001000002bd0008ffffffff0000\n" +
-                ">420000002e005f5f6173796e6370675f73746d745f315f5f00000100010001000000083fd999999999999a00010001450000000900000000005300000004\n" +
-                "<320000000444000000120001000000083fe6666666666666430000000d53454c4543542031005a0000000549\n" +
-                ">5800000004\n";
-        assertHexScript(
-                getFragmentedSendFacade(),
-                script,
-                getHexPgWireConfig()
-        );
+        for (int i = 0; i < 1; i++) {
+            final String script = ">0000000804d2162f\n" +
+                    "<4e\n" +
+                    ">0000003c00030000636c69656e745f656e636f64696e6700277574662d382700757365720078797a00646174616261736500706f7374677265730000\n" +
+                    "<520000000800000003\n" +
+                    ">70000000076f6800\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">50000000675f5f6173796e6370675f73746d745f315f5f000a20202020202020202020202073656c656374202a2066726f6d202774616232272077686572652061203e2024310a2020202020202020202020204c494d4954203130300a20202020202020200000004400000018535f5f6173796e6370675f73746d745f315f5f004800000004\n" +
+                    "<3100000004740000000a0001000002bd540000001a00016100000000000001000002bd0008ffffffff0000\n" +
+                    ">420000002e005f5f6173796e6370675f73746d745f315f5f00000100010001000000083fd999999999999a00010001450000000900000000005300000004\n" +
+                    "<320000000444000000120001000000083fe6666666666666430000000d53454c4543542031005a0000000549\n" +
+                    ">5800000004\n";
+            assertHexScript(
+                    getFragmentedSendFacade(),
+                    script,
+                    getHexPgWireConfig()
+            );
+            LOG.advisoryW().$("------ DONE, iteration: --------- ").$(i).$();
+        }
     }
 
     /* asyncqp.py - bind variable appear both in select and where clause
@@ -7754,6 +7722,46 @@ create table tab as (
     }
 
     @Test
+    /*
+        use sqlx::postgres::{PgPoolOptions};
+
+        #[tokio::main]
+        async fn main() -> anyhow::Result<()> {
+
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect("postgres://admin:quest@localhost:8812/qdb")
+                .await?;
+
+            let result = sqlx::query("SELECT $1 from long_sequence(2)")
+                .bind(1)
+                .execute(&pool).await?;
+
+
+            assert_eq!(result.rows_affected(), 2);
+
+            Ok(())
+        }
+     */
+    public void testSyncAfterLoginSendsRNQ() throws Exception {
+        String script = ">0000000804d2162f\n" +
+                "<4e\n" +
+                ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300330000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                ">5300000004\n" +
+                "<5a0000000549\n" +
+                ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
+                "<3100000004740000000a000100000017540000001b000124310000000000000100000413ffffffffffff00005a0000000549\n" +
+                ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
+                "<3200000004440000000b00010000000131440000000b00010000000131430000000d53454c45435420320033000000045a0000000549\n" +
+                ">5800000004";
+
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
+    }
+
+    @Test
     public void testSyntaxErrorReporting() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -8160,6 +8168,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8197,10 +8209,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8237,6 +8245,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
@@ -8286,10 +8298,6 @@ create table tab as (
                         "9,2.6,2020-06-01 00:00:06.0\n" +
                         "9,3.0,2020-06-01 00:00:12.0\n");
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
@@ -8750,11 +8758,6 @@ create table tab as (
                 return rnd;
             }
         });
-    }
-
-    @Test
-    public void testMetadata() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
     private void assertHexScript(
