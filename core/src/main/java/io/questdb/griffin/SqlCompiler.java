@@ -32,7 +32,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.*;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriterMetadata;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -57,6 +60,7 @@ import java.util.ServiceLoader;
 
 import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompiler implements Closeable {
@@ -329,6 +333,18 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private static void expectIndexKeyword(GenericLexer lexer) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'index' expected");
+        }
+
+        if (!SqlKeywords.isIndexKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'index' expected");
+        }
+    }
+
     private static boolean isCompatibleCase(int from, int to) {
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
@@ -389,7 +405,7 @@ public class SqlCompiler implements Closeable {
                         final CharSequence columnName = GenericLexer.immutableOf(tok);
                         tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
-                            expectKeyword(lexer, "index");
+                            expectIndexKeyword(lexer);
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
 
@@ -421,7 +437,7 @@ public class SqlCompiler implements Closeable {
 
                         } else if (SqlKeywords.isDropKeyword(tok)) {
                             // alter table <table name> alter column drop index
-                            expectKeyword(lexer, "index");
+                            expectIndexKeyword(lexer);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && !isSemicolon(tok)) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
@@ -2640,18 +2656,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    protected static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
-        }
-
-        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
-        }
-    }
-
     protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
@@ -2887,30 +2891,24 @@ public class SqlCompiler implements Closeable {
     }
 
     private class DatabaseBackupAgent implements Closeable {
+        private final Path auxPath = new Path();
         private final Path dstPath = new Path();
+        private final StringSink sink = new StringSink();
         private final Path srcPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
+        private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
-        private transient String cachedTmpBackupRoot;
-        private transient int changeDirPrefixLen;
-        private transient int currDirPrefixLen;
-        private final FindVisitor confFilesBackupOnFind = (file, type) -> {
-            if (type == Files.DT_FILE) {
-                srcPath.of(configuration.getConfRoot()).concat(file).$();
-                dstPath.trimTo(currDirPrefixLen).concat(file).$();
-                LOG.info().$("backup copying config file [from=").$(srcPath).$(",to=").$(dstPath).I$();
-                if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.critical(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
-                }
-            }
-        };
+        private transient String cachedBackupTmpRoot;
+        private transient int dstCurrDirLen;
+        private transient int dstPathRoot;
 
         public void clear() {
+            auxPath.trimTo(0);
             srcPath.trimTo(0);
             dstPath.trimTo(0);
-            cachedTmpBackupRoot = null;
-            changeDirPrefixLen = 0;
-            currDirPrefixLen = 0;
+            cachedBackupTmpRoot = null;
+            dstPathRoot = 0;
+            dstCurrDirLen = 0;
             tableBackupRowCopiedCache.clear();
             tableTokens.clear();
         }
@@ -2918,35 +2916,124 @@ public class SqlCompiler implements Closeable {
         @Override
         public void close() {
             tableBackupRowCopiedCache.clear();
+            Misc.free(auxPath);
             Misc.free(srcPath);
             Misc.free(dstPath);
         }
 
-        private void backupTabIndexFile() {
-            srcPath.of(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            dstPath.trimTo(currDirPrefixLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            LOG.info().$("backup copying file [from=").$(srcPath).$(",to=").$(dstPath).I$();
-            if (ff.copy(srcPath, dstPath) < 0) {
-                throw CairoException.critical(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
-            }
-        }
-
         private void backupTable(@NotNull TableToken tableToken) {
             LOG.info().$("starting backup of ").$(tableToken).$();
-            if (null == cachedTmpBackupRoot) {
+
+            // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
+            if (null == cachedBackupTmpRoot) {
                 if (null == configuration.getBackupRoot()) {
-                    throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                    throw CairoException.nonCritical()
+                            .put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
                 }
-                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
-                cachedTmpBackupRoot = Chars.toString(srcPath);
+                auxPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
+                cachedBackupTmpRoot = Chars.toString(auxPath); // absolute path to the TMP folder
             }
 
-            int renameRootLen = dstPath.length();
             String tableName = tableToken.getTableName();
+            auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
+            int tableRootLen = auxPath.length();
             try {
-                try (TableReader reader = engine.getReader(tableToken)) {
-                    cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
-                    try (TableWriter backupWriter = engine.getBackupWriter(tableToken, cachedTmpBackupRoot)) {
+                try (TableReader reader = engine.getReader(tableToken)) { // acquire reader lock
+                    if (ff.exists(auxPath)) {
+                        throw CairoException.nonCritical()
+                                .put("backup dir already exists [path=").put(auxPath)
+                                .put(", table=").put(tableName)
+                                .put(']');
+                    }
+
+                    // clone metadata
+
+                    // create TMP folder
+                    if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
+                        throw CairoException.critical(ff.errno()).put("could not create [dir=").put(auxPath).put(']');
+                    }
+
+                    // backup table metadata files to TMP folder
+                    try {
+                        TableReaderMetadata metadata = reader.getMetadata();
+
+                        // _meta
+                        mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                        metadata.dumpTo(mem);
+
+                        // create symbol maps
+                        auxPath.trimTo(tableRootLen).$();
+                        int symbolMapCount = 0;
+                        for (int i = 0, sz = metadata.getColumnCount(); i < sz; i++) {
+                            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                                SymbolMapReader mapReader = reader.getSymbolMapReader(i);
+                                MapWriter.createSymbolMapFiles(
+                                        ff,
+                                        mem,
+                                        auxPath,
+                                        metadata.getColumnName(i),
+                                        COLUMN_NAME_TXN_NONE,
+                                        mapReader.getSymbolCapacity(),
+                                        mapReader.isCached());
+                                symbolMapCount++;
+                            }
+                        }
+
+                        // _txn
+                        mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                        TableUtils.createTxn(mem, symbolMapCount, 0L, 0L, TableUtils.INITIAL_TXN, 0L, metadata.getStructureVersion(), 0L, 0L);
+
+                        // _cv
+                        mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                        TableUtils.createColumnVersionFile(mem);
+
+                        if (tableToken.isWal()) {
+                            // _name
+                            mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
+                            TableUtils.createTableNameFile(mem, tableToken.getTableName());
+
+                            // initialise txn_seq folder
+                            auxPath.trimTo(tableRootLen).concat(WalUtils.SEQ_DIR).slash$();
+                            if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
+                                throw CairoException.critical(ff.errno()).put("Cannot create [path=").put(auxPath).put(']');
+                            }
+                            int len = auxPath.length();
+                            // _wal_index.d
+                            mem.smallFile(ff, auxPath.concat(WalUtils.WAL_INDEX_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putInt(WAL_FORMAT_VERSION);
+                            mem.putLong(0L);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog.meta.i
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME_META_INX).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog.meta.d
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME_META_VAR).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _meta
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            WalWriterMetadata.syncToMetaFile(
+                                    mem,
+                                    metadata.getStructureVersion(),
+                                    metadata.getColumnCount(),
+                                    metadata.getTimestampIndex(),
+                                    metadata.getTableId(),
+                                    false,
+                                    metadata
+                            );
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                        }
+                    } finally {
+                        mem.close();
+                    }
+
+                    // copy the data
+                    try (TableWriter backupWriter = engine.getBackupWriter(tableToken, cachedBackupTmpRoot)) {
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
                         srcPath.of(tableName).slash().put(reader.getVersion()).$();
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
@@ -2960,18 +3047,17 @@ public class SqlCompiler implements Closeable {
                             );
                             tableBackupRowCopiedCache.put(srcPath.toString(), recordToRowCopier);
                         }
-
                         RecordCursor cursor = reader.getCursor();
                         //statement/query timeout value  is most likely too small for backup operation
                         copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                         backupWriter.commit();
                     }
-                }
-                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(tableToken.getDirName()).$();
+                } // release reader lock
+                int renameRootLen = dstPath.length();
                 try {
-                    dstPath.trimTo(renameRootLen).concat(tableToken.getDirName()).$();
-                    TableUtils.renameOrFail(ff, srcPath, dstPath);
-                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
+                    dstPath.trimTo(renameRootLen).concat(tableToken).$();
+                    TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath);
+                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").utf8(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
@@ -2981,80 +3067,31 @@ public class SqlCompiler implements Closeable {
                         .$(", ex=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
-
-                srcPath.of(cachedTmpBackupRoot).concat(tableToken.getDirName()).slash$();
+                auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
                 int errno;
-                if ((errno = ff.rmdir(srcPath)) != 0) {
-                    LOG.error().$("could not delete directory [path=").utf8(srcPath).$(", errno=").$(errno).I$();
+                if ((errno = ff.rmdir(auxPath)) != 0) {
+                    LOG.error().$("could not delete directory [path=").utf8(auxPath).$(", errno=").$(errno).I$();
                 }
                 throw e;
             }
         }
 
-        private void cdConfRenamePath() {
-            mkdir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
-        }
-
-        private void cdDbRenamePath() {
-            mkdir(configuration.getDbDirectory(), "could not create backup [db dir=");
-        }
-
-        private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-            TableToken tableToken = engine.verifyTableName(tableName);
-            srcPath.of(backupRoot).concat(tableToken).slash$();
-
-            if (ff.exists(srcPath)) {
-                throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
-            }
-
-            if (ff.mkdirs(srcPath, mkDirMode) != 0) {
-                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
-            }
-
-            int rootLen = srcPath.length();
-
-            TableReaderMetadata sourceMetaData = reader.getMetadata();
-            try {
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                sourceMetaData.dumpTo(mem);
-
-                // create symbol maps
-                srcPath.trimTo(rootLen).$();
-                int symbolMapCount = 0;
-                for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
-                    if (ColumnType.isSymbol(sourceMetaData.getColumnType(i))) {
-                        SymbolMapReader mapReader = reader.getSymbolMapReader(i);
-                        MapWriter.createSymbolMapFiles(ff, mem, srcPath, sourceMetaData.getColumnName(i), COLUMN_NAME_TXN_NONE, mapReader.getSymbolCapacity(), mapReader.isCached());
-                        symbolMapCount++;
-                    }
-                }
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                TableUtils.createTxn(mem, symbolMapCount, 0L, 0L, TableUtils.INITIAL_TXN, 0L, sourceMetaData.getStructureVersion(), 0L, 0L);
-
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                TableUtils.createColumnVersionFile(mem);
-                srcPath.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-            } finally {
-                mem.close();
-            }
-        }
-
-        private void mkdir(CharSequence dir, String errorMessage) {
-            dstPath.trimTo(changeDirPrefixLen).concat(dir).slash$();
-            currDirPrefixLen = dstPath.length();
+        private void mkBackupDstDir(CharSequence dir, String errorMessage) {
+            dstPath.trimTo(dstPathRoot).concat(dir).slash$();
+            dstCurrDirLen = dstPath.length();
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
                 throw CairoException.critical(ff.errno()).put(errorMessage).put(dstPath).put(']');
             }
         }
 
-        private void setupBackupRenamePath() {
+        private void mkBackupDstRoot() {
             DateFormat format = configuration.getBackupDirTimestampFormat();
             long epochMicros = configuration.getMicrosecondClock().getTicks();
-            int n = 0;
-            // There is a race here, two threads could try and create the same backupRenamePath,
-            // only one will succeed the other will throw a CairoException. Maybe it should be serialised
             dstPath.of(configuration.getBackupRoot()).slash();
             int plen = dstPath.length();
+            int n = 0;
+            // There is a race here, two threads could try and create the same dstPath,
+            // only one will succeed the other will throw a CairoException. It could be serialised
             do {
                 dstPath.trimTo(plen);
                 format.format(epochMicros, configuration.getDefaultDateLocale(), null, dstPath);
@@ -3064,18 +3101,18 @@ public class SqlCompiler implements Closeable {
                 dstPath.slash$();
                 n++;
             } while (ff.exists(dstPath));
-
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
+                // the winner will succeed the looser thread will get this exception
                 throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
-            changeDirPrefixLen = dstPath.length();
+            dstPathRoot = dstPath.length();
         }
 
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
             if (null == configuration.getBackupRoot()) {
-                throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                throw CairoException.nonCritical().put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
             }
-            final CharSequence tok = SqlUtil.fetchNext(lexer);
+            CharSequence tok = SqlUtil.fetchNext(lexer);
             if (null != tok) {
                 if (isTableKeyword(tok)) {
                     return sqlTableBackup(executionContext);
@@ -3088,24 +3125,51 @@ public class SqlCompiler implements Closeable {
         }
 
         private CompiledQuery sqlDatabaseBackup(SqlExecutionContext executionContext) {
-            tableTokens.clear();
-            setupBackupRenamePath();
-            cdDbRenamePath();
-            engine.getTableTokens(tableTokens, false);
+            mkBackupDstRoot();
+            mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
+
+            // backup tables
+            engine.getTableTokens(tableTokenBucket, false);
             executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
-            for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                backupTable(tableTokens.get(i));
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                backupTable(tableTokenBucket.get(i));
             }
-            backupTabIndexFile();
-            cdConfRenamePath();
-            ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind);
+
+            srcPath.of(configuration.getRoot()).$();
+            int srcLen = srcPath.length();
+
+            // backup table registry file (tables.d.<last>)
+            int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, srcPath, sink);
+            srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
+            dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0
+            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            if (ff.copy(srcPath, dstPath) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot backup table registry file [from=").put(srcPath)
+                        .put(", to=").put(dstPath)
+                        .put(']');
+            }
+
+            // backup table index file (_tab_index.d)
+            srcPath.trimTo(srcLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            dstPath.trimTo(dstCurrDirLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            if (ff.copy(srcPath, dstPath) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot backup table index file [from=").put(srcPath)
+                        .put(", to=").put(dstPath)
+                        .put(']');
+            }
+
+            // backup conf directory
+            mkBackupDstDir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
+            ff.copyRecursive(srcPath.of(configuration.getConfRoot()).$(), auxPath.of(dstPath).$(), configuration.getMkDirMode());
             return compiledQuery.ofBackupTable();
         }
 
         private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
-            setupBackupRenamePath();
-            cdDbRenamePath();
-
+            mkBackupDstRoot();
+            mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
             try {
                 tableTokens.clear();
                 while (true) {
@@ -3116,7 +3180,6 @@ public class SqlCompiler implements Closeable {
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                     tableTokens.add(tableToken);
-
                     tok = SqlUtil.fetchNext(lexer);
                     if (null == tok || Chars.equals(tok, ';')) {
                         break;
@@ -3128,10 +3191,9 @@ public class SqlCompiler implements Closeable {
 
                 executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
 
-                for (int n = 0; n < tableTokens.size(); n++) {
-                    backupTable(tableTokens.get(n));
+                for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                    backupTable(tableTokens.get(i));
                 }
-
                 return compiledQuery.ofBackupTable();
             } finally {
                 tableTokens.clear();
