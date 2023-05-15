@@ -47,13 +47,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
 
     @Override
     protected WalWriterTenant newTenant(TableToken tableToken, Entry<WalWriterTenant> entry, int index) {
-        return new WalWriterTenant(
-                this,
-                entry,
-                index,
-                tableToken,
-                engine.getTableSequencerAPI(),
-                engine.getMetrics());
+        return new WalWriterTenant(this, entry, index, tableToken, engine.getTableSequencerAPI(), engine.getMetrics());
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant {

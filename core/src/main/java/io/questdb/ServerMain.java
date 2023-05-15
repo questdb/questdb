@@ -40,7 +40,6 @@ import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.engine.functions.analytic.RankFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;

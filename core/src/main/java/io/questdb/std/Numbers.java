@@ -33,7 +33,6 @@ import io.questdb.std.str.CharSink;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
 //#else
-import io.questdb.std.str.StringSink;
 import jdk.internal.math.FDBigInteger;
 //#endif
 import org.jetbrains.annotations.NotNull;

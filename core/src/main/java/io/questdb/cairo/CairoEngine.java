@@ -65,6 +65,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final CairoConfiguration configuration;
+    private final CopyContext copyContext;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final MessageBusImpl messageBus;
     private final MetadataPool metadataPool;
@@ -75,7 +76,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final TableSequencerAPI tableSequencerAPI;
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryWalTask> telemetryWal;
-    private final CopyContext copyContext;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
@@ -102,7 +102,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
-        this.walListener = new WalListener() {};
+        this.walListener = new WalListener() {
+        };
         try {
             this.tableIdGenerator.open();
         } catch (Throwable e) {
@@ -356,6 +357,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return configuration;
     }
 
+    public CopyContext getCopyContext() {
+        return copyContext;
+    }
+
     public Job getEngineMaintenanceJob() {
         return engineMaintenanceJob;
     }
@@ -511,10 +516,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Telemetry<TelemetryWalTask> getTelemetryWal() {
         return telemetryWal;
-    }
-
-    public CopyContext getCopyContext() {
-        return copyContext;
     }
 
     public long getUnpublishedWalTxnCount() {

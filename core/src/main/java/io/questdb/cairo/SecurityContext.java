@@ -36,29 +36,29 @@ public interface SecurityContext {
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 
-    // TODO: columnNames should be removed, or this permission should change to column level
-    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    // TODO: columnNames should be removed, or this permission should change to column level
-    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
     default void authorizeAlterTableAttachPartition(TableToken tableToken) {
     }
 
     default void authorizeAlterTableDetachPartition(TableToken tableToken) {
     }
 
+    default void authorizeAlterTableDropPartition(TableToken tableToken) {
+    }
+
     // TODO: columnNames should be removed, or this permission should change to column level
-    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     // TODO: columnNames should be removed, or this permission should change to column level
     default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    default void authorizeAlterTableDropPartition(TableToken tableToken) {
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     // TODO: columnNames should be removed, or this permission should change to column level
