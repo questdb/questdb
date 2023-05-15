@@ -26,27 +26,33 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.TestOnly;
 
 // paged mapped appendable readable 
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
+    private final int commitMode;
     private int fd = -1;
     private FilesFacade ff;
     private int madviseOpts = -1;
     private int mappedPage;
     private long pageAddress = 0;
 
+    @TestOnly
     public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
+        this(CommitMode.NOSYNC);
         of(ff, name, pageSize, 0, memoryTag, opts, -1);
     }
 
-    public MemoryPMARImpl() {
+    public MemoryPMARImpl(int commitMode) {
+        this.commitMode = commitMode;
     }
 
     public final void close(boolean truncate, byte truncateMode) {
@@ -122,11 +128,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public void sync(boolean async) {
-        if (pageAddress != 0) {
-            if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {
-                return;
-            }
-            LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+        if (pageAddress != 0 && commitMode != CommitMode.NOSYNC) {
+            ff.msync(pageAddress, getPageSize(), commitMode == CommitMode.ASYNC);
         }
     }
 
@@ -156,6 +159,9 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     protected void release(long address) {
+        if (commitMode != CommitMode.NOSYNC) {
+            ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+        }
         ff.munmap(address, getPageSize(), memoryTag);
     }
 

@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.frm.file;
 
-public interface Pool<T> {
+public interface RecycleBin<T> {
     boolean isClosed();
 
     void put(T frame);

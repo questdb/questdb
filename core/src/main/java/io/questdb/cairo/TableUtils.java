@@ -70,6 +70,9 @@ public final class TableUtils {
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
     public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
+    // INT - symbol map count, this is a variable part of transaction file
+    // below this offset we will have INT values for symbol map size
+    public static final long META_OFFSET_PARTITION_BY = 4;
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
@@ -161,9 +164,6 @@ public final class TableUtils {
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_NOT_INDEXED = 0;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
-    // INT - symbol map count, this is a variable part of transaction file
-    // below this offset we will have INT values for symbol map size
-    public static final long META_OFFSET_PARTITION_BY = 4;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -383,6 +383,7 @@ public final class TableUtils {
     public static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
+        mem.sync(false);
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
@@ -1049,6 +1050,7 @@ public final class TableUtils {
         mem.putLong(0, 0); // txn
         mem.putLong(32, 0); // count
         mem.jumpTo(40);
+        mem.sync(false);
     }
 
     public static void resetTxn(
@@ -1409,6 +1411,7 @@ public final class TableUtils {
             for (int i = 0; i < count; i++) {
                 mem.putStr(structure.getColumnName(i));
             }
+            mem.sync(false);
 
             // create symbol maps
             int symbolMapCount = 0;
@@ -1428,9 +1431,10 @@ public final class TableUtils {
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
-
+            mem.sync(false);
             mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createColumnVersionFile(mem);
+            mem.sync(false);
             mem.close();
 
             resetTodoLog(ff, path, rootLen, mem);
@@ -1441,13 +1445,7 @@ public final class TableUtils {
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
         } finally {
             if (dirFd > 0) {
-                if (ff.fsync(dirFd) != 0) {
-                    LOG.error()
-                            .$("could not fsync [fd=").$(dirFd)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
-                }
-                ff.close(dirFd);
+                ff.fsyncAndClose(dirFd);
             }
         }
     }

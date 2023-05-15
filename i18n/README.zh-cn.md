@@ -33,12 +33,12 @@
 # QuestDB
 
 QuestDB 是一个开源的時序数据库，支持高吞吐数据获取和快速 SQL 查询，操作简单。
-应用场景包括金融市场数据、传感器数据、实时分析、数据仪表板和基础设施监控。它兼容
-InfluxDB 行协议以提供不受数据库模式影响的高吞吐数据获取能力，也兼容 PostgreSQL
-的线路协议，並提供 REST API 以便于批量导入和导出。
+它支持使用InfluxDB连接协议、PostgreSQL协议和REST API进行批量无模式导入和导出。
 
-QuestDB 使用 ANSI SQL ，並包含时间导向的 SQL 语义。这些 SQL 语义能更简单的连接
-（JOIN）不同来源的关联数据以及时间序列数据。QuestDB 通过列导向的存储模型、大规模
+QuestDB非常适用于金融市场数据、应用程序指标、传感器数据、实时分析、仪表板和系统基础设施监控。
+
+QuestDB使用原生时间序列SQL插件实现了ANSI SQL。这些 SQL 扩展语义能更简单的连接
+（JOIN）多个来源的关系型数据以及时间序列数据。我们通过列导向的存储模型、大规模
 并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和
 C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
 
@@ -58,7 +58,7 @@ C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾�
 和几个样本数据集：
 
 - Trips： 近 10 年的纽约市出租车行程轨迹数据集，含 1.6 亿行的数据。
-- Trades： 即时加密货币（比特币、以太币）交易数据集。
+- Trades： 每月30M+的实时加密货币市场数据。
 - Pos： 含有 25 万艘船的时序地理数据集。
 
 | 查询                                                                          | 运行时间                                                                                                                                                                                            |
@@ -91,8 +91,8 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-[QuestDB 下载页面](https://questdb.io/get-questdb/) 提供二进制文件的直接下载，并
-提供其他安装和部署方法的详细信息。
+[QuestDB 下载页面](https://questdb.io/get-questdb/) 提供运行文件的直接下载，并
+提供其他安装和部署方式的详细信息。
 
 ### 连接到 QuestDB
 
@@ -102,14 +102,13 @@ questdb stop  // To stop questdb
   控制台，默认运行在 `9000` 端口
 - [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
   持高性能、高吞吐量单向数据插入，默认运行在 `9009` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : 使用 REST API 来进行
-  交互，默认需要使用 `9000` 端口进行访问
+- [REST API](https://questdb.io/docs/reference/api/rest/) : 默认运行在 `9000` 端口
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
   默认运行在 `8812` 端口
 
-### 获取数据
+### 写入数据
 
-以下是我們官方开发的 InfluxDB line protocol 客户端，支持多种编程语言：
+以下是我们官方开发的questdb客户端，支持多种编程语言：
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -119,13 +118,13 @@ questdb stop  // To stop questdb
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
-## QuestDB 与其他开源 TSDB 的对比情况
+## QuestDB 与其他开源 TSDB 的对比
 
 参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
-其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序资料库。
+其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序数据库。
 
-以下是 [时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
-用例的测试结果，基于 6 个 worker 的 AMD Ryzen 3970X 上测试对比得到：
+以下是 高维度[时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
+用例的测试结果，基于使用 6 到 16 个工作线程在 32 个 CPU 和 64 GB RAM上测试对比得到：
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
@@ -140,19 +139,15 @@ questdb stop  // To stop questdb
 
 ### 📚 阅读文档
 
-- [QuestDB documentation:](https://questdb.io/docs/introduction/) 描述了如何运行
+- [QuestDB 文档:](https://questdb.io/docs/introduction/) 描述了如何运行
   和配置 QuestDB 的技术参考。
-- 由我们的社区成员编写的[教程](https://questdb.io/tutorial/)展示了 QuestDB 的可
-  能应用。
-- [产品路线图](https://github.com/questdb/questdb/projects/3)列出了我们目前正在
-  进行的任务和功能。
+- [教程](https://questdb.io/tutorial/) 逐步了解QuestDB的功能。
+- [产品路线图](https://github.com/questdb/questdb/projects) 了解我们下个产品发布的计划。
 
 ### ❓ 寻求支持
 
-- [Community Slack:](https://slack.questdb.io) 是一个进行技术讨论和认识其他用户
-  的好地方。👋
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB 缺陷
-  、功能建议或是反馈问题。
+- [Community Slack:](https://slack.questdb.io) 加入技术讨论，提问问题，与其他用户见面！
+- [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB bugs与问题
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 寻找常见
   问题的解决方法。
 

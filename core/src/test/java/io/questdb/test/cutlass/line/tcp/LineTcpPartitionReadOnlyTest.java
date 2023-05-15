@@ -209,7 +209,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         txWriter.setPartitionReadOnly(i, partitionIsReadOnly[i]);
                     }
                     txWriter.bumpTruncateVersion();
-                    txWriter.commit(CommitMode.NOSYNC, writer.getDenseSymbolMapWriters()); // default commit mode
+                    txWriter.commit(writer.getDenseSymbolMapWriters()); // default commit mode
                 }
 
                 // check read only state

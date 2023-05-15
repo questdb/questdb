@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.charFileName;
@@ -49,6 +50,7 @@ public interface MapWriter extends SymbolCountProvider {
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
+            mem.sync(false);
             mem.close();
 
             if (!ff.touch(charFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -57,12 +59,15 @@ public interface MapWriter extends SymbolCountProvider {
 
             mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+            mem.sync(false);
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         } finally {
-            mem.close();
+            Misc.free(mem);
             path.trimTo(plen);
         }
     }
+
+    void sync(boolean async);
 
     boolean getNullFlag();
 

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
+import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -58,7 +59,6 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.ServiceLoader;
 
-import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -101,7 +101,7 @@ public class SqlCompiler implements Closeable {
     private final QueryBuilder queryBuilder = new QueryBuilder();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final IndexBuilder rebuildIndex = new IndexBuilder();
+    private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path();
     private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -128,6 +128,7 @@ public class SqlCompiler implements Closeable {
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.messageBus = engine.getMessageBus();
+        this.rebuildIndex = new IndexBuilder(configuration);
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
@@ -1046,7 +1047,7 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
             engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
-            executionContext.storeTelemetry(TelemetryOrigin.WAL_APPLY, WAL_APPLY_RESUME);
+            executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             return compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
@@ -2272,7 +2273,7 @@ public class SqlCompiler implements Closeable {
             tok = GenericLexer.unquote(tok);
         }
         TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()), configuration);
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
 
         tok = SqlUtil.fetchNext(lexer);
         CharSequence columnName = null;
@@ -2338,10 +2339,13 @@ public class SqlCompiler implements Closeable {
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
 
-        textLoader.configureDestination(model.getTarget().token, false, false,
+        textLoader.configureDestination(
+                model.getTarget().token,
+                false,
                 model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
                 model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
-                model.getTimestampColumnName(), model.getTimestampFormat());
+                model.getTimestampColumnName(), model.getTimestampFormat()
+        );
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
