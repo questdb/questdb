@@ -34,9 +34,9 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjectFactory;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.tasks.AbstractTelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -60,7 +60,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         final TelemetryConfiguration telemetryConfiguration = type.getTelemetryConfiguration(configuration);
         enabled = telemetryConfiguration.getEnabled();
         if (enabled) {
-            this.telemetryType = type;
+            telemetryType = type;
             clock = configuration.getMicrosecondClock();
             telemetryQueue = new RingQueue<>(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
@@ -110,6 +110,13 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
 
         telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_UP, clock.getTicks());
+
+        if (telemetryType.shouldLogClasses()) {
+            telemetryType.logStatus(writer, getOSClass(), clock.getTicks());
+            telemetryType.logStatus(writer, getCpuClass(), clock.getTicks());
+            telemetryType.logStatus(writer, getDBSizeClass(engine.getConfiguration()), clock.getTicks());
+            telemetryType.logStatus(writer, getTableCountClass(engine), clock.getTicks());
+        }
     }
 
     public boolean isEnabled() {
@@ -133,6 +140,80 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         telemetryPubSeq.done(telemetryPubSeq.current());
     }
 
+    private static short getCpuClass() {
+        final int cpus = Runtime.getRuntime().availableProcessors();
+        if (cpus <= 4) {         // 0 - 1-4 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE;
+        } else if (cpus <= 8) {  // 1 - 5-8 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 1;
+        } else if (cpus <= 16) { // 2 - 9-16 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 2;
+        } else if (cpus <= 32) { // 3 - 17-32 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 3;
+        } else if (cpus <= 64) { // 4 - 33-64 cores
+            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 4;
+        }
+        // 5 - 65+ cores
+        return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 5;
+    }
+
+    private static short getDBSizeClass(CairoConfiguration configuration) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence root = configuration.getRoot();
+        final Path path = Path.PATH.get();
+        path.of(root).$();
+
+        final long dbSize = ff.getDirSize(path);
+        if (dbSize <= 10 * Numbers.SIZE_1GB) {          // 0 - <10GB
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
+        } else if (dbSize <= 50 * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 1;
+        } else if (dbSize <= 100 * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 2;
+        } else if (dbSize <= 500 * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 3;
+        } else if (dbSize <= Numbers.SIZE_1TB) {        // 4 - (500GB,1TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 4;
+        } else if (dbSize <= 5 * Numbers.SIZE_1TB) {    // 5 - (1TB,5TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 5;
+        } else if (dbSize <= 10 * Numbers.SIZE_1TB) {   // 6 - (5TB,10TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
+        }
+        // 7 - >10TB
+        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
+    }
+
+    private static short getOSClass() {
+        if (Os.isLinux()) {          // 0 - Linux
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE;
+        } else if (Os.isOSX()) {     // 1 - OS X
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 1;
+        } else if (Os.isWindows()) { // 2 - Windows
+            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 2;
+        }
+        // 3 - BSD
+        return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 3;
+    }
+
+    private static short getTableCountClass(CairoEngine engine) {
+        final long tableCount = engine.getTableTokenCount(false);
+        if (tableCount <= 10) {          // 0 - 0-10 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE;
+        } else if (tableCount <= 25) {   // 1 - 11-25 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 1;
+        } else if (tableCount <= 50) {   // 2 - 26-50 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 2;
+        } else if (tableCount <= 100) {  // 3 - 51-100 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 3;
+        } else if (tableCount <= 250) {  // 4 - 101-250 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 4;
+        } else if (tableCount <= 1000) { // 5 - 251-1000 tables
+            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 5;
+        }
+        // 6 - 1001+ tables
+        return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 6;
+    }
+
     public interface TelemetryType<T extends AbstractTelemetryTask> {
         SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder);
 
@@ -147,6 +228,10 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
 
         default void logStatus(TableWriter writer, short systemStatus, long micros) {
+        }
+
+        default boolean shouldLogClasses() {
+            return false;
         }
     }
 
