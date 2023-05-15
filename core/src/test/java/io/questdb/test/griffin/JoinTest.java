@@ -34,10 +34,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -2357,6 +2357,19 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinInnerAllTypesFF() throws Exception {
         testFullFat(this::testJoinInnerAllTypes);
+    }
+
+    @Test
+    public void testJoinInnerConstantFilterWithNonBooleanExpressionFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);", sqlExecutionContext);
+
+            assertFailure(
+                    "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now()",
+                    "boolean expression expected",
+                    73
+            );
+        });
     }
 
     @Test

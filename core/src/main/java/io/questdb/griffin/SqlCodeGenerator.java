@@ -1695,12 +1695,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                         }
                     }
-                } catch (Throwable th) {
+                } catch (Throwable e) {
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);
                     }
-                    throw th;
+                    throw e;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
                 }
@@ -1747,16 +1747,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilter = model.getConstWhereClause();
             if (constFilter != null) {
                 Function function = functionParser.parseFunction(constFilter, null, executionContext);
-                if (!function.getBool(null)) {
-                    // do not copy metadata here
-                    // this would have been JoinRecordMetadata, which is new instance anyway
-                    // we have to make sure that this metadata is safely transitioned
-                    // to empty cursor factory
-                    JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
-                    metadata.incrementRefCount();
-                    RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
-                    Misc.free(master);
-                    return factory;
+                try {
+                    if (!function.getBool(null)) {
+                        // do not copy metadata here
+                        // this would have been JoinRecordMetadata, which is new instance anyway
+                        // we have to make sure that this metadata is safely transitioned
+                        // to empty cursor factory
+                        JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
+                        metadata.incrementRefCount();
+                        RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
+                        Misc.free(master);
+                        return factory;
+                    }
+                } catch (UnsupportedOperationException e) {
+                    throw SqlException.position(constFilter.position).put("boolean expression expected");
                 }
             }
             return master;
