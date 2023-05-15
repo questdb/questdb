@@ -312,7 +312,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             } else if (!segmentLocked) {
                 // If the sequencer doesn't track any unapplied changes for this walId and the walId is unlocked,
-                // then we can delete the whole segment, unless any of the segments track pending tasks.
+                // then we can delete the whole WAL directory, unless any of its segments track pending tasks.
                 if (!lockedWalIDSet.contains(walId) && !pendingWalIDSet.contains(walId)) {
                     deleteWalDirectory(walId);
                 } else {
