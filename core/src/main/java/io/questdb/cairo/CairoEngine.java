@@ -478,6 +478,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTableToken(dirName, tableId);
     }
 
+    public int getTableTokenCount(boolean includeDropped) {
+        return tableNameRegistry.getTableTokenCount(includeDropped);
+    }
+
     public TableToken getTableTokenIfExists(CharSequence tableName) {
         return tableNameRegistry.getTableToken(tableName);
     }
