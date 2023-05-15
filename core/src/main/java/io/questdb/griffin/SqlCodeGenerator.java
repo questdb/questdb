@@ -1747,21 +1747,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilter = model.getConstWhereClause();
             if (constFilter != null) {
                 Function function = functionParser.parseFunction(constFilter, null, executionContext);
-                function.init(null, executionContext);
-                try {
-                    if (!function.getBool(null)) {
-                        // do not copy metadata here
-                        // this would have been JoinRecordMetadata, which is new instance anyway
-                        // we have to make sure that this metadata is safely transitioned
-                        // to empty cursor factory
-                        JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
-                        metadata.incrementRefCount();
-                        RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
-                        Misc.free(master);
-                        return factory;
-                    }
-                } catch (UnsupportedOperationException e) {
+                if (!ColumnType.isBoolean(function.getType())) {
                     throw SqlException.position(constFilter.position).put("boolean expression expected");
+                }
+                function.init(null, executionContext);
+                if (!function.getBool(null)) {
+                    // do not copy metadata here
+                    // this would have been JoinRecordMetadata, which is new instance anyway
+                    // we have to make sure that this metadata is safely transitioned
+                    // to empty cursor factory
+                    JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
+                    metadata.incrementRefCount();
+                    RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
+                    Misc.free(master);
+                    return factory;
                 }
             }
             return master;
