@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
@@ -40,12 +41,14 @@ import io.questdb.std.str.Path;
  */
 public class IndexBuilder extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(IndexBuilder.class);
-    private final MemoryMAR ddlMem = Vm.getMARInstance();
+    private final MemoryMAR ddlMem;
     private final MemoryMR indexMem = Vm.getMRInstance();
-    private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
+    private final SymbolColumnIndexer indexer;
 
-    public IndexBuilder() {
-        super();
+    public IndexBuilder(CairoConfiguration configuration) {
+        super(configuration);
+        ddlMem = Vm.getMARInstance(configuration.getCommitMode());
+        indexer = new SymbolColumnIndexer(configuration);
         unsupportedColumnMessage = "Column is not indexed";
     }
 
@@ -64,7 +67,7 @@ public class IndexBuilder extends RebuildColumnBase {
         Misc.free(indexer);
     }
 
-    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, long columnNameTxn) {
+    private void createIndexFiles(FilesFacade ff, CharSequence columnName, int indexValueBlockCapacity, int plen, long columnNameTxn) {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
             try {
@@ -99,7 +102,7 @@ public class IndexBuilder extends RebuildColumnBase {
         }
     }
 
-    private void removeFile(Path path) {
+    private void removeFile(FilesFacade ff, Path path) {
         LOG.info().$("deleting ").utf8(path).$();
         if (!ff.remove(this.path)) {
             if (!ff.exists(this.path)) {
@@ -111,16 +114,17 @@ public class IndexBuilder extends RebuildColumnBase {
         }
     }
 
-    private void removeIndexFiles(CharSequence columnName, long columnNameTxn) {
+    private void removeIndexFiles(FilesFacade ff, CharSequence columnName, long columnNameTxn) {
         final int plen = path.length();
         BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
-        removeFile(path);
+        removeFile(ff, path);
 
         BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
-        removeFile(path);
+        removeFile(ff, path);
     }
 
     protected void doReindex(
+            FilesFacade ff,
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,
             CharSequence columnName,
@@ -138,7 +142,7 @@ public class IndexBuilder extends RebuildColumnBase {
             if (ff.exists(path.$())) {
                 try (final MemoryMR roMem = indexMem) {
                     long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
-                    removeIndexFiles(columnName, columnNameTxn);
+                    removeIndexFiles(ff, columnName, columnNameTxn);
                     TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
                     final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
@@ -146,7 +150,7 @@ public class IndexBuilder extends RebuildColumnBase {
 
                         if (partitionSize > columnTop) {
                             LOG.info().$("indexing [path=").utf8(path).I$();
-                            createIndexFiles(columnName, indexValueBlockCapacity, plen, columnNameTxn);
+                            createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
                             TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
                             roMem.of(
                                     ff,
@@ -156,7 +160,7 @@ public class IndexBuilder extends RebuildColumnBase {
                                     MemoryTag.MMAP_TABLE_WRITER
                             );
                             try {
-                                indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             } finally {
                                 indexer.clear();

@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RecoverVarIndexTest extends AbstractCairoTest {
     private static SqlCompiler compiler;
     private static SqlExecutionContext sqlExecutionContext;
-    private final RecoverVarIndex rebuildVarColumn = new RecoverVarIndex();
+    private final RecoverVarIndex rebuildVarColumn = new RecoverVarIndex(configuration);
     TableWriter tempWriter;
 
     @BeforeClass
@@ -327,7 +327,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 checkRecoverVarIndex(createTableSql,
                         tablePath -> {
                         },
-                        rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+                        rebuildIndex -> rebuildIndex.reindexColumn(ff, "str2"));
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
@@ -372,7 +372,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             changeTable.run(tablePath);
 
             rebuildVarColumn.clear();
-            rebuildVarColumn.of(tablePath, configuration);
+            rebuildVarColumn.of(tablePath);
             rebuildIndexAction.run(rebuildVarColumn);
 
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "copytbl", "xxx", LOG);

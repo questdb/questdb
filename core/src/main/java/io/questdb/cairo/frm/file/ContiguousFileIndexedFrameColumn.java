@@ -25,26 +25,24 @@
 package io.questdb.cairo.frm.file;
 
 import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColumn {
-    private final FilesFacade ff;
     private final BitmapIndexWriter indexWriter;
 
-    public ContiguousFileIndexedFrameColumn(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
-        super(ff, fileOpts);
-        this.ff = ff;
-        this.indexWriter = new BitmapIndexWriter(ff, keyAppendPageSize, valueAppendPageSize);
+    public ContiguousFileIndexedFrameColumn(CairoConfiguration configuration) {
+        super(configuration);
+        this.indexWriter = new BitmapIndexWriter(configuration);
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
-        super.append(offset, sourceColumn, sourceLo, sourceHi);
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+        super.append(offset, sourceColumn, sourceLo, sourceHi, commitMode);
         int fd = super.getPrimaryFd();
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
@@ -59,6 +57,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
                     indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), offset + i);
                 }
                 indexWriter.setMaxValue(offset + size - 1);
+                indexWriter.commit();
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, size << shl, MEMORY_TAG);
             }
@@ -66,13 +65,14 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     }
 
     @Override
-    public void appendNulls(long offset, long count) {
-        super.appendNulls(offset, count);
+    public void appendNulls(long offset, long count, int commitMode) {
+        super.appendNulls(offset, count, commitMode);
         indexWriter.rollbackConditionally(offset);
         for (long i = 0; i < count; i++) {
             indexWriter.add(0, offset + i);
         }
         indexWriter.setMaxValue(offset + count - 1);
+        indexWriter.commit();
     }
 
     @Override

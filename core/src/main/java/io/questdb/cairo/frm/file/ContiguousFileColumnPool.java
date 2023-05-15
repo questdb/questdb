@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.frm.file;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.frm.FrameColumnPool;
@@ -37,20 +38,16 @@ import java.io.Closeable;
 public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
     private final FilesFacade ff;
-    private final long fileOpts;
     private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
-    private final long keyAppendPageSize;
-    private final long valueAppendPageSize;
     private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
     private boolean canWrite;
     private boolean isClosed;
+    private final CairoConfiguration configuration;
 
-    public ContiguousFileColumnPool(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
-        this.ff = ff;
-        this.fileOpts = fileOpts;
-        this.keyAppendPageSize = keyAppendPageSize;
-        this.valueAppendPageSize = valueAppendPageSize;
+    public ContiguousFileColumnPool(CairoConfiguration configuration) {
+        this.ff = configuration.getFilesFacade();
+        this.configuration = configuration;
     }
 
     @Override
@@ -110,7 +107,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             if (fixColumnPool.size() > 0) {
                 return fixColumnPool.pop();
             }
-            ContiguousFileFixFrameColumn col = new ContiguousFileFixFrameColumn(ff, fileOpts);
+            ContiguousFileFixFrameColumn col = new ContiguousFileFixFrameColumn(configuration);
             col.setPool(fixColumnPool);
             return col;
         }
@@ -119,7 +116,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             if (indexedColumnPool.size() > 0) {
                 return (ContiguousFileIndexedFrameColumn) indexedColumnPool.pop();
             }
-            ContiguousFileIndexedFrameColumn col = new ContiguousFileIndexedFrameColumn(ff, fileOpts, keyAppendPageSize, valueAppendPageSize);
+            ContiguousFileIndexedFrameColumn col = new ContiguousFileIndexedFrameColumn(configuration);
             col.setPool(indexedColumnPool);
             return col;
         }
@@ -128,13 +125,13 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             if (varColumnPool.size() > 0) {
                 return varColumnPool.pop();
             }
-            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(ff, fileOpts);
+            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(ff, configuration.getWriterFileOpenOpts());
             col.setPool(varColumnPool);
             return col;
         }
     }
 
-    private class ListPool<T> implements Pool<T> {
+    private class ListPool<T> implements RecycleBin<T> {
         private final ObjList<T> pool = new ObjList<>();
 
         @Override

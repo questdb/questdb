@@ -210,10 +210,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void sync(boolean async) {
-        if (pageAddress != 0 && ff.msync(pageAddress, size, async) == 0) {
-            return;
-        }
-        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+        ff.msync(pageAddress, size, async);
     }
 
     @Override
