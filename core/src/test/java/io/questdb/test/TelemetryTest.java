@@ -26,21 +26,22 @@ package io.questdb.test;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TelemetryTest extends AbstractCairoTest {
@@ -72,7 +73,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     compiler.compile("drop table " + TELEMETRY, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table="+TELEMETRY+"]");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=" + TELEMETRY + "]");
                 }
             }
         });
@@ -144,6 +145,38 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTelemetryStoresNonEvents() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
+                Misc.free(telemetryJob);
+                refreshTablesInBaseEngine();
+
+                HashSet<Short> expectedClasses = new HashSet<>();
+                expectedClasses.add(TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE);
+                expectedClasses.add(TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE);
+                expectedClasses.add(TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE);
+                expectedClasses.add(TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
+
+                HashSet<Short> actualClasses = new HashSet<>();
+                try (TableReader reader = newTableReader(configuration, TELEMETRY)) {
+                    final RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        final short event = record.getShort(1);
+                        if (event >= 0) {
+                            continue; // skip event entries
+                        }
+                        actualClasses.add((short) (event - event % 10));
+                    }
+                }
+
+                Assert.assertEquals(expectedClasses, actualClasses);
+            }
+        });
+    }
+
+    @Test
     public void testTelemetryStoresUpAndDownEvents() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -151,13 +184,9 @@ public class TelemetryTest extends AbstractCairoTest {
                 Misc.free(telemetryJob);
                 refreshTablesInBaseEngine();
 
-                final String expectedEvent = "100\n" +
-                        "101\n";
-                assertColumn(expectedEvent, 1);
-
-                final String expectedOrigin = "1\n" +
-                        "1\n";
-                assertColumn(expectedOrigin, 2);
+                final String expectedEvent = "100\t1\n" +
+                        "101\t1\n";
+                assertEventAndOrigin(expectedEvent);
             }
         });
     }
@@ -221,15 +250,29 @@ public class TelemetryTest extends AbstractCairoTest {
         });
     }
 
-    protected void assertColumn(CharSequence expected, int index) {
+    private void assertEventAndOrigin(CharSequence expected) {
         try (TableReader reader = newTableReader(configuration, TELEMETRY)) {
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
+            printEventAndOrigin(reader.getCursor(), reader.getMetadata());
             TestUtils.assertEquals(expected, sink);
             reader.getCursor().toTop();
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
+            printEventAndOrigin(reader.getCursor(), reader.getMetadata());
             TestUtils.assertEquals(expected, sink);
+        }
+    }
+
+    private void printEventAndOrigin(RecordCursor cursor, RecordMetadata metadata) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            final short event = record.getShort(1);
+            if (event < 0) {
+                continue; // skip non-event entries
+            }
+            TestUtils.printColumn(record, metadata, 1, sink, false);
+            sink.put('\t');
+            TestUtils.printColumn(record, metadata, 2, sink, false);
+            sink.put('\n');
         }
     }
 }

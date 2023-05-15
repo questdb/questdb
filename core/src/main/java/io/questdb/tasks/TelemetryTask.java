@@ -70,6 +70,11 @@ public class TelemetryTask implements AbstractTelemetryTask {
             systemStatusTask.writeTo(writer, micros);
             writer.commit();
         }
+
+        @Override
+        public boolean shouldLogClasses() {
+            return true;
+        }
     };
     private short event;
     private short origin;
