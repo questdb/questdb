@@ -384,7 +384,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         processNodeQueryModels(node, BACKUP_WHERE_CLAUSE);
     }
 
-    // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
+    // Checks if lo, hi is set and lo >= 0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
     private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
         if (model.getLimitLo() == null && model.getLimitHi() == null) {
@@ -1747,6 +1747,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilter = model.getConstWhereClause();
             if (constFilter != null) {
                 Function function = functionParser.parseFunction(constFilter, null, executionContext);
+                function.init(null, executionContext);
                 if (!function.getBool(null)) {
                     // do not copy metadata here
                     // this would have been JoinRecordMetadata, which is new instance anyway
