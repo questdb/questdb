@@ -176,6 +176,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
     private final int o3LagCalculationWindowsSize;
+    private final int o3LastPartitionMaxSplits;
     private final long o3MaxLag;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
@@ -348,6 +349,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
+    private boolean httpPessimisticHealthCheckEnabled;
     private boolean httpReadOnlySecurityContext;
     private boolean httpServerKeepAlive;
     private String httpVersion;
@@ -406,6 +408,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int multipartHeaderBufferSize;
     private long multipartIdleSpinCount;
     private int netTestConnectionBufferSize;
+    private final long o3PartitionSplitMinSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -571,8 +574,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
                 this.httpMinWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
-                this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, cpuAvailable > 16 ? 1 : 0);
-                cpuUsed += this.httpMinWorkerCount;
+                this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
                 this.httpMinWorkerAffinity = getAffinity(properties, env, PropertyKey.HTTP_MIN_WORKER_AFFINITY, httpMinWorkerCount);
                 this.httpMinWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_YIELD_THRESHOLD, 10);
                 this.httpMinWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_THRESHOLD, 100);
@@ -686,6 +688,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
+                this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
                 this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
                 this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
                 this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
@@ -980,6 +983,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
+            this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
+
+            // 1TB to disable by default
+            this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1024L * 1024L * 1024L * 1024L);
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -1652,11 +1659,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     class PropCairoConfiguration implements CairoConfiguration {
-        private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
+        private final LongSupplier copyIDSupplier = () -> getRandom().nextPositiveLong();
 
         @Override
-        public LongSupplier getImportIDSupplier() {
-            return importIDSupplier;
+        public LongSupplier getCopyIDSupplier() {
+            return copyIDSupplier;
         }
 
         @Override
@@ -1975,6 +1982,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3LastPartitionMaxSplits() {
+            return o3LastPartitionMaxSplits;
+        }
+
+        @Override
         public long getO3MaxLag() {
             return o3MaxLag;
         }
@@ -2032,6 +2044,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
+        }
+
+        @Override
+        public long getPartitionO3SplitMinSize() {
+            return o3PartitionSplitMinSize;
         }
 
         @Override
@@ -2861,6 +2878,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isEnabled() {
             return httpMinServerEnabled;
         }
+
+        @Override
+        public boolean isPessimisticHealthCheckEnabled() {
+            return httpPessimisticHealthCheckEnabled;
+        }
     }
 
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
@@ -2938,6 +2960,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpServerEnabled;
+        }
+
+        @Override
+        public boolean isPessimisticHealthCheckEnabled() {
+            return httpPessimisticHealthCheckEnabled;
         }
 
         @Override

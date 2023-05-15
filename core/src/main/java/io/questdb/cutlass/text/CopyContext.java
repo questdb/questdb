@@ -32,33 +32,33 @@ import io.questdb.std.Mutable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
-public class TextImportExecutionContext implements Mutable {
-    public static final long INACTIVE = -1;
-    private final AtomicLong activeImportId = new AtomicLong(INACTIVE);
+public class CopyContext implements Mutable {
+    public static final long INACTIVE_COPY_ID = -1;
+    private final AtomicLong activeCopyID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
-    private final LongSupplier importIDSupplier;
+    private final LongSupplier copyIDSupplier;
     private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
-    public TextImportExecutionContext(CairoConfiguration configuration) {
-        this.importIDSupplier = configuration.getImportIDSupplier();
+    public CopyContext(CairoConfiguration configuration) {
+        this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
     public long assignActiveImportId(SecurityContext securityContext) {
-        final long id = importIDSupplier.getAsLong();
-        activeImportId.set(id);
+        final long id = copyIDSupplier.getAsLong();
+        activeCopyID.set(id);
         this.originatorSecurityContext = securityContext;
         return id;
     }
 
     @Override
     public void clear() {
-        activeImportId.set(INACTIVE);
+        activeCopyID.set(INACTIVE_COPY_ID);
         originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     }
 
-    public long getActiveImportId() {
-        return activeImportId.get();
+    public long getActiveCopyID() {
+        return activeCopyID.get();
     }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {

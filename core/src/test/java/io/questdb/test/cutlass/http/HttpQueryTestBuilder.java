@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -45,6 +46,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 
 import java.util.concurrent.BrokenBarrierException;
+import java.util.function.LongSupplier;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -126,6 +128,11 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
+                    public LongSupplier getCopyIDSupplier() {
+                        return () -> 0;
+                    }
+
+                    @Override
                     public int getSqlJitMode() {
                         return jitMode;
                     }
@@ -154,6 +161,13 @@ public class HttpQueryTestBuilder {
                 if (telemetry) {
                     telemetryJob = new TelemetryJob(engine);
                 }
+
+                if (cairoConfiguration.getSqlCopyInputRoot() != null) {
+                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount, null);
+                    workerPool.assign(copyRequestJob);
+                    workerPool.freeOnExit(copyRequestJob);
+                }
+
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {

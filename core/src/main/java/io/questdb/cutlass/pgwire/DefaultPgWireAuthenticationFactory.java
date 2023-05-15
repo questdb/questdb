@@ -24,27 +24,11 @@
 
 package io.questdb.cutlass.pgwire;
 
-public final class PGBasicAuthenticatorFactory implements PGAuthenticatorFactory {
-    public static final PGBasicAuthenticatorFactory INSTANCE = new PGBasicAuthenticatorFactory();
+public class DefaultPgWireAuthenticationFactory implements PgWireAuthenticationFactory {
+    public static final PgWireAuthenticationFactory INSTANCE = new DefaultPgWireAuthenticationFactory();
 
     @Override
-    public PGAuthenticator getInstance(PGWireConfiguration configuration) {
-        return new PGBasicAuthenticator(
-                configuration.getFactoryProvider().getSecurityContextFactory(),
-                configuration.getDefaultUsername(),
-                configuration.getDefaultPassword(),
-                configuration.readOnlySecurityContext()
-        );
-    }
-
-    @Override
-    public PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration) {
-        assert configuration.isReadOnlyUserEnabled();
-        return new PGBasicAuthenticator(
-                configuration.getFactoryProvider().getSecurityContextFactory(),
-                configuration.getReadOnlyUsername(),
-                configuration.getReadOnlyPassword(),
-                true
-        );
+    public ClearTextPgWireAuthenticator getPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, PGWireConfiguration configuration) {
+        return new ClearTextPgWireAuthenticator(responseAsciiSink, configuration);
     }
 }

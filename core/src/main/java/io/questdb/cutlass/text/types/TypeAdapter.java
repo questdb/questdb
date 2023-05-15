@@ -29,6 +29,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 
 public interface TypeAdapter {
+
     int getType();
 
     default boolean isIndexed() {

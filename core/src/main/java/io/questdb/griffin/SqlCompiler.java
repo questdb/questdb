@@ -33,12 +33,12 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.*;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriterMetadata;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.*;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.engine.ops.CopyFactory;
-import io.questdb.griffin.engine.ops.InsertOperationImpl;
-import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
@@ -51,16 +51,17 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
-import java.util.function.Consumer;
 
 import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompiler implements Closeable {
@@ -98,6 +99,7 @@ public class SqlCompiler implements Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final Path path = new Path();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
+    private final QueryBuilder queryBuilder = new QueryBuilder();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex = new IndexBuilder();
@@ -282,6 +284,12 @@ public class SqlCompiler implements Closeable {
     }
 
     @TestOnly
+    public QueryBuilder query() {
+        queryBuilder.clear();
+        return queryBuilder;
+    }
+
+    // used in tests
     public void setEnableJitNullChecks(boolean value) {
         codeGenerator.setEnableJitNullChecks(value);
     }
@@ -322,6 +330,18 @@ public class SqlCompiler implements Closeable {
             if (op.symbol) {
                 lexer.defineSymbol(op.token);
             }
+        }
+    }
+
+    private static void expectIndexKeyword(GenericLexer lexer) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'index' expected");
+        }
+
+        if (!SqlKeywords.isIndexKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'index' expected");
         }
     }
 
@@ -385,7 +405,7 @@ public class SqlCompiler implements Closeable {
                         final CharSequence columnName = GenericLexer.immutableOf(tok);
                         tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
-                            expectKeyword(lexer, "index");
+                            expectIndexKeyword(lexer);
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
 
@@ -417,7 +437,7 @@ public class SqlCompiler implements Closeable {
 
                         } else if (SqlKeywords.isDropKeyword(tok)) {
                             // alter table <table name> alter column drop index
-                            expectKeyword(lexer, "index");
+                            expectIndexKeyword(lexer);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && !isSemicolon(tok)) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
@@ -934,7 +954,7 @@ public class SqlCompiler implements Closeable {
             // before applying to WAL writer
             if (reader != null) {
                 try {
-                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy(), 0, -1);
                     alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
                 } catch (CairoException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
@@ -1076,46 +1096,64 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void cancelTextImport(SecurityContext securityContext, CopyModel model) throws SqlException {
-        assert model.isCancel();
-
-        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
-        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
-
-        long inProgressImportId = textImportExecutionContext.getActiveImportId();
-        // The cancellation is based on the best effort, so we don't worry about potential races with imports.
-        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
-            throw SqlException.$(0, "No active import to cancel.");
-        }
-
-        textImportExecutionContext.getOriginatorSecurityContext().authorizeCopyCancel(securityContext);
-
-        long importId;
-        try {
-            CharSequence idString = model.getTarget().token;
-            int start = 0;
-            int end = idString.length();
-            if (Chars.isQuoted(idString)) {
-                start = 1;
-                end--;
-            }
-            importId = Numbers.parseHexLong(idString, start, end);
-        } catch (NumericException e) {
-            throw SqlException.$(0, "Provided id has invalid format.");
-        }
-        if (inProgressImportId == importId) {
-            circuitBreaker.cancel();
-        } else {
-            throw SqlException.$(0, "Active import has different id.");
-        }
-    }
-
     private CompiledQuery compileBegin(SqlExecutionContext executionContext) {
         return compiledQuery.ofBegin();
     }
 
     private CompiledQuery compileCommit(SqlExecutionContext executionContext) {
         return compiledQuery.ofCommit();
+    }
+
+    private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
+        assert !model.isCancel();
+
+        securityContext.authorizeCopy();
+
+        if (model.getTimestampColumnName() == null &&
+                ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+            throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
+        }
+        if (model.getDelimiter() < 0) {
+            model.setDelimiter((byte) ',');
+        }
+
+        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final ExpressionNode fileNameNode = model.getFileName();
+        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
+        assert fileName != null;
+
+        return new CopyFactory(
+                messageBus,
+                engine.getCopyContext(),
+                Chars.toString(tableName),
+                Chars.toString(fileName),
+                model
+        );
+    }
+
+    private RecordCursorFactory compileCopyCancel(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+        assert model.isCancel();
+
+        long cancelCopyID;
+        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTarget().token));
+        try {
+            cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
+
+        } catch (NumericException e) {
+            throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
+        }
+        return new CopyCancelFactory(
+                engine.getCopyContext(),
+                cancelCopyID,
+                cancelCopyIDStr,
+                query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("text_import_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory()
+        );
     }
 
     private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
@@ -1201,23 +1239,6 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofSet();
     }
 
-    private CopyFactory compileTextImport(CopyModel model) throws SqlException {
-        assert !model.isCancel();
-
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
-        final ExpressionNode fileNameNode = model.getFileName();
-        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
-        assert fileName != null;
-
-        return new CopyFactory(
-                messageBus,
-                engine.getTextImportExecutionContext(),
-                Chars.toString(tableName),
-                Chars.toString(fileName),
-                model
-        );
-    }
-
     @NotNull
     private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
@@ -1239,7 +1260,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.CREATE_TABLE:
                 return createTableWithRetries(executionModel, executionContext);
             case ExecutionModel.COPY:
-                return executeCopy(executionContext.getSecurityContext(), (CopyModel) executionModel);
+                return copy(executionContext, (CopyModel) executionModel);
             case ExecutionModel.RENAME_TABLE:
                 final RenameTableModel rtm = (RenameTableModel) executionModel;
                 engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
@@ -1266,6 +1287,24 @@ public class SqlCompiler implements Closeable {
                     return insert(executionModel, executionContext);
                 }
         }
+    }
+
+    @NotNull
+    private CompiledQuery copy(SqlExecutionContext executionContext, CopyModel copyModel) throws SqlException {
+        if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
+            // no-op implementation
+            executionContext.getSecurityContext().authorizeCopy();
+            setupTextLoaderFromModel(copyModel);
+            return compiledQuery.ofCopyRemote(textLoader);
+        }
+
+        final RecordCursorFactory copyFactory;
+        if (copyModel.isCancel()) {
+            copyFactory = compileCopyCancel(executionContext, copyModel);
+        } else {
+            copyFactory = compileCopy(executionContext.getSecurityContext(), copyModel);
+        }
+        return compiledQuery.ofCopyLocal(copyFactory);
     }
 
     private long copyOrdered(
@@ -1537,12 +1576,12 @@ public class SqlCompiler implements Closeable {
             SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
-        final TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
+        TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
         int status = executionContext.getTableStatus(path, tableToken);
         if (createTableModel.isIgnoreIfExists() && status != TableUtils.TABLE_DOES_NOT_EXIST) {
-            return compiledQuery.ofCreateTable();
+            return compiledQuery.ofCreateTable(tableToken);
         }
 
         if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -1569,7 +1608,7 @@ public class SqlCompiler implements Closeable {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
                 if (volumeAlias == null) {
-                    engine.createTable(
+                    tableToken = engine.createTable(
                             executionContext.getSecurityContext(),
                             mem,
                             path,
@@ -1577,7 +1616,7 @@ public class SqlCompiler implements Closeable {
                             createTableModel,
                             false);
                 } else {
-                    engine.createTableInVolume(
+                    tableToken = engine.createTableInVolume(
                             executionContext.getSecurityContext(),
                             mem,
                             path,
@@ -1595,42 +1634,21 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            boolean keepLock = !createTableModel.isWalEnabled();
-            createTableFromCursorExecutor(createTableModel, executionContext, name.position, metadata -> {
-                if (volumeAlias == null) {
-                    engine.createTable(
-                            executionContext.getSecurityContext(),
-                            mem,
-                            path,
-                            false,
-                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
-                            keepLock
-                    );
-                } else {
-                    engine.createTableInVolume(
-                            executionContext.getSecurityContext(),
-                            mem,
-                            path,
-                            false,
-                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
-                            keepLock
-                    );
-                }
-            });
+            tableToken = createTableFromCursorExecutor(createTableModel, executionContext, name.position, volumeAlias);
         }
 
         if (createTableModel.getQueryModel() == null) {
-            return compiledQuery.ofCreateTable();
+            return compiledQuery.ofCreateTable(tableToken);
         } else {
-            return compiledQuery.ofCreateTableAsSelect(insertCount);
+            return compiledQuery.ofCreateTableAsSelect(tableToken, insertCount);
         }
     }
 
-    private void createTableFromCursorExecutor(
+    private TableToken createTableFromCursorExecutor(
             CreateTableModel model,
             SqlExecutionContext executionContext,
             int position,
-            Consumer<RecordMetadata> createTableMethod
+            CharSequence volumeAlias
     ) throws SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
@@ -1639,12 +1657,32 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
+            boolean keepLock = !model.isWalEnabled();
 
-            createTableMethod.accept(metadata);
+            final TableToken tableToken;
+
+            if (volumeAlias == null) {
+                tableToken = engine.createTable(
+                        executionContext.getSecurityContext(),
+                        mem,
+                        path,
+                        false,
+                        tableStructureAdapter.of(model, metadata, typeCast),
+                        keepLock
+                );
+            } else {
+                tableToken = engine.createTableInVolume(
+                        executionContext.getSecurityContext(),
+                        mem,
+                        path,
+                        false,
+                        tableStructureAdapter.of(model, metadata, typeCast),
+                        keepLock
+                );
+            }
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
-                TableToken tableToken = executionContext.getTableToken(model.getName().token);
                 copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
@@ -1653,6 +1691,7 @@ public class SqlCompiler implements Closeable {
                 }
                 throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
             }
+            return tableToken;
         }
     }
 
@@ -1721,40 +1760,6 @@ public class SqlCompiler implements Closeable {
         executionContext.getSecurityContext().authorizeTableDrop(tableToken);
         engine.drop(path, tableToken);
         return compiledQuery.ofDrop();
-    }
-
-    @NotNull
-    private CompiledQuery executeCopy(SecurityContext securityContext, CopyModel copyModel) throws SqlException {
-        securityContext.authorizeCopy();
-        if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
-            // no-op implementation
-            setupTextLoaderFromModel(copyModel);
-            return compiledQuery.ofCopyRemote(textLoader);
-        }
-        RecordCursorFactory copyFactory = executeCopy0(securityContext, copyModel);
-        return compiledQuery.ofCopyLocal(copyFactory);
-    }
-
-    @Nullable
-    private RecordCursorFactory executeCopy0(SecurityContext securityContext, CopyModel model) throws SqlException {
-        try {
-            if (model.isCancel()) {
-                cancelTextImport(securityContext, model);
-                return null;
-            } else {
-                if (model.getTimestampColumnName() == null &&
-                        ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
-                    throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-                }
-                if (model.getDelimiter() < 0) {
-                    model.setDelimiter((byte) ',');
-                }
-                return compileTextImport(model);
-            }
-        } catch (TextImportException | TextException e) {
-            LOG.error().$((Throwable) e).$();
-            throw SqlException.$(0, e.getMessage());
-        }
     }
 
     private CompiledQuery executeWithRetries(
@@ -2651,18 +2656,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    protected static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
-        }
-
-        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
-        }
-    }
-
     protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
@@ -2753,6 +2746,7 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
     }
 
+    @SuppressWarnings({"unused", "RedundantThrows"})
     protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' expected");
@@ -2760,7 +2754,7 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
-    @SuppressWarnings({"RedundantThrows", "unused"})
+    @SuppressWarnings({"unused", "RedundantThrows"})
     protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         return null; // no-op
     }
@@ -2897,30 +2891,24 @@ public class SqlCompiler implements Closeable {
     }
 
     private class DatabaseBackupAgent implements Closeable {
+        private final Path auxPath = new Path();
         private final Path dstPath = new Path();
+        private final StringSink sink = new StringSink();
         private final Path srcPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
+        private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
-        private transient String cachedTmpBackupRoot;
-        private transient int changeDirPrefixLen;
-        private transient int currDirPrefixLen;
-        private final FindVisitor confFilesBackupOnFind = (file, type) -> {
-            if (type == Files.DT_FILE) {
-                srcPath.of(configuration.getConfRoot()).concat(file).$();
-                dstPath.trimTo(currDirPrefixLen).concat(file).$();
-                LOG.info().$("backup copying config file [from=").$(srcPath).$(",to=").$(dstPath).I$();
-                if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.critical(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
-                }
-            }
-        };
+        private transient String cachedBackupTmpRoot;
+        private transient int dstCurrDirLen;
+        private transient int dstPathRoot;
 
         public void clear() {
+            auxPath.trimTo(0);
             srcPath.trimTo(0);
             dstPath.trimTo(0);
-            cachedTmpBackupRoot = null;
-            changeDirPrefixLen = 0;
-            currDirPrefixLen = 0;
+            cachedBackupTmpRoot = null;
+            dstPathRoot = 0;
+            dstCurrDirLen = 0;
             tableBackupRowCopiedCache.clear();
             tableTokens.clear();
         }
@@ -2928,35 +2916,124 @@ public class SqlCompiler implements Closeable {
         @Override
         public void close() {
             tableBackupRowCopiedCache.clear();
+            Misc.free(auxPath);
             Misc.free(srcPath);
             Misc.free(dstPath);
         }
 
-        private void backupTabIndexFile() {
-            srcPath.of(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            dstPath.trimTo(currDirPrefixLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            LOG.info().$("backup copying file [from=").$(srcPath).$(",to=").$(dstPath).I$();
-            if (ff.copy(srcPath, dstPath) < 0) {
-                throw CairoException.critical(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
-            }
-        }
-
         private void backupTable(@NotNull TableToken tableToken) {
             LOG.info().$("starting backup of ").$(tableToken).$();
-            if (null == cachedTmpBackupRoot) {
+
+            // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
+            if (null == cachedBackupTmpRoot) {
                 if (null == configuration.getBackupRoot()) {
-                    throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                    throw CairoException.nonCritical()
+                            .put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
                 }
-                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
-                cachedTmpBackupRoot = Chars.toString(srcPath);
+                auxPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
+                cachedBackupTmpRoot = Chars.toString(auxPath); // absolute path to the TMP folder
             }
 
-            int renameRootLen = dstPath.length();
             String tableName = tableToken.getTableName();
+            auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
+            int tableRootLen = auxPath.length();
             try {
-                try (TableReader reader = engine.getReader(tableToken)) {
-                    cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
-                    try (TableWriter backupWriter = engine.getBackupWriter(tableToken, cachedTmpBackupRoot)) {
+                try (TableReader reader = engine.getReader(tableToken)) { // acquire reader lock
+                    if (ff.exists(auxPath)) {
+                        throw CairoException.nonCritical()
+                                .put("backup dir already exists [path=").put(auxPath)
+                                .put(", table=").put(tableName)
+                                .put(']');
+                    }
+
+                    // clone metadata
+
+                    // create TMP folder
+                    if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
+                        throw CairoException.critical(ff.errno()).put("could not create [dir=").put(auxPath).put(']');
+                    }
+
+                    // backup table metadata files to TMP folder
+                    try {
+                        TableReaderMetadata metadata = reader.getMetadata();
+
+                        // _meta
+                        mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                        metadata.dumpTo(mem);
+
+                        // create symbol maps
+                        auxPath.trimTo(tableRootLen).$();
+                        int symbolMapCount = 0;
+                        for (int i = 0, sz = metadata.getColumnCount(); i < sz; i++) {
+                            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                                SymbolMapReader mapReader = reader.getSymbolMapReader(i);
+                                MapWriter.createSymbolMapFiles(
+                                        ff,
+                                        mem,
+                                        auxPath,
+                                        metadata.getColumnName(i),
+                                        COLUMN_NAME_TXN_NONE,
+                                        mapReader.getSymbolCapacity(),
+                                        mapReader.isCached());
+                                symbolMapCount++;
+                            }
+                        }
+
+                        // _txn
+                        mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                        TableUtils.createTxn(mem, symbolMapCount, 0L, 0L, TableUtils.INITIAL_TXN, 0L, metadata.getStructureVersion(), 0L, 0L);
+
+                        // _cv
+                        mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                        TableUtils.createColumnVersionFile(mem);
+
+                        if (tableToken.isWal()) {
+                            // _name
+                            mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
+                            TableUtils.createTableNameFile(mem, tableToken.getTableName());
+
+                            // initialise txn_seq folder
+                            auxPath.trimTo(tableRootLen).concat(WalUtils.SEQ_DIR).slash$();
+                            if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
+                                throw CairoException.critical(ff.errno()).put("Cannot create [path=").put(auxPath).put(']');
+                            }
+                            int len = auxPath.length();
+                            // _wal_index.d
+                            mem.smallFile(ff, auxPath.concat(WalUtils.WAL_INDEX_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putInt(WAL_FORMAT_VERSION);
+                            mem.putLong(0L);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog.meta.i
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME_META_INX).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.putLong(0L);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _txnlog.meta.d
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME_META_VAR).$(), MemoryTag.MMAP_DEFAULT);
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            // _meta
+                            mem.smallFile(ff, auxPath.trimTo(len).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            WalWriterMetadata.syncToMetaFile(
+                                    mem,
+                                    metadata.getStructureVersion(),
+                                    metadata.getColumnCount(),
+                                    metadata.getTimestampIndex(),
+                                    metadata.getTableId(),
+                                    false,
+                                    metadata
+                            );
+                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                        }
+                    } finally {
+                        mem.close();
+                    }
+
+                    // copy the data
+                    try (TableWriter backupWriter = engine.getBackupWriter(tableToken, cachedBackupTmpRoot)) {
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
                         srcPath.of(tableName).slash().put(reader.getVersion()).$();
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
@@ -2970,18 +3047,17 @@ public class SqlCompiler implements Closeable {
                             );
                             tableBackupRowCopiedCache.put(srcPath.toString(), recordToRowCopier);
                         }
-
                         RecordCursor cursor = reader.getCursor();
                         //statement/query timeout value  is most likely too small for backup operation
                         copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                         backupWriter.commit();
                     }
-                }
-                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(tableToken.getDirName()).$();
+                } // release reader lock
+                int renameRootLen = dstPath.length();
                 try {
-                    dstPath.trimTo(renameRootLen).concat(tableToken.getDirName()).$();
-                    TableUtils.renameOrFail(ff, srcPath, dstPath);
-                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
+                    dstPath.trimTo(renameRootLen).concat(tableToken).$();
+                    TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath);
+                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").utf8(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
@@ -2991,80 +3067,31 @@ public class SqlCompiler implements Closeable {
                         .$(", ex=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
-
-                srcPath.of(cachedTmpBackupRoot).concat(tableToken.getDirName()).slash$();
+                auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
                 int errno;
-                if ((errno = ff.rmdir(srcPath)) != 0) {
-                    LOG.error().$("could not delete directory [path=").utf8(srcPath).$(", errno=").$(errno).I$();
+                if ((errno = ff.rmdir(auxPath)) != 0) {
+                    LOG.error().$("could not delete directory [path=").utf8(auxPath).$(", errno=").$(errno).I$();
                 }
                 throw e;
             }
         }
 
-        private void cdConfRenamePath() {
-            mkdir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
-        }
-
-        private void cdDbRenamePath() {
-            mkdir(configuration.getDbDirectory(), "could not create backup [db dir=");
-        }
-
-        private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-            TableToken tableToken = engine.verifyTableName(tableName);
-            srcPath.of(backupRoot).concat(tableToken).slash$();
-
-            if (ff.exists(srcPath)) {
-                throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
-            }
-
-            if (ff.mkdirs(srcPath, mkDirMode) != 0) {
-                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
-            }
-
-            int rootLen = srcPath.length();
-
-            TableReaderMetadata sourceMetaData = reader.getMetadata();
-            try {
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                sourceMetaData.dumpTo(mem);
-
-                // create symbol maps
-                srcPath.trimTo(rootLen).$();
-                int symbolMapCount = 0;
-                for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
-                    if (ColumnType.isSymbol(sourceMetaData.getColumnType(i))) {
-                        SymbolMapReader mapReader = reader.getSymbolMapReader(i);
-                        MapWriter.createSymbolMapFiles(ff, mem, srcPath, sourceMetaData.getColumnName(i), COLUMN_NAME_TXN_NONE, mapReader.getSymbolCapacity(), mapReader.isCached());
-                        symbolMapCount++;
-                    }
-                }
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                TableUtils.createTxn(mem, symbolMapCount, 0L, 0L, TableUtils.INITIAL_TXN, 0L, sourceMetaData.getStructureVersion(), 0L, 0L);
-
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                TableUtils.createColumnVersionFile(mem);
-                srcPath.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-            } finally {
-                mem.close();
-            }
-        }
-
-        private void mkdir(CharSequence dir, String errorMessage) {
-            dstPath.trimTo(changeDirPrefixLen).concat(dir).slash$();
-            currDirPrefixLen = dstPath.length();
+        private void mkBackupDstDir(CharSequence dir, String errorMessage) {
+            dstPath.trimTo(dstPathRoot).concat(dir).slash$();
+            dstCurrDirLen = dstPath.length();
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
                 throw CairoException.critical(ff.errno()).put(errorMessage).put(dstPath).put(']');
             }
         }
 
-        private void setupBackupRenamePath() {
+        private void mkBackupDstRoot() {
             DateFormat format = configuration.getBackupDirTimestampFormat();
             long epochMicros = configuration.getMicrosecondClock().getTicks();
-            int n = 0;
-            // There is a race here, two threads could try and create the same backupRenamePath,
-            // only one will succeed the other will throw a CairoException. Maybe it should be serialised
             dstPath.of(configuration.getBackupRoot()).slash();
             int plen = dstPath.length();
+            int n = 0;
+            // There is a race here, two threads could try and create the same dstPath,
+            // only one will succeed the other will throw a CairoException. It could be serialised
             do {
                 dstPath.trimTo(plen);
                 format.format(epochMicros, configuration.getDefaultDateLocale(), null, dstPath);
@@ -3074,18 +3101,18 @@ public class SqlCompiler implements Closeable {
                 dstPath.slash$();
                 n++;
             } while (ff.exists(dstPath));
-
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
+                // the winner will succeed the looser thread will get this exception
                 throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
-            changeDirPrefixLen = dstPath.length();
+            dstPathRoot = dstPath.length();
         }
 
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
             if (null == configuration.getBackupRoot()) {
-                throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                throw CairoException.nonCritical().put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
             }
-            final CharSequence tok = SqlUtil.fetchNext(lexer);
+            CharSequence tok = SqlUtil.fetchNext(lexer);
             if (null != tok) {
                 if (isTableKeyword(tok)) {
                     return sqlTableBackup(executionContext);
@@ -3098,24 +3125,51 @@ public class SqlCompiler implements Closeable {
         }
 
         private CompiledQuery sqlDatabaseBackup(SqlExecutionContext executionContext) {
-            tableTokens.clear();
-            setupBackupRenamePath();
-            cdDbRenamePath();
-            engine.getTableTokens(tableTokens, false);
+            mkBackupDstRoot();
+            mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
+
+            // backup tables
+            engine.getTableTokens(tableTokenBucket, false);
             executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
-            for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                backupTable(tableTokens.get(i));
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                backupTable(tableTokenBucket.get(i));
             }
-            backupTabIndexFile();
-            cdConfRenamePath();
-            ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind);
+
+            srcPath.of(configuration.getRoot()).$();
+            int srcLen = srcPath.length();
+
+            // backup table registry file (tables.d.<last>)
+            int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, srcPath, sink);
+            srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
+            dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0
+            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            if (ff.copy(srcPath, dstPath) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot backup table registry file [from=").put(srcPath)
+                        .put(", to=").put(dstPath)
+                        .put(']');
+            }
+
+            // backup table index file (_tab_index.d)
+            srcPath.trimTo(srcLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            dstPath.trimTo(dstCurrDirLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            if (ff.copy(srcPath, dstPath) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot backup table index file [from=").put(srcPath)
+                        .put(", to=").put(dstPath)
+                        .put(']');
+            }
+
+            // backup conf directory
+            mkBackupDstDir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
+            ff.copyRecursive(srcPath.of(configuration.getConfRoot()).$(), auxPath.of(dstPath).$(), configuration.getMkDirMode());
             return compiledQuery.ofBackupTable();
         }
 
         private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
-            setupBackupRenamePath();
-            cdDbRenamePath();
-
+            mkBackupDstRoot();
+            mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
             try {
                 tableTokens.clear();
                 while (true) {
@@ -3126,7 +3180,6 @@ public class SqlCompiler implements Closeable {
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                     tableTokens.add(tableToken);
-
                     tok = SqlUtil.fetchNext(lexer);
                     if (null == tok || Chars.equals(tok, ';')) {
                         break;
@@ -3138,14 +3191,36 @@ public class SqlCompiler implements Closeable {
 
                 executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
 
-                for (int n = 0; n < tableTokens.size(); n++) {
-                    backupTable(tableTokens.get(n));
+                for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                    backupTable(tableTokens.get(i));
                 }
-
                 return compiledQuery.ofBackupTable();
             } finally {
                 tableTokens.clear();
             }
+        }
+    }
+
+    public class QueryBuilder implements Mutable {
+        private final StringSink sink = new StringSink();
+
+        public QueryBuilder $(CharSequence value) {
+            sink.put(value);
+            return this;
+        }
+
+        public QueryBuilder $(int value) {
+            sink.put(value);
+            return this;
+        }
+
+        @Override
+        public void clear() {
+            sink.clear();
+        }
+
+        public CompiledQuery compile(SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompiler.this.compile(sink, executionContext);
         }
     }
 

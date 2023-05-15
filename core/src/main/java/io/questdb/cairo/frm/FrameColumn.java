@@ -22,11 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cairo.frm;
 
-import io.questdb.cairo.SecurityContext;
+import java.io.Closeable;
 
-@FunctionalInterface
-public interface PGAuthenticator {
-    SecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, AuthenticationException;
+public interface FrameColumn extends Closeable {
+    int COLUMN_CONTIGUOUS_FILE = 0;
+    int COLUMN_CONTIGUOUS_MEM = 1;
+
+    void addTop(long value);
+
+    void appendNulls(long offset, long count);
+
+    void close();
+
+    int getColumnIndex();
+
+    long getColumnTop();
+
+    int getColumnType();
+
+    int getPrimaryFd();
+
+    int getSecondaryFd();
+
+    int getStorageType();
+
+    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi);
 }

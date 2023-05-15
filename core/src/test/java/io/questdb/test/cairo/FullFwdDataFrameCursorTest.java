@@ -2026,10 +2026,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
-                    if (testRestricted || configuration.getFilesFacade().isRestrictedFileSystem()) {
-                        reader.closeColumnForRemove("c");
-                    }
-
                     writer.removeColumn("c");
                     writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8, false);
 
@@ -2127,10 +2123,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
-                    if (testRestricted || configuration.getFilesFacade().isRestrictedFileSystem()) {
-                        reader.closeColumnForRemove("c");
-                    }
-
                     writer.removeColumn("c");
                     writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8, false);
 
@@ -2205,10 +2197,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
-                    if (testRestricted || configuration.getFilesFacade().isRestrictedFileSystem()) {
-                        reader.closeColumnForRemove("c");
-                    }
-
                     writer.removeColumn("c");
                     writer.addColumn("c", ColumnType.SYMBOL);
 
@@ -2282,10 +2270,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
                     assertNoIndex(cursor);
-
-                    if (testRestricted || configuration.getFilesFacade().isRestrictedFileSystem()) {
-                        reader.closeColumnForRemove("c");
-                    }
 
                     writer.removeColumn("c");
                     writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8, false);

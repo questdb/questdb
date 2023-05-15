@@ -35,8 +35,8 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
-import io.questdb.cutlass.text.TextImportJob;
-import io.questdb.cutlass.text.TextImportRequestJob;
+import io.questdb.cutlass.text.CopyJob;
+import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -133,16 +133,16 @@ public class ServerMain implements Closeable {
                         }
 
                         // text import
-                        TextImportJob.assignToPool(messageBus, sharedPool);
+                        CopyJob.assignToPool(messageBus, sharedPool);
                         if (cairoConfig.getSqlCopyInputRoot() != null) {
-                            final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                            final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPool.getWorkerCount() - 2),
                                     ffCache
                             );
-                            sharedPool.assign(textImportRequestJob);
-                            sharedPool.freeOnExit(textImportRequestJob);
+                            sharedPool.assign(copyRequestJob);
+                            sharedPool.freeOnExit(copyRequestJob);
                         }
                     }
 

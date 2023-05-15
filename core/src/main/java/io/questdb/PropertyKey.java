@@ -224,6 +224,7 @@ public enum PropertyKey implements ConfigProperty {
     HTTP_TEXT_ROLL_BUFFER_LIMIT("http.text.roll.buffer.limit"),
     HTTP_TEXT_ROLL_BUFFER_SIZE("http.text.roll.buffer.size"),
     HTTP_TEXT_UTF8_SINK_SIZE("http.text.utf8.sink.size"),
+    HTTP_PESSIMISTIC_HEALTH_CHECK("http.pessimistic.health.check.enabled"),
     HTTP_SECURITY_READONLY("http.security.readonly"),
     HTTP_SECURITY_MAX_RESPONSE_ROWS("http.security.max.response.rows"),
     HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION("http.security.interrupt.on.closed.connection"),
@@ -400,7 +401,9 @@ public enum PropertyKey implements ConfigProperty {
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
-    CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version");
+    CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
+    CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
+    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

@@ -30,7 +30,18 @@ import org.jetbrains.annotations.Nullable;
 
 public interface SecurityContext {
 
+    default void assumeRole(CharSequence roleName) {
+    }
+
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     default void authorizeAlterTableAttachPartition(TableToken tableToken) {
@@ -39,23 +50,15 @@ public interface SecurityContext {
     default void authorizeAlterTableDetachPartition(TableToken tableToken) {
     }
 
-    default void authorizeAlterTableDropPartition(TableToken tableToken) {
-    }
-
     // TODO: columnNames should be removed, or this permission should change to column level
-    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     // TODO: columnNames should be removed, or this permission should change to column level
     default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    // TODO: columnNames should be removed, or this permission should change to column level
-    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    // TODO: columnNames should be removed, or this permission should change to column level
-    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableDropPartition(TableToken tableToken) {
     }
 
     // TODO: columnNames should be removed, or this permission should change to column level
@@ -66,15 +69,16 @@ public interface SecurityContext {
     default void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
-    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    default void authorizeCopy() {
     }
 
-    default void authorizeCopy() {
+    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
     default void authorizeDatabaseSnapshot() {
     }
 
+    @SuppressWarnings("unused")
     default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
     }
 
@@ -83,6 +87,7 @@ public interface SecurityContext {
     default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
+    @SuppressWarnings("unused")
     default void authorizeManageAccess() {
     }
 
@@ -112,5 +117,8 @@ public interface SecurityContext {
     }
 
     default void authorizeTableVacuum(TableToken tableToken) {
+    }
+
+    default void exitRole(CharSequence roleName) {
     }
 }

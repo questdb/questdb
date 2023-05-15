@@ -41,7 +41,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ContinuousOffsetMappedMemoryTest extends AbstractTest {
+public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
     @Test

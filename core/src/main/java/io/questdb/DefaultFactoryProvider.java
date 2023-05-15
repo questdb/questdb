@@ -26,10 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
+import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticationFactory;
+import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 
@@ -37,8 +37,14 @@ public class DefaultFactoryProvider implements FactoryProvider {
     public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
 
     @Override
-    public PGAuthenticatorFactory getPGAuthenticatorFactory() {
-        return PGBasicAuthenticatorFactory.INSTANCE;
+    public AuthenticatorFactory getAuthenticatorFactory() {
+        return DefaultAuthenticatorFactory.INSTANCE;
+    }
+
+
+    @Override
+    public PgWireAuthenticationFactory getPgWireAuthenticationFactory() {
+        return DefaultPgWireAuthenticationFactory.INSTANCE;
     }
 
     @Override
@@ -49,10 +55,5 @@ public class DefaultFactoryProvider implements FactoryProvider {
     @Override
     public SqlCompilerFactory getSqlCompilerFactory() {
         return SqlCompilerFactoryImpl.INSTANCE;
-    }
-
-    @Override
-    public AuthenticatorFactory getAuthenticatorFactory() {
-        return DefaultAuthenticatorFactory.INSTANCE;
     }
 }

@@ -91,9 +91,8 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
         this.unIndexedNullCount = unIndexedNullCount;
-        TableUtils.txnPartitionConditionally(path, partitionTxn);
         final int plen = path.length();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeout();
 

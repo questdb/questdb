@@ -1164,6 +1164,55 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testDetachAttachSplitPartition() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    String tableName = testName.getMethodName();
+                    node1.getConfigurationOverrides().setPartitionO3SplitThreshold(300);
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        TableToken token = createPopulateTable(
+                                1,
+                                tab.timestamp("ts")
+                                        .col("si", ColumnType.SYMBOL).indexed(true, 250)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s", ColumnType.SYMBOL),
+                                1000,
+                                "2022-06-01",
+                                2
+                        );
+
+                        try (TableReader ignore = getReader(token)) {
+                            // Split partition by committing O3 to "2022-06-01"
+                            compile("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
+
+                            //noinspection resource
+                            Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
+                            FilesFacade ff = configuration.getFilesFacade();
+                            Assert.assertTrue(ff.exists(path.$()));
+
+                            try {
+                                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                            } catch (CairoException e) {
+                                TestUtils.assertEquals("could not detach partition [table=testDetachAttachSplitPartition, " +
+                                        "detachStatus=DETACH_ERR_CANNOT_SQUASH, partitionTimestamp=2022-06-01T00:00:00.000Z, partitionBy=DAY]", e.getFlyweightMessage());
+                            }
+                        }
+
+                        // Detach partition "2022-06-01", should squash partition into 1 piece and detach it
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        assertSql("select min(ts) from " + tableName, "min\n" +
+                                "2022-06-02T00:01:55.116000Z\n");
+
+                        renameDetachedToAttachable(tableName, "2022-06-01");
+                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        assertSql("select min(ts) from " + tableName, "min\n" +
+                                "2022-06-01T00:02:52.799000Z\n");
+                    }
+                });
+    }
+
+    @Test
     public void testDetachNonPartitionedNotAllowed() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -2338,18 +2387,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void renameDetachedToAttachable(String tableName, long... partitions) {
         TableToken tableToken = engine.verifyTableName(tableName);
         for (long partition : partitions) {
-            PartitionBy.setSinkForPartition(
+            TableUtils.setSinkForPartition(
                     path.of(configuration.getRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
-                    false
+                    -1
             );
             path.put(DETACHED_DIR_MARKER).$();
-            PartitionBy.setSinkForPartition(
+            TableUtils.setSinkForPartition(
                     other.of(configuration.getRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
-                    false
+                    -1
             );
             other.put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path, other) > -1);

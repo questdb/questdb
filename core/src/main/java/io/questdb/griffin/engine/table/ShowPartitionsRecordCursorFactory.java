@@ -219,10 +219,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             if (partitionIndex < partitionCount) {
                 // we are within the partition table
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
-                long timestamp = tableTxReader.getPartitionTimestamp(partitionIndex);
+                long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
-                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp, false);
-                TableUtils.txnPartitionConditionally(path.concat(partitionName), tableTxReader.getPartitionNameTxn(partitionIndex));
+                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
+                TableUtils.setPathForPartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
@@ -258,7 +258,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     }
                                     detachedTxReader.ofRO(path, partitionBy);
                                     detachedTxReader.unsafeLoadAll();
-                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);
+                                    int length = partitionName.indexOf(".");
+                                    if (length < 0) {
+                                        length = partitionName.length();
+                                    }
+                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, length);
                                     int pIndex = detachedTxReader.getPartitionIndex(timestamp);
                                     // could set dynamicPartitionIndex to -pIndex
                                     numRows = detachedTxReader.getPartitionSize(pIndex);
@@ -343,22 +347,20 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public boolean getBool(int col) {
-                if (Column.IS_READ_ONLY.is(col)) {
-                    return isReadOnly;
+                switch (col) {
+                    case 8: // isReadOnly
+                        return isReadOnly;
+                    case 9:
+                        return isActive;
+                    case 10:
+                        return isReadOnly || !isDetached;
+                    case 11:
+                        return isDetached;
+                    case 12:
+                        return isAttachable;
+                    default:
+                        throw new UnsupportedOperationException();
                 }
-                if (Column.IS_ACTIVE.is(col)) {
-                    return isActive;
-                }
-                if (Column.IS_ATTACHED.is(col)) {
-                    return isReadOnly || !isDetached;
-                }
-                if (Column.IS_DETACHED.is(col)) {
-                    return isDetached;
-                }
-                if (Column.IS_ATTACHABLE.is(col)) {
-                    return isAttachable;
-                }
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -371,27 +373,33 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public long getLong(int col) {
-                if (Column.NUM_ROWS.is(col)) {
-                    return numRows;
+                switch (col) {
+                    case 3:
+                        return minTimestamp;
+                    case 4:
+                        return maxTimestamp;
+                    case 5:
+                        return numRows;
+                    case 6:
+                        return partitionSize;
+                    default:
+                        throw new UnsupportedOperationException();
+
                 }
-                if (Column.DISK_SIZE.is(col)) {
-                    return partitionSize;
-                }
-                throw new UnsupportedOperationException();
             }
 
             @Override
             public CharSequence getStr(int col) {
-                if (Column.PARTITION_BY.is(col)) {
-                    return PartitionBy.toString(partitionBy);
+                switch (col) {
+                    case 1:
+                        return PartitionBy.toString(partitionBy);
+                    case 2:
+                        return partitionName;
+                    case 7:
+                        return partitionSizeSink;
+                    default:
+                        throw new UnsupportedOperationException();
                 }
-                if (Column.DISK_SIZE_HUMAN.is(col)) {
-                    return partitionSizeSink;
-                }
-                if (Column.PARTITION_NAME.is(col)) {
-                    return partitionName;
-                }
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -407,13 +415,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public long getTimestamp(int col) {
-                if (Column.MIN_TIMESTAMP.is(col)) {
-                    return minTimestamp;
+                switch (col) {
+                    case 3:
+                        return minTimestamp;
+                    case 4:
+                        return maxTimestamp;
+                    default:
+                        throw new UnsupportedOperationException();
                 }
-                if (Column.MAX_TIMESTAMP.is(col)) {
-                    return maxTimestamp;
-                }
-                throw new UnsupportedOperationException();
             }
         }
     }

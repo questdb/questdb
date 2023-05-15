@@ -51,6 +51,8 @@ import java.util.function.LongSupplier;
 public class TestServerConfiguration extends DefaultServerConfiguration {
 
     public static final long importID = 100L;
+
+    @SuppressWarnings("unused")
     public static final String importIDStr = Numbers.toHexStrPadded(importID);
 
     private final CairoConfiguration cairoConfiguration;
@@ -174,19 +176,19 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         };
         this.cairoConfiguration = new DefaultCairoConfiguration(root) {
             @Override
-            public CharSequence getSqlCopyInputRoot() {
-                return TestUtils.getCsvRoot();
+            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                return circuitBreakerConfiguration;
             }
 
             // fix import ID
             @Override
-            public LongSupplier getImportIDSupplier() {
+            public LongSupplier getCopyIDSupplier() {
                 return () -> importID;
             }
 
             @Override
-            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-                return circuitBreakerConfiguration;
+            public CharSequence getSqlCopyInputRoot() {
+                return TestUtils.getCsvRoot();
             }
         };
     }

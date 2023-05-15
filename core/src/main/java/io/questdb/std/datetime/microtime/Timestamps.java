@@ -351,7 +351,16 @@ public final class Timestamps {
     }
 
     public static long floorWW(long micros, int stride) {
-        return (micros - micros % (stride * WEEK_MICROS)) + getIsoWeekMicrosOffset(micros);
+        // Epoch 1 Jan 1970 is a Thursday.
+        // Shift 3 days to find offset in the week.
+        long weekOffset = (micros + Timestamps.DAY_MICROS * 3) % (stride * WEEK_MICROS);
+        if (weekOffset < 0) {
+            // Floor value must be always below or equal to the original value.
+            // If offset is negative, we need to add stride to it so that the result is
+            // Monday before the original value.
+            weekOffset += stride * WEEK_MICROS;
+        }
+        return micros - weekOffset;
     }
 
     public static long floorYYYY(long micros) {
@@ -464,16 +473,6 @@ public final class Timestamps {
 
     public static long getHoursBetween(long a, long b) {
         return Math.abs(a - b) / HOUR_MICROS;
-    }
-
-    /**
-     * Due to epoch starting on Thursday while ISO week starts on Monday, there is an offset between epoch and ISO week micros when flooring.
-     *
-     * @param micros epoch microseconds
-     * @return 4 days micros offset for Monday through Wednesday and -3 days micros offset for Thursday through Sunday
-     */
-    public static long getIsoWeekMicrosOffset(long micros) {
-        return ((getDayOfWeek(micros) <= 3) ? 4 : -3) * DAY_MICROS;
     }
 
     // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,

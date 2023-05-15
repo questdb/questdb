@@ -37,6 +37,7 @@ import io.questdb.std.str.StringSink;
 import jdk.internal.math.FDBigInteger;
 //#endif
 import org.jetbrains.annotations.NotNull;
+import io.questdb.std.str.StringSink;
 
 import java.util.Arrays;
 
@@ -713,6 +714,10 @@ public final class Numbers {
             val = r;
         }
         return val;
+    }
+
+    public static long parseHexLong(CharSequence sequence) throws NumericException {
+        return parseHexLong(sequence, 0, sequence.length());
     }
 
     public static long parseHexLong(CharSequence sequence, int lo, int hi) throws NumericException {
