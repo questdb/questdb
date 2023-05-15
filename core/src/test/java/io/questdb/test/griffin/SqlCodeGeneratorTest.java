@@ -8290,4 +8290,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "tab latest on ts partition by symbol");
         });
     }
+
+
+    @Test
+    public void testJoinLongColumnWithIntColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table test as(\n" +
+                    "  select x y \n" +
+                    "  from long_sequence(10)\n" +
+                    ")", sqlExecutionContext);
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select x, y\n" +
+                            "from long_sequence(5) ls\n" +
+                            "join \n" +
+                            "(\n" +
+                            "  select cast(y as int) y from test\n" +
+                            ") \n" +
+                            "as ls2\n" +
+                            "on x = ls2.y;",
+                    sink,
+                    "x\ty\n" +
+                            "1\t1\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "4\t4\n" +
+                            "5\t5\n"
+            );
+        });
+    }
 }
