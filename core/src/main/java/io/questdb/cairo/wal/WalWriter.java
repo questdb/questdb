@@ -87,6 +87,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
     private final int walId;
+    private final WalInitializer walInitializer;
     private final String walName;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -116,6 +117,7 @@ public class WalWriter implements TableWriterAPI {
         this.configuration = configuration;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
+        this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
         this.tableToken = tableToken;
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
@@ -961,6 +963,7 @@ public class WalWriter implements TableWriterAPI {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
+        walInitializer.initSegmentDirectory(path, tableToken, walId, segmentId);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
     }
