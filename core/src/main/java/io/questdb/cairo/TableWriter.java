@@ -2369,7 +2369,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setLagRowCount(txWriter.getLagRowCount() - lagRowCount);
         txWriter.setMaxTimestamp(maxTimestamp);
         if (indexCount > 0) {
-            updateIndexesParallel(initialTransientRowCount, txWriter.getTransientRowCount());
+            // To index correctly, we need to set append offset of symbol columns first.
+            // So that re-indexing can read symbol values to the correct limits.
+            final long newTransientRowCount = txWriter.getTransientRowCount();
+            final int shl = ColumnType.pow2SizeOf(ColumnType.SYMBOL);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) == ColumnType.SYMBOL && metadata.isColumnIndexed(i)) {
+                    getPrimaryColumn(i).jumpTo(newTransientRowCount << shl);
+                }
+            }
+            updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
         }
     }
 

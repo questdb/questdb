@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.log.Log;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -36,6 +37,8 @@ import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
+import org.junit.Before;
 
 public class AbstractFuzzTest extends AbstractGriffinTest {
     protected final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
@@ -54,11 +57,33 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     private double notSetProb;
     private double nullSetProb;
     private double rollbackProb;
+    private long s0;
+    private long s1;
     private int strLen;
     private int symbolCountMax;
     private int symbolStrLenMax;
     private int transactionCount;
     private double truncateProb;
+
+    @Before
+    public void clearSeeds() {
+        s0 = 0;
+        s1 = 0;
+    }
+
+    public Rnd generateRandom(Log log, long s0, long s1) {
+        Rnd rnd = TestUtils.generateRandom(log, s0, s1);
+        this.s0 = rnd.getSeed0();
+        this.s1 = rnd.getSeed1();
+        return rnd;
+    }
+
+    public Rnd generateRandom(Log log) {
+        Rnd rnd = TestUtils.generateRandom(log);
+        s0 = rnd.getSeed0();
+        s1 = rnd.getSeed1();
+        return rnd;
+    }
 
     public ObjList<FuzzTransaction> generateSet(Rnd rnd, RecordMetadata metadata, long start, long end, String tableName) {
         return FuzzTransactionGenerator.generateSet(
@@ -83,6 +108,14 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 3
         );
+    }
+
+    @After
+    public void logSeeds() {
+        if (this.s0 != 0 || this.s1 != 0) {
+            LOG.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+            System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+        }
     }
 
     private static void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
