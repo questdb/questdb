@@ -26,7 +26,7 @@ package io.questdb.cairo.frm;
 
 public class FrameAlgebra {
 
-    public static void append(Frame target, Frame source) {
+    public static void append(Frame target, Frame source, int commitMode) {
         if (source.getSize() > 0) {
             for (int i = 0, n = source.columnCount(); i < n; i++) {
                 try (
@@ -34,7 +34,7 @@ public class FrameAlgebra {
                         FrameColumn targetColumn = target.createColumn(i)
                 ) {
                     if (sourceColumn.getColumnType() >= 0) {
-                        append(targetColumn, target.getSize(), sourceColumn, source.getSize());
+                        append(targetColumn, target.getSize(), sourceColumn, source.getSize(), commitMode);
                         target.saveChanges(targetColumn);
                     }
                 }
@@ -43,7 +43,7 @@ public class FrameAlgebra {
         }
     }
 
-    private static void append(FrameColumn targetColumn, long targetSize, FrameColumn sourceColumn, long sourceSize) {
+    private static void append(FrameColumn targetColumn, long targetSize, FrameColumn sourceColumn, long sourceSize, int commitMode) {
         int columnType = sourceColumn.getColumnType();
         if (columnType != targetColumn.getColumnType()) {
             throw new UnsupportedOperationException();
@@ -57,9 +57,9 @@ public class FrameAlgebra {
                 targetColumn.addTop(sourceColTop);
             } else {
                 // Pad target with NULLs
-                targetColumn.appendNulls(targetSize, sourceColTop);
+                targetColumn.appendNulls(targetSize, sourceColTop, commitMode);
             }
         }
-        targetColumn.append(targetSize + sourceColTop, sourceColumn, sourceColTop, sourceSize);
+        targetColumn.append(targetSize + sourceColTop, sourceColumn, sourceColTop, sourceSize, commitMode);
     }
 }
