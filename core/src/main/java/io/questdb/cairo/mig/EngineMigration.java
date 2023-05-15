@@ -112,7 +112,7 @@ public class EngineMigration {
                 }
 
                 if (currentMigrationVersion == latestMigrationVersion) {
-                    LOG.info().$("upgraded to [migrationVersion=").$(currentMigrationVersion).$();
+                    LOG.info().$("upgraded to [migrationVersion=").$(currentMigrationVersion).I$();
                     ff.fsyncAndClose(upgradeFd);
                     return;
                 }
