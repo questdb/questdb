@@ -2635,7 +2635,8 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    protected static void expectKeyword(GenericLexer lexer, @SuppressWarnings("SameParameterValue") CharSequence keyword) throws SqlException {
+    // public for testing
+    public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {

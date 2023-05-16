@@ -4253,6 +4253,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExpectedKeyword() throws Exception {
+        final GenericLexer lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
+        lexer.of("keyword1 keyword2\nkeyword3\tkeyword4");
+        SqlCompiler.expectKeyword(lexer, "keyword1");
+        SqlCompiler.expectKeyword(lexer, "keyword2");
+        SqlCompiler.expectKeyword(lexer, "keyword3");
+        SqlCompiler.expectKeyword(lexer, "keyword4");
+    }
+
+    @Test
     public void testReindexSyntaxError() throws Exception {
         assertFailure(
                 "REINDEX TABLE xxx",
