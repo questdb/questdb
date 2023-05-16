@@ -41,7 +41,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
-    protected final int commitMode;
     protected final LineUdpLexer lexer;
     protected final NetworkFacade nf;
     protected final LineUdpParserImpl parser;
@@ -59,7 +58,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             WorkerPool workerPool
     ) {
         this.configuration = configuration;
-        this.commitMode = configuration.getCommitMode();
         nf = configuration.getNetworkFacade();
         fd = nf.socketUdp();
         if (fd < 0) {
@@ -108,7 +106,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                 LOG.info().$("closed [fd=").$(fd).$(']').$();
             }
             if (parser != null) {
-                parser.commitAll(commitMode);
+                parser.commitAll();
                 parser.close();
             }
             Misc.free(lexer);
