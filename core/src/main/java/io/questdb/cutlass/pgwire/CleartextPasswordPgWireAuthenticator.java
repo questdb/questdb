@@ -32,10 +32,7 @@ import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -57,6 +54,7 @@ public final class CleartextPasswordPgWireAuthenticator {
     private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final NetworkFacade nf;
+    private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
@@ -75,7 +73,8 @@ public final class CleartextPasswordPgWireAuthenticator {
 
     public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, long recvBufStart, long recvBufEnd, long sendBufStart, long sendBufEnd,
                                                 PGWireConfiguration configuration,
-                                                int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry) {
+                                                int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+                                                OptionsListener optionsListener) {
         this.recvBufStart = recvBufStart;
         this.recvBufReadPos = recvBufStart;
         this.recvBufWritePos = recvBufStart;
@@ -97,6 +96,7 @@ public final class CleartextPasswordPgWireAuthenticator {
         this.sink = new ResponseSink();
         this.serverVersion = configuration.getServerVersion();
         this.circuitBreaker = circuitBreaker;
+        this.optionsListener = optionsListener;
     }
 
     public CharSequence getPrincipal() {
@@ -329,28 +329,28 @@ public final class CleartextPasswordPgWireAuthenticator {
                 e.put(dbcs.of(valueLo, valueHi));
                 this.username = e.toImmutable();
             }
-            // todo: store statement_timeout
-//                                if (Chars.equals(dbcs, "options")) {
-//                                    dbcs.of(valueLo, valueHi);
-//                                    if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
-//                                        try {
-//                                            this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
-//                                            if (this.statementTimeout > 0) {
-//                                                circuitBreaker.setTimeout(statementTimeout);
-//                                            }
-//                                        } catch (NumericException ex) {
-//                                            parsed = false;
-//                                        }
-//                                    } else {
-//                                        parsed = false;
-//                                    }
-//                                }
-//
-//                                if (parsed) {
-//                                    LOG.debug().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
-//                                } else {
-//                                    LOG.info().$("invalid property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
-//                                }
+            boolean parsed = true;
+            if (Chars.equals(dbcs, "options")) {
+                dbcs.of(valueLo, valueHi);
+                if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
+                    try {
+                        long statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                        optionsListener.setStatementTimeout(statementTimeout);
+                        if (statementTimeout > 0) {
+                            circuitBreaker.setTimeout(statementTimeout);
+                        }
+                    } catch (NumericException ex) {
+                        parsed = false;
+                    }
+                } else {
+                    parsed = false;
+                }
+            }
+            if (parsed) {
+                LOG.debug().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+            } else {
+                LOG.info().$("invalid property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+            }
         }
         characterStore.clear();
         recvBufReadPos = msgLimit;
@@ -382,7 +382,7 @@ public final class CleartextPasswordPgWireAuthenticator {
         throw PeerIsSlowToReadException.INSTANCE;
     }
 
-    void handleIo() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
+    void handleIO() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
         for (; ; ) {
             switch (state) {
                 case EXPECT_INIT_MESSAGE: {

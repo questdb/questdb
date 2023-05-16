@@ -55,7 +55,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
  * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
-public class PGConnectionContext extends IOContext<PGConnectionContext> implements WriterSource {
+public class PGConnectionContext extends IOContext<PGConnectionContext> implements WriterSource, OptionsListener {
 
     public static final char STATUS_IDLE = 'I';
     public static final char STATUS_IN_ERROR = 'E';
@@ -226,7 +226,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.authenticator = new CleartextPasswordPgWireAuthenticator(nf, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit, configuration, circuitBreakerId, circuitBreaker, registry);
+        this.authenticator = new CleartextPasswordPgWireAuthenticator(nf, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit, configuration, circuitBreakerId, circuitBreaker, registry, this);
         this.securityContextFactory = factoryProvider.getSecurityContextFactory();
         this.readOnlyContext = configuration.readOnlySecurityContext();
     }
@@ -518,6 +518,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Short.BYTES, valueLen);
         bindVariableService.setShort(index, getShortUnsafe(address));
+    }
+
+    @Override
+    public void setStatementTimeout(long statementTimeout) {
+        this.statementTimeout = statementTimeout;
     }
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -1531,7 +1536,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (authenticator.isAuthenticated()) {
             return false;
         }
-        authenticator.handleIo();
+        authenticator.handleIO();
         assert authenticator.isAuthenticated();
         SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), readOnlyContext);
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
