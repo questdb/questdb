@@ -1490,7 +1490,8 @@ public class SqlCompiler implements Closeable {
                         false,
                         DefaultLifecycleManager.INSTANCE,
                         configuration.getRoot(),
-                        engine.getMetrics());
+                        engine.getMetrics()
+                );
             } else {
                 writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
             }
@@ -1512,7 +1513,7 @@ public class SqlCompiler implements Closeable {
             );
         } catch (CairoException e) {
             LOG.error().$("could not create table [error=").$((Throwable) e).I$();
-            // Close writer, directory will be removed
+            // Close writer, the table will be removed
             writerAPI = Misc.free(writerAPI);
             writer = null;
             if (e.isInterruption()) {
@@ -1687,10 +1688,9 @@ public class SqlCompiler implements Closeable {
                 copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
-                if (removeTableDirectory(model)) {
-                    throw e;
-                }
-                throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
+                engine.drop(path, tableToken);
+                engine.unlockTableName(tableToken);
+                throw e;
             }
             return tableToken;
         }
@@ -2308,19 +2308,6 @@ public class SqlCompiler implements Closeable {
         executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnName);
         rebuildIndex.reindex(partition, columnName);
         return compiledQuery.ofRepair();
-    }
-
-    private boolean removeTableDirectory(CreateTableModel model) {
-        int errno;
-        TableToken tableToken = engine.verifyTableName(model.getName().token);
-        if ((errno = engine.removeDirectory(path, tableToken.getDirName())) == 0) {
-            return true;
-        }
-        LOG.error()
-                .$("could not clean up after create table failure [path=").$(path)
-                .$(", errno=").$(errno)
-                .$(']').$();
-        return false;
     }
 
     private void setupTextLoaderFromModel(CopyModel model) {
