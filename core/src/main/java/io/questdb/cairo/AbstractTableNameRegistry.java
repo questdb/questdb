@@ -60,6 +60,17 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
+    public int getTableTokenCount(boolean includeDropped) {
+        int count = 0;
+        for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {
+            if (includeDropped || !entry.isDropped()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
     public void getTableTokens(ObjHashSet<TableToken> target, boolean includeDropped) {
         target.clear();
         for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {

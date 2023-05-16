@@ -69,7 +69,7 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
 
             if (totalCount > commitRate) {
                 totalCount = 0;
-                parser.commitAll(commitMode);
+                parser.commitAll();
             }
 
             if (ran) {
@@ -78,7 +78,7 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
 
             ran = true;
         }
-        parser.commitAll(commitMode);
+        parser.commitAll();
         return ran;
     }
 }

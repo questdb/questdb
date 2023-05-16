@@ -66,7 +66,14 @@ public interface TableNameRegistry extends Closeable {
     TableToken getTableToken(String dirName, int tableId);
 
     /**
-     * Sets all table tokens to the target provided. Among live table it can return dropped tables which are not fully deleted yet.
+     * Returns total count of table tokens. Among live tables it can count dropped tables which are not fully deleted yet.
+     *
+     * @param includeDropped if true, count dropped tables
+     */
+    int getTableTokenCount(boolean includeDropped);
+
+    /**
+     * Sets all table tokens to the target provided. Among live tables it can return dropped tables which are not fully deleted yet.
      *
      * @param target         target to set table tokens to
      * @param includeDropped if true, include dropped tables

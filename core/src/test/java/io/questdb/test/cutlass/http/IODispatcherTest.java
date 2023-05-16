@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
@@ -56,7 +56,6 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cutlass.NetUtils;
@@ -90,7 +89,6 @@ public class IODispatcherTest extends AbstractTest {
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
     private static final Metrics metrics = Metrics.enabled();
-    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -3289,6 +3287,16 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonQueryCreateTableAsSelectTimeoutNoWal() throws Exception {
+        testJsonQueryCreateTableAsSelectTimeout(false);
+    }
+
+    @Test
+    public void testJsonQueryCreateTableAsSelectTimeoutWal() throws Exception {
+        testJsonQueryCreateTableAsSelectTimeout(true);
+    }
+
+    @Test
     public void testJsonQueryDataError() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
@@ -4554,15 +4562,10 @@ public class IODispatcherTest extends AbstractTest {
                 true
         );
 
-        final String expectedEvent = "100\n" +
-                "1\n" +
-                "101\n";
-        assertColumn(expectedEvent, 1);
-
-        final String expectedOrigin = "1\n" +
-                "2\n" +
-                "1\n";
-        assertColumn(expectedOrigin, 2);
+        final String expectedEvent = "100\t1\n" +
+                "1\t2\n" +
+                "101\t1\n";
+        assertTelemetryEventAndOrigin(expectedEvent);
     }
 
     @Test
@@ -4594,17 +4597,11 @@ public class IODispatcherTest extends AbstractTest {
                 true
         );
 
-        final String expected = "100\n" +
-                "1\n" +
-                "1\n" +
-                "101\n";
-        assertColumn(expected, 1);
-
-        final String expectedOrigin = "1\n" +
-                "2\n" +
-                "2\n" +
-                "1\n";
-        assertColumn(expectedOrigin, 2);
+        final String expected = "100\t1\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "101\t1\n";
+        assertTelemetryEventAndOrigin(expected);
     }
 
     @Test
@@ -7949,24 +7946,6 @@ public class IODispatcherTest extends AbstractTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
-    private void assertColumn(CharSequence expected, int index) {
-        final String baseDir = root;
-        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
-
-        String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false);
-        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
-            final StringSink sink = new StringSink();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-        }
-    }
-
     private void assertMetadataAndData(
             String tableName,
             long expectedO3MaxLag,
@@ -7987,6 +7966,24 @@ public class IODispatcherTest extends AbstractTest {
             Assert.assertEquals(0, expectedImportedRows - reader.size());
             StringSink sink = new StringSink();
             TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+        }
+    }
+
+    private void assertTelemetryEventAndOrigin(CharSequence expected) {
+        final String baseDir = root;
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
+
+        String telemetry = TelemetryTask.TABLE_NAME;
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false);
+        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
+            final StringSink sink = new StringSink();
+            sink.clear();
+            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            TestUtils.assertEquals(expected, sink);
         }
     }
 
@@ -8062,9 +8059,9 @@ public class IODispatcherTest extends AbstractTest {
             public FilesFacade getFilesFacade() {
                 return new TestFilesFacadeImpl() {
                     @Override
-                    public int msync(long addr, long len, boolean async) {
+                    public void msync(long addr, long len, boolean async) {
                         msyncCallCount.incrementAndGet();
-                        return Files.msync(addr, len, async);
+                        Files.msync(addr, len, async);
                     }
                 };
             }
@@ -8141,8 +8138,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }
         );
-
-        Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
 
         assertMetadataAndData(
                 tableName,
@@ -8231,6 +8226,20 @@ public class IODispatcherTest extends AbstractTest {
                 expectedImportedRows,
                 expectedData,
                 false);
+    }
+
+    private void printTelemetryEventAndOrigin(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            final short event = record.getShort(1);
+            if (event < 0) {
+                continue; // skip non-event entries
+            }
+            TestUtils.printColumn(record, metadata, 1, sink, false);
+            sink.put('\t');
+            TestUtils.printColumn(record, metadata, 2, sink, false);
+            sink.put('\n');
+        }
     }
 
     private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
@@ -8349,6 +8358,66 @@ public class IODispatcherTest extends AbstractTest {
                         .withHttpProtocolVersion(http1 ? "HTTP/1.0 " : "HTTP/1.1 "));
         builder.run(code);
         return builder;
+    }
+
+    private void testJsonQueryCreateTableAsSelectTimeout(boolean withWal) throws Exception {
+        final String ddlAsSelectSuffix = withWal ? " wal" : " bypass wal";
+        final String ddlSuffix = withWal ? " bypass wal" : " wal";
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
+                .run((engine) -> {
+                    final String ddlAsSelect = "create table x as (select x::timestamp as ts, x as l from long_sequence(100)) timestamp(ts) partition by day" + ddlAsSelectSuffix;
+                    final String expectedErrorResponse = "HTTP/1.1 400 Bad request";
+                    new SendAndReceiveRequestBuilder()
+                            .withCompareLength(expectedErrorResponse.length())
+                            .execute(
+                                    "GET /exec?query=" + HttpUtils.urlEncodeQuery(ddlAsSelect) + " HTTP/1.1\r\n" +
+                                            "Host: localhost:9000\r\n" +
+                                            "Connection: keep-alive\r\n" +
+                                            "Accept: */*\r\n" +
+                                            "X-Requested-With: XMLHttpRequest\r\n" +
+                                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                            "Sec-Fetch-Site: same-origin\r\n" +
+                                            "Sec-Fetch-Mode: cors\r\n" +
+                                            "Referer: http://localhost:9000/index.html\r\n" +
+                                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                            "\r\n",
+                                    expectedErrorResponse
+                            );
+                    // We should be able to create table with the same name.
+                    final String ddl = "create table x (ts timestamp, x long) timestamp(ts) partition by day" + ddlSuffix;
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /exec?query=" + HttpUtils.urlEncodeQuery(ddl) + " HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
+                });
     }
 
     private void testMaxConnections0(

@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -128,7 +129,9 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     rnd.nextDouble(),
                     rnd.nextDouble(),
                     rnd.nextDouble(),
-                    1, // insert only
+                    // do not generate truncate on windows because it cannot be executed
+                    // successfully due to readers being open
+                    Os.type == Os.WINDOWS ? 0 : 0.2, // insert only
                     0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},

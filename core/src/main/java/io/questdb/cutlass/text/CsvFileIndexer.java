@@ -120,8 +120,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private int timestampIndex;
     private long timestampValue;
     private boolean useFieldRollBuf = false;
+    private final CairoConfiguration configuration;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
+        this.configuration = configuration;
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
@@ -646,7 +648,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     class IndexOutputFile implements Closeable {
-        final MemoryPMARImpl memory = new MemoryPMARImpl();
+        final MemoryPMARImpl memory;
         final long partitionKey;
         int chunkNumber;
         long dataSize;//partition data size in bytes
@@ -657,6 +659,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             this.indexChunkSize = 0;
             this.chunkNumber = 0;
             this.dataSize = 0;
+            this.memory = new MemoryPMARImpl(configuration.getCommitMode());
 
             nextChunk(ff, path);
         }
