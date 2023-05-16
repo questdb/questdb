@@ -2872,6 +2872,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExpectedKeyword() throws Exception {
+        final GenericLexer lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
+        lexer.of("keyword1 keyword2\nkeyword3\tkeyword4");
+        SqlCompiler.expectKeyword(lexer, "keyword1");
+        SqlCompiler.expectKeyword(lexer, "keyword2");
+        SqlCompiler.expectKeyword(lexer, "keyword3");
+        SqlCompiler.expectKeyword(lexer, "keyword4");
+    }
+
+    @Test
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )", sqlExecutionContext);
@@ -4250,16 +4260,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     compile("REINDEX TABLE \"xxx\" Lock exclusive;");
                 }
         );
-    }
-
-    @Test
-    public void testExpectedKeyword() throws Exception {
-        final GenericLexer lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-        lexer.of("keyword1 keyword2\nkeyword3\tkeyword4");
-        SqlCompiler.expectKeyword(lexer, "keyword1");
-        SqlCompiler.expectKeyword(lexer, "keyword2");
-        SqlCompiler.expectKeyword(lexer, "keyword3");
-        SqlCompiler.expectKeyword(lexer, "keyword4");
     }
 
     @Test
