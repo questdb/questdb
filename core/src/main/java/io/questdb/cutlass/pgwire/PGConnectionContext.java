@@ -127,6 +127,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final boolean readOnlyContext;
+    private final String readOnlyUsername;
     private final int recvBufferSize;
     private final CircuitBreakerRegistry registry;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
@@ -231,6 +232,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.authenticator = new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreakerId, circuitBreaker, registry, this);
         this.securityContextFactory = factoryProvider.getSecurityContextFactory();
         this.readOnlyContext = configuration.readOnlySecurityContext();
+        this.readOnlyUsername = configuration.isReadOnlyUserEnabled() ? configuration.getReadOnlyUsername() : null;
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -1557,7 +1559,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             default:
                 throw BadProtocolException.INSTANCE;
         }
-        SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), readOnlyContext);
+        CharSequence principal = authenticator.getPrincipal();
+        // todo: PgConnectionContext should not bother with readOnly users and context
+        // this responsibility should be moved to SecurityContextFactory - which will probably require a bit of context - at very least
+        // it will need to know who is creating the context - PgWire / ILP / REST etc.
+        boolean readOnly = readOnlyContext || (readOnlyUsername != null && principal != null && Chars.equals(readOnlyUsername, principal));
+        SecurityContext securityContext = securityContextFactory.getInstance(principal, readOnly);
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
         sendRNQ = true;
 
