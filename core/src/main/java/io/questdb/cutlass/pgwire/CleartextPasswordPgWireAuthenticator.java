@@ -27,17 +27,20 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public final class CleartextPasswordPgWireAuthenticator {
+public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
@@ -71,8 +74,7 @@ public final class CleartextPasswordPgWireAuthenticator {
     private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
-    public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, long recvBufStart, long recvBufEnd, long sendBufStart, long sendBufEnd,
-                                                PGWireConfiguration configuration,
+    public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
                                                 int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
                                                 OptionsListener optionsListener) {
         this.recvBufStart = recvBufStart;
@@ -113,6 +115,68 @@ public final class CleartextPasswordPgWireAuthenticator {
         return recvBufReadPos;
     }
 
+    public int handleIO() throws AuthenticatorException {
+        try {
+            for (; ; ) {
+                switch (state) {
+                    case EXPECT_INIT_MESSAGE: {
+                        int r = readFromSocket();
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        r = processInitMessage();
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        break;
+                    }
+                    case EXPECT_PASSWORD_MESSAGE: {
+                        readFromSocket();
+                        int r = processPasswordMessage();
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        break;
+                    }
+                    case WRITE_AND_EXPECT_PASSWORD_MESSAGE: {
+                        int r = writeToSocketAndAdvance(State.EXPECT_PASSWORD_MESSAGE);
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        break;
+                    }
+                    case WRITE_AND_EXPECT_INIT_MESSAGE: {
+                        int r = writeToSocketAndAdvance(State.EXPECT_INIT_MESSAGE);
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        break;
+                    }
+                    case WRITE_AND_AUTH_SUCCESS: {
+                        int r = writeToSocketAndAdvance(State.AUTH_SUCCESS);
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        break;
+                    }
+                    case WRITE_AND_AUTH_FAILURE: {
+                        writeToSocketAndAdvance(State.AUTH_FAILED);
+                        break;
+                    }
+                    case AUTH_SUCCESS:
+                        return Authenticator.OK;
+                    case AUTH_FAILED:
+                        return Authenticator.NEEDS_DISCONNECT;
+                    default:
+                        assert false;
+                }
+            }
+        } catch (BadProtocolException e) {
+            throw AuthenticatorException.INSTANCE;
+        }
+    }
+
+    @Override
     public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
         this.state = State.EXPECT_INIT_MESSAGE;
         this.username = null;
@@ -242,14 +306,14 @@ public final class CleartextPasswordPgWireAuthenticator {
         }
     }
 
-    private void processInitMessage() throws PeerIsSlowToWriteException, BadProtocolException, PeerDisconnectedException {
+    private int processInitMessage() throws BadProtocolException {
         int availableToRead = availableToRead();
         if (availableToRead < Integer.BYTES) { // size of message
-            throw PeerIsSlowToWriteException.INSTANCE;
+            return Authenticator.NEEDS_READ;
         }
         int msgLen = getIntUnsafe(recvBufReadPos);
         if (msgLen > availableToRead) {
-            throw PeerIsSlowToWriteException.INSTANCE;
+            return Authenticator.NEEDS_READ;
         }
         // at this point we have a full message available ready to be processed
         recvBufReadPos += Integer.BYTES; // first move beyond the msgLen
@@ -262,7 +326,7 @@ public final class CleartextPasswordPgWireAuthenticator {
                 break;
             case INIT_CANCEL_REQUEST:
                 processCancelMessage();
-                throw PeerDisconnectedException.INSTANCE;
+                return Authenticator.NEEDS_DISCONNECT;
             case INIT_SSL_REQUEST:
                 compactRecvBuf();
                 prepareSslResponse();
@@ -277,12 +341,13 @@ public final class CleartextPasswordPgWireAuthenticator {
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
                 throw BadProtocolException.INSTANCE;
         }
+        return Authenticator.OK;
     }
 
-    private void processPasswordMessage() throws PeerIsSlowToWriteException, BadProtocolException {
+    private int processPasswordMessage() throws BadProtocolException {
         int availableToRead = availableToRead();
         if (availableToRead < 1 + Integer.BYTES) { // msgType + msgLen
-            throw PeerIsSlowToWriteException.INSTANCE;
+            return Authenticator.NEEDS_READ;
         }
         byte msgType = Unsafe.getUnsafe().getByte(recvBufReadPos);
         assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
@@ -290,7 +355,7 @@ public final class CleartextPasswordPgWireAuthenticator {
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
         long msgLimit = (recvBufReadPos + msgLen + 1); // +1 for the type byte which is not included in msgLen
         if (recvBufWritePos < msgLimit) {
-            throw PeerIsSlowToWriteException.INSTANCE;
+            return Authenticator.NEEDS_READ;
         }
 
         // at this point we have a full message available ready to be processed
@@ -308,6 +373,7 @@ public final class CleartextPasswordPgWireAuthenticator {
             prepareWrongUsernamePasswordResponse();
             state = State.WRITE_AND_AUTH_FAILURE;
         }
+        return Authenticator.OK;
     }
 
     private void processStartupMessage(int msgLen) throws BadProtocolException {
@@ -359,66 +425,28 @@ public final class CleartextPasswordPgWireAuthenticator {
         state = State.WRITE_AND_EXPECT_PASSWORD_MESSAGE;
     }
 
-    private void readFromSocket() throws PeerDisconnectedException {
+    private int readFromSocket() {
         int bytesRead = nf.recv(fd, recvBufWritePos, (int) (recvBufEnd - recvBufWritePos));
         if (bytesRead < 0) {
-            throw PeerDisconnectedException.INSTANCE;
+            return Authenticator.NEEDS_DISCONNECT;
         }
         recvBufWritePos += bytesRead;
+        return Authenticator.OK;
     }
 
-    private void writeToSocketAndAdvance(State nextState) throws PeerIsSlowToReadException {
+    private int writeToSocketAndAdvance(State nextState) {
         int toWrite = (int) (sendBufWritePos - sendBufReadPos);
         int bytesWritten = nf.send(fd, sendBufReadPos, toWrite);
         sendBufReadPos += bytesWritten;
         compactSendBuf();
         if (sendBufReadPos == sendBufWritePos) {
             state = nextState;
-            return;
+            return Authenticator.OK;
         }
         // we could try to call nf.send() again as there could be space in the socket buffer now
         // but: auth messages are small and we assume that the socket buffer is large enough to accommodate them in one go
-        // thus this exception should be rare and we will just wait for the next select() call
-        throw PeerIsSlowToReadException.INSTANCE;
-    }
-
-    void handleIO() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
-        for (; ; ) {
-            switch (state) {
-                case EXPECT_INIT_MESSAGE: {
-                    readFromSocket();
-                    processInitMessage();
-                    break;
-                }
-                case EXPECT_PASSWORD_MESSAGE: {
-                    readFromSocket();
-                    processPasswordMessage();
-                    break;
-                }
-                case WRITE_AND_EXPECT_PASSWORD_MESSAGE: {
-                    writeToSocketAndAdvance(State.EXPECT_PASSWORD_MESSAGE);
-                    break;
-                }
-                case WRITE_AND_EXPECT_INIT_MESSAGE: {
-                    writeToSocketAndAdvance(State.EXPECT_INIT_MESSAGE);
-                    break;
-                }
-                case WRITE_AND_AUTH_SUCCESS: {
-                    writeToSocketAndAdvance(State.AUTH_SUCCESS);
-                    break;
-                }
-                case WRITE_AND_AUTH_FAILURE: {
-                    writeToSocketAndAdvance(State.AUTH_FAILED);
-                    break;
-                }
-                case AUTH_SUCCESS:
-                    return;
-                case AUTH_FAILED:
-                    throw PeerDisconnectedException.INSTANCE;
-                default:
-                    assert false;
-            }
-        }
+        // thus this return should be rare and we will just wait for the next select() call
+        return Authenticator.NEEDS_WRITE;
     }
 
 

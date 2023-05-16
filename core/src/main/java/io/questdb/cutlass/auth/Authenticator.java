@@ -29,6 +29,7 @@ public interface Authenticator {
     int NEEDS_DISCONNECT = 3;
     int NEEDS_READ = 0;
     int NEEDS_WRITE = 1;
+    int OK = -1;
     int QUEUE_FULL = 2;
 
     CharSequence getPrincipal();
@@ -39,7 +40,7 @@ public interface Authenticator {
 
     int handleIO() throws AuthenticatorException;
 
-    void init(int fd);
+    void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
 
     boolean isAuthenticated();
 }

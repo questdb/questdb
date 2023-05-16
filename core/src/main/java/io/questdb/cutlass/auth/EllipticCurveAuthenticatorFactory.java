@@ -41,9 +41,6 @@ public class EllipticCurveAuthenticatorFactory implements AuthenticatorFactory {
     public Authenticator getLineTCPAuthenticator(long recvBufStart, long recvBufEnd) {
         return new EllipticCurveAuthenticator(
                 networkFacade,
-                publicKeyRepo,
-                recvBufStart,
-                recvBufEnd
-        );
+                publicKeyRepo);
     }
 }

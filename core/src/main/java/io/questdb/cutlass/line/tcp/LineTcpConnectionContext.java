@@ -182,37 +182,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 netIoJob.releaseWalTableDetails();
             }
         } else {
-            try {
-                int result = authenticator.handleIO();
-                if (authenticator.isAuthenticated()) {
-                    assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal());
-                    recvBufPos = authenticator.getRecvBufPos();
-                    resetParser(authenticator.getRecvBufPseudoStart());
-                    return parseMeasurements(netIoJob);
-                }
-                switch (result) {
-                    case Authenticator.NEEDS_WRITE:
-                        return IOContextResult.NEEDS_WRITE;
-                    case Authenticator.NEEDS_READ:
-                        return IOContextResult.NEEDS_READ;
-                    case Authenticator.NEEDS_DISCONNECT:
-                        return IOContextResult.NEEDS_DISCONNECT;
-                    case Authenticator.QUEUE_FULL:
-                        return IOContextResult.QUEUE_FULL;
-                    default:
-                        LOG.error().$("unexpected authenticator result [result=").$(result).I$();
-                        return IOContextResult.NEEDS_DISCONNECT;
-                }
-            } catch (AuthenticatorException e) {
-                return IOContextResult.NEEDS_DISCONNECT;
-            }
+            // uncommon branch in a separate method to avoid polluting common path
+            return handleAuthentication(netIoJob);
         }
     }
 
     @Override
     public LineTcpConnectionContext of(int fd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-        authenticator.init(fd);
+        authenticator.init(fd, recvBufStart, recvBufEnd, 0, 0);
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
@@ -243,6 +220,34 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             } else {
                 LOG.info().$('[').$(fd).$("] peer disconnected").$();
             }
+        }
+    }
+
+    private IOContextResult handleAuthentication(NetworkIOJob netIoJob) {
+        try {
+            int result = authenticator.handleIO();
+            switch (result) {
+                case Authenticator.NEEDS_WRITE:
+                    return IOContextResult.NEEDS_WRITE;
+                case Authenticator.OK:
+                    assert authenticator.isAuthenticated();
+                    assert securityContext == DenyAllSecurityContext.INSTANCE;
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal());
+                    recvBufPos = authenticator.getRecvBufPos();
+                    resetParser(authenticator.getRecvBufPseudoStart());
+                    return parseMeasurements(netIoJob);
+                case Authenticator.NEEDS_READ:
+                    return IOContextResult.NEEDS_READ;
+                case Authenticator.NEEDS_DISCONNECT:
+                    return IOContextResult.NEEDS_DISCONNECT;
+                case Authenticator.QUEUE_FULL:
+                    return IOContextResult.QUEUE_FULL;
+                default:
+                    LOG.error().$("unexpected authenticator result [result=").$(result).I$();
+                    return IOContextResult.NEEDS_DISCONNECT;
+            }
+        } catch (AuthenticatorException e) {
+            return IOContextResult.NEEDS_DISCONNECT;
         }
     }
 

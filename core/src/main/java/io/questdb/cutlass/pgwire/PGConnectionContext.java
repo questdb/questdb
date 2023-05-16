@@ -32,6 +32,8 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -102,7 +104,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
-    private final CleartextPasswordPgWireAuthenticator authenticator;
+    private final Authenticator authenticator;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     //stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -226,7 +228,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.authenticator = new CleartextPasswordPgWireAuthenticator(nf, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit, configuration, circuitBreakerId, circuitBreaker, registry, this);
+        this.authenticator = new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreakerId, circuitBreaker, registry, this);
         this.securityContextFactory = factoryProvider.getSecurityContextFactory();
         this.readOnlyContext = configuration.readOnlySecurityContext();
     }
@@ -1536,13 +1538,30 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (authenticator.isAuthenticated()) {
             return false;
         }
-        authenticator.handleIO();
-        assert authenticator.isAuthenticated();
+        int r;
+        try {
+            r = authenticator.handleIO();
+        } catch (AuthenticatorException e) {
+            throw PeerDisconnectedException.INSTANCE;
+        }
+        switch (r) {
+            case Authenticator.OK:
+                assert authenticator.isAuthenticated();
+                break;
+            case Authenticator.NEEDS_READ:
+                throw PeerIsSlowToWriteException.INSTANCE;
+            case Authenticator.NEEDS_WRITE:
+                throw PeerIsSlowToReadException.INSTANCE;
+            case Authenticator.NEEDS_DISCONNECT:
+                throw PeerDisconnectedException.INSTANCE;
+            default:
+                throw BadProtocolException.INSTANCE;
+        }
         SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), readOnlyContext);
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
         sendRNQ = true;
 
-        // authenticator may have read some non-auth data left in the buffer
+        // authenticator may have some non-auth data left in the buffer - make we don't overwrite it
         recvBufferWriteOffset = authenticator.getRecvBufPos() - recvBuffer;
         recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
         return true;
