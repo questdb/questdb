@@ -24,10 +24,10 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
@@ -44,6 +44,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
+
         @Override
         public MillisecondClock getClock() {
             return httpContextConfiguration.getClock();
@@ -57,6 +58,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public int getDoubleScale() {
             return Numbers.MAX_SCALE;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return DefaultFactoryProvider.INSTANCE;
         }
 
         @Override
@@ -77,11 +83,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
-        }
-
-        @Override
-        public SqlParserFactory getSqlParserFactory() {
-            return SqlParserFactoryImpl.INSTANCE;
         }
     };
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
@@ -200,6 +201,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getWorkerCount() {
         return 2;
+    }
+
+    @Override
+    public boolean isPessimisticHealthCheckEnabled() {
+        return false;
     }
 
     @Override

@@ -24,9 +24,7 @@
 
 package io.questdb.test;
 
-import io.questdb.Metrics;
-import io.questdb.ServerConfiguration;
-import io.questdb.WorkerPoolManager;
+import io.questdb.*;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -203,6 +201,11 @@ public class WorkerPoolManagerTest {
             @Override
             public WorkerPoolConfiguration getWorkerPoolConfiguration() {
                 return () -> workerCount;
+            }
+
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return DefaultFactoryProvider.INSTANCE;
             }
         };
     }

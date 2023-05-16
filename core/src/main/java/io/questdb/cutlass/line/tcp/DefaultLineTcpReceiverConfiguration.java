@@ -24,12 +24,10 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.DefaultPublicKeyRepoFactory;
-import io.questdb.cutlass.auth.PublicKeyRepoFactory;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -57,10 +55,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
         }
     };
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
-    private PublicKeyRepoFactory publicKeyRepoFactory;
 
     @Override
-    public String getAuthDbPath() {
+    public String getAuthDB() {
         return null;
     }
 
@@ -169,18 +166,8 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-        if (publicKeyRepoFactory == null) {
-            if (getAuthDbPath() != null) {
-                publicKeyRepoFactory = new DefaultPublicKeyRepoFactory(getAuthDbPath());
-            }
-        }
-        return publicKeyRepoFactory;
-    }
-
-    @Override
-    public SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override

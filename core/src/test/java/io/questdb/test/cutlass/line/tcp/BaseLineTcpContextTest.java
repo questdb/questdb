@@ -24,11 +24,13 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cutlass.auth.AuthenticatorFactory;
+import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -134,17 +136,18 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
-        return new DefaultLineTcpReceiverConfiguration() {
+        final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
-            public String getAuthDbPath() {
+            public AuthenticatorFactory getAuthenticatorFactory() {
                 if (withAuth) {
                     URL u = getClass().getResource("authDb.txt");
                     assert u != null;
-                    return u.getFile();
+                    return new EllipticCurveAuthenticatorFactory(nf, u.getFile());
                 }
-                return super.getAuthDbPath();
+                return super.getAuthenticatorFactory();
             }
-
+        };
+        return new DefaultLineTcpReceiverConfiguration() {
             @Override
             public boolean getAutoCreateNewColumns() {
                 return autoCreateNewColumns;
@@ -168,6 +171,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public boolean getDisconnectOnError() {
                 return disconnectOnError;
+            }
+
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return factoryProvider;
             }
 
             @Override
@@ -196,11 +204,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
-            }
-
-            @Override
-            public SecurityContextFactory getSecurityContextFactory() {
-                return AllowAllSecurityContextFactory.INSTANCE;
             }
 
             @Override

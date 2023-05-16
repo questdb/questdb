@@ -42,11 +42,11 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MILLISECONDS)
+@OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class TableWriterBenchmark {
 
     // Should be set close enough to the cairo.max.uncommitted.rows default value.
-    private static final int ROWS_PER_ITERATION = 500_000;
+    private static final int ROWS_PER_ITERATION = 1;
 
     private static TableWriter writer;
     private static TableWriter writer2;
@@ -164,7 +164,7 @@ public class TableWriterBenchmark {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
-                            configuration.getSecurityContextFactory().getRootContext(),
+                            configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,

@@ -63,7 +63,7 @@ public class Bootstrap {
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
-        this(new DefaultBootstrapConfiguration(), args);
+        this(new PropBootstrapConfiguration(), args);
     }
 
     public Bootstrap(BootstrapConfiguration bootstrapConfiguration, String... args) {
@@ -82,6 +82,7 @@ public class Bootstrap {
         if (!rootPath.exists()) {
             throw new BootstrapException("Root directory does not exist: " + rootDirectory);
         }
+
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
             Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
         }
@@ -145,9 +146,10 @@ public class Bootstrap {
                 extractSite();
             }
 
-            if (bootstrapConfiguration.getServerConfiguration() == null) {
+            ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
+            if (configuration == null) {
                 // /server.conf properties
-                final Properties properties = loadProperties(rootPath);
+                final Properties properties = loadProperties();
                 final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
                 if (ffOverride == null) {
                     config = new PropServerConfiguration(
@@ -155,8 +157,7 @@ public class Bootstrap {
                             properties,
                             bootstrapConfiguration.getEnv(),
                             log,
-                            buildInformation,
-                            bootstrapConfiguration.getFactoriesFactory()
+                            buildInformation
                     );
                 } else {
                     config = new PropServerConfiguration(
@@ -164,8 +165,7 @@ public class Bootstrap {
                             properties,
                             bootstrapConfiguration.getEnv(),
                             log,
-                            buildInformation,
-                            bootstrapConfiguration.getFactoriesFactory()
+                            buildInformation
                     ) {
                         private CairoConfiguration cairoConf;
 
@@ -184,7 +184,7 @@ public class Bootstrap {
                     };
                 }
             } else {
-                config = bootstrapConfiguration.getServerConfiguration();
+                config = configuration;
             }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
@@ -263,58 +263,60 @@ public class Bootstrap {
 
     public void extractSite() throws IOException {
         URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
-        long thisVersion = Long.MIN_VALUE;
         if (resource == null) {
             log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
         } else {
-            thisVersion = resource.openConnection().getLastModified();
-        }
+            long thisVersion = resource.openConnection().getLastModified();
+            final String publicDir = rootDirectory + Files.SEPARATOR + "public";
+            final byte[] buffer = new byte[1024 * 1024];
 
-        final String publicDir = rootDirectory + Files.SEPARATOR + "public";
-        final byte[] buffer = new byte[1024 * 1024];
-
-        boolean extracted = false;
-        final String oldVersionStr = getPublicVersion(publicDir);
-        final CharSequence dbVersion = buildInformation.getQuestDbVersion();
-        if (oldVersionStr == null) {
-            if (thisVersion != 0) {
-                extractSite0(publicDir, buffer, Long.toString(thisVersion));
-            } else {
-                extractSite0(publicDir, buffer, Chars.toString(dbVersion));
-            }
-            extracted = true;
-        } else {
-            // This is a hack to deal with RT package problem
-            // in this package "thisVersion" is always 0, and we need to fall back
-            // to the database version.
-            if (thisVersion == 0) {
-                if (!Chars.equals(oldVersionStr, dbVersion)) {
+            boolean extracted = false;
+            final String oldVersionStr = getPublicVersion(publicDir);
+            final CharSequence dbVersion = buildInformation.getQuestDbVersion();
+            if (oldVersionStr == null) {
+                if (thisVersion != 0) {
+                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                } else {
                     extractSite0(publicDir, buffer, Chars.toString(dbVersion));
-                    extracted = true;
                 }
+                extracted = true;
             } else {
-                // it is possible that old version is the database version
-                // which means user might have switched from RT distribution to no-JVM on the same data dir
-                // in this case we might fail to parse the version string
-                try {
-                    final long oldVersion = Numbers.parseLong(oldVersionStr);
-                    if (thisVersion > oldVersion) {
+                // This is a hack to deal with RT package problem
+                // in this package "thisVersion" is always 0, and we need to fall back
+                // to the database version.
+                if (thisVersion == 0) {
+                    if (!Chars.equals(oldVersionStr, dbVersion)) {
+                        extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                        extracted = true;
+                    }
+                } else {
+                    // it is possible that old version is the database version
+                    // which means user might have switched from RT distribution to no-JVM on the same data dir
+                    // in this case we might fail to parse the version string
+                    try {
+                        final long oldVersion = Numbers.parseLong(oldVersionStr);
+                        if (thisVersion > oldVersion) {
+                            extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                            extracted = true;
+                        }
+                    } catch (NumericException e) {
                         extractSite0(publicDir, buffer, Long.toString(thisVersion));
                         extracted = true;
                     }
-                } catch (NumericException e) {
-                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
-                    extracted = true;
                 }
             }
-        }
-        if (!extracted) {
-            log.infoW().$("Web Console is up to date").$();
+            if (!extracted) {
+                log.infoW().$("Web Console is up to date").$();
+            }
         }
     }
 
     public String getBanner() {
         return banner;
+    }
+
+    public BuildInformation getBuildInformation() {
+        return buildInformation;
     }
 
     public ServerConfiguration getConfiguration() {
@@ -327,6 +329,22 @@ public class Bootstrap {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    public String getRootDirectory() {
+        return rootDirectory;
+    }
+
+    @NotNull
+    public Properties loadProperties() throws IOException {
+        final Properties properties = new Properties();
+        java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
+        log.advisoryW().$("Server config: ").$(configFile).$();
+
+        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
+            properties.load(is);
+        }
+        return properties;
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -438,18 +456,6 @@ public class Bootstrap {
         }
         copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
         copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
-    }
-
-    @NotNull
-    private Properties loadProperties(File rootPath) throws IOException {
-        final Properties properties = new Properties();
-        java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
-        log.advisoryW().$("Server config: ").$(configFile).$();
-
-        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
-            properties.load(is);
-        }
-        return properties;
     }
 
     private void reportValidateConfig() {

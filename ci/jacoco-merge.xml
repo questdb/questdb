@@ -26,7 +26,7 @@
 <!--
 
    This is maven build file to merge .exec JaCoCo reports and producing combined .xml report
-   To produce .xml report it is required to build to build core sources as a separate step
+   To produce .xml report it is required to build core sources as a separate step
 
 -->
 <project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"

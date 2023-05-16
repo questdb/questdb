@@ -63,6 +63,8 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int dataAppendPageSize = -1;
     protected static int o3MemMaxPages = -1;
+    protected static long partitionO3SplitThreshold = -1;
+
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -352,6 +354,11 @@ public class AbstractO3Test extends AbstractTest {
                     public int getO3MemMaxPages() {
                         return o3MemMaxPages > 0 ? o3MemMaxPages : super.getO3MemMaxPages();
                     }
+
+                    @Override
+                    public long getPartitionO3SplitMinSize() {
+                        return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
+                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration, LOG);
@@ -407,6 +414,11 @@ public class AbstractO3Test extends AbstractTest {
                     public int getO3PurgeDiscoveryQueueCapacity() {
                         return 0;
                     }
+
+                    @Override
+                    public long getPartitionO3SplitMinSize() {
+                        return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
+                    }
                 };
                 TestUtils.execute(null, runnable, configuration, LOG);
             }
@@ -450,5 +462,9 @@ public class AbstractO3Test extends AbstractTest {
                 }
             }
         }
+    }
+
+    protected enum ParallelMode {
+        Contended, Parallel
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -51,6 +52,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private String sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
+    private TableToken tableToken;
     private TextLoader textLoader;
     private short type;
     private UpdateOperation updateOp;
@@ -123,6 +125,11 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    @Override
     public TextLoader getTextLoader() {
         return textLoader;
     }
@@ -138,7 +145,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     public CompiledQuery of(short type) {
-        return of(type, null);
+        return of(type, null, null);
     }
 
     public CompiledQuery ofAlter(AlterOperation alterOp) {
@@ -172,15 +179,16 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.sqlStatement = sqlStatement;
     }
 
-    private CompiledQuery of(short type, RecordCursorFactory factory) {
+    private CompiledQuery of(short type, RecordCursorFactory factory, TableToken tableToken) {
         this.type = type;
         this.recordCursorFactory = factory;
+        this.tableToken = tableToken;
         this.affectedRowsCount = -1;
         return this;
     }
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory);
+        return of(SELECT, recordCursorFactory, null);
     }
 
     CompiledQuery ofBackupTable() {
@@ -207,12 +215,12 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(COPY_REMOTE);
     }
 
-    CompiledQuery ofCreateTable() {
-        return of(CREATE_TABLE);
+    CompiledQuery ofCreateTable(TableToken tableToken) {
+        return of(CREATE_TABLE, null, tableToken);
     }
 
-    CompiledQuery ofCreateTableAsSelect(long affectedRowsCount) {
-        of(CREATE_TABLE_AS_SELECT);
+    CompiledQuery ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
+        of(CREATE_TABLE_AS_SELECT, null, tableToken);
         this.affectedRowsCount = affectedRowsCount;
         return this;
     }
@@ -227,7 +235,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
-        return of(EXPLAIN, recordCursorFactory);
+        return of(EXPLAIN, recordCursorFactory, null);
     }
 
     CompiledQuery ofInsert(InsertOperation insertOperation) {
@@ -253,7 +261,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(ROLLBACK);
     }
 
-    CompiledQuery ofSet() {
+    public CompiledQuery ofSet() {
         return of(SET);
     }
 

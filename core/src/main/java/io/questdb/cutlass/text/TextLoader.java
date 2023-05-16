@@ -131,13 +131,12 @@ public class TextLoader implements Closeable, Mutable {
     public void configureDestination(
             CharSequence tableName,
             boolean overwrite,
-            boolean durable,
             int atomicity,
             int partitionBy,
             CharSequence timestampColumn,
             CharSequence timestampFormat
     ) {
-        configureDestination(tableName, overwrite, durable, atomicity, partitionBy, timestampColumn);
+        configureDestination(tableName, overwrite, atomicity, partitionBy, timestampColumn);
         this.textDelimiterScanner.setTableName(tableName);
         this.textMetadataParser.setTableName(tableName);
         this.timestampColumn = timestampColumn;
@@ -150,7 +149,6 @@ public class TextLoader implements Closeable, Mutable {
         LOG.info()
                 .$("configured [table=`").$(tableName)
                 .$("`, overwrite=").$(overwrite)
-                .$(", durable=").$(durable)
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampColumn)
@@ -161,12 +159,11 @@ public class TextLoader implements Closeable, Mutable {
     public void configureDestination(
             CharSequence tableName,
             boolean overwrite,
-            boolean durable,
             int atomicity,
             int partitionBy,
             CharSequence timestampColumn
     ) {
-        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampColumn);
+        textWriter.of(tableName, overwrite, atomicity, partitionBy, timestampColumn);
         this.tableName = tableName;
     }
 
@@ -212,6 +209,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public boolean isForceHeaders() {
         return forceHeaders;
+    }
+
+    public boolean isHeaderDetected() {
+        return textMetadataDetector.isHeader();
     }
 
     public void parse(long lo, long hi, int lineCountLimit, CsvTextLexer.Listener textLexerListener) {

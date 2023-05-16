@@ -31,13 +31,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.TextImportRequestJob;
+import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -357,6 +356,27 @@ public final class TestUtils {
                 Assert.assertEquals(message, expected, actual);
             }
         }
+    }
+
+    public static boolean equals(CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return true;
+        }
+
+        if (expected == null || actual == null) {
+            return false;
+        }
+
+        if (expected.length() != actual.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < expected.length(); i++) {
+            if (expected.charAt(i) != actual.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
@@ -847,21 +867,25 @@ public final class TestUtils {
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
+
+        if (tableModel.isWalEnabled()) {
+            sql.append(" WAL ");
+        }
         return sql.toString();
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1);
+        return new SqlExecutionContextImpl(engine, 1).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(engine.getConfiguration().getSecurityContextFactory().getRootContext(), bindVariableService);
+        ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
         return ctx;
     }
 
-    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, int workerCount) {
-        return new SqlExecutionContextImpl(engine, workerCount);
+    public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
     public static void createTestPath(CharSequence root) {
@@ -887,8 +911,8 @@ public final class TestUtils {
     }
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            processingJob.drain(0);
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1, null)) {
+            copyRequestJob.drain(0);
         }
     }
 
@@ -903,7 +927,7 @@ public final class TestUtils {
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
         ) {
             try {
                 if (pool != null) {
@@ -1305,35 +1329,6 @@ public final class TestUtils {
         Assert.assertTrue("Test dir cleanup error, rc=" + rc, rc <= 0);
     }
 
-    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
-        WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return new int[1];
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
-        WorkerPool pool = new WorkerPool(config, Metrics.disabled().health());
-        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
-        try {
-            pool.assign(processingJob);
-            pool.freeOnExit(processingJob);
-            pool.start(null);
-            task.run();
-        } finally {
-            pool.halt();
-        }
-    }
-
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
     }
@@ -1377,6 +1372,12 @@ public final class TestUtils {
         }
     }
 
+    public static void txnPartitionConditionally(Path path, int txn) {
+        if (txn > -1) {
+            path.put('.').put(txn);
+        }
+    }
+
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
@@ -1407,10 +1408,10 @@ public final class TestUtils {
                         }
                         break;
                     case ColumnType.DOUBLE:
-                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
+                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), 1E-6);
                         break;
                     case ColumnType.FLOAT:
-                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 4);
+                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
@@ -1468,9 +1469,28 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
+                String expected = recordToString(rr, metadataExpected);
+                String actual = recordToString(lr, metadataActual);
+                Assert.assertEquals(
+                        String.format(String.format("Row %d column %s[%s]", rowIndex, columnName, ColumnType.nameOf(columnType))),
+                        expected,
+                        actual
+                );
+                // If above didn't fail because of types not included or double precision not enough, throw here anyway
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
             }
         }
+    }
+
+    private static String recordToString(Record record, RecordMetadata metadata) {
+        sink.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            printColumn(record, metadata, i, sink, false);
+            if (i < n - 1) {
+                sink.put('\t');
+            }
+        }
+        return sink.toString();
     }
 
     private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
@@ -1499,6 +1519,7 @@ public final class TestUtils {
         }
     }
 
+/*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0, n = src.getColumnCount(); i < n; i++) {
@@ -1512,6 +1533,7 @@ public final class TestUtils {
         metadata.setTimestampIndex(src.getTimestampIndex());
         return metadata;
     }
+*/
 
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;

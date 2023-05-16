@@ -33,11 +33,9 @@ public interface BootstrapConfiguration {
 
     Map<String, String> getEnv();
 
-    FactoryProvider getFactoriesFactory();
-
     FilesFacade getFilesFacade();
 
-    ServerConfiguration getServerConfiguration();
+    ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception;
 
     boolean useSite();
 }

@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.setPathForPartition;
 import static io.questdb.cairo.mig.MigrationUtils.openFileSafe;
 
 public class Mig620 {
@@ -249,13 +250,6 @@ public class Mig620 {
                     tops.add(-1L);
                 }
             }
-        }
-    }
-
-    private static void setPathForPartition(Path path, int partitionBy, long timestamp, long partitionNameTxn) {
-        PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, false);
-        if (partitionNameTxn > -1L) {
-            path.put('.').put(partitionNameTxn);
         }
     }
 

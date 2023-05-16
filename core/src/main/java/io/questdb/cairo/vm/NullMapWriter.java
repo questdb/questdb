@@ -31,8 +31,18 @@ public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
 
     @Override
+    public void sync(boolean async) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean getNullFlag() {
         return false;
+    }
+
+    @Override
+    public int getSymbolCapacity() {
+        return -1;
     }
 
     @Override

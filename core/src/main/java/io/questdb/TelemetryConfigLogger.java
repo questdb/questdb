@@ -91,10 +91,7 @@ public class TelemetryConfigLogger implements Closeable {
 
     private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
         try {
-            final CompiledQuery cc = compiler.compile(
-                    "ALTER TABLE " + TELEMETRY_CONFIG_TABLE_NAME + " ADD COLUMN " + columnDetails,
-                    executionContext
-            );
+            CompiledQuery cc = compiler.query().$("ALTER TABLE ").$(TELEMETRY_CONFIG_TABLE_NAME).$(" ADD COLUMN ").$(columnDetails).compile(executionContext);
             try (OperationFuture fut = cc.execute(tempSequence)) {
                 fut.await();
             }
@@ -112,7 +109,7 @@ public class TelemetryConfigLogger implements Closeable {
                 tableToken,
                 "telemetryConfig"
         );
-        final CompiledQuery cc = compiler.compile(TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sqlExecutionContext);
+        final CompiledQuery cc = compiler.query().$(TELEMETRY_CONFIG_TABLE_NAME).$(" LIMIT -1").compile(sqlExecutionContext);
         try (
                 final RecordCursorFactory factory = cc.getRecordCursorFactory();
                 final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -146,8 +143,14 @@ public class TelemetryConfigLogger implements Closeable {
         return configWriter;
     }
 
-    void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
-        compiler.compile("CREATE TABLE IF NOT EXISTS " + TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean, version symbol, os symbol, package symbol)", sqlExecutionContext);
+    void init(SqlCompiler compiler, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
+        final TableToken configTableToken = compiler.query()
+                .$("CREATE TABLE IF NOT EXISTS ")
+                .$(TELEMETRY_CONFIG_TABLE_NAME)
+                .$(" (id long256, enabled boolean, version symbol, os symbol, package symbol)")
+                .compile(sqlExecutionContext)
+                .getTableToken();
+
         tryAddColumn(compiler, sqlExecutionContext, "version symbol");
         tryAddColumn(compiler, sqlExecutionContext, "os symbol");
         tryAddColumn(compiler, sqlExecutionContext, "package symbol");
@@ -155,7 +158,6 @@ public class TelemetryConfigLogger implements Closeable {
         // TODO: close configWriter, we currently keep it open to prevent users from modifying the table.
         // Once we have a permission system, we can use that instead.
         try {
-            final TableToken configTableToken = engine.verifyTableName(TELEMETRY_CONFIG_TABLE_NAME);
             configWriter = updateTelemetryConfig(compiler, sqlExecutionContext, configTableToken);
         } catch (CairoException ex) {
             LOG.error()

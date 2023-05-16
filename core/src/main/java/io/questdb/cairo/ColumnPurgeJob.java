@@ -84,12 +84,14 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(
-                configuration.getSecurityContextFactory().getRootContext(),
+                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                 null,
                 null
         );
-        this.sqlCompiler.compile(
-                "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (" +
+        this.tableToken = this.sqlCompiler.query().$(
+                        "CREATE TABLE IF NOT EXISTS \"")
+                .$(tableName)
+                .$("\" (" +
                         "ts timestamp, " + // 0
                         "table_name symbol, " + // 1
                         "column_name symbol, " + // 2
@@ -102,10 +104,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         "partition_timestamp timestamp, " + // 9
                         "partition_name_txn long," + // 10
                         "completed timestamp" + // 11
-                        ") timestamp(ts) partition by MONTH BYPASS WAL",
-                sqlExecutionContext
-        );
-        this.tableToken = engine.verifyTableName(tableName);
+                        ") timestamp(ts) partition by MONTH BYPASS WAL"
+                )
+                .compile(sqlExecutionContext)
+                .getTableToken();
         this.writer = engine.getWriter(tableToken, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
         processTableRecords(engine);
@@ -199,10 +201,11 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
     private void processTableRecords(CairoEngine engine) {
         try {
-            CompiledQuery reloadQuery = sqlCompiler.compile(
-                    "SELECT * FROM \"" + tableToken.getTableName() + "\" WHERE completed = null",
-                    sqlExecutionContext
-            );
+            CompiledQuery reloadQuery = sqlCompiler.query()
+                    .$("SELECT * FROM \"")
+                    .$(tableToken.getTableName())
+                    .$("\" WHERE completed = null")
+                    .compile(sqlExecutionContext);
 
             long microTime = clock.getTicks();
             try (RecordCursorFactory recordCursorFactory = reloadQuery.getRecordCursorFactory()) {

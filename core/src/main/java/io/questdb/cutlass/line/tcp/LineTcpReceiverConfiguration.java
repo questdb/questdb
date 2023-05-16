@@ -24,8 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.PublicKeyRepoFactory;
+import io.questdb.FactoryProvider;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -35,9 +34,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
-
-    String getAuthDbPath();
-
     boolean getAutoCreateNewColumns();
 
     boolean getAutoCreateNewTables();
@@ -62,6 +58,8 @@ public interface LineTcpReceiverConfiguration {
 
     FilesFacade getFilesFacade();
 
+    String getAuthDB();
+
     WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
     /**
@@ -84,10 +82,6 @@ public interface LineTcpReceiverConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    PublicKeyRepoFactory getPublicKeyRepoFactory();
-
-    SecurityContextFactory getSecurityContextFactory();
-
     long getSymbolCacheWaitUsBeforeReload();
 
     LineProtoTimestampAdapter getTimestampAdapter();
@@ -107,4 +101,6 @@ public interface LineTcpReceiverConfiguration {
     boolean isSymbolAsFieldSupported();
 
     boolean readOnlySecurityContext();
+
+    FactoryProvider getFactoryProvider();
 }

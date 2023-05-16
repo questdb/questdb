@@ -1312,7 +1312,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, precision is micro
                 3,
-                true,
                 setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1")
         );
     }
@@ -1322,8 +1321,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 60_000_000, // 1 minute, precision is micro
                 2,
-                false,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1", "2021-01-02.2")
+                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1", "2021-01-02.2", "2021-01-02.4")
         );
     }
 
@@ -3258,7 +3256,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination("test", overwrite, atomicity, PartitionBy.NONE, null, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3266,13 +3264,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, "ts", null);
+        textLoader.configureDestination("test", overwrite, atomicity, partitionBy, "ts", null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
-    private void configureLoaderDefaults(TextLoader textLoader, boolean durable) {
+    private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, durable, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
+        textLoader.configureDestination("test", false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
@@ -3326,7 +3324,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private void importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
             long expectedO3MaxLag,
             int maxUncommittedRows,
-            boolean durable,
             Set<String> expectedPartitionNames
     ) throws Exception {
         final AtomicInteger rmdirCallCount = new AtomicInteger();
@@ -3334,10 +3331,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         final FilesFacade ff = new TestFilesFacade() {
             @Override
-            public int msync(long addr, long len, boolean async) {
+            public void msync(long addr, long len, boolean async) {
                 msyncCallCount.incrementAndGet();
                 Assert.assertFalse(async);
-                return Files.msync(addr, len, false);
+                Files.msync(addr, len, false);
             }
 
             @Override
@@ -3387,10 +3384,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             assertNoLeak(
                     engine,
                     textLoader -> {
-                        configureLoaderDefaults(
-                                textLoader,
-                                durable
-                        );
+                        configureLoaderDefaults2(textLoader);
                         textLoader.setForceHeaders(true);
                         textLoader.setO3MaxLag(expectedO3MaxLag);
                         textLoader.setMaxUncommittedRows(maxUncommittedRows);
@@ -3419,7 +3413,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     }
             );
             Assert.assertEquals(expectedPartitionNames.size(), rmdirCallCount.get());
-            Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
             try (TableReader reader = getReader("test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
                 Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());

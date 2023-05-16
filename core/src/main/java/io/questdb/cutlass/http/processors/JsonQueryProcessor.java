@@ -81,7 +81,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this(
                 configuration,
                 engine,
-                new SqlCompiler(engine, functionFactoryCache, snapshotAgent, configuration.getSqlParserFactory()),
+                configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent),
                 new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
         );
     }
@@ -106,6 +106,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeUpdate);
         this.queryExecutors.extendAndSet(CompiledQuery.VACUUM, sendConfirmation);

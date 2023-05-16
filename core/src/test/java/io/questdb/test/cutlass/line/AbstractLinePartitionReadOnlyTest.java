@@ -34,7 +34,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.TestName;
 
@@ -63,9 +63,9 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
     @Rule
     public TestName testName = new TestName();
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
+    @Before
+    public void setUp() {
+        super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration(
                         "cairo.max.uncommitted.rows=500",
                         "cairo.commit.lag=2000",
@@ -83,7 +83,7 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
             Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
             for (int i = 0; i < partitionCount; i++) {
                 Assert.assertEquals(txFile.isPartitionReadOnly(i), partitionIsReadOnly[i]);
-                Assert.assertEquals(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestamp(i)), partitionIsReadOnly[i]);
+                Assert.assertEquals(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestampByIndex(i)), partitionIsReadOnly[i]);
             }
         }
     }

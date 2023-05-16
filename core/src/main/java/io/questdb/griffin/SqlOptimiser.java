@@ -1908,6 +1908,29 @@ public class SqlOptimiser {
         }
     }
 
+    private boolean hasAggregateQueryColumn(QueryModel model) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.getAst().type != LITERAL) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                        return true;
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
+                        continue;
+                    }
+                }
+
+                if (checkForAggregates(qc.getAst())) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private boolean hasAggregates(ExpressionNode node) {
 
         sqlNodeStack.clear();
@@ -2265,7 +2288,9 @@ public class SqlOptimiser {
                             && nested.getLatestBy().size() == 0
             ) {
                 model.setTimestamp(timestamp);
+                model.setExplicitTimestamp(nested.isExplicitTimestamp());
                 nested.setTimestamp(null);
+                nested.setExplicitTimestamp(false);
             }
         }
 
@@ -3350,6 +3375,9 @@ public class SqlOptimiser {
                     && current.getLimitHi() == null
                     && current.getUnionModel() == null
                     && current.getJoinModels().size() == 1
+                    && current.getGroupBy().size() == 0
+                    && current.getSampleBy() == null
+                    && !hasAggregateQueryColumn(current)
                     && !current.isDistinct()
                     && nested != null
                     && nested.getTimestamp() != null
@@ -3372,6 +3400,7 @@ public class SqlOptimiser {
                 limit.setLimit(limitNode, null);
                 limit.setNestedModel(nested);
                 limit.setTimestamp(nested.getTimestamp());
+                limit.setExplicitTimestamp(nested.isExplicitTimestamp());
 
                 int timestampKey = current.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
                 if (timestampKey < 0) {

@@ -384,7 +384,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         processNodeQueryModels(node, BACKUP_WHERE_CLAUSE);
     }
 
-    // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
+    // Checks if lo, hi is set and lo >= 0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
     private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
         if (model.getLimitLo() == null && model.getLimitHi() == null) {
@@ -1695,12 +1695,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                         }
                     }
-                } catch (Throwable th) {
+                } catch (Throwable e) {
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);
                     }
-                    throw th;
+                    throw e;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
                 }
@@ -1747,6 +1747,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilter = model.getConstWhereClause();
             if (constFilter != null) {
                 Function function = functionParser.parseFunction(constFilter, null, executionContext);
+                if (!ColumnType.isBoolean(function.getType())) {
+                    throw SqlException.position(constFilter.position).put("boolean expression expected");
+                }
+                function.init(null, executionContext);
                 if (!function.getBool(null)) {
                     // do not copy metadata here
                     // this would have been JoinRecordMetadata, which is new instance anyway
@@ -2896,7 +2900,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
+        final RecordCursorFactory factory;
+        try {
+            //if model uses explicit timestamp (e.g. select * from X timestamp(ts)) then we shouldn't expect the inner models to produce one
+            if (overrideTimestampRequired) {
+                executionContext.pushTimestampRequiredFlag(false);
+            }
+            factory = generateSubQuery(model, executionContext);
+        } finally {
+            if (overrideTimestampRequired) {
+                executionContext.popTimestampRequiredFlag();
+            }
+        }
 
         final RecordMetadata metadata = factory.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();

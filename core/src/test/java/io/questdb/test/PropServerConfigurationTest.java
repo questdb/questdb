@@ -28,6 +28,7 @@ import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -100,6 +101,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10, configuration.getHttpMinServerConfiguration().getYieldThreshold());
         Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getSleepThreshold());
         Assert.assertEquals(50, configuration.getHttpMinServerConfiguration().getSleepTimeout());
+        Assert.assertEquals(1, configuration.getHttpMinServerConfiguration().getWorkerCount());
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative, and we need to check if absolute path is good
@@ -138,6 +140,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
         Assert.assertEquals(12, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
+
+        Assert.assertFalse(configuration.getHttpMinServerConfiguration().isPessimisticHealthCheckEnabled());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().isPessimisticHealthCheckEnabled());
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
@@ -391,6 +396,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
         Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
+
+
+        Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
+        Assert.assertEquals(1L << 40, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
     }
 
     @Test
@@ -531,7 +540,7 @@ public class PropServerConfigurationTest {
     public void testDeprecatedValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("http.net.rcv.buf.size", "10000");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
         Assert.assertFalse(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
@@ -612,13 +621,13 @@ public class PropServerConfigurationTest {
 
         //direct cases
         assertInputWorkRootCantBeSetTo(properties, root);
-        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot());
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getSnapshotRoot().toString());
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getConfRoot().toString());
 
         //relative cases
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(root));
-        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getRoot().toString()));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getRoot()));
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getSnapshotRoot().toString()));
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getConfRoot().toString()));
     }
@@ -631,8 +640,8 @@ public class PropServerConfigurationTest {
 
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertNull(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot());
-        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toUpperCase());
-        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toLowerCase());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toUpperCase());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toLowerCase());
     }
 
     @Test(expected = ServerConfigurationException.class)
@@ -707,7 +716,7 @@ public class PropServerConfigurationTest {
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("invalid.key", "value");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
         Assert.assertTrue(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
@@ -812,7 +821,7 @@ public class PropServerConfigurationTest {
     public void testObsoleteValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.timeout", "10000");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
         Assert.assertTrue(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
@@ -877,6 +886,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
             Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
+            Assert.assertTrue(configuration.getHttpMinServerConfiguration().isPessimisticHealthCheckEnabled());
+            Assert.assertTrue(configuration.getHttpServerConfiguration().isPessimisticHealthCheckEnabled());
+
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
             Assert.assertFalse(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
@@ -895,6 +907,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100002, configuration.getHttpMinServerConfiguration().getSleepThreshold());
             Assert.assertEquals(1002, configuration.getHttpMinServerConfiguration().getSleepTimeout());
             Assert.assertEquals(16, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
+            Assert.assertEquals(4, configuration.getHttpMinServerConfiguration().getWorkerCount());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
@@ -1124,6 +1137,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("my_quest_ro", configuration.getPGWireConfiguration().getReadOnlyPassword());
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
             Assert.assertEquals(16, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
+            Assert.assertEquals(new DefaultPGWireConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
 
             Assert.assertEquals(255, configuration.getCairoConfiguration().getMaxFileNameLength());
             Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
@@ -1158,6 +1172,10 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
             Assert.assertEquals(42.2d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getWalDataAppendPageSize());
+
+            Assert.assertEquals(1, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
+            final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
+            Assert.assertEquals(TB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         }
     }
 
@@ -1262,7 +1280,7 @@ public class PropServerConfigurationTest {
             String volumeCPath = volumeC.getAbsolutePath();
             Properties properties = new Properties();
             properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), "");
-            Assert.assertNull(PropServerConfiguration.validate(properties));
+            Assert.assertNull(validate(properties));
             for (int i = 0; i < 20; i++) {
                 sink.clear();
                 loadVolumePath(aliasA, volumeAPath);
@@ -1298,7 +1316,7 @@ public class PropServerConfigurationTest {
     public void testValidConfiguration() {
         Properties properties = new Properties();
         properties.setProperty("http.net.connection.rcvbuf", "10000");
-        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNull(result);
     }
 
@@ -1340,5 +1358,9 @@ public class PropServerConfigurationTest {
         for (int i = 0, n = Math.abs(rnd.nextInt()) % 4; i < n; i++) {
             sink.put(' ');
         }
+    }
+
+    private PropServerConfiguration.ValidationResult validate(Properties properties) {
+        return new PropServerConfiguration.PropertyValidator().validate(properties);
     }
 }
