@@ -1154,7 +1154,9 @@ public class WalWriter implements TableWriterAPI {
             lastSegmentTxn = 0;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
-            releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
+            if (oldSegmentLockFd > -1) {
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
+            }
             path.trimTo(rootLen);
         }
     }
