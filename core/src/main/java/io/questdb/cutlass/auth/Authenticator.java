@@ -24,19 +24,22 @@
 
 package io.questdb.cutlass.auth;
 
-import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
-import io.questdb.cutlass.line.tcp.NetworkIOJob;
-
 public interface Authenticator {
-    boolean isAuthenticated();
 
-    LineTcpConnectionContext.IOContextResult handleIO(NetworkIOJob job) throws AuthenticatorException;
-
-    long getRecvBufPos();
+    int NEEDS_DISCONNECT = 3;
+    int NEEDS_READ = 0;
+    int NEEDS_WRITE = 1;
+    int QUEUE_FULL = 2;
 
     CharSequence getPrincipal();
 
+    long getRecvBufPos();
+
     long getRecvBufPseudoStart();
 
+    int handleIO() throws AuthenticatorException;
+
     void init(int fd);
+
+    boolean isAuthenticated();
 }

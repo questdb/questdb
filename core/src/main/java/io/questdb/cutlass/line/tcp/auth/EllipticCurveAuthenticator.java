@@ -29,8 +29,6 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.PublicKeyRepo;
-import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
-import io.questdb.cutlass.line.tcp.NetworkIOJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
@@ -105,7 +103,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     @Override
-    public LineTcpConnectionContext.IOContextResult handleIO(NetworkIOJob job) throws AuthenticatorException {
+    public int handleIO() throws AuthenticatorException {
         switch (authState) {
             case WAITING_FOR_KEY_ID:
                 readKeyId();
@@ -277,15 +275,15 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     private enum AuthState {
-        WAITING_FOR_KEY_ID(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
-        SENDING_CHALLENGE(LineTcpConnectionContext.IOContextResult.NEEDS_WRITE),
-        WAITING_FOR_RESPONSE(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
-        COMPLETE(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
-        FAILED(LineTcpConnectionContext.IOContextResult.NEEDS_DISCONNECT);
+        WAITING_FOR_KEY_ID(Authenticator.NEEDS_READ),
+        SENDING_CHALLENGE(Authenticator.NEEDS_WRITE),
+        WAITING_FOR_RESPONSE(Authenticator.NEEDS_READ),
+        COMPLETE(Authenticator.NEEDS_READ),
+        FAILED(Authenticator.NEEDS_DISCONNECT);
 
-        private final LineTcpConnectionContext.IOContextResult ioContextResult;
+        private final int ioContextResult;
 
-        AuthState(LineTcpConnectionContext.IOContextResult ioContextResult) {
+        AuthState(int ioContextResult) {
             this.ioContextResult = ioContextResult;
         }
     }
