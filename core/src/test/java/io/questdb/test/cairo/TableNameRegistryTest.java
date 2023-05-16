@@ -498,9 +498,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     private static int getNonDroppedSize(TableNameRegistry ro) {
-        ObjHashSet<TableToken> bucket = new ObjHashSet<>();
-        ro.getTableTokens(bucket, false);
-        return bucket.size();
+        return ro.getTableTokenCount(false);
     }
 
     private static void testConvertedTableListPassedToRegistryOnLoad0(boolean releaseInactiveBeforeConversion) throws Exception {

@@ -35,7 +35,6 @@ public interface ColumnIndexer extends QuietCloseable {
     void closeSlider();
 
     void configureFollowerAndWriter(
-            CairoConfiguration configuration,
             Path path,
             CharSequence name,
             long columnNameTxn,
@@ -43,7 +42,7 @@ public interface ColumnIndexer extends QuietCloseable {
             long columnTop
     );
 
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop);
+    void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop);
 
     void distress();
 
@@ -62,4 +61,6 @@ public interface ColumnIndexer extends QuietCloseable {
     void rollback(long maxRow);
 
     boolean tryLock(long expectedSequence);
+
+    void sync(boolean async);
 }

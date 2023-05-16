@@ -131,6 +131,10 @@ public final class Os {
         return type == LINUX_AMD64 || type == LINUX_ARM64;
     }
 
+    public static boolean isOSX() {
+        return type == OSX_AMD64 || type == OSX_ARM64;
+    }
+
     public static boolean isPosix() {
         return type != Os.WINDOWS;
     }

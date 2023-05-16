@@ -108,6 +108,11 @@ public class HttpQueryTestBuilder {
                         };
                     }
 
+                    @Override
+                    public LongSupplier getCopyIDSupplier() {
+                        return () -> 0;
+                    }
+
                     public FilesFacade getFilesFacade() {
                         return filesFacade;
                     }
@@ -125,11 +130,6 @@ public class HttpQueryTestBuilder {
                     @Override
                     public CharSequence getSqlCopyInputRoot() {
                         return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
-                    }
-
-                    @Override
-                    public LongSupplier getCopyIDSupplier() {
-                        return () -> 0;
                     }
 
                     @Override

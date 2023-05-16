@@ -304,5 +304,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
         // update metadata size
         metaMem.putInt(0, (int) metaMem.getAppendOffset());
+        metaMem.sync(false);
     }
 }

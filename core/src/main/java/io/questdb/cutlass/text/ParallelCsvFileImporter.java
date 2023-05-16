@@ -686,11 +686,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             writer.truncate();
         }
         closeWriter();
-        if (tableToken != null) {
-            cairoEngine.unlockTableName(tableToken);
-        }
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
             cairoEngine.drop(tmpPath, tableToken);
+        }
+        if (tableToken != null) {
+            cairoEngine.unlockTableName(tableToken);
         }
     }
 

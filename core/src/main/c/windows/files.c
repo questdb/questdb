@@ -171,7 +171,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
     }
     HANDLE handle = FD_TO_HANDLE(fd);
     if (set_file_pos(handle, offset)
-            && WriteFile(handle, (LPCVOID) address, (DWORD) len, &count, NULL)) {
+        && WriteFile(handle, (LPCVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
@@ -189,7 +189,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     DWORD count;
     HANDLE handle = FD_TO_HANDLE(fd);
     if (set_file_pos(handle, offset)
-            && ReadFile(handle, (LPVOID) address, (DWORD) len, &count, NULL)) {
+        && ReadFile(handle, (LPVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
@@ -202,7 +202,7 @@ JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
     jbyte result;
     HANDLE handle = FD_TO_HANDLE(fd);
     if (set_file_pos(handle, offset)
-            && ReadFile(handle, (LPVOID) &result, (DWORD) 1, &count, NULL)) {
+        && ReadFile(handle, (LPVOID) &result, (DWORD) 1, &count, NULL)) {
         if (count == 1) {
             return result;
         }
@@ -217,7 +217,7 @@ JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
     jshort result;
     HANDLE handle = FD_TO_HANDLE(fd);
     if (set_file_pos(handle, offset)
-            && ReadFile(handle, (LPVOID) &result, (DWORD) 2, &count, NULL)) {
+        && ReadFile(handle, (LPVOID) &result, (DWORD) 2, &count, NULL)) {
         if (count == 2) {
             return result;
         }
@@ -232,7 +232,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
     jint result;
     HANDLE handle = FD_TO_HANDLE(fd);
     if (set_file_pos(handle, offset)
-            && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+        && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
         if (count == 4) {
             return result;
         }
@@ -247,7 +247,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
     jlong result;
     HANDLE handle = FD_TO_HANDLE(fd);
     if (set_file_pos(handle, offset)
-            && ReadFile(handle, (LPVOID) &result, (DWORD) 8, &count, NULL)) {
+        && ReadFile(handle, (LPVOID) &result, (DWORD) 8, &count, NULL)) {
         if (count == 8) {
             return result;
         }
@@ -304,9 +304,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlo
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jint fd) {
-    // Windows does not seem to have fsync or cannot fsync directory.
-    // To be fair we never saw our destructive test fail on windows,
-    // which leads to an assumption that all directory changes on windows are synchronous.
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
     return -1;
 }
 
@@ -646,12 +647,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
     }
 
     HANDLE hMapping = CreateFileMapping(
-        FD_TO_HANDLE(fd),
-        NULL,
-        flProtect | SEC_RESERVE,
-        (DWORD) (maxsize >> 32),
-        (DWORD) maxsize,
-        NULL
+            FD_TO_HANDLE(fd),
+            NULL,
+            flProtect | SEC_RESERVE,
+            (DWORD) (maxsize >> 32),
+            (DWORD) maxsize,
+            NULL
     );
     if (hMapping == NULL) {
         SaveLastError();
@@ -847,8 +848,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                 DWORD writtenCount = 0;
                 byte buff[1] = {0};
                 if (set_file_pos(handle, 0)
-                        && WriteFile(handle, (LPCVOID) &buff, (DWORD) 1, &writtenCount, NULL)
-                        && writtenCount == 1) {
+                    && WriteFile(handle, (LPCVOID) &buff, (DWORD) 1, &writtenCount, NULL)
+                    && writtenCount == 1) {
 
                     // extend file to `size`
                     if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
@@ -874,7 +875,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     } else if (fileSize == 0) {
         // file size is already 0, no cleanup but allocate the file
         if (Java_io_questdb_std_Files_truncate(e, cl, fd, size) == JNI_TRUE
-                && LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
+            && LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
             return fd;
         }
     }
