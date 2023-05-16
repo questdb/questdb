@@ -174,7 +174,6 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader.configureDestination(
                 tableName,
                 false,
-                false,
                 atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
                 PartitionBy.NONE,
                 timestampColumn,

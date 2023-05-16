@@ -35,7 +35,7 @@
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
-        <web.console.version>0.1.2</web.console.version>
+        <web.console.version>0.2.0</web.console.version>
     </properties>
 
     <version>7.1.2-SNAPSHOT</version>

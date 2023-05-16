@@ -66,7 +66,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         this.tableWriter = tableWriter;
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
-        this.indexBuilder = new IndexBuilder();
+        this.indexBuilder = new IndexBuilder(configuration);
         this.dataAppendPageSize = configuration.getDataAppendPageSize();
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
@@ -694,12 +694,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             TableWriter tableWriter
     ) {
         int pathTrimToLen = path.length();
-        indexBuilder.of(path.trimTo(rootLen), configuration);
+        indexBuilder.of(path.trimTo(rootLen));
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
             if (tableMetadata.isColumnIndexed(columnIndex)) {
                 CharSequence colName = tableMetadata.getColumnName(columnIndex);
-                indexBuilder.reindexAfterUpdate(partitionTimestamp, colName, tableWriter);
+                indexBuilder.reindexAfterUpdate(ff, partitionTimestamp, colName, tableWriter);
             }
         }
         indexBuilder.clear();

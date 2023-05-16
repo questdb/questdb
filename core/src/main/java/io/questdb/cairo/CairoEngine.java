@@ -206,7 +206,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         try {
             String lockedReason = lock(tableToken, "createTable");
-            if (null == lockedReason) {
+            if (lockedReason == null) {
                 boolean tableCreated = false;
                 try {
                     if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
@@ -305,7 +305,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         } else {
             CharSequence lockedReason = lock(tableToken, "removeTable");
-            if (null == lockedReason) {
+            if (lockedReason == null) {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
                     int errno;
@@ -480,6 +480,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableToken getTableTokenByDirName(String dirName, int tableId) {
         return tableNameRegistry.getTableToken(dirName, tableId);
+    }
+
+    public int getTableTokenCount(boolean includeDropped) {
+        return tableNameRegistry.getTableTokenCount(includeDropped);
     }
 
     public TableToken getTableTokenIfExists(CharSequence tableName) {

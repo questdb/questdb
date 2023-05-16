@@ -252,7 +252,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     throw CairoException.critical(TestFilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
-                try (MemoryMA mem = Vm.getMAInstance()) {
+                try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
                     mem.of(
                             TestFilesFacadeImpl.INSTANCE,
                             path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(),

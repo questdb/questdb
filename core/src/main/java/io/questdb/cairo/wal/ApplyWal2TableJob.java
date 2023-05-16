@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
+import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -90,65 +91,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().getWalMetrics();
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
-    }
-
-    // returns transaction number, which is always > -1. Negative values are used as status code.
-    long applyWAL(
-            TableToken tableToken,
-            CairoEngine engine,
-            OperationCompiler operationCompiler,
-            Job.RunStatus runStatus
-    ) {
-        long lastWriterTxn = WAL_APPLY_IGNORE_ERROR;
-        Path tempPath = Path.PATH.get();
-
-        try {
-            // security context is checked on writing to the WAL and can be ignored here
-            TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
-            if (engine.isTableDropped(tableToken) || updatedToken == null) {
-                if (engine.isTableDropped(tableToken)) {
-                    return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
-                }
-                // else: table is dropped and fully cleaned, this is late notification.
-                return Long.MAX_VALUE;
-            }
-
-            boolean finished;
-            try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
-                assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                finished = applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
-                lastWriterTxn = writer.getAppliedSeqTxn();
-            } catch (EntryUnavailableException tableBusy) {
-                //noinspection StringEquality
-                if (tableBusy.getReason() != NO_LOCK_REASON
-                        && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
-                        && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
-                    LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
-                }
-                // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
-                // We don't suspend table by virtue of having initial value on lastWriterTxn. It will either be
-                // "ignore" or last txn we applied.
-                return lastWriterTxn;
-            }
-
-            long updatedLastWriterTxn = -1;
-            if (!finished || lastWriterTxn < (updatedLastWriterTxn = engine.getTableSequencerAPI().lastTxn(tableToken))) {
-                long notifyTxn = updatedLastWriterTxn > -1 ? updatedLastWriterTxn : engine.getTableSequencerAPI().lastTxn(tableToken);
-                engine.notifyWalTxnCommitted(tableToken, notifyTxn);
-            }
-        } catch (CairoException ex) {
-            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
-                // Table is dropped, and we received cairo exception in the middle of apply
-                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : WAL_APPLY_IGNORE_ERROR;
-            }
-            telemetryFacade.store(TelemetryOrigin.WAL_APPLY, WAL_APPLY_SUSPEND);
-            LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .I$();
-            return WAL_APPLY_FAILED;
-        }
-        return lastWriterTxn;
     }
 
     @Override
@@ -464,7 +406,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
                         final long start = microClock.getTicks();
                         walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                        final long rowsAdded = writer.processWalData(
+                        final long rowsAdded = writer.commitWalTransaction(
                                 walPath,
                                 !dataInfo.isOutOfOrder(),
                                 dataInfo.getStartRowID(),
@@ -551,6 +493,67 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+    }
+
+    /**
+     * Returns transaction number, which is always > -1. Negative values are used as status code.
+     */
+    long applyWAL(
+            TableToken tableToken,
+            CairoEngine engine,
+            OperationCompiler operationCompiler,
+            Job.RunStatus runStatus
+    ) {
+        long lastWriterTxn = WAL_APPLY_IGNORE_ERROR;
+        Path tempPath = Path.PATH.get();
+
+        try {
+            // security context is checked on writing to the WAL and can be ignored here
+            TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+            if (engine.isTableDropped(tableToken) || updatedToken == null) {
+                if (engine.isTableDropped(tableToken)) {
+                    return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
+                }
+                // else: table is dropped and fully cleaned, this is late notification.
+                return Long.MAX_VALUE;
+            }
+
+            boolean finished;
+            try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
+                assert writer.getMetadata().getTableId() == tableToken.getTableId();
+                finished = applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
+                lastWriterTxn = writer.getAppliedSeqTxn();
+            } catch (EntryUnavailableException tableBusy) {
+                //noinspection StringEquality
+                if (tableBusy.getReason() != NO_LOCK_REASON
+                        && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
+                        && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
+                    LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
+                }
+                // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
+                // We don't suspend table by virtue of having initial value on lastWriterTxn. It will either be
+                // "ignore" or last txn we applied.
+                return lastWriterTxn;
+            }
+
+            long updatedLastWriterTxn = -1;
+            if (!finished || lastWriterTxn < (updatedLastWriterTxn = engine.getTableSequencerAPI().lastTxn(tableToken))) {
+                long notifyTxn = updatedLastWriterTxn > -1 ? updatedLastWriterTxn : engine.getTableSequencerAPI().lastTxn(tableToken);
+                engine.notifyWalTxnCommitted(tableToken, notifyTxn);
+            }
+        } catch (CairoException ex) {
+            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
+                // Table is dropped, and we received cairo exception in the middle of apply
+                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : WAL_APPLY_IGNORE_ERROR;
+            }
+            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return WAL_APPLY_FAILED;
+        }
+        return lastWriterTxn;
     }
 
     @Override

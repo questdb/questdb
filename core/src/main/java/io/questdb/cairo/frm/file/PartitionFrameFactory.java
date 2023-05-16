@@ -36,18 +36,13 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class PartitionFrameFactory implements Pool<PartitionFrame>, Closeable {
+public class PartitionFrameFactory implements RecycleBin<PartitionFrame>, Closeable {
     private final FrameColumnPool columnPool;
     private final ObjList<PartitionFrame> framePool = new ObjList<>();
     private boolean closed;
 
     public PartitionFrameFactory(CairoConfiguration configuration) {
-        this.columnPool = new ContiguousFileColumnPool(
-                configuration.getFilesFacade(),
-                configuration.getWriterFileOpenOpts(),
-                configuration.getDataIndexKeyAppendPageSize(),
-                configuration.getDataIndexValueAppendPageSize()
-        );
+        this.columnPool = new ContiguousFileColumnPool(configuration);
     }
 
     @Override
@@ -99,7 +94,7 @@ public class PartitionFrameFactory implements Pool<PartitionFrame>, Closeable {
             return frm;
         }
         PartitionFrame frame = new PartitionFrame(columnPool);
-        frame.setPool(this);
+        frame.setRecycleBin(this);
         return frame;
     }
 }

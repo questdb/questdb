@@ -915,7 +915,7 @@ public class CopyTask {
                                 .I$();
                     }
                 } finally {
-                    writer.commit(CommitMode.SYNC);
+                    writer.commit();
                 }
             }
         }
