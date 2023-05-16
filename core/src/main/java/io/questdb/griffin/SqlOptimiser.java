@@ -1516,10 +1516,6 @@ public class SqlOptimiser {
             // the translating model, but not to the inner one.
             alias = map.valueAtQuick(index);
             if (innerModel != null && innerModel.getColumnNameToAliasMap().excludes(alias)) {
-//                QueryColumn column = translatingModel.getAliasToColumnMap().get(alias);
-//                assert column != null;
-//                // but equally, column may already be referenced by translating model
-//                innerModel.addBottomUpColumn(column, true);
                 innerModel.addBottomUpColumn(nextColumn(alias), true);
             }
         }
