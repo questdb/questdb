@@ -34,6 +34,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.analytic.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
@@ -1557,8 +1558,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testFunctions() throws Exception {
-        assertMemoryLeak(() -> {//test table for show_columns
-            compile("create table bbb( a int )");
+        assertMemoryLeak(() -> { // test table for show_columns
+            compile("create table bbb (a int)");
         });
 
         final StringSink sink = new StringSink();
@@ -1754,7 +1755,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
                         argPositions.setAll(args.size(), 0);
 
-                        if (factory instanceof RowNumberFunctionFactory) {
+                        if (factory instanceof RowNumberFunctionFactory || factory instanceof RankFunctionFactory) {
                             sqlExecutionContext.configureAnalyticContext(null, null, null, true, true);
                         }
 
