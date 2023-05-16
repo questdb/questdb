@@ -25,30 +25,34 @@
 package io.questdb.test.cairo;
 
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.O3Basket;
+import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class O3BasketTest {
+public class O3BasketTest extends AbstractTest {
     @Test
     public void testSimple() {
         O3Basket basket = new O3Basket();
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
 
-        basket.ensureCapacity(5, 2);
+        basket.ensureCapacity(configuration, 5, 2);
         assertBasket(basket, 5, 2);
         basket.clear();
         assertBasket(basket, 5, 2);
 
         basket.clear();
-        basket.ensureCapacity(8, 2);
+        basket.ensureCapacity(configuration, 8, 2);
         assertBasket(basket, 8, 2);
 
         basket.clear();
-        basket.ensureCapacity(8, 4);
+        basket.ensureCapacity(configuration, 8, 4);
         assertBasket(basket, 8, 4);
 
         basket.clear();
-        basket.ensureCapacity(3, 1);
+        basket.ensureCapacity(configuration, 3, 1);
         assertBasket(basket, 3, 1);
 
     }

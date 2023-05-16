@@ -406,7 +406,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
                         final long start = microClock.getTicks();
                         walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                        final long rowsAdded = writer.processWalData(
+                        final long rowsAdded = writer.commitWalTransaction(
                                 walPath,
                                 !dataInfo.isOutOfOrder(),
                                 dataInfo.getStartRowID(),

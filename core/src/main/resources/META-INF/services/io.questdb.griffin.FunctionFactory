@@ -699,8 +699,7 @@ io.questdb.griffin.engine.functions.str.RTrimFunctionFactory
 
 # analytic functions
 io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
-# this factory seems to corrupt memory, symptoms of which are visible on M1 CPU
-#io.questdb.griffin.engine.functions.analytic.RankFunctionFactory
+io.questdb.griffin.engine.functions.analytic.RankFunctionFactory
 
 # metadata functions
 io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory

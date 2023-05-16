@@ -404,7 +404,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     TestUtils.assertContains(e.getFlyweightMessage(), "bad partition index -1");
                 }
                 txWriter.bumpTruncateVersion();
-                txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
+                txWriter.commit(writer.getDenseSymbolMapWriters());
             }
             engine.releaseAllWriters();
             engine.releaseAllReaders();
@@ -1049,7 +1049,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 txWriter.setPartitionReadOnly(i, true);
             }
             txWriter.bumpTruncateVersion();
-            txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
+            txWriter.commit(writer.getDenseSymbolMapWriters());
         }
         engine.releaseAllWriters();
         engine.releaseAllReaders();
@@ -1184,7 +1184,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 TxWriter txWriter = writer.getTxWriter();
                 txWriter.setPartitionReadOnlyByTimestamp(readOnlyPartitionTimestamp, true);
                 txWriter.bumpTruncateVersion();
-                txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
+                txWriter.commit(writer.getDenseSymbolMapWriters());
             }
             engine.releaseAllWriters();
             engine.releaseAllReaders();

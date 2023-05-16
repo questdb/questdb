@@ -93,12 +93,12 @@ public class Vm {
         return new MemoryCMRImpl();
     }
 
-    public static MemoryMA getMAInstance() {
-        return new MemoryPMARImpl();
+    public static MemoryMA getMAInstance(int commitMode) {
+        return new MemoryPMARImpl(commitMode);
     }
 
-    public static MemoryMAR getMARInstance() {
-        return new MemoryPMARImpl();
+    public static MemoryMAR getMARInstance(int commitMode) {
+        return new MemoryPMARImpl(commitMode);
     }
 
     public static MemoryMARW getMARWInstance() {

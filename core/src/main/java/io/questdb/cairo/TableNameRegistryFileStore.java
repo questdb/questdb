@@ -90,6 +90,7 @@ public class TableNameRegistryFileStore implements Closeable {
 
     public synchronized void appendEntry(final TableToken tableToken) {
         writeEntry(tableToken, OPERATION_ADD);
+        tableNameMemory.sync(false);
     }
 
     @Override
@@ -122,6 +123,7 @@ public class TableNameRegistryFileStore implements Closeable {
 
     public synchronized void logDropTable(final TableToken tableToken) {
         writeEntry(tableToken, OPERATION_REMOVE);
+        tableNameMemory.sync(false);
     }
 
     @TestOnly
