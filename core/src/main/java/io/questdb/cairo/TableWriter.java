@@ -1630,7 +1630,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     final boolean lagTrimmedToMax = o3Hi - lagThresholdRow > maxLagRows;
                     walLagRowCount = lagTrimmedToMax ? maxLagRows : o3Hi - lagThresholdRow;
-                    assert walLagRowCount > 0 && walLagRowCount < o3Hi - o3Lo;
+                    assert walLagRowCount > 0 && walLagRowCount <= o3Hi - o3Lo;
 
                     o3Hi -= walLagRowCount;
                     commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
@@ -1681,21 +1681,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Real data writing into table happens here.
                 // Everything above it is to figure out how much data to write now,
                 // map symbols and sort data if necessary.
-                processO3Block(
-                        walLagRowCount,
-                        timestampIndex,
-                        timestampAddr,
-                        o3Hi,
-                        commitMinTimestamp,
-                        commitMaxTimestamp,
-                        copiedToMemory,
-                        o3Lo
-                );
+                if (o3Hi > o3Lo) {
+                    processO3Block(
+                            walLagRowCount,
+                            timestampIndex,
+                            timestampAddr,
+                            o3Hi,
+                            commitMinTimestamp,
+                            commitMaxTimestamp,
+                            copiedToMemory,
+                            o3Lo
+                    );
 
+                    finishO3Commit(initialPartitionTimestampHi);
+                }
                 txWriter.setLagOrdered(true);
                 txWriter.setLagRowCount((int) walLagRowCount);
 
-                finishO3Commit(initialPartitionTimestampHi);
                 if (walLagRowCount > 0) {
                     LOG.info().$("moving rows to LAG [table=").$(tableToken)
                             .$(", lagRowCount=").$(walLagRowCount)
