@@ -121,7 +121,7 @@ public class Constants {
             "with",
             "writer"
     };
-    public static final StrConstant PG_CATALOG_VERSION_CONSTANT = new StrConstant("PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit");
+    public static final StrConstant PG_CATALOG_VERSION_CONSTANT = new StrConstant("PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB");
     public static final String PUBLIC = "public";
     static final String[] NAMESPACES = {"pg_catalog", PUBLIC};
     static final int[] NAMESPACE_OIDS = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};
