@@ -37,12 +37,15 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private boolean hasChanges;
     private long size;
     private long version;
+    private final CairoConfiguration configuration;
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
-    public ColumnVersionWriter(FilesFacade ff, LPSZ fileName) {
+    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName) {
+        final FilesFacade ff = configuration.getFilesFacade();
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
+        this.configuration = configuration;
         this.size = this.mem.size();
         super.ofRO(mem);
         if (this.size > 0) {
@@ -275,6 +278,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
         Unsafe.getUnsafe().storeFence();
         storeNewVersion();
+
+        final int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            mem.sync(commitMode == CommitMode.ASYNC);
+        }
     }
 
     private long getSizeA() {

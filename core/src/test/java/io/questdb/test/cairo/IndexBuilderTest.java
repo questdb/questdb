@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -48,7 +49,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
     protected static CharSequence root;
     private static SqlCompiler compiler;
     private static SqlExecutionContext sqlExecutionContext;
-    private final IndexBuilder indexBuilder = new IndexBuilder();
+    private final IndexBuilder indexBuilder = new IndexBuilder(configuration);
     TableWriter tempWriter;
 
     @BeforeClass
@@ -93,10 +94,12 @@ public class IndexBuilderTest extends AbstractCairoTest {
             };
 
             try {
-                checkRebuildIndexes(createTableSql,
+                checkRebuildIndexes(
+                        ff,
+                        createTableSql,
                         tablePath -> {
                         },
-                        indexBuilder -> indexBuilder.reindexColumn("sym2"));
+                        indexBuilder -> indexBuilder.reindexColumn(ff, "sym2"));
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "cannot remove index file");
@@ -116,6 +119,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
         checkRebuildIndexes(
+                ff,
                 createTableSql,
                 (tablePath) -> {
                 },
@@ -143,7 +147,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "rnd_symbol(4,4,4,2) as sym2 " +
                 "from long_sequence(5000)";
 
-        checkRebuildIndexes(createAlterInsertSql,
+        checkRebuildIndexes(
+                ff,
+                createAlterInsertSql,
                 tablePath -> removeFileAtPartition("sym2.k.1", PartitionBy.NONE, tablePath, 0, -1L),
                 indexBuilder -> indexBuilder.reindexColumn("sym2"));
     }
@@ -160,7 +166,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     "alter table xxx add column sym1 symbol index;" +
                     "alter table xxx add column sym2 symbol index";
 
-            checkRebuildIndexes(createAlterInsertSql,
+            checkRebuildIndexes(
+                    ff,
+                    createAlterInsertSql,
                     tablePath -> {
                     },
                     IndexBuilder::rebuildAll);
@@ -189,7 +197,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "from long_sequence(10000)" +
                 "), index(sym1), index(sym2)";
 
-        checkRebuildIndexes(createTableSql,
+        checkRebuildIndexes(
+                ff,
+                createTableSql,
                 tablePath -> {
                     removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.NONE, tablePath, 0, -1L);
@@ -209,6 +219,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
         checkRebuildIndexes(
+                ff,
                 createTableSql,
                 (tablePath) -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
@@ -230,6 +241,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "), index(sym1), index(sym2)";
 
         checkRebuildIndexes(
+                ff,
                 createTableSql,
                 (tablePath) -> {
                     removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0, -1L);
@@ -251,6 +263,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "), index(sym1), index(sym2)";
 
         checkRebuildIndexes(
+                ff,
                 createTableSql,
                 (tablePath) -> {
                     removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0, -1L);
@@ -271,7 +284,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "from long_sequence(10000)" +
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
-        checkRebuildIndexes(createTableSql,
+        checkRebuildIndexes(
+                ff,
+                createTableSql,
                 tablePath -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0, -1L);
@@ -290,7 +305,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "from long_sequence(10000)" +
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
-        checkRebuildIndexes(createTableSql,
+        checkRebuildIndexes(
+                ff,
+                createTableSql,
                 tablePath -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0, -1L);
@@ -309,7 +326,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "from long_sequence(10000)" +
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
-        checkRebuildIndexes(createTableSql,
+        checkRebuildIndexes(
+                ff,
+                createTableSql,
                 tablePath -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0, -1L);
@@ -337,7 +356,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "rnd_symbol(4,4,4,2) as sym2 " +
                 "from long_sequence(5000)";
 
-        checkRebuildIndexes(createAlterInsertSql,
+        checkRebuildIndexes(
+                ff,
+                createAlterInsertSql,
                 tablePath -> removeFileAtPartition("sym2.k.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
                 indexBuilder -> indexBuilder.reindexColumn("sym2"));
     }
@@ -357,7 +378,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
             tempWriter = null;
             try {
-                checkRebuildIndexes(createTableSql,
+                checkRebuildIndexes(
+                        ff,
+                        createTableSql,
                         tablePath -> tempWriter = TestUtils.getWriter(engine, "xxx"),
                         indexBuilder -> {
                             try {
@@ -386,7 +409,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
         try {
-            checkRebuildIndexes(createTableSql,
+            checkRebuildIndexes(
+                    ff,
+                    createTableSql,
                     tablePath -> {
                     },
                     indexBuilder -> indexBuilder.reindexColumn("sym4"));
@@ -422,7 +447,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
             };
 
             try {
-                checkRebuildIndexes(createTableSql,
+                checkRebuildIndexes(
+                        ff,
+                        createTableSql,
                         tablePath -> {
                         },
                         indexBuilder -> indexBuilder.reindexColumn("sym2"));
@@ -458,10 +485,12 @@ public class IndexBuilderTest extends AbstractCairoTest {
             };
 
             try {
-                checkRebuildIndexes(createTableSql,
+                checkRebuildIndexes(
+                        ff,
+                        createTableSql,
                         tablePath -> {
                         },
-                        indexBuilder -> indexBuilder.reindexColumn("sym2"));
+                        indexBuilder -> indexBuilder.reindexColumn(ff, "sym2"));
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not create index");
@@ -480,7 +509,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "from long_sequence(10000)" +
                 "), index(sym1 capacity 512), index(sym2 capacity 1024) timestamp(ts) PARTITION BY DAY";
 
-        checkRebuildIndexes(createTableSql,
+        checkRebuildIndexes(
+                ff,
+                createTableSql,
                 tablePath -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0, -1L);
@@ -517,7 +548,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "from long_sequence(10000)" +
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
-        checkRebuildIndexes(createTableSql,
+        checkRebuildIndexes(
+                ff,
+                createTableSql,
                 tablePath -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0, -1L);
@@ -540,6 +573,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
         try {
             checkRebuildIndexes(
+                    ff,
                     createTableSql,
                     (tablePath) -> {
                     },
@@ -564,7 +598,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
         try {
-            checkRebuildIndexes(createTableSql,
+            checkRebuildIndexes(
+                    ff,
+                    createTableSql,
                     tablePath -> {
                     },
                     indexBuilder -> indexBuilder.reindexColumn("sym3"));
@@ -585,7 +621,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 "from long_sequence(10000)" +
                 "), index(sym1 capacity 512), index(sym2 capacity 1024) timestamp(ts) PARTITION BY DAY";
 
-        checkRebuildIndexes(createTableSql,
+        checkRebuildIndexes(
+                ff,
+                createTableSql,
                 tablePath -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0, -1L);
@@ -621,7 +659,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         }
     }
 
-    private void checkRebuildIndexes(String createTableSql, Action<String> changeTable, Action<IndexBuilder> rebuildIndexAction) throws Exception {
+    private void checkRebuildIndexes(FilesFacade ff, String createTableSql, Action<String> changeTable, Action<IndexBuilder> rebuildIndexAction) throws Exception {
         assertMemoryLeak(ff, () -> {
             for (String sql : createTableSql.split(";")) {
                 compiler.compile(sql, sqlExecutionContext).execute(null).await();
@@ -639,7 +677,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             changeTable.run(tablePath);
 
             indexBuilder.clear();
-            indexBuilder.of(tablePath, configuration);
+            indexBuilder.of(tablePath);
             rebuildIndexAction.run(indexBuilder);
 
             int sym1A2 = countByFullScan("select * from xxx where sym1 = 'A'");

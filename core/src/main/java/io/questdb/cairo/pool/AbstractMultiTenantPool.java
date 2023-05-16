@@ -128,6 +128,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
                 e.next = new Entry<T>(e.index + 1, clock.getTicks());
+            } else {
+                // if the race is lost we need to wait until e.next is set by the winning thread
+                while (e.next == null && e.nextStatus == NEXT_ALLOCATED) {
+                    Os.pause();
+                }
             }
             e = e.next;
         } while (e != null && e.index < maxSegments);

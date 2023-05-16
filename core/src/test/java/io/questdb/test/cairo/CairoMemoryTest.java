@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.MemorySRImpl;
@@ -72,7 +73,7 @@ public class CairoMemoryTest extends AbstractTest {
         int failureCount = 0;
         try (Path path = new Path()) {
             path.of(temp.newFile().getAbsolutePath());
-            try (MemoryMA mem = Vm.getMAInstance()) {
+            try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
                 mem.of(ff, path.$(), ff.getPageSize() * 2, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                 int i = 0;
                 while (i < N) {
@@ -153,7 +154,7 @@ public class CairoMemoryTest extends AbstractTest {
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.length();
-            try (MemoryMA mem = Vm.getMAInstance()) {
+            try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
                     path.trimTo(prefixLen).concat(rnd.nextString(10));
@@ -308,7 +309,7 @@ public class CairoMemoryTest extends AbstractTest {
                 path.of(temp.getRoot().getAbsolutePath());
                 final int N = 100000;
                 final Rnd rnd = new Rnd();
-                try (MemoryMA mem = Vm.getMAInstance()) {
+                try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
                     mem.of(FF, path.concat("x.dat").$(), FF.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
 
                     for (int i = 0; i < N; i++) {
@@ -363,7 +364,7 @@ public class CairoMemoryTest extends AbstractTest {
                         return super.mmap(fd, len, offset, flags, memoryTag);
                     }
                 };
-                try (MemoryMA mem = Vm.getMAInstance()) {
+                try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
                     mem.of(ff, path.concat("x.dat").$(), ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
 
                     for (int i = 0; i < N; i++) {
