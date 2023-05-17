@@ -65,6 +65,28 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private long last = 0;
     private TableToken tableToken;
 
+    private static class SegmentKey {
+        static int encode(int segmentId, boolean pendingTasks, boolean locked) {
+            return (segmentId << 2) + (pendingTasks ? 2 : 0) + (locked ? 1 : 0);
+        }
+
+        static int encodeNoSegment() {
+            return encode(WalUtils.SEG_NONE_ID, false, false);
+        }
+
+        static int decodeSegmentId(int segmentKey) {
+            return segmentKey >> 2;
+        }
+
+        static boolean decodePendingTasks(int segmentKey) {
+            return (segmentKey & 2) == 2;
+        }
+
+        static boolean decodeLocked(int segmentKey) {
+            return (segmentKey & 1) == 1;
+        }
+    }
+
     public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
         this.engine = engine;
         this.ff = ff;
@@ -146,16 +168,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .put(", discovered=[");
 
         for (int i = 0, n = onDiskWalIDSegmentIDPairs.size(); i < n; i++) {
-            long walSegment = onDiskWalIDSegmentIDPairs.getQuick(i);
-            int segmentId = Numbers.decodeLowInt(walSegment);
-            int walId = Numbers.decodeHighInt(walSegment);
-            if (segmentId < Integer.MAX_VALUE) {
-                debugBuffer.put('(').put(walId).put(',').put(segmentId >> 2);
-                if ((segmentId & 1) == 1) {
-                    debugBuffer.put(":locked");
-                }
-                if ((segmentId & 2) == 2) {
+            final long walSegment = onDiskWalIDSegmentIDPairs.getQuick(i);
+            final int segmentKey = Numbers.decodeLowInt(walSegment);
+            final int walId = Numbers.decodeHighInt(walSegment);
+            final int segmentId = SegmentKey.decodeSegmentId(segmentKey);
+            final boolean pendingTasks = SegmentKey.decodePendingTasks(segmentKey);
+            final boolean locked = SegmentKey.decodeLocked(segmentKey);
+            if (segmentId <= WalUtils.SEG_MAX_ID) {
+                debugBuffer.put('(').put(walId).put(',').put(segmentId);
+                if (pendingTasks) {
                     debugBuffer.put(":tasks");
+                }
+                if (locked) {
+                    debugBuffer.put(":locked");
                 }
                 debugBuffer.put(')');
             } else {
@@ -177,7 +202,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         debugBuffer.put("], nextToApply=[");
         for (int i = 0, n = sequencerWalIDSegmentIDPairs.size(); i < n; i++) {
             long walSegment = sequencerWalIDSegmentIDPairs.getQuick(i);
-            int segmentId = Numbers.decodeLowInt(walSegment) >> 1;
+            int segmentId = Numbers.decodeLowInt(walSegment);
             int walId = Numbers.decodeHighInt(walSegment);
 
             debugBuffer.put('(').put(walId).put(',').put(segmentId).put(')');
@@ -285,23 +310,23 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         int committedSegmentSize = sequencerWalIDSegmentIDPairs.size();
 
         for (int i = 0, n = onDiskWalIDSegmentIDPairs.size(); i < n; i++) {
-            long diskPair = onDiskWalIDSegmentIDPairs.get(i);
-            int walId = Numbers.decodeHighInt(diskPair);
-            int segmentKey = Numbers.decodeLowInt(diskPair);
-            int segmentId = segmentKey >> 2;
-            boolean segmentLocked = segmentKey != Integer.MAX_VALUE && (segmentKey & 1) == 1;
-            boolean hasPendingTasks = segmentKey != Integer.MAX_VALUE && (segmentKey & 2) == 2;
+            final long diskPair = onDiskWalIDSegmentIDPairs.get(i);
+            final int walId = Numbers.decodeHighInt(diskPair);
+            final int segmentKey = Numbers.decodeLowInt(diskPair);
+            final int segmentId = SegmentKey.decodeSegmentId(segmentKey);
+            final boolean hasPendingTasks = SegmentKey.decodePendingTasks(segmentKey);
+            final boolean segmentLocked = SegmentKey.decodeLocked(segmentKey);
 
             if (hasPendingTasks) {
                 continue;
             }
 
-            // If the current segment is locked, scroll to next wall id.
+            // If the current segment is locked, scroll to next WAL id.
             final int walIdLimit = segmentLocked ? walId + 1 : walId;
             while (committedWalId < walIdLimit && ++committedWalSegmentIndex < committedSegmentSize) {
                 long sequencerPair = sequencerWalIDSegmentIDPairs.get(committedWalSegmentIndex);
                 committedWalId = Numbers.decodeHighInt(sequencerPair);
-                committedSegmentId = Numbers.decodeLowInt(sequencerPair) >> 1;
+                committedSegmentId = Numbers.decodeLowInt(sequencerPair);
             }
 
             if (walId == committedWalId) {
@@ -317,8 +342,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     deleteWalDirectory(walId);
                 } else {
                     // WAL is locked but the segment in it is not in outstanding commits, delete it.
-                    // Segment with ID of Integer.MAX_VALUE is the WAL directory itself, only delete it if it's unlocked.
-                    if (segmentId != (Integer.MAX_VALUE >> 2)) {
+                    // Segment with ID of WalUtils.SEG_NONE_ID is the WAL directory itself: only delete it if it's unlocked.
+                    if (segmentId != WalUtils.SEG_NONE_ID) {
                         deleteSegmentDirectory(tableToken, walId, segmentId);
                     }
                 }
@@ -363,8 +388,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                 lockedWalIDSet.add(walId);
                             }
                             onDiskWalIDSet.add(walId);
-                            // SegmentId of Integer.MAX_VALUE is to track WAL directory itself.
-                            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(Integer.MAX_VALUE, walId));
+                            // This is to track WAL directory itself.
+                            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(SegmentKey.encodeNoSegment(), walId));
 
                             // Search for segments.
                             path.trimTo(rootPathLen).concat(pUtf8NameZ);
@@ -384,12 +409,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                             }
                                             Path segmentPath = path.trimTo(walPathLen).slash().put(segmentId);
                                             TableUtils.lockName(segmentPath);
-                                            boolean unlocked = unlocked(segmentPath.$());
+                                            boolean locked = !unlocked(segmentPath.$());
                                             boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
                                             if (pendingTasks) {
                                                 pendingWalIDSet.add(walId);
                                             }
-                                            int segmentKey = (segmentId << 2) + (pendingTasks ? 2 : 0) + (unlocked ? 0 : 1);
+                                            final int segmentKey = SegmentKey.encode(segmentId, pendingTasks, locked);
                                             onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(segmentKey, walId));
                                         } catch (NumericException ne) {
                                             // Non-Segment directory, ignore.
@@ -425,7 +450,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         int walId = transactionLogCursor.getWalId();
                         if (onDiskWalIDSet.remove(walId) != -1) {
                             int segmentId = transactionLogCursor.getSegmentId();
-                            sequencerWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(segmentId << 1, walId));
+                            sequencerWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(segmentId, walId));
                         }
                     }
                     sequencerWalIDSegmentIDPairs.sort();
