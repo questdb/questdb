@@ -102,9 +102,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(false, tableName, 1);
             assertWalLockExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 0);
+            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
         });
     }
 
@@ -329,9 +329,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // Create a second segment.
             compile("alter table " + tableName + " add column sss string");
@@ -340,7 +340,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertSegmentExistence(true, tableName, 1, 0);
             final File segment1DirPath = assertSegmentExistence(true, tableName, 1, 1);
             assertSegmentExistence(false, tableName, 1, 2);
-            assertSegmentLockExistence(false, tableName, 2);
+            assertSegmentLockExistence(false, tableName, 1, 2);
 
             // We write a marker file to prevent the second segment "wal1/1" from being reaped.
             final File pendingDirPath = new File(segment1DirPath, ".pending");
@@ -371,7 +371,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0); // Only the first segment is reaped.
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentExistence(true, tableName, 1, 1);
+            assertSegmentExistence(false, tableName, 1, 2);
 
             // We remove the marker file to allow the second segment "wal1/1" to be reaped.
             // Since all changes are applied and the wal is unlocked, the whole WAL is reaped.
@@ -397,9 +397,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertWalLockExistence(true, tableName, 1);
             final File segment0DirPath = assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // We write a marker file to prevent the segment "wal1/0" from being reaped.
             final File pendingDirPath = new File(segment0DirPath, ".pending");
@@ -562,7 +562,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
             assertSegmentLockEngagement(true, tableName, 1, 0);  // Segment 0 is locked.
             assertWalLockEngagement(true, tableName, 1);
 
@@ -570,7 +570,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
             assertWalLockEngagement(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1);
+            assertSegmentLockExistence(true, tableName, 1, 1);
             assertSegmentLockEngagement(false, tableName, 1, 0);  // Segment 0 is unlocked.
             assertSegmentLockEngagement(true, tableName, 1, 1);  // Segment 1 is locked.
 
@@ -582,7 +582,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 Assert.assertTrue(path.toString(), ff.exists(path));
 
                 runWalPurgeJob();
-                assertSegmentLockExistence(false, tableName, 0);
+                assertSegmentLockExistence(false, tableName, 1, 0);
 
                 // "stuff" is untouched.
                 Assert.assertTrue(path.toString(), ff.exists(path));
@@ -757,9 +757,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // Altering the table doesn't create a new segment yet.
             compile("alter table " + tableName + " add column sss string");
@@ -795,9 +795,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 0);
+            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1);
+            assertSegmentLockExistence(true, tableName, 1, 1);
 
             // Releasing inactive writers and purging will also delete the wal directory.
             engine.releaseInactive();
