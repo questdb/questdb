@@ -24,6 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
+
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
@@ -40,7 +42,11 @@ public class SimpleWaitingLock {
         this.waiter = Thread.currentThread();
         while (true) {
             while (lock.get()) {
-                LockSupport.park();
+                // Don't use LockSupport.park() here.
+                // Once in a while there can be a delay between check of lock.get()
+                // and parking and unlock() will be called before LockSupport.park().
+                // Limit the parking time by using Os.park() instead of LockSupport.park()
+                Os.park();
             }
             if (!lock.getAndSet(true)) {
                 return;

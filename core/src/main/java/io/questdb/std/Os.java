@@ -41,6 +41,7 @@ public final class Os {
     public static final int LINUX_ARM64 = 4;
     public static final int OSX_AMD64 = 1;
     public static final int OSX_ARM64 = 6;
+    public static final long PARK_NANOS_MAX = 5 * 1_000_000_000L;
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
     public static final int type;
@@ -141,6 +142,10 @@ public final class Os {
 
     public static boolean isWindows() {
         return type == Os.WINDOWS;
+    }
+
+    public static void park() {
+        LockSupport.parkNanos(Os.PARK_NANOS_MAX);
     }
 
     public static void pause() {
