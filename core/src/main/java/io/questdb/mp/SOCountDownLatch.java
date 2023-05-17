@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.concurrent.locks.LockSupport;
@@ -47,7 +48,11 @@ public class SOCountDownLatch implements CountDownLatchSPI {
     public void await() {
         this.waiter = Thread.currentThread();
         while (getCount() > 0) {
-            LockSupport.park();
+            // Don't use LockSupport.park() here.
+            // Once in a while there can be a delay between check of this.count > -count
+            // and parking and unparkWaiter() will be called before park().
+            // Limit the parking time by using Os.park() instead of LockSupport.park()
+            Os.park();
         }
     }
 
