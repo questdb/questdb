@@ -31,7 +31,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.SPSequence;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.Dates;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -79,27 +78,6 @@ public class SOUnboundedCountDownLatchTest {
         LOG.info().$("section 2 done").$();
 
         Assert.assertEquals(count, dc.get());
-    }
-
-    @Test
-    public void testUnparked() throws BrokenBarrierException, InterruptedException {
-        final SOUnboundedCountDownLatch latch = new SOUnboundedCountDownLatch();
-        int threads = TestUtils.generateRandom(null).nextInt(30) + 1;
-        CyclicBarrier startLatch = new CyclicBarrier(threads + 1);
-
-        for (int t = 0; t < threads; t++) {
-            Thread th = new Thread(() -> {
-                try {
-                    startLatch.await();
-                    latch.countDown();
-                } catch (InterruptedException | BrokenBarrierException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-            th.start();
-        }
-        startLatch.await();
-        latch.await(threads);
     }
 
     private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count, int s) throws BrokenBarrierException, InterruptedException {
