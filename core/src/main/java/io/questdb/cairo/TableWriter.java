@@ -937,6 +937,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
             shrinkO3Mem();
+
+            if (commitListener != null) {
+                commitListener.onCommit(txWriter.getTxn(), rowsAdded);
+            }
             return rowsAdded;
         }
 
@@ -1629,7 +1633,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     final boolean lagTrimmedToMax = o3Hi - lagThresholdRow > maxLagRows;
                     walLagRowCount = lagTrimmedToMax ? maxLagRows : o3Hi - lagThresholdRow;
-                    assert walLagRowCount > 0 && walLagRowCount < o3Hi - o3Lo;
+                    assert walLagRowCount > 0 && walLagRowCount <= o3Hi - o3Lo;
 
                     o3Hi -= walLagRowCount;
                     commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
@@ -1680,21 +1684,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Real data writing into table happens here.
                 // Everything above it is to figure out how much data to write now,
                 // map symbols and sort data if necessary.
-                processO3Block(
-                        walLagRowCount,
-                        timestampIndex,
-                        timestampAddr,
-                        o3Hi,
-                        commitMinTimestamp,
-                        commitMaxTimestamp,
-                        copiedToMemory,
-                        o3Lo
-                );
+                if (o3Hi > o3Lo) {
+                    processO3Block(
+                            walLagRowCount,
+                            timestampIndex,
+                            timestampAddr,
+                            o3Hi,
+                            commitMinTimestamp,
+                            commitMaxTimestamp,
+                            copiedToMemory,
+                            o3Lo
+                    );
 
+                    finishO3Commit(initialPartitionTimestampHi);
+                }
                 txWriter.setLagOrdered(true);
                 txWriter.setLagRowCount((int) walLagRowCount);
 
-                finishO3Commit(initialPartitionTimestampHi);
                 if (walLagRowCount > 0) {
                     LOG.info().$("moving rows to LAG [table=").$(tableToken)
                             .$(", lagRowCount=").$(walLagRowCount)
@@ -2372,7 +2378,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setLagRowCount(txWriter.getLagRowCount() - lagRowCount);
         txWriter.setMaxTimestamp(maxTimestamp);
         if (indexCount > 0) {
-            updateIndexesParallel(initialTransientRowCount, txWriter.getTransientRowCount());
+            // To index correctly, we need to set append offset of symbol columns first.
+            // So that re-indexing can read symbol values to the correct limits.
+            final long newTransientRowCount = txWriter.getTransientRowCount();
+            final int shl = ColumnType.pow2SizeOf(ColumnType.SYMBOL);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) == ColumnType.SYMBOL && metadata.isColumnIndexed(i)) {
+                    getPrimaryColumn(i).jumpTo(newTransientRowCount << shl);
+                }
+            }
+            updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
         }
     }
 

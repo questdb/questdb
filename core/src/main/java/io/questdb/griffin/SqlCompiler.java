@@ -334,18 +334,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private static void expectIndexKeyword(GenericLexer lexer) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'index' expected");
-        }
-
-        if (!SqlKeywords.isIndexKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'index' expected");
-        }
-    }
-
     private static boolean isCompatibleCase(int from, int to) {
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
@@ -407,7 +395,7 @@ public class SqlCompiler implements Closeable {
                         final CharSequence columnName = GenericLexer.immutableOf(tok);
                         tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
-                            expectIndexKeyword(lexer);
+                            expectKeyword(lexer, "index");
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
 
@@ -439,7 +427,7 @@ public class SqlCompiler implements Closeable {
 
                         } else if (SqlKeywords.isDropKeyword(tok)) {
                             // alter table <table name> alter column drop index
-                            expectIndexKeyword(lexer);
+                            expectKeyword(lexer, "index");
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && !isSemicolon(tok)) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
@@ -1499,7 +1487,8 @@ public class SqlCompiler implements Closeable {
                         false,
                         DefaultLifecycleManager.INSTANCE,
                         configuration.getRoot(),
-                        engine.getMetrics());
+                        engine.getMetrics()
+                );
             } else {
                 writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
             }
@@ -1521,7 +1510,7 @@ public class SqlCompiler implements Closeable {
             );
         } catch (CairoException e) {
             LOG.error().$("could not create table [error=").$((Throwable) e).I$();
-            // Close writer, directory will be removed
+            // Close writer, the table will be removed
             writerAPI = Misc.free(writerAPI);
             writer = null;
             if (e.isInterruption()) {
@@ -1696,10 +1685,9 @@ public class SqlCompiler implements Closeable {
                 copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
-                if (removeTableDirectory(model)) {
-                    throw e;
-                }
-                throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
+                engine.drop(path, tableToken);
+                engine.unlockTableName(tableToken);
+                throw e;
             }
             return tableToken;
         }
@@ -2319,19 +2307,6 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofRepair();
     }
 
-    private boolean removeTableDirectory(CreateTableModel model) {
-        int errno;
-        TableToken tableToken = engine.verifyTableName(model.getName().token);
-        if ((errno = engine.removeDirectory(path, tableToken.getDirName())) == 0) {
-            return true;
-        }
-        LOG.error()
-                .$("could not clean up after create table failure [path=").$(path)
-                .$(", errno=").$(errno)
-                .$(']').$();
-        return false;
-    }
-
     private void setupTextLoaderFromModel(CopyModel model) {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
@@ -2666,6 +2641,19 @@ public class SqlCompiler implements Closeable {
 
         if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
             throw SqlException.position(0).put("timestamp is not defined");
+        }
+    }
+
+    // public for testing
+    public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
+        }
+
+        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
         }
     }
 

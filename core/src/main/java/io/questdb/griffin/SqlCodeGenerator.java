@@ -1695,12 +1695,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                         }
                     }
-                } catch (Throwable th) {
+                } catch (Throwable e) {
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);
                     }
-                    throw th;
+                    throw e;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
                 }
@@ -1747,6 +1747,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilter = model.getConstWhereClause();
             if (constFilter != null) {
                 Function function = functionParser.parseFunction(constFilter, null, executionContext);
+                if (!ColumnType.isBoolean(function.getType())) {
+                    throw SqlException.position(constFilter.position).put("boolean expression expected");
+                }
                 function.init(null, executionContext);
                 if (!function.getBool(null)) {
                     // do not copy metadata here

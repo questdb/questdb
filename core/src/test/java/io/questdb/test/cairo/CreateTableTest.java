@@ -446,12 +446,12 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableLikeTableWithWALDisabled() throws Exception {
-        createWALNonWal(false);
+        createTableLike(false);
     }
 
     @Test
     public void testCreateTableLikeTableWithWALEnabled() throws Exception {
-        createWALNonWal(true);
+        createTableLike(true);
     }
 
     @Test
@@ -727,7 +727,7 @@ public class CreateTableTest extends AbstractGriffinTest {
         });
     }
 
-    private void createWALNonWal(boolean isWalEnabled) throws Exception {
+    private void createTableLike(boolean isWalEnabled) throws Exception {
         String walParameterValue = isWalEnabled ? "WAL" : "BYPASS WAL";
 
         assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
