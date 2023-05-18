@@ -24,6 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-interface OptionsListener {
+public interface OptionsListener {
     void setStatementTimeout(long statementTimeout);
 }

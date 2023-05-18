@@ -229,7 +229,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.authenticator = new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreakerId, circuitBreaker, registry, this);
+        this.authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(nf, configuration, circuitBreakerId, circuitBreaker, registry, this);
         this.securityContextFactory = factoryProvider.getSecurityContextFactory();
         this.readOnlyContext = configuration.readOnlySecurityContext();
         this.readOnlyUsername = configuration.isReadOnlyUserEnabled() ? configuration.getReadOnlyUsername() : null;

@@ -61,7 +61,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
-    private final StaticUserDatabase userDatabase;
+    private final PgWireUserDatabase userDatabase;
     private int fd;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -76,17 +76,8 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
                                                 int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
-                                                OptionsListener optionsListener) {
-        this.recvBufStart = recvBufStart;
-        this.recvBufReadPos = recvBufStart;
-        this.recvBufWritePos = recvBufStart;
-        this.recvBufEnd = recvBufEnd;
-
-        this.sendBufStart = sendBufStart;
-        this.sendBufReadPos = sendBufStart;
-        this.sendBufWritePos = sendBufStart;
-        this.sendBufEnd = sendBufEnd;
-        this.userDatabase = new StaticUserDatabase(configuration);
+                                                OptionsListener optionsListener, PgWireUserDatabase userDatabase) {
+        this.userDatabase = userDatabase;
 
         this.nf = nf;
         this.characterStore = new CharacterStore(
@@ -99,6 +90,12 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         this.serverVersion = configuration.getServerVersion();
         this.circuitBreaker = circuitBreaker;
         this.optionsListener = optionsListener;
+    }
+
+    public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
+                                                int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+                                                OptionsListener optionsListener) {
+        this(nf, configuration, circuitBreakerId, circuitBreaker, registry, optionsListener, new StaticUserDatabase(configuration));
     }
 
     public CharSequence getPrincipal() {

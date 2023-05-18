@@ -74,8 +74,6 @@ public class EllipticCurveAuthenticator implements Authenticator {
 
     public EllipticCurveAuthenticator(NetworkFacade networkFacade, PublicKeyRepo publicKeyRepo) {
         this.publicKeyRepo = publicKeyRepo;
-        this.recvBufStart = recvBufPos = recvBufStart;
-        this.recvBufEnd = recvBufEnd;
         this.nf = networkFacade;
     }
 
