@@ -66,6 +66,43 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAliasInImplicitGroupByFormula() throws SqlException {
+        // table alias in group-by formula should be replaced to align with "choose" model
+        assertQuery(
+                "select-group-by column, count(event1) count from (select-virtual [event1 + event column, event1] event1 + event column, event1 from (select-choose [b.event event, a.event event1] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a) a",
+                "select \n" +
+                        "  a.event + b.event,\n" +
+                        "  count(a.event)\n" +
+                        "from\n" +
+                        "  telemetry as a\n" +
+                        "  inner join telemetry as b on a.created = b.created\n" +
+                        "where\n" +
+                        "  a.event > 0\n" +
+                        "  and b.event < 1\n",
+                modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
+        );
+    }
+
+    @Test
+    public void testAliasInExplicitGroupByFormula() throws SqlException {
+        // table alias in group-by formula should be replaced to align with "choose" model
+        assertQuery(
+                "select-virtual count from (select-group-by [count(event1) count, column] column, count(event1) count from (select-virtual [event1, event1 + event column] event1 + event column, event1 from (select-choose [a.event event1, b.event event] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a) a) a",
+                "select\n" +
+                        "    count(a.event)\n" +
+                        "    from\n" +
+                        "    telemetry as a\n" +
+                        "    inner join telemetry as b on a.created = b.created\n" +
+                        "            where\n" +
+                        "    a.event > 0\n" +
+                        "    and b.event < 1\n" +
+                        "    group by\n" +
+                        "    a.event + b.event",
+                modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
+        );
+    }
+
+    @Test
     public void testAliasSecondJoinTable() throws SqlException {
         assertQuery(
                 "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx left join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
