@@ -31,6 +31,9 @@ public class WalUtils {
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final int METADATA_WALID = -1;
+    public static final int SEG_MIN_ID = 0;
+    public static final int SEG_NONE_ID = Integer.MAX_VALUE >> 2;
+    public static final int SEG_MAX_ID = SEG_NONE_ID - 1;
     public static final String SEQ_DIR = "txn_seq";
     public static final String SEQ_DIR_DEPRECATED = "seq";
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
