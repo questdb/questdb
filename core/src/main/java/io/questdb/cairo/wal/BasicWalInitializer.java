@@ -22,22 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
-import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.str.Path;
 
-public interface FactoryProvider {
-    AuthenticatorFactory getAuthenticatorFactory();
+public class BasicWalInitializer implements WalInitializer {
+    public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
 
-    PgWireAuthenticationFactory getPgWireAuthenticationFactory();
-
-    SecurityContextFactory getSecurityContextFactory();
-
-    SqlCompilerFactory getSqlCompilerFactory();
-
-    WalInitializerFactory getWalInitializerFactory();
+    @Override
+    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
+    }
 }
