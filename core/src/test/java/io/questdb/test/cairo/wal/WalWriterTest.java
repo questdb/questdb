@@ -222,6 +222,44 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAlterAddChangeLag() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+            compile("alter table " + tableToken.getTableName() + " SET PARAM o3MaxLag = 20s");
+            compile("alter table " + tableToken.getTableName() + " add i2 int");
+
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
+
+    @Test
+    public void testAlterAddChangeMaxUncommitted() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+            compile("alter table " + tableToken.getTableName() + " set PARAM maxUncommittedRows = 20000");
+            compile("alter table " + tableToken.getTableName() + " add i2 int");
+
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
+
+    @Test
+    public void testAlterAddDropIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+            compile("alter table " + tableToken.getTableName() + " add sym2 symbol");
+            compile("alter table " + tableToken.getTableName() + " alter column sym2 add index");
+            compile("alter table " + tableToken.getTableName() + " alter column sym2 drop index");
+            compile("alter table " + tableToken.getTableName() + " add i2 int");
+
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
+
+    @Test
     public void testAddingColumnClosesSegment() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());

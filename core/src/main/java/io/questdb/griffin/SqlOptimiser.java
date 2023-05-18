@@ -1749,7 +1749,7 @@ public class SqlOptimiser {
     }
 
     private void enumerateColumns(QueryModel model, TableRecordMetadata metadata) throws SqlException {
-        model.setTableVersion(metadata.getStructureVersion());
+        model.setTableVersion(metadata.getMetadataVersion());
         model.setTableId(metadata.getTableId());
         copyColumnsFromMetadata(model, metadata, false);
         if (model.isUpdate()) {

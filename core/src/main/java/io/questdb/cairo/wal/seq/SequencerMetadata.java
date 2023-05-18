@@ -106,13 +106,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
-    public int getRealColumnCount() {
-        return columnNameIndexMap.size();
+    @Override
+    public long getMetadataVersion() {
+        return structureVersion.get();
     }
 
-    @Override
-    public long getStructureVersion() {
-        return structureVersion.get();
+    public int getRealColumnCount() {
+        return columnNameIndexMap.size();
     }
 
     @Override

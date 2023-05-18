@@ -99,9 +99,9 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
 
             // Check that table structure hasn't changed between planning and executing the UPDATE
-            if (tableMetadata.getTableId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
+            if (tableMetadata.getTableId() != tableId || tableWriter.getMetadataVersion() != tableVersion) {
                 throw TableReferenceOutOfDateException.of(tableToken, tableId, tableMetadata.getTableId(),
-                        tableVersion, tableWriter.getStructureVersion());
+                        tableVersion, tableWriter.getMetadataVersion());
             }
 
             // Select the rows to be updated

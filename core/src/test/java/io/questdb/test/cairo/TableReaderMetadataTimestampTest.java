@@ -174,7 +174,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 long structureVersion;
                 try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
                     writer.removeColumn("timestamp");
-                    structureVersion = writer.getStructureVersion();
+                    structureVersion = writer.getMetadataVersion();
                 }
 
                 long pTransitionIndex = metadata.createTransitionIndex(structureVersion);
@@ -221,7 +221,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 long structVersion;
                 try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
                     manipulator.restructure(writer);
-                    structVersion = writer.getStructureVersion();
+                    structVersion = writer.getMetadataVersion();
                 }
 
                 long address = metadata.createTransitionIndex(structVersion);

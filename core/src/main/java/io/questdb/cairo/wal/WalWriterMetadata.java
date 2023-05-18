@@ -121,7 +121,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public long getStructureVersion() {
+    public long getMetadataVersion() {
         return structureVersion;
     }
 

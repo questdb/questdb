@@ -32,7 +32,7 @@ import io.questdb.std.Chars;
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
     private int maxUncommittedRows;
     private long o3MaxLag;
-    private long structureVersion;
+    private long metadataVersion;
     private int symbolMapCount;
     private int tableId;
     private TableToken tableToken;
@@ -60,8 +60,8 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public long getStructureVersion() {
-        return structureVersion;
+    public long getMetadataVersion() {
+        return metadataVersion;
     }
 
     public int getSymbolMapCount() {
@@ -97,7 +97,7 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
-        this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
@@ -136,8 +136,8 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         this.o3MaxLag = o3MaxLagUs;
     }
 
-    public void setStructureVersion(long value) {
-        this.structureVersion = value;
+    public void setMetadataVersion(long value) {
+        this.metadataVersion = value;
     }
 
     public void setTableVersion() {
