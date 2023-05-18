@@ -87,7 +87,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
-        this.authenticator = configuration.getFactoryProvider().getAuthenticatorFactory().getLineTCPAuthenticator(recvBufStart, recvBufEnd);
+        this.authenticator = configuration.getFactoryProvider().getAuthenticatorFactory().getLineTCPAuthenticator();
     }
 
     public void checkIdle(long millis) {

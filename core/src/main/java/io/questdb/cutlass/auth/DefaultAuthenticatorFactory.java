@@ -28,7 +28,7 @@ public class DefaultAuthenticatorFactory implements AuthenticatorFactory {
     public static final AuthenticatorFactory INSTANCE = new DefaultAuthenticatorFactory();
 
     @Override
-    public Authenticator getLineTCPAuthenticator(long recvBufStart, long recvBufEnd) {
+    public Authenticator getLineTCPAuthenticator() {
         return AnonymousAuthenticator.INSTANCE;
     }
 }
