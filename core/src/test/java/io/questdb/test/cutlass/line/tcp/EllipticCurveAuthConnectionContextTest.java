@@ -106,16 +106,16 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         runInAuthContext(() -> {
             maxSendBytes = 0;
             recvBuffer = AUTH_KEY_ID1 + "\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             Assert.assertNull(sentBytes);
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             Assert.assertNull(sentBytes);
             maxSendBytes = -1;
-            handleContextIO();
+            handleContextIO0();
             Assert.assertNull(sentBytes);
             Assert.assertTrue(disconnected);
         });
@@ -126,18 +126,18 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         runInAuthContext(() -> {
             maxSendBytes = 5;
             recvBuffer = AUTH_KEY_ID1 + "\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
-            handleContextIO();
+            handleContextIO0();
             Assert.assertEquals(maxSendBytes, sentBytes.length);
             sentBytes = null;
             Assert.assertFalse(disconnected);
-            handleContextIO();
+            handleContextIO0();
             Assert.assertEquals(maxSendBytes, sentBytes.length);
             sentBytes = null;
             Assert.assertFalse(disconnected);
             maxSendBytes = -1;
-            handleContextIO();
+            handleContextIO0();
             Assert.assertNull(sentBytes);
             Assert.assertTrue(disconnected);
         });
@@ -158,7 +158,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             }
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -175,7 +175,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -192,7 +192,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -209,7 +209,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -226,7 +226,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -243,7 +243,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -260,7 +260,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -286,7 +286,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
 
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -316,7 +316,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             }
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -354,7 +354,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         try {
             runInAuthContext(() -> {
                 recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-                handleContextIO();
+                handleContextIO0();
                 Assert.assertFalse(disconnected);
                 waitForIOCompletion();
                 closeContext();
@@ -397,13 +397,13 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     public void testTruncatedKeyId() throws Exception {
         runInAuthContext(() -> {
             recvBuffer = "test";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             recvBuffer = "Key";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             recvBuffer = null;
-            handleContextIO();
+            handleContextIO0();
             Assert.assertTrue(disconnected);
         });
     }
@@ -458,7 +458,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             }
             byte[] signature = Base64.getEncoder().encode(rawSignature);
             send(new String(signature, Files.UTF_8) + "\n" + extraData, fragmentSignature);
-            handleContextIO();
+            handleContextIO0();
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
@@ -476,7 +476,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             if (fragment) {
                 maxSendBytes = rnd.nextInt(10) + 1;
             }
-            handleContextIO();
+            handleContextIO0();
             if (null != sentBytes) {
                 if (null == challengeBytes) {
                     challengeBytes = sentBytes;
@@ -511,11 +511,11 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                     recvBuffer = sendStr.substring(nSent, nSent + n);
                 }
                 nSent += n;
-                handleContextIO();
+                handleContextIO0();
             } while (nSent < sendStr.length());
         } else {
             recvBuffer = sendStr;
-            handleContextIO();
+            handleContextIO0();
         }
     }
 }

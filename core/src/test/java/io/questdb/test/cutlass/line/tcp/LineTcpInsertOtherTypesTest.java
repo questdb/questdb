@@ -903,7 +903,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             }
             recvBuffer = sink.toString();
             do {
-                handleContextIO();
+                handleContextIO0();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
