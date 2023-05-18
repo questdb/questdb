@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
@@ -193,7 +194,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null);
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
         }
         return super.of(fd, dispatcher);
     }
@@ -232,7 +233,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 case Authenticator.OK:
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal());
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), SecurityContextFactory.ILP);
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);

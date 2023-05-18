@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -35,6 +37,9 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -215,6 +220,21 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();
+    }
+
+    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
+        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
+        if (readOnlyInstance) {
+            return ReadOnlySecurityContextFactory.INSTANCE;
+        } else {
+            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
+            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
+            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
+            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
+            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
+            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
+            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
+        }
     }
 
     public static AuthenticatorFactory getAuthenticatorFactory(ServerConfiguration configuration) {
