@@ -81,6 +81,19 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
         super.close();
     }
 
+    public void ofRW(
+            Path partitionPath,
+            CharSequence columnName,
+            long columnTxn,
+            int columnType,
+            int indexBlockCapacity,
+            long columnTop,
+            int columnIndex
+    ) {
+        super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+        indexWriter.of(partitionPath, columnName, columnTxn, columnTop < 0 ? indexBlockCapacity : 0);
+    }
+
     @Override
     public void ofRW(
             Path partitionPath,
@@ -93,16 +106,15 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
         throw new UnsupportedOperationException();
     }
 
-    public void ofRW(
-            Path partitionPath,
-            CharSequence columnName,
-            long columnTxn,
-            int columnType,
-            int indexBlockCapacity,
-            long columnTop,
-            int columnIndex
-    ) {
-        super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-        indexWriter.of(partitionPath, columnName, columnTxn, columnTop < 0 ? indexBlockCapacity : 0);
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    private int keyCount(int key, long size, long mappedAddress) {
+        int count = 0;
+        for (long i = 0; i < size; i++) {
+            if (TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << 2))) == key) {
+                count++;
+            }
+        }
+        return count;
     }
 }
