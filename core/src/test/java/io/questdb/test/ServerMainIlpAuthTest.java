@@ -37,7 +37,7 @@ import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
 
 public class ServerMainIlpAuthTest extends AbstractBootstrapTest {
-    private static final String AUTH_CONF_PATH = "conf" + Files.SEPARATOR + "auth.conf";
+    private static final String AUTH_CONF_PATH = "conf/auth.conf";
 
     @Before
     public void setUp() {
