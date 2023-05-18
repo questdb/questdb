@@ -527,6 +527,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void setStatementTimeout(long statementTimeout) {
         this.statementTimeout = statementTimeout;
+        if (statementTimeout > 0) {
+            circuitBreaker.setTimeout(statementTimeout);
+        }
     }
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
