@@ -270,7 +270,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
 
             recvBuffer = input;
             do {
-                handleContextIO();
+                handleContextIO0();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();

@@ -108,7 +108,7 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                 Assert.assertTrue(isWalTable(tableName));
             }
             recvBuffer = inboundLines;
-            handleContextIO();
+            handleContextIO0();
             waitForIOCompletion();
             closeContext();
             mayDrainWalQueue();

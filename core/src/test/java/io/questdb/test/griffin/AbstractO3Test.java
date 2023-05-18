@@ -25,10 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -61,6 +58,7 @@ import java.util.concurrent.TimeUnit;
 public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink = new StringSink();
     protected static final StringSink sink2 = new StringSink();
+    protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
@@ -336,6 +334,11 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public int getCommitMode() {
+                        return commitMode;
+                    }
+
+                    @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
                     }
@@ -368,6 +371,11 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public boolean disableColumnPurgeJob() {
                         return false;
+                    }
+
+                    @Override
+                    public int getCommitMode() {
+                        return commitMode;
                     }
 
                     @Override
