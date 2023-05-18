@@ -2032,6 +2032,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void squashPartitions() {
+        // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
             squashPartitionForce(i);
         }
@@ -6735,6 +6736,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         assert lastLogicalPartitionTimestamp == txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
 
+        // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         while (partitionIndex < txWriter.getPartitionCount()) {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
             long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);

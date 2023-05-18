@@ -543,7 +543,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription + " expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();
