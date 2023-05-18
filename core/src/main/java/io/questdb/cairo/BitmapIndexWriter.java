@@ -38,6 +38,7 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
+    private static final long MAX_VALUE_OFFSET = 37L;
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
@@ -65,8 +66,8 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
-        keyMem.toTop();
-        Vect.memset(keyMem.addressOf(0), keyMem.getAppendAddressSize(), 0);
+        keyMem.jumpTo(0);
+        keyMem.truncate();
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();
@@ -75,6 +76,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(0); // KEY COUNT
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(1); // SEQUENCE CHECK
+        assert keyMem.getAppendOffset() == MAX_VALUE_OFFSET;
         keyMem.putLong(-1); // maxRow. It's inclusive, -1 means no rows
         keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
@@ -169,7 +171,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     public long getMaxValue() {
-        return keyMem.getLong(38L);
+        return keyMem.getLong(MAX_VALUE_OFFSET);
     }
 
     @TestOnly
@@ -271,7 +273,6 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
             if (init) {
                 this.keyMem.of(ff, path, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
-                keyMem.zero();
                 initKeyMemory(this.keyMem, indexBlockCapacity);
             } else {
                 boolean exists = ff.exists(path);
@@ -377,7 +378,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
                     if (blockOffset != seekValueBlockOffset) {
                         Unsafe.getUnsafe().storeFence();
-                        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT + 16, seekValueBlockOffset);
+                        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, seekValueBlockOffset);
                         Unsafe.getUnsafe().storeFence();
                     }
                     keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, seekValueCount);
@@ -394,7 +395,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     public void setMaxValue(long maxValue) {
-        keyMem.putLong(38L, maxValue);
+        keyMem.putLong(MAX_VALUE_OFFSET, maxValue);
     }
 
     public void sync(boolean async) {
@@ -403,9 +404,8 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     public void truncate() {
-        keyMem.truncate();
-        valueMem.truncate();
         initKeyMemory(keyMem, blockValueCountMod + 1);
+        valueMem.truncate();
         keyCount = 0;
         valueMemSize = 0;
     }

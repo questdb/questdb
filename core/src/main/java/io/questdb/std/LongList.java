@@ -354,6 +354,15 @@ public class LongList implements Mutable, LongVec, Sinkable {
         Arrays.fill(data, pos, pos + slotSize, noEntryValue);
     }
 
+    public void reverse() {
+        int n = size();
+        for (int i = 0, m = n / 2; i < m; i++) {
+            long tmp = data[i];
+            data[i] = data[n - i - 1];
+            data[n - i - 1] = tmp;
+        }
+    }
+
     public void seed(int capacity, long value) {
         ensureCapacity(capacity);
         pos = capacity;
