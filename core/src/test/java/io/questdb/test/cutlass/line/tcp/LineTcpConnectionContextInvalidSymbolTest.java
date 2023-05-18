@@ -52,7 +52,7 @@ public class LineTcpConnectionContextInvalidSymbolTest extends BaseLineTcpContex
                             table + ",ip_address=Invalid IP address. cpu=13 1465839830101400200\n" +
                             table + ",ip_address=192.168.0.1 cpu=42 1465839830100500200\n";
 
-            handleContextIO();
+            handleContextIO0();
             Assert.assertEquals(disconnectOnError, disconnected);
             closeContext();
 
