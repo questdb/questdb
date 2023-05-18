@@ -79,7 +79,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             int httpMinPort,
             int pgPort,
             int ilpPort,
-            String... extra) throws Exception {
+            String... extra
+    ) throws Exception {
         final String confPath = root + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
