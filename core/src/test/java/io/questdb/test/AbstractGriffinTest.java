@@ -1002,10 +1002,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertSegmentLockExistence(boolean expectExists, String tableName, int segmentId) {
+    protected void assertSegmentLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(1).slash().put(segmentId).put(".lock").$();
+            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
@@ -1025,20 +1025,25 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertSqlWithTypes(compiler, sqlExecutionContext, sql, sink, expected);
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, String tableName) {
+    protected void assertWalLockEngagement(boolean expectLocked, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        assertWalLockEngagement(expectLocked, tableToken, walId);
+    }
+
+    protected void assertWalLockEngagement(boolean expectLocked, TableToken tableToken, int walId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(1).put(".lock").$();
+            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Chars.toString(path), expectLocked, !could);
         }
     }
 
-    protected void assertWalLockExistence(boolean expectExists, String tableName) {
+    protected void assertWalLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             TableToken tableToken = engine.verifyTableName(tableName);
-            path.of(root).concat(tableToken).concat("wal").put(1).put(".lock").$();
+            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
