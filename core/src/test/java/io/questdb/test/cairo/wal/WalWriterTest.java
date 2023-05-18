@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -43,6 +44,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -2905,6 +2907,56 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             assertSql(tableName, "a\tb\tts\n" +
                     "1\t\t1970-01-01T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testWalSegmentInit() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testWalSegmentInit";
+            TableToken tableToken;
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("a", ColumnType.BYTE)
+                    .wal()
+            ) {
+                tableToken = createTable(model);
+            }
+
+            assertTableExistence(true, tableToken);
+
+            node1.getConfigurationOverrides().setFactoryProvider(new DefaultFactoryProvider() {
+                @Override
+                public WalInitializerFactory getWalInitializerFactory() {
+                    return () -> new WalInitializer() {
+                        @Override
+                        public void initSegmentDirectory(Path segmentDir, TableToken tableToken1, int walId, int segmentId) {
+                            final File segmentDirFile = new File(segmentDir.toString());
+                            final File customInitFile = new File(segmentDirFile, "customInitFile");
+                            try {
+                                customInitFile.createNewFile();
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    };
+                }
+            });
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.append();
+                }
+
+                walWriter.commit();
+            }
+
+            assertWalExistence(true, tableToken, 1);
+            File segmentDir = assertSegmentExistence(true, tableToken, 1, 0);
+
+            final File customInitFile = new File(segmentDir, "customInitFile");
+            assertTrue(customInitFile.exists());
         });
     }
 

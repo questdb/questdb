@@ -338,10 +338,9 @@ public final class Files {
     }
 
     public static long mremap(int fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
-        Unsafe.recordMemAlloc(-previousSize, memoryTag);
         address = mremap0(fd, address, previousSize, newSize, offset, flags);
         if (address != -1) {
-            Unsafe.recordMemAlloc(newSize, memoryTag);
+            Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
         }
         return address;
     }

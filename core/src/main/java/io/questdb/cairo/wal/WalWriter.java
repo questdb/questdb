@@ -87,6 +87,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
     private final int walId;
+    private final WalInitializer walInitializer;
     private final String walName;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -116,6 +117,7 @@ public class WalWriter implements TableWriterAPI {
         this.configuration = configuration;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
+        this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
         this.tableToken = tableToken;
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
@@ -436,6 +438,13 @@ public class WalWriter implements TableWriterAPI {
         if (uncommittedRows > 0) {
             final int oldSegmentId = segmentId;
             final int newSegmentId = segmentId + 1;
+            if (newSegmentId > WalUtils.SEG_MAX_ID) {
+                throw CairoException.critical(0)
+                        .put("cannot roll over to new segment due to SEG_MAX_ID overflow ")
+                        .put("[table=").put(tableToken.getTableName())
+                        .put(", walId=").put(walId)
+                        .put(", segmentId=").put(newSegmentId).put(']');
+            }
             final int oldSegmentLockFd = segmentLockFd;
             segmentLockFd = -1;
             try {
@@ -978,6 +987,7 @@ public class WalWriter implements TableWriterAPI {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
+        walInitializer.initSegmentDirectory(path, tableToken, walId, segmentId);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
     }
@@ -1154,7 +1164,9 @@ public class WalWriter implements TableWriterAPI {
             lastSegmentTxn = 0;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
-            releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
+            if (oldSegmentLockFd > -1) {
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
+            }
             path.trimTo(rootLen);
         }
     }
