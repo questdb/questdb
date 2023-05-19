@@ -882,7 +882,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             Assert.assertEquals(metadata0.getTableId(), metadata.getTableId());
                             Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
                             Assert.assertEquals(metadata0.getO3MaxLag(), metadata.getO3MaxLag());
-                            Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
+                            Assert.assertEquals(metadata0.getMetadataVersion(), metadata.getMetadataVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
                                 TableColumnMetadata columnMetadata0 = metadata0.getColumnMetadata(i);
@@ -905,7 +905,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                                     Assert.assertEquals(txReader0.getFixedRowCount(), txReader1.getFixedRowCount());
                                     Assert.assertEquals(txReader0.getMinTimestamp(), txReader1.getMinTimestamp());
                                     Assert.assertEquals(txReader0.getMaxTimestamp(), txReader1.getMaxTimestamp());
-                                    Assert.assertEquals(txReader0.getStructureVersion(), txReader1.getStructureVersion());
+                                    Assert.assertEquals(txReader0.getMetadataVersion(), txReader1.getMetadataVersion());
                                     Assert.assertEquals(txReader0.getDataVersion(), txReader1.getDataVersion());
                                     Assert.assertEquals(txReader0.getPartitionTableVersion(), txReader1.getPartitionTableVersion());
                                     Assert.assertEquals(1, txReader0.getTruncateVersion());

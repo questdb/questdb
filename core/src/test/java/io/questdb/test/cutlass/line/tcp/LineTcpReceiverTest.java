@@ -227,9 +227,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 final int expectedNumOfRows = numOfRows / 2;
                 // usually the data will be in the table by the time we get here but
                 // if it is not we will wait for it in a loop
-                while (reader.getTransientRowCount() < expectedNumOfRows) {
-                    mayDrainWalQueue();
+                long maxWaitIters = 60 * Timestamps.SECOND_MILLIS / 100;
+                for (int i = 0; i < maxWaitIters && reader.getTransientRowCount() < expectedNumOfRows; i++) {
                     Os.sleep(100);
+                    mayDrainWalQueue();
+                    reader.reload();
                 }
                 Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
                 Assert.assertEquals(expectedNumOfRows, reader.getTransientRowCount());

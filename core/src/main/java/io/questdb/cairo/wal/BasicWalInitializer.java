@@ -22,26 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.wal;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Path;
 
-public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
+public class BasicWalInitializer implements WalInitializer {
+    public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
 
-    default int getMaxUncommittedRows() {
-        return Integer.MAX_VALUE;
+    @Override
+    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
     }
-
-    long getMetadataVersion();
-
-    default long getO3MaxLag() {
-        return 0;
-    }
-
-    int getTableId();
-
-    TableToken getTableToken();
-
-    boolean isWalEnabled();
 }
