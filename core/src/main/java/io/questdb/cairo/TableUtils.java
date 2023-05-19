@@ -1027,10 +1027,42 @@ public final class TableUtils {
         }
     }
 
+    public static void removeColumnFromMetadata(
+            CharSequence columnName,
+            LowerCaseCharSequenceIntHashMap columnNameIndexMap,
+            ObjList<TableColumnMetadata> columnMetadata
+    ) {
+        final int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+        }
+
+        columnNameIndexMap.remove(columnName);
+        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
+        deletedMeta.markDeleted();
+    }
+
     public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {
         if (ff.exists(path) && !ff.closeRemove(fd, path)) {
             throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
         }
+    }
+
+    public static void renameColumnInMetadata(
+            CharSequence columnName,
+            CharSequence newName,
+            LowerCaseCharSequenceIntHashMap columnNameIndexMap,
+            ObjList<TableColumnMetadata> columnMetadata
+    ) {
+        final int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+        }
+        final String newNameStr = newName.toString();
+        columnMetadata.getQuick(columnIndex).setName(newNameStr);
+
+        columnNameIndexMap.removeEntry(columnName);
+        columnNameIndexMap.put(newNameStr, columnIndex);
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
@@ -1571,6 +1603,7 @@ public final class TableUtils {
     }
 
     static {
+        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

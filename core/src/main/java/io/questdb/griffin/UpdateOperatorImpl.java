@@ -43,7 +43,6 @@ import static io.questdb.cairo.TableUtils.iFile;
 
 public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
-    private final CairoConfiguration configuration;
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final FilesFacade ff;
@@ -70,7 +69,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         this.dataAppendPageSize = configuration.getDataAppendPageSize();
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
-        this.configuration = configuration;
         this.path = path;
     }
 
