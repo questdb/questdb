@@ -635,9 +635,9 @@ public class TableUpdateDetails implements Closeable {
             return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
         }
 
-        long getStructureVersion() {
+        long getMetadataVersion() {
             if (latestKnownMetadata != null) {
-                return latestKnownMetadata.getStructureVersion();
+                return latestKnownMetadata.getMetadataVersion();
             }
             return ANY_TABLE_VERSION;
         }
@@ -659,8 +659,8 @@ public class TableUpdateDetails implements Closeable {
             // Second, check if writer's structure version has changed
             // compared with the known metadata.
             if (latestKnownMetadata != null) {
-                long structureVersion = writerAPI.getStructureVersion();
-                if (latestKnownMetadata.getStructureVersion() != structureVersion) {
+                long metadataVersion = writerAPI.getMetadataVersion();
+                if (latestKnownMetadata.getMetadataVersion() != metadataVersion) {
                     // clear() frees latestKnownMetadata and sets it to null
                     clear();
                 }

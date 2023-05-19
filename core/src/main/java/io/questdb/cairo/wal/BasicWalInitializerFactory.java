@@ -22,26 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.QuietCloseable;
+public class BasicWalInitializerFactory implements WalInitializerFactory {
+    public static final BasicWalInitializerFactory INSTANCE = new BasicWalInitializerFactory();
 
-public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
-
-    default int getMaxUncommittedRows() {
-        return Integer.MAX_VALUE;
+    @Override
+    public WalInitializer getInstance() {
+        return BasicWalInitializer.INSTANCE;
     }
-
-    long getMetadataVersion();
-
-    default long getO3MaxLag() {
-        return 0;
-    }
-
-    int getTableId();
-
-    TableToken getTableToken();
-
-    boolean isWalEnabled();
 }

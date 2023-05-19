@@ -29,9 +29,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -106,13 +104,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
-    public int getRealColumnCount() {
-        return columnNameIndexMap.size();
+    @Override
+    public long getMetadataVersion() {
+        return structureVersion.get();
     }
 
-    @Override
-    public long getStructureVersion() {
-        return structureVersion.get();
+    public int getRealColumnCount() {
+        return columnNameIndexMap.size();
     }
 
     @Override
@@ -159,29 +157,12 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void removeColumn(CharSequence columnName) {
-        final int columnIndex = columnNameIndexMap.get(columnName);
-        if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
-        }
-
-        columnNameIndexMap.remove(columnName);
-        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
-        deletedMeta.markDeleted();
-
+        removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
         structureVersion.incrementAndGet();
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
-        final int columnIndex = columnNameIndexMap.get(columnName);
-        if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
-        }
-        final String newNameStr = newName.toString();
-        columnMetadata.getQuick(columnIndex).setName(newNameStr);
-
-        columnNameIndexMap.removeEntry(columnName);
-        columnNameIndexMap.put(newNameStr, columnIndex);
-
+        TableUtils.renameColumnInMetadata(columnName, newName, columnNameIndexMap, columnMetadata);
         structureVersion.incrementAndGet();
     }
 
