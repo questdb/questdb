@@ -272,7 +272,7 @@ public class TxnTest extends AbstractCairoTest {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.getTxn(),
-                                            txReader.getStructureVersion(),
+                                            txReader.getMetadataVersion(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );
@@ -280,13 +280,13 @@ public class TxnTest extends AbstractCairoTest {
                                 }
                             }
 
-                            long offset = txReader.getTxn() - txReader.getStructureVersion();
+                            long offset = txReader.getTxn() - txReader.getMetadataVersion();
                             for (int i = txReader.getPartitionCount() - 2; i > -1; i--) {
                                 if (offset + i != txReader.getPartitionSize(i)) {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.getTxn(),
-                                            txReader.getStructureVersion(),
+                                            txReader.getMetadataVersion(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );
@@ -384,13 +384,13 @@ public class TxnTest extends AbstractCairoTest {
                             symbolCounts.setPos(symbolCount);
                             zeroSymbolCounts.setPos(symbolCount);
                         }
-                        txWriter.bumpStructureVersion(symbolCounts);
+                        txWriter.bumpColumnStructureVersion(symbolCounts);
 
                         // Set random number of partitions
                         int partitionCount = rnd.nextInt(maxPartitionCount);
                         int partitions = txWriter.getPartitionCount() - 1; // Last partition always stays
 
-                        long offset = txWriter.getTxn() + 1 - txWriter.getStructureVersion();
+                        long offset = txWriter.getTxn() + 1 - txWriter.getMetadataVersion();
                         // Add / Update
                         for (int i = 0; i < partitionCount; i++) {
                             txWriter.updatePartitionSizeByTimestamp(i * Timestamps.HOUR_MICROS, offset + i);

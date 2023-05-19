@@ -25,9 +25,9 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -121,7 +121,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public long getStructureVersion() {
+    public long getMetadataVersion() {
         return structureVersion;
     }
 
@@ -150,29 +150,12 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void removeColumn(CharSequence columnName) {
-        final int columnIndex = columnNameIndexMap.get(columnName);
-        if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
-        }
-
-        columnNameIndexMap.remove(columnName);
-        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
-        deletedMeta.markDeleted();
-
+        TableUtils.removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
         structureVersion++;
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
-        final int columnIndex = columnNameIndexMap.get(columnName);
-        if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
-        }
-        final String newNameStr = newName.toString();
-        columnMetadata.getQuick(columnIndex).setName(newNameStr);
-
-        columnNameIndexMap.removeEntry(columnName);
-        columnNameIndexMap.put(newNameStr, columnIndex);
-
+        TableUtils.renameColumnInMetadata(columnName, newName, columnNameIndexMap, columnMetadata);
         structureVersion++;
     }
 

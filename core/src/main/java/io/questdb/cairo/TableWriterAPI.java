@@ -87,7 +87,7 @@ public interface TableWriterAPI extends Closeable {
      *
      * @return table structure version
      */
-    long getStructureVersion();
+    long getMetadataVersion();
 
     /**
      * Returns safe watermark for the symbol count stored in the given column.
