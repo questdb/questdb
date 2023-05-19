@@ -33,11 +33,11 @@ public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
         return Integer.MAX_VALUE;
     }
 
+    long getMetadataVersion();
+
     default long getO3MaxLag() {
         return 0;
     }
-
-    long getStructureVersion();
 
     int getTableId();
 

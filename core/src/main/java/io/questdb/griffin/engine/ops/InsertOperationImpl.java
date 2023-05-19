@@ -44,13 +44,13 @@ public class InsertOperationImpl implements InsertOperation {
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
-    private final long structureVersion;
+    private final long metadataVersion;
     private final TableToken tableToken;
 
-    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long structureVersion) {
+    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
         this.engine = engine;
         this.tableToken = tableToken;
-        this.structureVersion = structureVersion;
+        this.metadataVersion = metadataVersion;
     }
 
     @Override
@@ -63,7 +63,7 @@ public class InsertOperationImpl implements InsertOperation {
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
-            if (writer.getStructureVersion() != structureVersion
+            if (writer.getMetadataVersion() != metadataVersion
                     || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;

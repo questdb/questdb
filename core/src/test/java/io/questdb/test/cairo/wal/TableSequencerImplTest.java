@@ -24,7 +24,10 @@
 
 package io.questdb.test.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericTableRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.ObjList;
@@ -64,7 +67,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         TableToken tableToken = engine.verifyTableName(tableName);
                         do {
                             engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
-                            Assert.assertEquals(metadata.getColumnCount() - initialColumnCount, metadata.getStructureVersion());
+                            Assert.assertEquals(metadata.getColumnCount() - initialColumnCount, metadata.getMetadataVersion());
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);

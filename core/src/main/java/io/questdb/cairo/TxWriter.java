@@ -34,6 +34,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
+    private final CairoConfiguration configuration;
     private long baseVersion;
     private TableWriter.ExtensionListener extensionListener;
     private int lastRecordBaseOffset = -1;
@@ -50,7 +51,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int txPartitionCount;
     private int writeAreaSize;
     private int writeBaseOffset;
-    private final CairoConfiguration configuration;
 
     public TxWriter(FilesFacade ff, CairoConfiguration configuration) {
         super(ff);
@@ -72,15 +72,25 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+        recordStructureVersion++;
+        structureVersion = Numbers.decodeHighInt(structureVersion) != 0 ? Numbers.encodeLowHighInts(getMetadataVersion() + 1, getColumnStructureVersion() + 1) : structureVersion + 1;
+        commit(denseSymbolMapWriters);
+    }
+
+    public void bumpMetadataVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+        recordStructureVersion++;
+        int colStoreVersion = getColumnStructureVersion();
+        if (colStoreVersion == 0) {
+            colStoreVersion = NONE_COL_STRUCTURE_VERSION;
+        }
+        structureVersion = Numbers.encodeLowHighInts(getMetadataVersion() + 1, colStoreVersion);
+        commit(denseSymbolMapWriters);
+    }
+
     public void bumpPartitionTableVersion() {
         recordStructureVersion++;
         partitionTableVersion++;
-    }
-
-    public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
-        recordStructureVersion++;
-        structureVersion.incrementAndGet();
-        commit(denseSymbolMapWriters);
     }
 
     public void bumpTruncateVersion() {
@@ -387,7 +397,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 seqTxn,
                 dataVersion,
                 partitionTableVersion,
-                structureVersion.get(),
+                structureVersion,
                 columnVersion,
                 truncateVersion
         );
@@ -409,18 +419,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
-    public void updateMaxTimestamp(long timestamp) {
-        prevMaxTimestamp = maxTimestamp;
-        assert timestamp >= maxTimestamp;
-        maxTimestamp = timestamp;
-    }
-
     public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
         if (partitionIndex > -1) {
             updatePartitionSizeByRawIndex(partitionIndex, partitionSize);
         } else {
             insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
         }
+    }
+
+    public void updateMaxTimestamp(long timestamp) {
+        prevMaxTimestamp = maxTimestamp;
+        assert timestamp >= maxTimestamp;
+        maxTimestamp = timestamp;
+    }
+
+    public void updatePartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
+        updateAttachedPartitionSizeByRawIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
     }
 
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
@@ -472,7 +486,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
-        putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());
+        putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
         putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
@@ -593,10 +607,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             offset += Integer.BYTES;
             putInt(offset, symCount);
         }
-    }
-
-    public void updatePartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
-        updateAttachedPartitionSizeByRawIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
     }
 
     private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
