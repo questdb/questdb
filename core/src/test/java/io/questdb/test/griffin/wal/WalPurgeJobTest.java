@@ -30,18 +30,22 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -65,13 +69,13 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertWalLockEngagement(true, tableName);
+            assertWalLockEngagement(true, tableName, 1);
             assertSegmentLockEngagement(false, tableName, 1, 0);  // Old segment is unlocked.
             assertSegmentLockEngagement(true, tableName, 1, 1);
 
             // Release WAL and segments.
             engine.releaseInactive();
-            assertWalLockEngagement(false, tableName);
+            assertWalLockEngagement(false, tableName, 1);
             assertSegmentLockEngagement(false, tableName, 1, 0);
             assertSegmentLockEngagement(false, tableName, 1, 1);
 
@@ -96,11 +100,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     "2\t2022-02-24T00:00:01.000000Z\tx\n");
             runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName);
+            assertWalLockExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 0);
+            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
         });
     }
 
@@ -313,6 +317,119 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPendingSegmentTasks() throws Exception {
+        assertMemoryLeak(() -> {
+            // Creating a table creates a new WAL with a first segment.
+            final String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+            assertWalExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentExistence(false, tableName, 1, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
+
+            // Create a second segment.
+            compile("alter table " + tableName + " add column sss string");
+            executeInsert("insert into " + tableName + " values (6, '2022-02-24T00:00:05.000000Z', 'x')");
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            final File segment1DirPath = assertSegmentExistence(true, tableName, 1, 1);
+            assertSegmentExistence(false, tableName, 1, 2);
+            assertSegmentLockExistence(false, tableName, 1, 2);
+
+            // We write a marker file to prevent the second segment "wal1/1" from being reaped.
+            final File pendingDirPath = new File(segment1DirPath, ".pending");
+            Assert.assertTrue(pendingDirPath.mkdirs());
+            final File pendingFilePath = new File(pendingDirPath, "task.pending");
+            Assert.assertTrue(pendingFilePath.createNewFile());
+
+            // Create a third segment.
+            compile("alter table " + tableName + " add column ttt string");
+            executeInsert("insert into " + tableName + " values (7, '2022-02-24T00:00:06.000000Z', 'x', 'y')");
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+            assertSegmentExistence(true, tableName, 1, 2);
+            assertSegmentExistence(false, tableName, 1, 3);
+
+            drainWalQueue();
+            engine.releaseInactive();
+
+            assertWalExistence(true, tableName, 1);
+            assertWalLockEngagement(false, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+            assertSegmentExistence(true, tableName, 1, 2);
+
+            runWalPurgeJob();
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(false, tableName, 1, 0); // Only the first segment is reaped.
+            assertSegmentExistence(true, tableName, 1, 1);
+            assertSegmentExistence(false, tableName, 1, 2);
+
+            // We remove the marker file to allow the second segment "wal1/1" to be reaped.
+            // Since all changes are applied and the wal is unlocked, the whole WAL is reaped.
+            Assert.assertTrue(pendingFilePath.delete());
+
+            runWalPurgeJob();
+
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    @Test
+    public void testPendingSegmentTasksOnDeletedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Creating a table creates a new WAL with a first segment.
+            final String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+            assertWalExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName, 1);
+            final File segment0DirPath = assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentExistence(false, tableName, 1, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
+
+            // We write a marker file to prevent the segment "wal1/0" from being reaped.
+            final File pendingDirPath = new File(segment0DirPath, ".pending");
+            Assert.assertTrue(pendingDirPath.mkdirs());
+            final File pendingFilePath = new File(pendingDirPath, "task.pending");
+            Assert.assertTrue(pendingFilePath.createNewFile());
+
+            // Drop the table and apply all outstanding operations.
+            compile("drop table " + tableName);
+            drainWalQueue();
+            engine.releaseInactive();
+            runWalPurgeJob();
+
+            // The table, wal and the segment are intact, but unlocked.
+            assertTableExistence(true, tableToken);
+            assertWalExistence(true, tableToken, 1);
+            assertWalLockEngagement(false, tableToken, 1);
+            assertSegmentExistence(true, tableToken, 1, 0);
+            assertSegmentLockEngagement(false, tableToken, 1, 0);
+
+            // We remove the marker file to allow the segment directory, wal and the whole table dir to be reaped.
+            Assert.assertTrue(pendingFilePath.delete());
+
+            runWalPurgeJob();
+            assertWalExistence(false, tableToken, 1);
+            assertTableExistence(false, tableToken);
+        });
+    }
+
+    @Test
     public void testRemoveWalLockFailure() throws Exception {
         AtomicBoolean allowRemove = new AtomicBoolean();
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -351,11 +468,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             allowRemove.set(false);
             runWalPurgeJob(ff);
-            assertWalLockExistence(true, tableName);
+            assertWalLockExistence(true, tableName, 1);
 
             allowRemove.set(true);
             runWalPurgeJob(ff);
-            assertWalLockExistence(false, tableName);
+            assertWalLockExistence(false, tableName, 1);
         });
     }
 
@@ -443,17 +560,17 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             drainWalQueue();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName);
+            assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
             assertSegmentLockEngagement(true, tableName, 1, 0);  // Segment 0 is locked.
-            assertWalLockEngagement(true, tableName);
+            assertWalLockEngagement(true, tableName, 1);
 
             compile("alter table " + tableName + " add column s1 string");
             compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
-            assertWalLockEngagement(true, tableName);
+            assertWalLockEngagement(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1);
+            assertSegmentLockExistence(true, tableName, 1, 1);
             assertSegmentLockEngagement(false, tableName, 1, 0);  // Segment 0 is unlocked.
             assertSegmentLockEngagement(true, tableName, 1, 1);  // Segment 1 is locked.
 
@@ -465,7 +582,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 Assert.assertTrue(path.toString(), ff.exists(path));
 
                 runWalPurgeJob();
-                assertSegmentLockExistence(false, tableName, 0);
+                assertSegmentLockExistence(false, tableName, 1, 0);
 
                 // "stuff" is untouched.
                 Assert.assertTrue(path.toString(), ff.exists(path));
@@ -638,11 +755,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName);
+            assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1);
+            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // Altering the table doesn't create a new segment yet.
             compile("alter table " + tableName + " add column sss string");
@@ -676,17 +793,17 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             // Purging will now clean up the inactive segmentId==0, but leave segmentId==1
             runWalPurgeJob();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName);
+            assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 0);
+            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1);
+            assertSegmentLockExistence(true, tableName, 1, 1);
 
             // Releasing inactive writers and purging will also delete the wal directory.
             engine.releaseInactive();
             runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName);
+            assertWalLockExistence(false, tableName, 1);
         });
     }
 
@@ -703,7 +820,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             getTableWriterAPI(tableName).close();
 
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName);
+            assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
 
             // Released before committing anything to the sequencer.
@@ -711,7 +828,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName);
+            assertWalLockExistence(false, tableName, 1);
         });
     }
 

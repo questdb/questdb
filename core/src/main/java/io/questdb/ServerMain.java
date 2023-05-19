@@ -241,11 +241,11 @@ public class ServerMain implements Closeable {
         AuthenticatorFactory authenticatorFactory;
         // create default authenticator for Line TCP protocol
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
+            // we need "root/" here, not "root/db/"
+            final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new File(
-                            configuration.getCairoConfiguration().getRoot(),
-                            configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
+                    new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
             );
         } else {
             authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;

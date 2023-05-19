@@ -1005,6 +1005,51 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 1024);
+            Rnd r = TestUtils.generateRandom(LOG);
+            final int count = 100 + r.nextInt(1_000_000);
+            final int maxKeys = 10 + r.nextInt(1000);
+
+            BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE);
+            LongList values = new LongList();
+            for (int i = 0; i < count; i++) {
+                int key = r.nextInt(maxKeys);
+                writer.add(key, i);
+                values.add((long) key * count + i);
+            }
+            assertValuesMatchBitmapWriter(count, writer, values);
+
+            writer.close();
+            int plen = path.length();
+            FilesFacade ff = configuration.getFilesFacade();
+
+            // Make x.k dirty, write random data
+            int fd = ff.openRW(path.concat("x.k").$(), configuration.getWriterFileOpenOpts());
+            long len = ff.length(fd);
+            Assert.assertTrue(len > 0);
+            long address = TableUtils.mapRW(ff, fd, len, MemoryTag.MMAP_DEFAULT);
+            Vect.memset(address, len, 1);
+            ff.close(fd);
+            ff.munmap(address, len, MemoryTag.MMAP_DEFAULT);
+            path.trimTo(plen);
+
+            // Force initialise index, e.g. truncate
+            writer.of(path, "x", COLUMN_NAME_TXN_NONE, 4096);
+            values.clear();
+            for (int i = 0; i < count; i++) {
+                int key = r.nextInt(maxKeys);
+                writer.add(key, i);
+                values.add((long) key * count + i);
+            }
+            assertValuesMatchBitmapWriter(count, writer, values);
+
+            writer.close();
+        });
+    }
+
+    @Test
     public void testIntIndex() throws Exception {
         final int plen = path.length();
         final Rnd rnd = new Rnd();
@@ -1030,6 +1075,15 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertForwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
+        try {
+            new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
+            Assert.fail();
+        } catch (CairoException e) {
+            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
+        }
     }
 
     @Test
@@ -1523,13 +1577,37 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertForwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
-        try {
-            new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
-            Assert.fail();
-        } catch (CairoException e) {
-            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
+    private void assertThat(LongList expected, RowCursor cursor) {
+        int i = 0;
+        while (cursor.hasNext()) {
+            long val = cursor.next();
+            if (i < expected.size()) {
+                Assert.assertEquals(expected.getQuick(i++), val);
+            } else {
+                Assert.fail("element should not be in index: " + val);
+            }
         }
+        Assert.assertEquals("missing values in index", i, expected.size());
+    }
+
+    private void assertValuesMatchBitmapWriter(int count, BitmapIndexWriter writer, LongList values) {
+        values.sort();
+        LongList keyValues = new LongList();
+        int lastKey = 0;
+        for (int i = 0; i < values.size(); i++) {
+            long keyVal = values.get(i);
+            int key = (int) (keyVal / count);
+            if (lastKey != key) {
+                keyValues.reverse();
+                assertThat(keyValues, writer.getCursor(lastKey));
+                keyValues.clear();
+                lastKey = key;
+            }
+            keyValues.add(keyVal % count);
+
+        }
+        keyValues.reverse();
+        assertThat(keyValues, writer.getCursor(lastKey));
     }
 
     private void assertThat(String expected, RowCursor cursor, LongList temp) {

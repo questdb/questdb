@@ -351,13 +351,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
 
-                        if (!read()) {
-                            if (peerDisconnected) {
-                                return IOContextResult.NEEDS_DISCONNECT;
-                            }
-                            return IOContextResult.NEEDS_READ;
+                        if (peerDisconnected) {
+                            return IOContextResult.NEEDS_DISCONNECT;
                         }
-                        break;
+                        return IOContextResult.NEEDS_READ;
                     }
                 }
             } catch (CairoException ex) {

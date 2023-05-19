@@ -79,10 +79,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             recvBuffer = tableName + ",location=us-midwest temperature=82 1465839830100400200\n" +
                     tableName + ",location=us-eastcoast cast=cast,temperature=81,humidity=23 1465839830101400200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             drainWalQueue();
             String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
@@ -113,10 +110,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\n" +
@@ -178,10 +172,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
@@ -201,10 +192,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         addTable(table);
         runInContext(() -> {
             recvBuffer = makeMessages(table);
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -231,10 +219,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -259,8 +244,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 a=146583983102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
+            handleIO();
+
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -285,7 +270,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast,broken temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -311,7 +296,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast broken=23 temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -337,8 +322,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast broken.col=aString,temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
+            handleIO();
+
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -363,8 +348,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast,broken.col=aString temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -390,8 +374,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast,broken.col=aString temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -416,7 +399,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 146583983x102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -442,10 +425,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast raining=T 1465839830102400200\n" +
                             table + ",location=us-eastcoast raining=F 1465839830102400200\n" +
                             table + ",location=us-westcost raining=False 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\training\ttimestamp\n" +
                     "us-eastcoast\ttrue\t2016-06-13T17:43:50.100400Z\n" +
@@ -483,10 +463,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                                     table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                                     table + ",location=us-westcost temperature=82 1465839830102500200\n";
-                    do {
-                        handleContextIO();
-                        Assert.assertFalse(disconnected);
-                    } while (recvBuffer.length() > 0);
+                    handleIO();
                     closeContext();
                     String expected = "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -526,7 +503,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                                     table + ",location=us-eastcoast temperature=80 50000\n" +
                                     table + ",location=us-westcost temperature=82 40000\n";
                     do {
-                        handleContextIO();
+                        handleContextIO0();
                     } while (!disconnected && recvBuffer.length() > 0);
 
                     Assert.assertTrue(disconnected);
@@ -563,10 +540,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                                     table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                                     table + ",location=us-westcost temperature=82 1465839830102500200\n";
-                    do {
-                        handleContextIO();
-                        Assert.assertFalse(disconnected);
-                    } while (recvBuffer.length() > 0);
+                    handleIO();
                     closeContext();
                     String expected = "location\ttemperature\tbroken\ttimestamp\n";
                     assertTable(expected, table);
@@ -594,7 +568,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             microSecondTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i\n" +
                     "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
@@ -616,7 +590,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer = "t_ilp21 l=843530699759026177i\n" +
                     "t_ilp21 l=\"843530699759026178\"\n" +
                     "t_ilp21 l=843530699759026179i\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "l\n" +
@@ -638,10 +612,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -666,10 +637,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -696,10 +664,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -725,10 +690,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89,Timestamp=1465839830102400200t\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -754,10 +716,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=89\n" +
                             table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=80\n" +
                             table + ",location=us-westcost timestamp=1465839830102500200t,temperature=82\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttimestamp\ttemperature\n" +
                     "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
@@ -783,10 +742,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
@@ -822,10 +778,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80,time=1465839830102500200t\n" +
                             table + ",location=us-westcost temperature=82,time=1465839830102600200t 1465839830102700200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttime\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100300Z\t\n" +
@@ -861,10 +814,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast Temperature=89,temperature=88 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82,timestamp=1465839830102500200t\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
@@ -890,10 +840,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -919,10 +866,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -948,10 +892,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -977,10 +918,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
                             table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
                             table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "terület\thőmérséklet\tветер\ttimestamp\n" +
                     "us-midwest\t82.0\t2.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -1006,10 +944,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
                             table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
                             table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "terület\thőmérséklet\tветер\ttimestamp\n" +
                     "us-midwest\t82.0\t2.5\t2016-06-13T17:43:50.100400Z\n" +
@@ -1035,10 +970,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
                             table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
                             table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "terület\thőmérséklet\tветер\ttimestamp\n" +
                     "us-midwest\t82.0\t2.5\t2016-06-13T17:43:50.100400Z\n" +
@@ -1074,10 +1006,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82,timestamp=1465839830102500200t\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
@@ -1113,10 +1042,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
                             table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
                             table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "terület\thőmérséklet\ttimestamp\tветер\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t2.5\n" +
@@ -1142,10 +1068,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\n" +
@@ -1171,10 +1094,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89,another=30,humidity=31 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\tanother\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\n" +
@@ -1200,10 +1120,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89,HuMiditY=28,humidity=29 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\n" +
@@ -1229,10 +1146,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -1258,10 +1172,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -1279,7 +1190,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testEmptyLine() throws Exception {
         runInContext(() -> {
             recvBuffer = "\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
         });
     }
@@ -1293,7 +1204,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             while (n < allMsgs.length()) {
                 recvBuffer = allMsgs.substring(n, n + 1);
                 n++;
-                handleContextIO();
+                handleContextIO0();
                 Assert.assertFalse(disconnected);
             }
             closeContext();
@@ -1327,7 +1238,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertTrue(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -1439,7 +1350,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
-                handleContextIO();
+                handleContextIO0();
             } while (recvBuffer.length() > 0);
         });
 
@@ -1448,17 +1359,17 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             recvBuffer = ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
             do {
-                handleContextIO();
+                handleContextIO0();
             } while (recvBuffer.length() > 0);
 
             recvBuffer = ".,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
             do {
-                handleContextIO();
+                handleContextIO0();
             } while (recvBuffer.length() > 0);
 
             recvBuffer = "..\\/dbRoot,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
             do {
-                handleContextIO();
+                handleContextIO0();
             } while (recvBuffer.length() > 0);
 
 
@@ -1489,10 +1400,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getNetMsgBufferSize());
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -1518,10 +1426,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89,pollution=5 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\tpollution\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\n" +
@@ -1547,8 +1452,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -1570,14 +1474,14 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81 1465839830101400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             recvBuffer =
                     table + ",location=us-midwest temperature=85 1465839830102300200\n" +
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -1604,7 +1508,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + " temperature=89,pressure=101i 1465839830102400200\n" +
                             table + " temperature=80,pressure=100i 1465839830102400200\n" +
                             table + " temperature=82,pressure=100i 1465839830102500200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "temperature\tpressure\ttimestamp\n" +
@@ -1631,7 +1535,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + " temperature=89,pressure=101i 1465839830102400200\n" +
                             table + " temperature=80,pressure=100i 1465839830102400200\n" +
                             table + " temperature=82,pressure=100i 1465839830102500200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "temperature\tpressure\ttimestamp\n" +
@@ -1673,7 +1577,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
-                handleContextIO();
+                handleContextIO0();
             } while (recvBuffer.length() > 0);
 
             Assert.assertTrue(disconnected);
@@ -1707,7 +1611,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
-                handleContextIO();
+                handleContextIO0();
             } while (recvBuffer.length() > 0);
 
             Assert.assertTrue(disconnected);
@@ -1725,7 +1629,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
-                handleContextIO();
+                handleContextIO0();
             } while (recvBuffer.length() > 0);
 
             Assert.assertTrue(disconnected);
@@ -1743,10 +1647,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             recvBuffer =
                     "vbw water_speed_longitudinal=0.07,water_speed_traversal=,water_speed_status=\"A\",ground_speed_longitudinal=0,ground_speed_traversal=0,ground_speed_status=\"A\",water_speed_stern_traversal=,water_speed_stern_traversal_status=\"V\",ground_speed_stern_traversal=0,ground_speed_stern_traversal_status=\"V\" 1627046637414969856\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
 
 
@@ -1785,10 +1686,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + " val=4 \n" +
                             table + ",platform=APP2 \n" +
                             table + ",platform=APP3\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "platform\tval\ttimestamp\n" +
                     "APP\t1.0\t1970-01-02T00:00:00.000000Z\n" +
@@ -1813,10 +1711,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             try (Path path = new Path().of(configuration.getRoot()).concat(table).$()) {
                 Assert.assertFalse(configuration.getFilesFacade().exists(path));
@@ -1839,10 +1734,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89,hőmérséklet" + nonPrintable2 + "=26 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80,hőmérséklet" + nonPrintable + "=25,hőmérséklet" + nonPrintable2 + "=23 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thőmérséklet" + nonPrintable1 + "\thőmérséklet" + nonPrintable2 + "\thőmérséklet" + nonPrintable + "\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\tNaN\n" +
@@ -1865,7 +1757,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 recvBuffer += recvBuffer;
             }
             int nUnread = recvBuffer.length() - msgBufferSize;
-            handleContextIO();
+            handleContextIO0();
             Assert.assertTrue(disconnected);
             Assert.assertEquals(nUnread, recvBuffer.length());
         });
@@ -1882,10 +1774,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "tbl,t1=tv1\",t2=tv2 f2=\"1\" 1465839830100400200\n" +
                     "tbl,t1=\"tv1,t2=tv2 f2=\"1\" 1465839830100400200\n" +
                     "tbl,t1=tv1,t2=tv2 f1=\"Zen Internet Ltd\",f2=\"fv2\" 1465839830100400200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "t1\tt2\tf1\tf2\ttimestamp\n" +
                     "tv1\ttv2\tfv1\tZen Internet Ltd\t2016-06-13T17:43:50.100400Z\n" +
@@ -1904,7 +1793,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "singleMeasurement";
         runInContext(() -> {
             recvBuffer = table + ",location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -1925,10 +1814,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast raining=\"T\" 1465839830102400200\n" +
                             table + ",location=us-eastcoast raining=\"F\" 1465839830102400200\n" +
                             table + ",location=us-westcost raining=\"False\" 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\training\ttimestamp\n" +
                     "us-eastcoast\ttrue\t2016-06-13T17:43:50.100400Z\n" +
@@ -1953,10 +1839,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer = sb.toString();
 
             // ingesting 2038 rows -> size of location.o file will be 16384 bytes (pageSize)
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
 
             // with this line we are testing that mmap size is calculated correctly even in case of fileSize=pageSize
@@ -1980,10 +1863,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast,sensor=type1 temperature=89 1465839830102402200\n" +
                             table + ",sensor=type3,location=us-eastcoast temperature=80 1465839830102403200\n" +
                             table + ",location=us-westcost,sensor=type1 temperature=82 1465839830102504200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tsensor\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\ttype3\n" +
@@ -2026,10 +1906,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
@@ -2061,7 +1938,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89\n" +
                             table + ",location=us-eastcoast temperature=80\n" +
                             table + ",location=us-westcost temperature=82\n";
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -2104,6 +1981,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         }
     }
 
+    private void handleIO() {
+        do {
+            handleContextIO0();
+            Assert.assertFalse(disconnected);
+        } while (recvBuffer.length() > 0);
+    }
+
     @NotNull
     private String makeMessages(String table) {
         return table + ",location=us-midwest temperature=82 1465839830100400200\n" +
@@ -2122,10 +2006,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
@@ -2141,10 +2022,10 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             String allMsgs = makeMessages(table);
             recvBuffer = allMsgs.substring(0, breakPos);
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             recvBuffer = allMsgs.substring(breakPos);
-            handleContextIO();
+            handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -2203,7 +2084,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 }
                 recvBuffer = sink.toString();
                 do {
-                    if (handleContextIO()) {
+                    if (handleContextIO0()) {
                         Os.pause();
                     }
                 } while (recvBuffer.length() > 0);
