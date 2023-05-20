@@ -807,7 +807,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public long getStructureVersion() {
+        public long getMetadataVersion() {
             return 0;
         }
 

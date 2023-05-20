@@ -46,6 +46,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
+    private final Authenticator authenticator;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final long checkIdleInterval;
     private final long commitInterval;
@@ -67,7 +68,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long lastQueueFullLogMillis = 0;
     private long nextCheckIdleTime;
     private long nextCommitTime;
-    private final Authenticator authenticator;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         this.configuration = configuration;
@@ -333,13 +333,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
 
-                        if (!read()) {
-                            if (peerDisconnected) {
-                                return IOContextResult.NEEDS_DISCONNECT;
-                            }
-                            return IOContextResult.NEEDS_READ;
+                        if (peerDisconnected) {
+                            return IOContextResult.NEEDS_DISCONNECT;
                         }
-                        break;
+                        return IOContextResult.NEEDS_READ;
                     }
                 }
             } catch (CairoException ex) {

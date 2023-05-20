@@ -226,7 +226,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2048, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
         Assert.assertEquals(10000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
         Assert.assertEquals(8388608, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
-        Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().isEnabled());
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 

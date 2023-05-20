@@ -59,7 +59,7 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
                             table + ",location=us-eastcoast temperature=80,hőmérséklet=25" + nonPrintable + ",hőmérséklet=23 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
 
-            handleContextIO();
+            handleContextIO0();
             Assert.assertEquals(disconnectOnError, disconnected);
             closeContext();
         });

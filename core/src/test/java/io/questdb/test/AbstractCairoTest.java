@@ -61,6 +61,7 @@ import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
 import org.junit.runner.Description;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
@@ -556,28 +557,50 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, cursor, metadata, true);
     }
 
-    protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
+    protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        return assertSegmentExistence(expectExists, tableToken, walId, segmentId);
+    }
+
+    protected File assertSegmentExistence(boolean expectExists, @NotNull TableToken tableToken, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            TableToken tableToken = engine.verifyTableName(tableName);
             path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            return new File(Chars.toString(path));
         }
     }
 
     protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        assertSegmentLockEngagement(expectLocked, tableToken, walId, segmentId);
+    }
+
+    protected void assertSegmentLockEngagement(boolean expectLocked, TableToken tableToken, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
+            path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Chars.toString(path), expectLocked, !could);
         }
     }
 
-    protected void assertWalExistence(boolean expectExists, String tableName, int walId) {
+    protected void assertTableExistence(boolean expectExists, @NotNull TableToken tableToken) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(root).concat(tableToken).$();
+            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+        }
+    }
+
+    protected void assertWalExistence(boolean expectExists, String tableName, int walId) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        assertWalExistence(expectExists, tableToken, walId);
+    }
+
+    protected void assertWalExistence(boolean expectExists, @NotNull TableToken tableToken, int walId) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }

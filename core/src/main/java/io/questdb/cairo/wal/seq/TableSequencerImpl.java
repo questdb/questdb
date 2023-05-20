@@ -115,7 +115,7 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
         checkDropped();
-        if (metadata.getStructureVersion() == structureVersionLo) {
+        if (metadata.getMetadataVersion() == structureVersionLo) {
             // Nothing to do.
             return emptyOperationCursor.of(tableToken);
         }
@@ -129,7 +129,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public long getStructureVersion() {
-        return metadata.getStructureVersion();
+        return metadata.getMetadataVersion();
     }
 
     @Override
@@ -169,7 +169,7 @@ public class TableSequencerImpl implements TableSequencer {
                 timestampIndex,
                 compressedTimestampIndex,
                 metadata.isSuspended(),
-                metadata.getStructureVersion(),
+                metadata.getMetadataVersion(),
                 compressedColumnCount
         );
 
@@ -215,18 +215,19 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         long txn;
         try {
-            if (metadata.getStructureVersion() == expectedStructureVersion) {
+            // From sequencer perspective metadata version is the same as column structure version
+            if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, microClock.getTicks());
 
                 // Re-read serialised change to ensure it can be read.
                 AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(expectedStructureVersion, alterCommandWalFormatter);
 
                 applyToMetadata(deserializedAlter);
-                if (metadata.getStructureVersion() != expectedStructureVersion + 1) {
+                if (metadata.getMetadataVersion() != expectedStructureVersion + 1) {
                     throw CairoException.critical(0)
                             .put("applying structure change to WAL table failed [table=").put(tableToken.getDirName())
                             .put(", oldVersion: ").put(expectedStructureVersion)
-                            .put(", newVersion: ").put(metadata.getStructureVersion())
+                            .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
                 }
                 metadata.syncToDisk();
@@ -255,7 +256,8 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         long txn;
         try {
-            if (metadata.getStructureVersion() == expectedStructureVersion) {
+            // From sequencer perspective metadata version is the same as column structure version
+            if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 txn = nextTxn(walId, segmentId, segmentTxn);
             } else {
                 return NO_TXN;

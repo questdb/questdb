@@ -318,16 +318,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txn;
     }
 
+    public long getTxnMetadataVersion() {
+        return txFile.getMetadataVersion();
+    }
+
     public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
     }
 
-    public long getTxnStructureVersion() {
-        return txFile.getStructureVersion();
-    }
-
     public long getVersion() {
-        return txFile.getStructureVersion();
+        return txFile.getMetadataVersion();
     }
 
     public void goActive() {
@@ -1129,16 +1129,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader.getVersion() == columnVersion;
     }
 
-    private boolean reloadMetadata(long txnStructureVersion, long deadline, boolean reshuffleColumns) {
+    private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
         // create transition index, which will help us reuse already open resources
-        if (txnStructureVersion == metadata.getStructureVersion()) {
+        if (txnMetadataVersion == metadata.getMetadataVersion()) {
             return true;
         }
 
         while (true) {
             long pTransitionIndex;
             try {
-                pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);
+                pTransitionIndex = metadata.createTransitionIndex(txnMetadataVersion);
                 if (pTransitionIndex < 0) {
                     if (clock.getTicks() < deadline) {
                         return false;
@@ -1236,7 +1236,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload column versions, column version used in metadata reload column shuffle
                 !reloadColumnVersion(txFile.getColumnVersion(), deadline)
                         // Start again if _meta with matching structure version cannot be loaded
-                        || !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle)
+                        || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
     }
 
