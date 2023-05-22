@@ -90,7 +90,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_NO_DATA = 'n';
     private static final byte MESSAGE_TYPE_PARAMETER_DESCRIPTION = 't';
-    private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
     private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
@@ -989,12 +988,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void assertTrue(boolean check, String message) throws BadProtocolException {
+    private void assertBufferSize(boolean check) throws BadProtocolException {
         if (check) {
             return;
         }
         // we did not find 0 within message limit
-        LOG.error().$(message).$();
+        LOG.error().$("undersized receive buffer or someone is abusing protocol").$();
         throw BadProtocolException.INSTANCE;
     }
 
@@ -2674,7 +2673,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     int recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
-        assertTrue(remaining > 0, "undersized receive buffer or someone is abusing protocol");
+        assertBufferSize(remaining > 0);
 
         int n = doReceive(remaining);
         LOG.debug().$("recv [n=").$(n).$(']').$();
