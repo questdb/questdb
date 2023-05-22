@@ -177,7 +177,7 @@ public class TableConverter {
         }
     }
 
-    private static class TableDescriptorImpl implements TableDescriptor {
+    private static class TableDescriptorImpl implements TableStructure {
         private final ObjList<CharSequence> columnNames = new ObjList<>();
         private final IntList columnTypes = new IntList();
         private final int timestampIndex;
@@ -203,6 +203,56 @@ public class TableConverter {
         @Override
         public int getColumnType(int columnIndex) {
             return columnTypes.get(columnIndex);
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return 0;
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return 0;
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return 0;
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return null;
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public boolean isWalEnabled() {
+            return false;
         }
 
         @Override

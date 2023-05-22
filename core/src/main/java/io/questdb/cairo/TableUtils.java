@@ -1391,6 +1391,46 @@ public final class TableUtils {
         }
     }
 
+    public static void writeMetadata(TableStructure structure, int tableVersion, int tableId, MemoryA mem) {
+        int count = structure.getColumnCount();
+        mem.putInt(count);
+        mem.putInt(structure.getPartitionBy());
+        int timestampIndex = structure.getTimestampIndex();
+        assert timestampIndex == -1 ||
+                (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
+        mem.putInt(timestampIndex);
+        mem.putInt(tableVersion);
+        mem.putInt(tableId);
+        mem.putInt(structure.getMaxUncommittedRows());
+        mem.putLong(structure.getO3MaxLag());
+        mem.putLong(0); // Structure version.
+        mem.putInt(structure.isWalEnabled() ? 1 : 0);
+        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
+        assert count > 0;
+
+        for (int i = 0; i < count; i++) {
+            mem.putInt(structure.getColumnType(i));
+            long flags = 0;
+            if (structure.isIndexed(i)) {
+                flags |= META_FLAG_BIT_INDEXED;
+            }
+
+            if (structure.isSequential(i)) {
+                flags |= META_FLAG_BIT_SEQUENTIAL;
+            }
+
+            mem.putLong(flags);
+            mem.putInt(structure.getIndexBlockCapacity(i));
+            // reserved
+            mem.skip(16);
+        }
+
+        for (int i = 0; i < count; i++) {
+            mem.putStr(structure.getColumnName(i));
+        }
+    }
+
     private static void createTableFiles(
             FilesFacade ff,
             MemoryMARW memory,
@@ -1407,42 +1447,7 @@ public final class TableUtils {
             mem.jumpTo(0);
             final int count = structure.getColumnCount();
             path.trimTo(rootLen);
-            mem.putInt(count);
-            mem.putInt(structure.getPartitionBy());
-            int timestampIndex = structure.getTimestampIndex();
-            assert timestampIndex == -1 ||
-                    (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
-            mem.putInt(timestampIndex);
-            mem.putInt(tableVersion);
-            mem.putInt(tableId);
-            mem.putInt(structure.getMaxUncommittedRows());
-            mem.putLong(structure.getO3MaxLag());
-            mem.putLong(0); // Structure version.
-            mem.putInt(structure.isWalEnabled() ? 1 : 0);
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-            assert count > 0;
-
-            for (int i = 0; i < count; i++) {
-                mem.putInt(structure.getColumnType(i));
-                long flags = 0;
-                if (structure.isIndexed(i)) {
-                    flags |= META_FLAG_BIT_INDEXED;
-                }
-
-                if (structure.isSequential(i)) {
-                    flags |= META_FLAG_BIT_SEQUENTIAL;
-                }
-
-                mem.putLong(flags);
-                mem.putInt(structure.getIndexBlockCapacity(i));
-                // reserved
-                mem.skip(16);
-            }
-
-            for (int i = 0; i < count; i++) {
-                mem.putStr(structure.getColumnName(i));
-            }
+            writeMetadata(structure, tableVersion, tableId, mem);
             mem.sync(false);
 
             // create symbol maps
