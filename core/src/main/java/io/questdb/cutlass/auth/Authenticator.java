@@ -24,10 +24,9 @@
 
 package io.questdb.cutlass.auth;
 
-import java.io.Closeable;
-import java.io.IOException;
+import io.questdb.std.QuietCloseable;
 
-public interface Authenticator extends Closeable {
+public interface Authenticator extends QuietCloseable {
 
     int NEEDS_DISCONNECT = 3;
     int NEEDS_READ = 0;
@@ -40,8 +39,7 @@ public interface Authenticator extends Closeable {
     }
 
     @Override
-    default void close() throws IOException {
-
+    default void close() {
     }
 
     CharSequence getPrincipal();

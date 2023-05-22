@@ -40,8 +40,6 @@ import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 
-import java.io.IOException;
-
 public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
@@ -76,12 +74,14 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
-    public CleartextPasswordPgWireAuthenticator(NetworkFacade nf,
-                                                PGWireConfiguration configuration,
-                                                NetworkSqlExecutionCircuitBreaker circuitBreaker,
-                                                CircuitBreakerRegistry registry,
-                                                OptionsListener optionsListener,
-                                                PgWireUserDatabase userDatabase) {
+    public CleartextPasswordPgWireAuthenticator(
+            NetworkFacade nf,
+            PGWireConfiguration configuration,
+            NetworkSqlExecutionCircuitBreaker circuitBreaker,
+            CircuitBreakerRegistry registry,
+            OptionsListener optionsListener,
+            PgWireUserDatabase userDatabase
+    ) {
         this.userDatabase = userDatabase;
 
         this.nf = nf;
@@ -104,7 +104,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         registry.remove(circuitBreakerId);
         Misc.free(circuitBreaker);
     }
@@ -403,18 +403,16 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             lo = valueHi + 1;
 
             // store user
-            dbcs.of(nameLo, nameHi);
-            if (Chars.equals(dbcs, "user")) {
+            if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
                 CharacterStoreEntry e = characterStore.newEntry();
                 e.put(dbcs.of(valueLo, valueHi));
                 this.username = e.toImmutable();
             }
             boolean parsed = true;
-            if (Chars.equals(dbcs, "options")) {
-                dbcs.of(valueLo, valueHi);
-                if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
+            if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
+                if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
                     try {
-                        long statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                        long statementTimeout = Numbers.parseLong(dbcs.of(valueLo + 21, valueHi));
                         optionsListener.setStatementTimeout(statementTimeout);
                     } catch (NumericException ex) {
                         parsed = false;

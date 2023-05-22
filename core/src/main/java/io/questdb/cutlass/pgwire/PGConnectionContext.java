@@ -587,14 +587,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
     }
 
-    private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
-        sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
-        final long addr = sink.skip();
-        sink.encodeUtf8Z(name);
-        sink.encodeUtf8Z(value);
-        sink.putLen(addr);
-    }
-
     private static void setupBindVariables(long lo, IntList bindVariableTypes, int count) {
         bindVariableTypes.setPos(count);
         for (int i = 0; i < count; i++) {
