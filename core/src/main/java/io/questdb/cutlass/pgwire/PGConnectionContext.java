@@ -104,7 +104,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
-    private final Authenticator authenticator;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     //stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -140,6 +139,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private IntList activeBindVariableTypes;
     //list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList activeSelectColumnTypes;
+    private Authenticator authenticator;
     private BindVariableService bindVariableService;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
@@ -190,7 +190,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private NamedStatementWrapper wrapper;
 
-    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, CircuitBreakerRegistry registry) {
+    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, NetworkSqlExecutionCircuitBreaker circuitBreaker) {
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
@@ -204,7 +204,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         );
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-
+        this.circuitBreaker = circuitBreaker;
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
@@ -213,7 +213,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
         this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
         final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
@@ -223,7 +222,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, this);
         this.securityContextFactory = factoryProvider.getSecurityContextFactory();
     }
 
@@ -364,6 +362,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             @Transient WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool,
             int operation
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, QueryPausedException, BadProtocolException {
+        assert authenticator != null;
 
         this.typesAndSelectCache = selectAndTypesCache;
         this.typesAndSelectPool = selectAndTypesPool;
@@ -459,6 +458,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             authenticator.init(fd, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
         }
         return r;
+    }
+
+    public void setAuthenticator(Authenticator authenticator) {
+        this.authenticator = authenticator;
     }
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
