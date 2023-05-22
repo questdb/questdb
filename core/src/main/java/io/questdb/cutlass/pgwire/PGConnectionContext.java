@@ -114,7 +114,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
-    private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
@@ -127,7 +126,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final int recvBufferSize;
-    private final CircuitBreakerRegistry registry;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final SecurityContextFactory securityContextFactory;
     private final IntList selectColumnTypes = new IntList();
@@ -216,8 +214,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
-        this.circuitBreakerId = registry.add(circuitBreaker);
-        this.registry = registry;
         this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
         final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
@@ -227,7 +223,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(nf, configuration, circuitBreakerId, circuitBreaker, registry, this);
+        this.authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, this);
         this.securityContextFactory = factoryProvider.getSecurityContextFactory();
     }
 
@@ -337,8 +333,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
-        registry.remove(circuitBreakerId);
-        Misc.free(circuitBreaker);
+        Misc.free(authenticator);
         freeBuffers();
     }
 
@@ -450,7 +445,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
             freeBuffers();
-            this.circuitBreaker.setSecret(-1);
             authenticator.init(-1, 0, 0, 0, 0);
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
@@ -462,7 +456,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 this.sendBufferPtr = sendBuffer;
                 this.sendBufferLimit = sendBuffer + sendBufferSize;
             }
-            this.circuitBreaker.setSecret(registry.getNewSecret());
             authenticator.init(fd, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
         }
         return r;

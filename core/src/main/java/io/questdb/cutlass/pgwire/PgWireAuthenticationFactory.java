@@ -30,6 +30,6 @@ import io.questdb.network.NetworkFacade;
 
 public interface PgWireAuthenticationFactory {
     Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                         int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+                                         NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
                                          OptionsListener optionsListener);
 }

@@ -40,6 +40,8 @@ import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 
+import java.io.IOException;
+
 public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
@@ -75,7 +77,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private CharSequence username;
 
     public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                                int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+                                                NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
                                                 OptionsListener optionsListener, PgWireUserDatabase userDatabase) {
         this.userDatabase = userDatabase;
 
@@ -84,7 +86,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
         );
-        this.circuitBreakerId = circuitBreakerId;
+        this.circuitBreakerId = registry.add(circuitBreaker);
         this.registry = registry;
         this.sink = new ResponseSink();
         this.serverVersion = configuration.getServerVersion();
@@ -93,9 +95,15 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                                int circuitBreakerId, NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+                                                NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
                                                 OptionsListener optionsListener) {
-        this(nf, configuration, circuitBreakerId, circuitBreaker, registry, optionsListener, new StaticUserDatabase(configuration));
+        this(nf, configuration, circuitBreaker, registry, optionsListener, new StaticUserDatabase(configuration));
+    }
+
+    @Override
+    public void close() throws IOException {
+        registry.remove(circuitBreakerId);
+        Misc.free(circuitBreaker);
     }
 
     public CharSequence getPrincipal() {
@@ -175,6 +183,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     @Override
     public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+        if (fd == -1) {
+            this.circuitBreaker.setSecret(-1);
+        } else {
+            this.circuitBreaker.setSecret(registry.getNewSecret());
+        }
         this.state = State.EXPECT_INIT_MESSAGE;
         this.username = null;
         this.fd = fd;
