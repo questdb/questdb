@@ -30,7 +30,6 @@ public interface SecurityContextFactory {
     int HTTP = 0;
     int PGWIRE = 1;
     int ILP = 2;
-    int TEST_ONLY = -1;
 
     SecurityContext getInstance(CharSequence principal, int interfaceId);
 
