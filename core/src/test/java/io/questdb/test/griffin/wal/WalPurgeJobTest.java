@@ -46,6 +46,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -276,6 +280,87 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 Assert.assertEquals(3, counter.get());
             }
         });
+    }
+
+    @Test
+    public void testLastSegmentUnlockedPrevLocked() throws Exception {
+        /*
+          discovered=[
+              (1,1),(1,2),(1,3),(1,4),(1,5),(1,6:locked),(1,7),(wal1:locked),
+              (2,0),(2,1),(2,2),(2,3),(2,4:locked),(wal2:locked),
+              (3,0),(3,1),(3,2),(3,3:locked),(wal3:locked),
+              (4,0),(4,1),(4,2),(4,3),(4,4),(4,5),(4,6:locked),(wal4:locked)],
+          nextToApply=[
+              (1,1),(2,0),(3,0),(4,0)]
+         */
+        TestDeleter deleter = new TestDeleter();
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        TableToken tableToken = new TableToken("test", "test~1", 42, true);
+        logic.reset(tableToken);
+        logic.trackDiscoveredSegment(1, 1, false, false);
+        logic.trackDiscoveredSegment(1, 2, false, false);
+        logic.trackDiscoveredSegment(1, 3, false, false);
+        logic.trackDiscoveredSegment(1, 4, false, false);
+        logic.trackDiscoveredSegment(1, 5, false, false);
+        logic.trackDiscoveredSegment(1, 6, false, true);
+        logic.trackDiscoveredSegment(1, 7, false, false);
+        logic.trackDiscoveredWal(1, true);
+        logic.trackDiscoveredSegment(2, 0, false, false);
+        logic.trackDiscoveredSegment(2, 1, false, false);
+        logic.trackDiscoveredSegment(2, 2, false, false);
+        logic.trackDiscoveredSegment(2, 3, false, false);
+        logic.trackDiscoveredSegment(2, 4, false, true);
+        logic.trackDiscoveredWal(2, true);
+        logic.trackDiscoveredSegment(3, 0, false, false);
+        logic.trackDiscoveredSegment(3, 1, false, false);
+        logic.trackDiscoveredSegment(3, 2, false, false);
+        logic.trackDiscoveredSegment(3, 3, false, true);
+        logic.trackDiscoveredWal(3, true);
+        logic.trackDiscoveredSegment(4, 0, false, false);
+        logic.trackDiscoveredSegment(4, 1, false, false);
+        logic.trackDiscoveredSegment(4, 2, false, false);
+        logic.trackDiscoveredSegment(4, 3, false, false);
+        logic.trackDiscoveredSegment(4, 4, false, false);
+        logic.trackDiscoveredSegment(4, 5, false, false);
+        logic.trackDiscoveredSegment(4, 6, false, true);
+        logic.trackDiscoveredWal(4, true);
+        logic.trackNextToApplySegment(1, 1);
+        logic.trackNextToApplySegment(2, 0);
+        logic.trackNextToApplySegment(3, 0);
+        logic.trackNextToApplySegment(4, 0);
+        logic.run();
+
+//        logDeletionEvents(deleter.events);
+        Iterator<DeletionEvent> deleted = deleter.events.iterator();
+        assertNoMoreEvents(deleted);
+    }
+
+    @Test
+    public void testLastSegmentUnlockedPrevLocked2() throws Exception {
+        /*
+          discovered=[
+              (1,1),(1,2:locked),(1,3),(wal1:locked),
+              (2,0:locked),(wal2:locked)],
+          nextToApply=[
+              (1,1),(2,0)]
+         */
+        TestDeleter deleter = new TestDeleter();
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        TableToken tableToken = new TableToken("test", "test~1", 42, true);
+        logic.reset(tableToken);
+        logic.trackDiscoveredSegment(1, 1, false, false);
+        logic.trackDiscoveredSegment(1, 2, false, true);
+        logic.trackDiscoveredSegment(1, 3, false, false);
+        logic.trackDiscoveredWal(1, true);
+        logic.trackDiscoveredSegment(2, 0, false, true);
+        logic.trackDiscoveredWal(2, true);
+        logic.trackNextToApplySegment(1, 1);
+        logic.trackNextToApplySegment(2, 0);
+        logic.run();
+
+//        logDeletionEvents(deleter.events);
+        Iterator<DeletionEvent> deleted = deleter.events.iterator();
+        assertNoMoreEvents(deleted);
     }
 
     @Test
@@ -965,8 +1050,71 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         });
     }
 
+    private void assertNoMoreEvents(Iterator<DeletionEvent> it) {
+        if (it.hasNext()) {
+            StringBuilder sb = new StringBuilder();
+            while (it.hasNext()) {
+                sb.append(it.next()).append(", ");
+            }
+            Assert.fail("Unexpected events: " + sb);
+        }
+    }
+
+    private void logDeletionEvents(List<DeletionEvent> events) {
+        System.err.println("Deletion events:");
+        for (DeletionEvent event : events) {
+            System.err.println("  " + event);
+        }
+    }
+
     static void addColumn(WalWriter writer, String columnName) {
         writer.addColumn(columnName, ColumnType.INT);
     }
 
+    private static class DeletionEvent {
+        final Integer segmentId;
+        final int walId;
+
+        public DeletionEvent(int walId) {
+            this.walId = walId;
+            this.segmentId = null;
+        }
+
+        public DeletionEvent(int walId, int segmentId) {
+            this.walId = walId;
+            this.segmentId = segmentId;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof DeletionEvent) {
+                DeletionEvent other = (DeletionEvent) obj;
+                return walId == other.walId && Objects.equals(segmentId, other.segmentId);
+            }
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            if (segmentId == null) {
+                return "wal" + walId;
+            } else {
+                return "wal" + walId + "/" + segmentId;
+            }
+        }
+    }
+
+    private static class TestDeleter implements WalPurgeJob.Deleter {
+        public final List<DeletionEvent> events = new ArrayList<>();
+
+        @Override
+        public void deleteSegmentDirectory(int walId, int segmentId) {
+            events.add(new DeletionEvent(walId, segmentId));
+        }
+
+        @Override
+        public void deleteWalDirectory(int walId) {
+            events.add(new DeletionEvent(walId));
+        }
+    }
 }
