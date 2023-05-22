@@ -515,7 +515,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // at this point listColumnFilterB has column indexes of the master record that are JOIIN keys
+        // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
         // so masterSink writes key columns of master record to a sink
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
@@ -3623,7 +3623,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return null;
             }
         } catch (Throwable e) {
-            Misc.free(factoryA);
             Misc.free(factoryB);
             Misc.freeObjList(castFunctionsA);
             Misc.freeObjList(castFunctionsB);
@@ -4238,7 +4237,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), setFactory, executionContext);
+            try {
+                return generateSetFactory(model.getUnionModel(), setFactory, executionContext);
+            } catch (Throwable e) {
+                Misc.free(factoryA);
+                throw e;
+            }
         }
         return setFactory;
     }

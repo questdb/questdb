@@ -458,6 +458,23 @@ public class LongList implements Mutable, LongVec, Sinkable {
         sink.put(']');
     }
 
+    public void toSink(CharSink sink, long exceptValue) {
+        sink.put('[');
+        boolean pastFirst = false;
+        for (int i = 0, k = size(); i < k; i++) {
+            if (pastFirst) {
+                sink.put(',');
+            }
+            long val = get(i);
+            if (val == exceptValue) {
+                continue;
+            }
+            sink.put(val);
+            pastFirst = true;
+        }
+        sink.put(']');
+    }
+
     /**
      * {@inheritDoc}
      */
