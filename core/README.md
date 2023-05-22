@@ -9,6 +9,7 @@ git clone git@github.com:questdb/questdb.git
 **Note:** in this document, the `<software_version>` placeholder may be replaced
 by a release version number that follows semver conventions (e.g. `6.0.0`):
 
+
 ```bash
 # example usage
 docker push questdb/questdb:<software_version>-linux-amd64
