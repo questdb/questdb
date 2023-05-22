@@ -76,9 +76,12 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
-    public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                                NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
-                                                OptionsListener optionsListener, PgWireUserDatabase userDatabase) {
+    public CleartextPasswordPgWireAuthenticator(NetworkFacade nf,
+                                                PGWireConfiguration configuration,
+                                                NetworkSqlExecutionCircuitBreaker circuitBreaker,
+                                                CircuitBreakerRegistry registry,
+                                                OptionsListener optionsListener,
+                                                PgWireUserDatabase userDatabase) {
         this.userDatabase = userDatabase;
 
         this.nf = nf;
@@ -92,12 +95,6 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         this.serverVersion = configuration.getServerVersion();
         this.circuitBreaker = circuitBreaker;
         this.optionsListener = optionsListener;
-    }
-
-    public CleartextPasswordPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                                NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
-                                                OptionsListener optionsListener) {
-        this(nf, configuration, circuitBreaker, registry, optionsListener, new StaticUserDatabase(configuration));
     }
 
     @Override

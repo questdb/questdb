@@ -32,9 +32,11 @@ public class DefaultPgWireAuthenticationFactory implements PgWireAuthenticationF
     public static final PgWireAuthenticationFactory INSTANCE = new DefaultPgWireAuthenticationFactory();
 
     @Override
-    public Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                                NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+    public Authenticator getPgWireAuthenticator(NetworkFacade nf,
+                                                PGWireConfiguration configuration,
+                                                NetworkSqlExecutionCircuitBreaker circuitBreaker,
+                                                CircuitBreakerRegistry registry,
                                                 OptionsListener optionsListener) {
-        return new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreaker, registry, optionsListener);
+        return new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreaker, registry, optionsListener, new StaticUserDatabase(configuration));
     }
 }

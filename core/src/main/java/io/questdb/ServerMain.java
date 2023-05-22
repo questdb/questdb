@@ -38,8 +38,7 @@ import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
+import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -222,21 +221,6 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("server is ready to be started").$();
     }
 
-    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
-        if (readOnlyInstance) {
-            return ReadOnlySecurityContextFactory.INSTANCE;
-        } else {
-            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
-            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
-            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
-        }
-    }
-
     public static AuthenticatorFactory getAuthenticatorFactory(ServerConfiguration configuration) {
         AuthenticatorFactory authenticatorFactory;
         // create default authenticator for Line TCP protocol
@@ -251,6 +235,25 @@ public class ServerMain implements Closeable {
             authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;
         }
         return authenticatorFactory;
+    }
+
+    public static PgWireAuthenticationFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration) {
+        return new StaticPgWireAuthenticationFactory(new StaticUserDatabase(configuration.getPGWireConfiguration()));
+    }
+
+    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
+        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
+        if (readOnlyInstance) {
+            return ReadOnlySecurityContextFactory.INSTANCE;
+        } else {
+            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
+            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
+            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
+            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
+            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
+            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
+            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
+        }
     }
 
     public static void main(String[] args) {
