@@ -35,6 +35,10 @@ public interface Authenticator extends Closeable {
     int OK = -1;
     int QUEUE_FULL = 2;
 
+    default void clear() {
+        
+    }
+
     @Override
     default void close() throws IOException {
 

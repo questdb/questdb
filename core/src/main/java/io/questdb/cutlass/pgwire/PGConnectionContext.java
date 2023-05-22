@@ -304,8 +304,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndSelectIsCached = true;
         typesAndUpdateIsCached = false;
         statementTimeout = -1L;
-        circuitBreaker.resetMaxTimeToDefault();
-        circuitBreaker.unsetTimer();
+        authenticator.clear();
         isPausedQuery = false;
         isEmptyQuery = false;
         clearSuspendEvent();
@@ -1434,15 +1433,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             tableWriterAPI.commit();
             tableWriterAPI.apply(op);
         } else {
-            if (statementTimeout > 0) {
-                circuitBreaker.setTimeout(statementTimeout);
-            }
-
             // execute against writer from the engine, or async
             try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, false)) {
                 if (statementTimeout > 0) {
+                    // Timeout is explicitly enforced here as during async execution we cannot rely on CircuitBreaker
+                    // to enforce it. Why? When a TableWriter in unavailable then an async task will be put into
+                    // TableWriter's task queue and will be executed when TableWriter becomes available. However, during this
+                    // queueing there is nothing enforcing timeout. So we have to do it here.
+                    // Alternatively, we could introduce timeout enforcement in the tasks queue. But it's not clear if it's worth the effort.
                     if (fut.await(statementTimeout) != QUERY_COMPLETE) {
-                        // Timeout
                         if (op.isWriterClosePending()) {
                             // Writer has not tried to execute the command
                             freeUpdateCommand(op);
@@ -1556,7 +1555,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         CharSequence principal = authenticator.getPrincipal();
         SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
-        sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
+        sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker);
         sendRNQ = true;
 
         // authenticator may have some non-auth data left in the buffer - make we don't overwrite it

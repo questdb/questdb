@@ -101,6 +101,12 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     @Override
+    public void clear() {
+        circuitBreaker.resetMaxTimeToDefault();
+        circuitBreaker.unsetTimer();
+    }
+
+    @Override
     public void close() throws IOException {
         registry.remove(circuitBreakerId);
         Misc.free(circuitBreaker);
@@ -169,6 +175,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case AUTH_SUCCESS:
+                        circuitBreaker.of(fd);
                         return Authenticator.OK;
                     case AUTH_FAILED:
                         return Authenticator.NEEDS_DISCONNECT;
