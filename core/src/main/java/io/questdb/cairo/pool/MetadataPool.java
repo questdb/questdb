@@ -102,7 +102,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
         @Override
         public void refresh() {
-            tableSequencerAPI.reloadMetadataConditionally(tableToken, getStructureVersion(), this);
+            tableSequencerAPI.reloadMetadataConditionally(tableToken, getMetadataVersion(), this);
         }
     }
 

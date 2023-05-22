@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
 
 public class GenericTableRecordMetadata extends GenericRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
-    private long structureVersion;
+    private long metadataVersion;
     private int tableId;
     private TableToken tableToken;
 
@@ -61,8 +61,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public long getStructureVersion() {
-        return structureVersion;
+    public long getMetadataVersion() {
+        return metadataVersion;
     }
 
     @Override
@@ -87,7 +87,7 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
         this.tableId = tableId;
         this.timestampIndex = compressedTimestampIndex;
         // todo: suspended
-        this.structureVersion = structureVersion;
+        this.metadataVersion = structureVersion;
         // todo: maxUncommittedRows where from ?
     }
 

@@ -269,7 +269,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     if (!walWriter.goActive(transaction.structureVersion)) {
                         throw CairoException.critical(0).put("cannot apply structure change");
                     }
-                    if (walWriter.getStructureVersion() != transaction.structureVersion) {
+                    if (walWriter.getMetadataVersion() != transaction.structureVersion) {
                         throw CairoException.critical(0)
                                 .put("cannot update wal writer to correct structure version");
                     }

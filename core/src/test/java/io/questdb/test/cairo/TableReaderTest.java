@@ -29,8 +29,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -1278,7 +1278,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     while (colAdded < totalColAddCount) {
                         if (colAdded < (newColsAdded = columnsAdded.get())) {
                             reader.reload();
-                            Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
+                            Assert.assertEquals(reader.getTxnMetadataVersion(), reader.getMetadata().getMetadataVersion());
                             colAdded = newColsAdded;
                             reloadCount.incrementAndGet();
                         }
@@ -1355,7 +1355,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     while (colAdded < totalColAddCount) {
                         if (colAdded < columnsAdded.get()) {
                             if (reader.reload()) {
-                                Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
+                                Assert.assertEquals(reader.getTxnMetadataVersion(), reader.getMetadata().getMetadataVersion());
                                 colAdded = reader.getMetadata().getColumnCount();
                                 reloadCount.incrementAndGet();
                             }
@@ -1431,7 +1431,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     while (colAdded < totalColAddCount) {
                         if (colAdded < (newColsAdded = columnsAdded.get())) {
                             try (TableReader reader = getReader(tableToken)) {
-                                Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
+                                Assert.assertEquals(reader.getTxnMetadataVersion(), reader.getMetadata().getMetadataVersion());
                                 colAdded = newColsAdded;
                                 reloadCount.incrementAndGet();
                             }
@@ -1973,7 +1973,7 @@ public class TableReaderTest extends AbstractCairoTest {
                                 configuration.getWriterFileOpenOpts()
                         )
                 ) {
-                    mem.putLong(TableUtils.META_OFFSET_STRUCTURE_VERSION, 0);
+                    mem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
                 }
 
                 try {

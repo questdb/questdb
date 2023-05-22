@@ -126,9 +126,9 @@ class LineTcpMeasurementEvent implements Closeable {
         try {
             TableWriterAPI writer = tableUpdateDetails.getWriter();
             long offset = buffer.getAddress();
-            final long structureVersion = buffer.readLong(offset);
+            final long metadataVersion = buffer.readLong(offset);
             offset += Long.BYTES;
-            if (structureVersion > writer.getStructureVersion()) {
+            if (metadataVersion > writer.getMetadataVersion()) {
                 // I/O thread has a more recent version of the WAL table metadata than the writer.
                 // Let the WAL writer commit, so that it refreshes its metadata copy.
                 writer.commit();
@@ -141,7 +141,7 @@ class LineTcpMeasurementEvent implements Closeable {
             row = writer.newRow(timestamp);
             final int nEntities = buffer.readInt(offset);
             offset += Integer.BYTES;
-            final long writerStructureVersion = writer.getStructureVersion();
+            final long writerMetadataVersion = writer.getMetadataVersion();
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
                 int colIndex = buffer.readInt(offset);
                 offset += Integer.BYTES;
@@ -150,7 +150,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     entityType = buffer.readByte(offset);
                     offset += Byte.BYTES;
                     // Did the I/O thread have the latest structure version when it serialized the row?
-                    if (structureVersion < writerStructureVersion) {
+                    if (metadataVersion < writerMetadataVersion) {
                         // Nope. For WAL tables, it could mean that the column is already dropped. Let's check it.
                         if (!writer.getMetadata().hasColumn(colIndex)) {
                             // The column was dropped, so we skip it.
@@ -304,7 +304,7 @@ class LineTcpMeasurementEvent implements Closeable {
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
         }
-        buffer.addStructureVersion(buffer.getAddress(), localDetails.getStructureVersion());
+        buffer.addStructureVersion(buffer.getAddress(), localDetails.getMetadataVersion());
         // timestamp, entitiesWritten are written to the buffer after saving all fields
         // because their values are worked out while the columns are processed
         long offset = buffer.getAddressAfterHeader();

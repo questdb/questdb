@@ -81,7 +81,7 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
     }
 
     public long getVersion() {
-        return this.txFile.getStructureVersion();
+        return this.txFile.getMetadataVersion();
     }
 
     public void reload() {
@@ -143,16 +143,16 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
         }
     }
 
-    private boolean reloadMetadata(long txnStructureVersion, long deadline) {
+    private boolean reloadMetadata(long txnMetadataVersion, long deadline) {
         // create transition index, which will help us reuse already open resources
-        if (txnStructureVersion == getStructureVersion()) {
+        if (txnMetadataVersion == getMetadataVersion()) {
             return true;
         }
 
         while (true) {
             long pTransitionIndex;
             try {
-                pTransitionIndex = createTransitionIndex(txnStructureVersion);
+                pTransitionIndex = createTransitionIndex(txnMetadataVersion);
                 if (pTransitionIndex < 0) {
                     if (clock.getTicks() < deadline) {
                         return false;
@@ -182,6 +182,6 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
             readTxnSlow(deadline);
             // Reload _meta if structure version updated, reload _cv if column version updated
             // Start again if _meta with matching structure version cannot be loaded
-        } while (!reloadMetadata(txFile.getStructureVersion(), deadline));
+        } while (!reloadMetadata(txFile.getMetadataVersion(), deadline));
     }
 }
