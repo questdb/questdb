@@ -40,8 +40,6 @@ import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 
-import java.io.IOException;
-
 public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
@@ -104,7 +102,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         registry.remove(circuitBreakerId);
         Misc.free(circuitBreaker);
     }
@@ -414,7 +412,8 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                 dbcs.of(valueLo, valueHi);
                 if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                     try {
-                        long statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                        dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi);
+                        long statementTimeout = Numbers.parseLong(dbcs);
                         optionsListener.setStatementTimeout(statementTimeout);
                     } catch (NumericException ex) {
                         parsed = false;

@@ -90,7 +90,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_NO_DATA = 'n';
     private static final byte MESSAGE_TYPE_PARAMETER_DESCRIPTION = 't';
-    private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
     private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
@@ -585,14 +584,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private static short getShortUnsafe(long address) {
         return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
-    }
-
-    private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
-        sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
-        final long addr = sink.skip();
-        sink.encodeUtf8Z(name);
-        sink.encodeUtf8Z(value);
-        sink.putLen(addr);
     }
 
     private static void setupBindVariables(long lo, IntList bindVariableTypes, int count) {
