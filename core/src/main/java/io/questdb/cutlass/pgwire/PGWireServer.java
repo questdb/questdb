@@ -24,8 +24,11 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -35,6 +38,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.QuietCloseable;
@@ -161,12 +165,20 @@ public class PGWireServer implements Closeable {
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
-            super(() -> new PGConnectionContext(
-                    engine,
-                    configuration,
-                    executionContextObjectFactory.newInstance(),
-                    registry
-            ), configuration.getConnectionPoolInitialCapacity());
+            super(() -> {
+                NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
+                PGConnectionContext pgConnectionContext = new PGConnectionContext(
+                        engine,
+                        configuration,
+                        executionContextObjectFactory.newInstance(),
+                        circuitBreaker
+                );
+                FactoryProvider factoryProvider = configuration.getFactoryProvider();
+                NetworkFacade nf = configuration.getNetworkFacade();
+                Authenticator authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, pgConnectionContext);
+                pgConnectionContext.setAuthenticator(authenticator);
+                return pgConnectionContext;
+            }, configuration.getConnectionPoolInitialCapacity());
         }
     }
 }
