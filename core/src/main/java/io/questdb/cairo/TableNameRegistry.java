@@ -60,10 +60,9 @@ public interface TableNameRegistry extends Closeable {
      * Returns table token by directory name. If table does not exist, returns null.
      *
      * @param dirName directory name
-     * @param tableId table id
      * @return resolves private table name to TableToken. If no token exists, returns null
      */
-    TableToken getTableToken(String dirName, int tableId);
+    TableToken getTableTokenByDirName(String dirName);
 
     /**
      * Returns total count of table tokens. Among live tables it can count dropped tables which are not fully deleted yet.

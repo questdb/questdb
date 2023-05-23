@@ -727,7 +727,7 @@ public final class TestUtils {
 
     public static TableToken create(TableModel model, CairoEngine engine) {
         int tableId = (int) engine.getTableIdGenerator().getNextId();
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, model.isWalEnabled());
         if (tableToken == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }

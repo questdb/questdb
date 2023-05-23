@@ -79,6 +79,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             int httpMinPort,
             int pgPort,
             int ilpPort,
+            String root,
             String... extra
     ) throws Exception {
         final String confPath = root + Files.SEPARATOR + "conf";
@@ -143,7 +144,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     protected static void createDummyConfiguration(String... extra) throws Exception {
-        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
+        createDummyConfigurationInRoot(root, extra);
+    }
+
+    protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
+        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
