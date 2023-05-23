@@ -37,8 +37,13 @@ public class StaticUserDatabase implements PgWireUserDatabase {
     public StaticUserDatabase(PGWireConfiguration configuration) {
         this.defaultUsername = configuration.getDefaultUsername();
         this.defaultPassword = configuration.getDefaultPassword();
-        this.roUsername = configuration.getReadOnlyUsername();
-        this.roPassword = configuration.getReadOnlyPassword();
+        if (configuration.isReadOnlyUserEnabled()) {
+            this.roUsername = configuration.getReadOnlyUsername();
+            this.roPassword = configuration.getReadOnlyPassword();
+        } else {
+            this.roUsername = null;
+            this.roPassword = null;
+        }
     }
 
     @Override
