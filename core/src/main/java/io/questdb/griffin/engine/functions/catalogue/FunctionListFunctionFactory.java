@@ -211,7 +211,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                     if (col == TYPE_COLUMN) {
                         return FunctionFactoryType.getType(funcFactory).name();
                     }
-                    throw new IndexOutOfBoundsException(col);
+                    throw new IndexOutOfBoundsException("offending: " + col);
                 }
 
                 @Override
