@@ -24,8 +24,7 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -37,7 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.io.File;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
 
@@ -140,6 +138,15 @@ public class TableUtilsTest extends AbstractTest {
             dbRoot.delete();
             volumeRoot.delete();
         }
+    }
+
+    @Test
+    public void testEstimateRecordSize() {
+        GenericTableRecordMetadata metadata = new GenericTableRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata))
+                .add(new TableColumnMetadata("b", ColumnType.STRING, metadata))
+                .add(new TableColumnMetadata("c", -ColumnType.DOUBLE, metadata));
+        Assert.assertEquals(4 + 28, TableUtils.estimateAvgRecordSize(metadata));
     }
 
     @Test

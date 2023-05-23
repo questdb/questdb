@@ -59,6 +59,7 @@ public final class TableUtils {
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
+    public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
     public static final int INITIAL_TXN = 0;
@@ -499,6 +500,20 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static long estimateAvgRecordSize(RecordMetadata metadata) {
+        long recSize = 0;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (ColumnType.isVariableLength(columnType)) {
+                // Estimate size of variable length column as 28 bytes
+                recSize += ESTIMATED_VAR_COL_SIZE;
+            } else if (columnType > 0) {
+                recSize += ColumnType.sizeOf(columnType);
+            }
+        }
+        return recSize;
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
