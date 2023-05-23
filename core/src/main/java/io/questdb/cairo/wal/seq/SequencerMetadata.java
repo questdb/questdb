@@ -83,6 +83,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         openSmallFile(ff, path, pathLen, metaMem, WalUtils.INITIAL_META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         TableUtils.writeMetadata(model, ColumnType.VERSION, tableId, metaMem);
         metaMem.sync(false);
+        metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
         switchTo(path, pathLen);
     }
 
