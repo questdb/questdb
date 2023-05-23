@@ -27,23 +27,23 @@ package io.questdb.std;
 import java.util.Arrays;
 
 
-public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAsciiCharSequenceHashSet {
-    private static final int NO_ENTRY_VALUE = -1;
-    private final int noEntryValue;
-    private int[] values;
+public class LowerCaseAsciiCharSequenceLongHashMap extends AbstractLowerCaseAsciiCharSequenceHashSet {
+    private static final long NO_ENTRY_VALUE = -1L;
+    private final long noEntryValue;
+    private long[] values;
 
-    public LowerCaseAsciiCharSequenceIntHashMap() {
+    public LowerCaseAsciiCharSequenceLongHashMap() {
         this(8);
     }
 
-    public LowerCaseAsciiCharSequenceIntHashMap(int initialCapacity) {
+    public LowerCaseAsciiCharSequenceLongHashMap(int initialCapacity) {
         this(initialCapacity, 0.5, NO_ENTRY_VALUE);
     }
 
-    public LowerCaseAsciiCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+    public LowerCaseAsciiCharSequenceLongHashMap(int initialCapacity, double loadFactor, long noEntryValue) {
         super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
-        values = new int[keys.length];
+        values = new long[keys.length];
         clear();
     }
 
@@ -52,15 +52,15 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         Arrays.fill(values, noEntryValue);
     }
 
-    public int get(CharSequence key) {
+    public long get(CharSequence key) {
         return valueAt(keyIndex(key));
     }
 
-    public boolean put(CharSequence key, int value) {
+    public boolean put(CharSequence key, long value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, CharSequence key, int value) {
+    public boolean putAt(int index, CharSequence key, long value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
@@ -69,18 +69,18 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         return true;
     }
 
-    public void putIfAbsent(CharSequence key, int value) {
+    public void putIfAbsent(CharSequence key, long value) {
         int index = keyIndex(key);
         if (index > -1) {
             putAt0(index, Chars.toLowerCaseAscii(key), value);
         }
     }
 
-    public int valueAt(int index) {
+    public long valueAt(int index) {
         return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
-    private void putAt0(int index, CharSequence key, int value) {
+    private void putAt0(int index, CharSequence key, long value) {
         keys[index] = key;
         values[index] = value;
         if (--free == 0) {
@@ -94,10 +94,10 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
-        int[] oldValues = values;
+        long[] oldValues = values;
         CharSequence[] oldKeys = keys;
         this.keys = new CharSequence[len];
-        this.values = new int[len];
+        this.values = new long[len];
         Arrays.fill(keys, null);
         mask = len - 1;
 

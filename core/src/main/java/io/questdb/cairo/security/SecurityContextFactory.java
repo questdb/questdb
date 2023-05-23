@@ -27,11 +27,11 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.SecurityContext;
 
 public interface SecurityContextFactory {
-    SecurityContext getInstance(CharSequence principal, boolean readOnlyContext);
+    int HTTP = 0;
+    int PGWIRE = 1;
+    int ILP = 2;
 
-    default SecurityContext getInstance(CharSequence principal) {
-        return getInstance(principal, false);
-    }
+    SecurityContext getInstance(CharSequence principal, int interfaceId);
 
     default SecurityContext getRootContext() {
         return AllowAllSecurityContext.INSTANCE;
