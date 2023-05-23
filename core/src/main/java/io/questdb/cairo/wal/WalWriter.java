@@ -1174,7 +1174,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void releaseSegmentLock(int segmentId, int segmentLockFd) {
         if (ff.close(segmentLockFd)) {
-            LOG.info().$("released segment lock [walId=").$(walId)
+            LOG.debug().$("released segment lock [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .$(", fd=").$(segmentLockFd)
                     .$(']').$();
