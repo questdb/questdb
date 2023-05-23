@@ -539,7 +539,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         public void trackNextToApplySegment(int walId, int segmentId) {
             final int index = nextToApply.keyIndex(walId);
-            if (index >= 0) {
+            if (index > -1) {  // not tracked yet
                 nextToApply.putAt(index, walId, segmentId);
                 nextToApplyKeys.add(walId);
             }
