@@ -48,7 +48,7 @@ public class LineSenderExceptionTest {
 
     @Test
     public void testMessage_PutAsPrintableWithNonPrintableInput() {
-        LineSenderException e = new LineSenderException("non-printable char: ").put("\u0101a");
+        LineSenderException e = new LineSenderException("non-printable char: ").putAsPrintable("\u0101a");
         String message = e.getMessage();
         assertEquals("non-printable char: āa", message);
 
