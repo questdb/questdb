@@ -32,10 +32,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FindVisitor;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -46,8 +43,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -304,18 +299,18 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         logic.trackDiscoveredSegment(1, 5, false, false);
         logic.trackDiscoveredSegment(1, 6, false, true);
         logic.trackDiscoveredSegment(1, 7, false, false);
-        logic.trackDiscoveredWal(1, true);
+        logic.trackDiscoveredWal(1, false, true);
         logic.trackDiscoveredSegment(2, 0, false, false);
         logic.trackDiscoveredSegment(2, 1, false, false);
         logic.trackDiscoveredSegment(2, 2, false, false);
         logic.trackDiscoveredSegment(2, 3, false, false);
         logic.trackDiscoveredSegment(2, 4, false, true);
-        logic.trackDiscoveredWal(2, true);
+        logic.trackDiscoveredWal(2, false, true);
         logic.trackDiscoveredSegment(3, 0, false, false);
         logic.trackDiscoveredSegment(3, 1, false, false);
         logic.trackDiscoveredSegment(3, 2, false, false);
         logic.trackDiscoveredSegment(3, 3, false, true);
-        logic.trackDiscoveredWal(3, true);
+        logic.trackDiscoveredWal(3, false, true);
         logic.trackDiscoveredSegment(4, 0, false, false);
         logic.trackDiscoveredSegment(4, 1, false, false);
         logic.trackDiscoveredSegment(4, 2, false, false);
@@ -323,7 +318,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         logic.trackDiscoveredSegment(4, 4, false, false);
         logic.trackDiscoveredSegment(4, 5, false, false);
         logic.trackDiscoveredSegment(4, 6, false, true);
-        logic.trackDiscoveredWal(4, true);
+        logic.trackDiscoveredWal(4, false, true);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.trackNextToApplySegment(3, 0);
@@ -331,8 +326,8 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         logic.run();
 
 //        logDeletionEvents(deleter.events);
-        Iterator<DeletionEvent> deleted = deleter.events.iterator();
-        assertNoMoreEvents(deleted);
+        int evIndex = 0;
+        assertNoMoreEvents(deleter, evIndex);
     }
 
     @Test
@@ -351,16 +346,16 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         logic.trackDiscoveredSegment(1, 1, false, false);
         logic.trackDiscoveredSegment(1, 2, false, true);
         logic.trackDiscoveredSegment(1, 3, false, false);
-        logic.trackDiscoveredWal(1, true);
+        logic.trackDiscoveredWal(1, false, true);
         logic.trackDiscoveredSegment(2, 0, false, true);
-        logic.trackDiscoveredWal(2, true);
+        logic.trackDiscoveredWal(2, false, true);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.run();
 
 //        logDeletionEvents(deleter.events);
-        Iterator<DeletionEvent> deleted = deleter.events.iterator();
-        assertNoMoreEvents(deleted);
+        int evIndex = 0;
+        assertNoMoreEvents(deleter, evIndex);
     }
 
     @Test
@@ -1050,11 +1045,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertNoMoreEvents(Iterator<DeletionEvent> it) {
-        if (it.hasNext()) {
+    private void assertNoMoreEvents(TestDeleter deleter, int evIndex) {
+        if (deleter.events.size() > evIndex) {
             StringBuilder sb = new StringBuilder();
-            while (it.hasNext()) {
-                sb.append(it.next()).append(", ");
+            for (int i = evIndex; i < deleter.events.size(); i++) {
+                sb.append(deleter.events.get(i)).append(", ");
             }
             Assert.fail("Unexpected events: " + sb);
         }
@@ -1105,7 +1100,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
-        public final List<DeletionEvent> events = new ArrayList<>();
+        public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId) {

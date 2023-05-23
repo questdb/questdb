@@ -454,7 +454,7 @@ public class WalWriter implements TableWriterAPI {
                 try {
                     final int timestampIndex = metadata.getTimestampIndex();
                     LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                            .$(path).$(Files.SEPARATOR).$(newSegmentId)
+                            .$(path).$(Files.SEPARATOR).$(oldSegmentId)
                             .$(", newSegment=").$(newSegmentId)
                             .$(", rowCount=").$(uncommittedRows).I$();
 
