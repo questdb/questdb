@@ -4378,6 +4378,59 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinFailsBecauseSubqueryDoesntSupportRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trade (\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  instrument SYMBOL,\n" +
+                    "  price DOUBLE,\n" +
+                    "  qty DOUBLE\n" +
+                    ") timestamp (ts) PARTITION BY MONTH", sqlExecutionContext);
+
+            assertFailure("SELECT *\n" +
+                    "FROM \n" +
+                    "(\n" +
+                    "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
+                    "  FROM trade\n" +
+                    "  WHERE instrument = 'A'\n" +
+                    "  SAMPLE by 5m ALIGN TO CALENDAR\n" +
+                    ") \n" +
+                    "SPLICE JOIN trade ", "left side of splice join doesn't support random access", 137);
+
+            assertFailure("SELECT *\n" +
+                    "FROM trade " +
+                    "SPLICE JOIN " +
+                    "(\n" +
+                    "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
+                    "  FROM trade\n" +
+                    "  WHERE instrument = 'A'\n" +
+                    "  SAMPLE BY 5m ALIGN TO CALENDAR\n" +
+                    ") \n", "right side of splice join doesn't support random access", 20);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinFailsInFullFatMode() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trade (\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  instrument SYMBOL,\n" +
+                    "  price DOUBLE,\n" +
+                    "  qty DOUBLE\n" +
+                    ") timestamp (ts) PARTITION BY MONTH", sqlExecutionContext);
+
+            compiler.setFullFatJoins(true);
+            try {
+                assertFailure("SELECT *" +
+                        "FROM trade t1 " +
+                        "SPLICE JOIN trade t2", "splice join doesn't support full fat mode", 22);
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
+        });
+    }
+
+    @Test
     public void testSpliceJoinLeftTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym";
