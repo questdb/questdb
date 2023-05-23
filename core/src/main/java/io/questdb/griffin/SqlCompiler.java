@@ -57,7 +57,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.ServiceLoader;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
@@ -120,10 +119,10 @@ public class SqlCompiler implements Closeable {
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
-        this(engine, null, null);
+        this(engine, null);
     }
 
-    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
+    public SqlCompiler(CairoEngine engine, @Nullable DatabaseSnapshotAgent snapshotAgent) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -138,13 +137,7 @@ public class SqlCompiler implements Closeable {
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
 
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-        this.functionParser = new FunctionParser(
-                configuration,
-                functionFactoryCache != null
-                        ? functionFactoryCache
-                        : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
-                        FunctionFactory.class, FunctionFactory.class.getClassLoader()))
-        );
+        this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
         this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
@@ -182,6 +175,19 @@ public class SqlCompiler implements Closeable {
 
         textLoader = new TextLoader(engine);
         alterOperationBuilder = new AlterOperationBuilder();
+    }
+
+    // public for testing
+    public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
+        }
+
+        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
+        }
     }
 
     @Override
@@ -2632,19 +2638,6 @@ public class SqlCompiler implements Closeable {
 
         if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
             throw SqlException.position(0).put("timestamp is not defined");
-        }
-    }
-
-    // public for testing
-    public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
-        }
-
-        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
         }
     }
 

@@ -2790,7 +2790,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
         configOverrideParallelImportStatusLogKeepNDays(daysToKeep);
-        new CopyRequestJob(engine, 1, null).close();
+        new CopyRequestJob(engine, 1).close();
         assertQuery("count\n" + daysToKeep + "\n",
                 "select count() from " + backlogTableName,
                 null,

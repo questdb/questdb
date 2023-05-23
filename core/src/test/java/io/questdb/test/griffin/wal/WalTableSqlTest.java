@@ -1457,7 +1457,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     private void runApplyOnce() {
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
             walApplyJob.run(0);
         }
     }

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -36,21 +35,19 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
+    private final TableRenameSupportExecutionContext renameSupportExecutionContext;
     private final Rnd rnd;
     private final SqlCompiler sqlCompiler;
-    private final TableRenameSupportExecutionContext renameSupportExecutionContext;
 
     OperationCompiler(
             CairoEngine engine,
             int workerCount,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache
+            int sharedWorkerCount
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
@@ -66,7 +63,7 @@ class OperationCompiler implements Closeable {
                 -1,
                 null
         );
-        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
+        this.sqlCompiler = new SqlCompiler(engine, null);
     }
 
     @Override

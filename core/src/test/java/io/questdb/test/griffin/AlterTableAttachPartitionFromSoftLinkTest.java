@@ -830,7 +830,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         engine.releaseAllReaders();
                         engine.releaseAllWriters();
                         try (
-                                ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine, null);
+                                ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine);
                                 TableReader reader = engine.getReader(tableToken)
                         ) {
                             TxReader txReader = reader.getTxFile();

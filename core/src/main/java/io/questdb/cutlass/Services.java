@@ -43,7 +43,6 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -60,7 +59,6 @@ public final class Services {
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
-            @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
@@ -76,7 +74,6 @@ public final class Services {
                 cairoEngine,
                 workerPoolManager.getInstance(configuration, metrics.health(), Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
-                functionFactoryCache,
                 snapshotAgent,
                 metrics
         );
@@ -88,7 +85,6 @@ public final class Services {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
@@ -103,7 +99,6 @@ public final class Services {
                 cairoEngine,
                 workerPool.getWorkerCount(),
                 sharedWorkerCount,
-                functionFactoryCache,
                 snapshotAgent
         );
 
@@ -114,7 +109,6 @@ public final class Services {
                 workerPool,
                 sharedWorkerCount,
                 jsonQueryProcessorBuilder,
-                functionFactoryCache,
                 snapshotAgent
         );
         return server;
@@ -239,7 +233,6 @@ public final class Services {
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
-            FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
@@ -262,7 +255,6 @@ public final class Services {
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
                 snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,

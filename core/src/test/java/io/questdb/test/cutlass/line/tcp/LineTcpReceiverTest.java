@@ -203,7 +203,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             new Thread(() -> {
                 try (Socket socket = getSocket()) {
                     for (int i = 0; i < numOfRows; i++) {
-                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : "" + i;
+                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : String.valueOf(i);
                         sendToSocket(socket, tableName + ",abcdef=x col=" + value + "\n");
                     }
                 } catch (Exception e) {
@@ -1678,7 +1678,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
         if (ioPool == writerPool) {
-            O3Utils.setupWorkerPool(ioPool, engine, null, null);
+            O3Utils.setupWorkerPool(ioPool, engine, null);
         }
         ioPool.start(LOG);
         if (ioPool != writerPool) {

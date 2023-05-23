@@ -198,7 +198,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount(), null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
 
             String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
@@ -236,7 +236,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount(), null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
             String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -653,7 +653,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount(), null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
             // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
             sqlCopyBufferSize = 1024;
             String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
@@ -1173,7 +1173,7 @@ public class CopyTest extends AbstractGriffinTest {
             CountDownLatch processed = new CountDownLatch(1);
 
             compiler.compile("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"", sqlExecutionContext);
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1, null)) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 Thread processingThread = createJobThread(copyRequestJob, processed);
                 processingThread.start();
                 statement.run();

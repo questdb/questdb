@@ -38,8 +38,6 @@ import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -48,11 +46,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.File;
-import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
@@ -60,7 +56,6 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ServerConfiguration config;
     private final CairoEngine engine;
-    private final FunctionFactoryCache ffCache;
     private final ObjList<Closeable> freeOnExitList = new ObjList<>();
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -83,13 +78,7 @@ public class ServerMain implements Closeable {
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
 
-        // create function factory cache
-        ffCache = new FunctionFactoryCache(
-                cairoConfig,
-                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-        );
-
-        config.init(engine, ffCache);
+        config.init(engine);
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
@@ -114,8 +103,7 @@ public class ServerMain implements Closeable {
                         O3Utils.setupWorkerPool(
                                 sharedPool,
                                 engine,
-                                config.getCairoConfiguration().getCircuitBreakerConfiguration(),
-                                ffCache
+                                config.getCairoConfiguration().getCircuitBreakerConfiguration()
                         );
 
                         if (walSupported) {
@@ -127,7 +115,7 @@ public class ServerMain implements Closeable {
                             sharedPool.freeOnExit(walPurgeJob);
 
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                                setupWalApplyJob(sharedPool, engine, getSharedWorkerCount(), ffCache);
+                                setupWalApplyJob(sharedPool, engine, getSharedWorkerCount());
                             }
                         }
 
@@ -137,8 +125,7 @@ public class ServerMain implements Closeable {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
-                                    Math.max(1, sharedPool.getWorkerCount() - 2),
-                                    ffCache
+                                    Math.max(1, sharedPool.getWorkerCount() - 2)
                             );
                             sharedPool.assign(copyRequestJob);
                             sharedPool.freeOnExit(copyRequestJob);
@@ -147,7 +134,7 @@ public class ServerMain implements Closeable {
 
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-                        final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
+                        final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExitList.add(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
@@ -165,7 +152,7 @@ public class ServerMain implements Closeable {
                     metrics.health(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
-            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount(), ffCache);
+            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
         // http
@@ -173,7 +160,6 @@ public class ServerMain implements Closeable {
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
-                ffCache,
                 snapshotAgent,
                 metrics
         ));
@@ -191,7 +177,6 @@ public class ServerMain implements Closeable {
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
-                ffCache,
                 snapshotAgent,
                 metrics
         ));
@@ -322,12 +307,11 @@ public class ServerMain implements Closeable {
     protected void setupWalApplyJob(
             WorkerPool workerPool,
             CairoEngine engine,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache ffCache
+            int sharedWorkerCount
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount);
             workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }

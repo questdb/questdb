@@ -488,7 +488,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
-            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
                 while (done.get() == 0 && errors.size() == 0) {
                     Unsafe.getUnsafe().loadFence();
                     while (job.run(0) || checkJob.run(0)) {
@@ -535,7 +535,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
             }
 
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
@@ -605,7 +605,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             // Can help to reduce memory consumption.
             engine.releaseInactive();
 
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
             try {
                 applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true);
