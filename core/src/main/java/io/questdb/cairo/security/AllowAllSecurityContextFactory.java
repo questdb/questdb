@@ -33,7 +33,7 @@ public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     }
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, boolean readOnlyContext) {
-        return readOnlyContext ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
+    public SecurityContext getInstance(CharSequence principal, int interfaceId) {
+        return AllowAllSecurityContext.INSTANCE;
     }
 }
