@@ -35,9 +35,11 @@ import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -113,6 +115,106 @@ public class SqlUtilTest {
             }).start();
         }
         Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(2L)));
+    }
+
+    @Test
+    public void testImplicitCastStrAsUuid() {
+        Uuid uuid = new Uuid();
+        final StringSink stringSink = new StringSink();
+        Numbers.appendUuid(1, 2, stringSink);
+        SqlUtil.implicitCastStrAsUuid(stringSink, uuid);
+        StringSink sink = new StringSink();
+        uuid.toSink(sink);
+        Assert.assertEquals("00000000-0000-0002-0000-000000000001", sink.toString());
+
+        Uuid uuid2 = new Uuid();
+        final StringSink stringSink2 = new StringSink();
+        Numbers.appendUuid(100, 250, stringSink2);
+        SqlUtil.implicitCastStrAsUuid(stringSink2, uuid2);
+        StringSink sink2 = new StringSink();
+        uuid2.toSink(sink2);
+        Assert.assertEquals("00000000-0000-00fa-0000-000000000064", sink2.toString());
+
+
+        Uuid uuid3 = new Uuid();
+        final StringSink stringSink3 = new StringSink();
+        Numbers.appendUuid(10000, 500000, stringSink3);
+        SqlUtil.implicitCastStrAsUuid(stringSink3, uuid3);
+        StringSink sink3 = new StringSink();
+        uuid3.toSink(sink3);
+        Assert.assertEquals("00000000-0007-a120-0000-000000002710", sink3.toString());
+
+
+        // Not a UUID
+        try {
+            Uuid uuid4 = new Uuid();
+            final StringSink stringSink4 = new StringSink();
+            stringSink4.put("77823232322323233");
+            //Numbers.appendUuid(77823232322323233, 500000, stringSink4);
+            SqlUtil.implicitCastStrAsUuid(stringSink4, uuid4);
+            StringSink sink4 = new StringSink();
+            uuid4.toSink(sink4);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `77823232322323233` [STRING -> UUID]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            Uuid uuid5 = new Uuid();
+            final StringSink stringSink5 = new StringSink();
+            stringSink5.put("hello");
+            SqlUtil.implicitCastStrAsUuid(stringSink5, uuid5);
+            StringSink sink5 = new StringSink();
+            uuid5.toSink(sink5);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> UUID]", e.getFlyweightMessage());
+        }
+
+        try {
+            Uuid uuid6 = new Uuid();
+            final StringSink stringSink6 = new StringSink();
+
+            for (int i = 0; i < 2; i++) {
+                Numbers.appendUuid(i, i + 1, stringSink6);
+            }
+
+            SqlUtil.implicitCastStrAsUuid(stringSink6, uuid6);
+            StringSink sink6 = new StringSink();
+            uuid6.toSink(sink6);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `00000000-0000-0001-0000-00000000000000000000-0000-0002-0000-000000000001` [STRING -> UUID]", e.getFlyweightMessage());
+        }
+
+    }
+
+    @Test
+    public void testImplicitCastUuidAsStr() {
+
+        final StringSink stringSink = new StringSink();
+        Assert.assertTrue(SqlUtil.implicitCastUuidAsStr(1, 2, stringSink));
+        TestUtils.assertEquals("00000000-0000-0002-0000-000000000001", stringSink);
+        stringSink.clear();
+
+        Assert.assertTrue(SqlUtil.implicitCastUuidAsStr(100, 250, stringSink));
+        TestUtils.assertEquals("00000000-0000-00fa-0000-000000000064", stringSink);
+        stringSink.clear();
+
+        Assert.assertTrue(SqlUtil.implicitCastUuidAsStr(1, 250000, stringSink));
+        TestUtils.assertEquals("00000000-0003-d090-0000-000000000001", stringSink);
+        stringSink.clear();
+
+
+        Assert.assertTrue(SqlUtil.implicitCastUuidAsStr(Long.MIN_VALUE, 250000, stringSink));
+        TestUtils.assertEquals("00000000-0003-d090-8000-000000000000", stringSink);
+        stringSink.clear();
+
+        Assert.assertFalse(SqlUtil.implicitCastUuidAsStr(Long.MIN_VALUE, Long.MIN_VALUE, stringSink));
+        stringSink.clear();
+
+
     }
 
     @Test
@@ -325,4 +427,6 @@ public class SqlUtilTest {
             TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]", e.getFlyweightMessage());
         }
     }
+
+
 }
