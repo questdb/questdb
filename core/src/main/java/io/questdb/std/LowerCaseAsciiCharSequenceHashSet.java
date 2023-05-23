@@ -64,10 +64,6 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
         }
     }
 
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
-    }
-
     public CharSequence keyAt(int index) {
         return keys[-index - 1];
     }
