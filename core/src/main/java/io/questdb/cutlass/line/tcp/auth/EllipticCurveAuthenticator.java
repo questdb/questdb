@@ -29,8 +29,6 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.PublicKeyRepo;
-import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
-import io.questdb.cutlass.line.tcp.NetworkIOJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
@@ -64,28 +62,18 @@ public class EllipticCurveAuthenticator implements Authenticator {
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
     private final NetworkFacade nf;
     private final PublicKeyRepo publicKeyRepo;
-    private final long recvBufEnd;
-    private final long recvBufStart;
     private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
     protected long recvBufPseudoStart;
     private AuthState authState;
     private int fd;
     private String principal;
     private PublicKey pubKey;
+    private long recvBufEnd;
     private long recvBufPos;
+    private long recvBufStart;
 
-    public EllipticCurveAuthenticator(
-            NetworkFacade networkFacade,
-            PublicKeyRepo publicKeyRepo,
-            long recvBufStart,
-            long recvBufEnd
-    ) {
-        if (recvBufEnd - recvBufStart < MIN_BUF_SIZE) {
-            throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
-        }
+    public EllipticCurveAuthenticator(NetworkFacade networkFacade, PublicKeyRepo publicKeyRepo) {
         this.publicKeyRepo = publicKeyRepo;
-        this.recvBufStart = recvBufPos = recvBufStart;
-        this.recvBufEnd = recvBufEnd;
         this.nf = networkFacade;
     }
 
@@ -105,7 +93,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     @Override
-    public LineTcpConnectionContext.IOContextResult handleIO(NetworkIOJob job) throws AuthenticatorException {
+    public int handleIO() throws AuthenticatorException {
         switch (authState) {
             case WAITING_FOR_KEY_ID:
                 readKeyId();
@@ -126,11 +114,16 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     @Override
-    public void init(int fd) {
+    public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+        if (recvBufferLimit - recvBuffer < MIN_BUF_SIZE) {
+            throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
+        }
         this.fd = fd;
         authState = AuthState.WAITING_FOR_KEY_ID;
         pubKey = null;
-        recvBufPos = recvBufStart;
+        this.recvBufStart = recvBuffer;
+        this.recvBufPos = recvBuffer;
+        this.recvBufEnd = recvBufferLimit;
     }
 
     @Override
@@ -277,15 +270,15 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     private enum AuthState {
-        WAITING_FOR_KEY_ID(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
-        SENDING_CHALLENGE(LineTcpConnectionContext.IOContextResult.NEEDS_WRITE),
-        WAITING_FOR_RESPONSE(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
-        COMPLETE(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
-        FAILED(LineTcpConnectionContext.IOContextResult.NEEDS_DISCONNECT);
+        WAITING_FOR_KEY_ID(Authenticator.NEEDS_READ),
+        SENDING_CHALLENGE(Authenticator.NEEDS_WRITE),
+        WAITING_FOR_RESPONSE(Authenticator.NEEDS_READ),
+        COMPLETE(Authenticator.OK),
+        FAILED(Authenticator.NEEDS_DISCONNECT);
 
-        private final LineTcpConnectionContext.IOContextResult ioContextResult;
+        private final int ioContextResult;
 
-        AuthState(LineTcpConnectionContext.IOContextResult ioContextResult) {
+        AuthState(int ioContextResult) {
             this.ioContextResult = ioContextResult;
         }
     }
