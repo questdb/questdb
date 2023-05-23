@@ -43,6 +43,10 @@ public class FunctionListFunctionFactory implements FunctionFactory {
     private static final int TYPE_COLUMN;
     private static final ObjHashSet<CharSequence> excludeSet = new ObjHashSet<>();
 
+    public static boolean isExcluded(CharSequence funcName) {
+        return excludeSet.contains(funcName) || Chars.startsWith(funcName, "test_");
+    }
+
     @Override
     public String getSignature() {
         return "functions()";
@@ -70,10 +74,10 @@ public class FunctionListFunctionFactory implements FunctionFactory {
         };
     }
 
-    private enum FunctionFactoryType {
+    public enum FunctionFactoryType {
         PREDICATE, CURSOR, GROUP_BY, WINDOW, STANDARD;
 
-        static FunctionFactoryType getType(FunctionFactory factory) {
+        public static FunctionFactoryType getType(FunctionFactory factory) {
             if (factory.isBoolean()) {
                 return PREDICATE;
             }
@@ -148,7 +152,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                     if (funcDescriptors == null) {
                         funcNameIndex++;
                         CharSequence funcName = funcNames.get(funcNameIndex);
-                        if (excludeSet.contains(funcName) || Chars.startsWith(funcName, "test_")) {
+                        if (isExcluded(funcName)) {
                             return hasNext();
                         }
                         funcDescriptors = factories.get(funcName);
@@ -158,7 +162,10 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                     } else {
                         descriptorIndex++;
                         if (descriptorIndex < funcDescriptors.size()) {
-                            record.init(funcNames.get(funcNameIndex), funcDescriptors.get(descriptorIndex).getFactory());
+                            record.init(
+                                    funcNames.get(funcNameIndex),
+                                    funcDescriptors.get(descriptorIndex).getFactory()
+                            );
                             return true;
                         } else {
                             descriptorIndex = -1;
@@ -266,5 +273,6 @@ public class FunctionListFunctionFactory implements FunctionFactory {
         excludeSet.add("=");
         excludeSet.add(">");
         excludeSet.add(">=");
+        excludeSet.add("VARCHAR");
     }
 }
