@@ -15,7 +15,7 @@ guidelines. Releases should not look too dissimilar.
 ```bash
 git fetch
 git checkout master
-git branch v_7_1_1
+git checkout -b v_7_1_1
 ```
 
 ## Clear previous release "memory"
@@ -46,7 +46,7 @@ mode that follows.
 Compile using maven on Windows, Linux and FreeBSD and upload to GH release
 
 ```bash
-git fetch
+git fetch --tags
 git checkout tags/7.1.1
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
