@@ -65,6 +65,11 @@ public class JsonPlanSinkTest {
         }
 
         @Override
+        public boolean isClosed() {
+            return false;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }

@@ -4551,6 +4551,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectInListWithBadCastClosesFactories() throws Exception {
+        String query = "select * from ( select x, '1' from long_sequence(1000000) order by 2 desc limit 999999 ) #SETOP#  " +
+                "select * from ( select x, '2' from long_sequence(1000000) order by 2 desc limit 999999 ) #SETOP# " +
+                "select * from ( select x, x::float from long_sequence(1000000) order by 2 desc limit 999999 ) ";
+
+        assertFailure(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION"));
+        assertFailure(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION ALL"));
+        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
+        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+    }
+
+    @Test
     public void testSelectIntInListContainingNull() throws Exception {
         assertQuery("c\n1\nNaN\n",
                 "select * from x where c in (1,null)",

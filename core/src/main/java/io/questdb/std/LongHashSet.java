@@ -132,7 +132,7 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        list.toSink(sink, noEntryKeyValue);
+        list.toSink(sink);
     }
 
     @Override

@@ -116,8 +116,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 
-    /* used for describing query execution plan */
-
     /**
      * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
      * The calling code must not hold on to copies of the cursor.
@@ -163,6 +161,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    boolean isClosed();
+
     boolean recordCursorSupportsRandomAccess();
 
     default boolean supportPageFrameCursor() {
@@ -173,6 +173,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /* Adds description of this factory to EXPLAIN output. */
     @Override
     default void toPlan(PlanSink sink) {
         sink.type(getClass().getName());

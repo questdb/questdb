@@ -47,6 +47,11 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
         return metadata;
     }
 
+    @Override
+    public boolean isClosed() {
+        return closed;
+    }
+
     protected void _close() {
         // nothing to do
     }
