@@ -426,9 +426,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     public static class Logic {
         private final StringSink debugBuffer = new StringSink();
         private final Deleter deleter;
+        private final LongList discovered = new LongList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
         private final LongList nextToApplyKeys = new LongList();  // LongList rather than IntList because need .sort().
-        private final LongList onDiskWalIDSegmentIDPairs = new LongList();
         private TableToken tableToken;
 
         public Logic(Deleter deleter) {
@@ -440,13 +440,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             debugBuffer.put("table=").put(tableToken.getDirName())
                     .put(", discovered=[");
 
-            for (int i = 0, n = onDiskWalIDSegmentIDPairs.size(); i < n; i++) {
-                final long walSegment = onDiskWalIDSegmentIDPairs.getQuick(i);
-                final int segmentKey = Numbers.decodeLowInt(walSegment);
-                final int walId = Numbers.decodeHighInt(walSegment);
-                final int segmentId = decodeSegmentId(segmentKey);
-                final boolean pendingTasks = decodePendingTasks(segmentKey);
-                final boolean locked = decodeLocked(segmentKey);
+            for (int i = 0, n = discovered.size(); i < n; i++) {
+                final long encoded = discovered.getQuick(i);
+                final int walId = decodeWalId(encoded);
+                final int segmentId = decodeSegmentId(encoded);
+                final boolean pendingTasks = decodePendingTasks(encoded);
+                final boolean locked = decodeLocked(encoded);
                 if (isWalDir(segmentId)) {
                     debugBuffer.put("(wal").put(walId);
                 } else {
@@ -479,12 +478,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public boolean hasOnDiskSegments() {
-            return onDiskWalIDSegmentIDPairs.size() != 0;
+            return discovered.size() != 0;
         }
 
         public boolean hasPendingTasks() {
-            for (int i = 0; i < onDiskWalIDSegmentIDPairs.size(); ++i) {
-                if (decodePendingTasks(Numbers.decodeLowInt(onDiskWalIDSegmentIDPairs.get(i)))) {
+            for (int i = 0; i < discovered.size(); ++i) {
+                if (decodePendingTasks(discovered.get(i))) {
                     return true;
                 }
             }
@@ -495,20 +494,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             this.tableToken = tableToken;
             nextToApply.clear();
             nextToApplyKeys.clear();
-            onDiskWalIDSegmentIDPairs.clear();
+            discovered.clear();
         }
 
         public void run() {
             sortTracked();
             accumDebugState();
 
-            for (int i = 0, n = onDiskWalIDSegmentIDPairs.size(); i < n; i++) {
-                final long diskPair = onDiskWalIDSegmentIDPairs.get(i);
-                final int walId = Numbers.decodeHighInt(diskPair);
-                final int segmentKey = Numbers.decodeLowInt(diskPair);
-                final int segmentId = decodeSegmentId(segmentKey);
-                final boolean hasPendingTasks = decodePendingTasks(segmentKey);
-                final boolean isLocked = decodeLocked(segmentKey);
+            for (int i = 0, n = discovered.size(); i < n; i++) {
+                final long encoded = discovered.get(i);
+                final int walId = decodeWalId(encoded);
+                final int segmentId = decodeSegmentId(encoded);
+                final boolean hasPendingTasks = decodePendingTasks(encoded);
+                final boolean isLocked = decodeLocked(encoded);
                 final int nextToApplySegmentId = nextToApply.get(walId);  // -1 if not found
 
                 // Delete a wal or segment directory only if:
@@ -532,13 +530,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public void trackDiscoveredSegment(int walId, int segmentId, boolean pendingTasks, boolean locked) {
-            final int segmentKey = encodeSegmentKey(segmentId, pendingTasks, locked);
-            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(segmentKey, walId));
+            discovered.add(encodeDiscovered(walId, segmentId, pendingTasks, locked));
         }
 
-        public void trackDiscoveredWal(int walId, boolean hasPendingTasks, boolean locked) {
-            final int segmentKey = encodeSegmentKey(WalUtils.SEG_NONE_ID, hasPendingTasks, locked);
-            onDiskWalIDSegmentIDPairs.add(Numbers.encodeLowHighInts(segmentKey, walId));
+        public void trackDiscoveredWal(int walId, boolean pendingTasks, boolean locked) {
+            discovered.add(encodeDiscovered(walId, WalUtils.SEG_NONE_ID, pendingTasks, locked));
         }
 
         public void trackNextToApplySegment(int walId, int segmentId) {
@@ -549,30 +545,28 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        private static boolean decodeLocked(int segmentKey) {
+        private static boolean decodeLocked(long encoded) {
+            final int segmentKey = Numbers.decodeLowInt(encoded);
             return (segmentKey & 1) == 1;
         }
 
-        private static boolean decodePendingTasks(int segmentKey) {
+        private static boolean decodePendingTasks(long encoded) {
+            final int segmentKey = Numbers.decodeLowInt(encoded);
             return (segmentKey & 2) == 2;
         }
 
-        private static int decodeSegmentId(int segmentKey) {
+        private static int decodeSegmentId(long encoded) {
+            final int segmentKey = Numbers.decodeLowInt(encoded);
             return segmentKey >> 2;
         }
 
-        /**
-         * Return encoded segment key for no segment.
-         */
-        private static int encodeNoSegment() {
-            return encodeSegmentKey(WalUtils.SEG_NONE_ID, false, false);
+        private static int decodeWalId(long encoded) {
+            return Numbers.decodeHighInt(encoded);
         }
 
-        /**
-         * Return new encoded segment key.
-         */
-        private static int encodeSegmentKey(int segmentId, boolean pendingTasks, boolean locked) {
-            return (segmentId << 2) + (pendingTasks ? 2 : 0) + (locked ? 1 : 0);
+        private static long encodeDiscovered(int walId, int segmentId, boolean pendingTasks, boolean locked) {
+            final int segmentKey = (segmentId << 2) + (pendingTasks ? 2 : 0) + (locked ? 1 : 0);
+            return Numbers.encodeLowHighInts(segmentKey, walId);
         }
 
         private static boolean isWalDir(int segmentId) {
@@ -587,7 +581,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         private void sortTracked() {
-            onDiskWalIDSegmentIDPairs.sort();
+            discovered.sort();
             nextToApplyKeys.sort();
         }
     }
