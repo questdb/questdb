@@ -514,9 +514,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 //   * Is not locked.
                 //   * None of its segments have pending tasks
                 if (isWalDir(segmentId)) {
-                    logDebugInfo();
                     final boolean walAlreadyApplied = nextToApplySegmentId == -1;
                     if (walAlreadyApplied && !isLocked && !hasPendingTasks) {
+                        logDebugInfo();
                         deleter.deleteWalDirectory(walId);
                     }
                 } else {
