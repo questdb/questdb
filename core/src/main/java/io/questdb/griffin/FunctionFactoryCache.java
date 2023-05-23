@@ -31,7 +31,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import org.jetbrains.annotations.TestOnly;
 
 public class FunctionFactoryCache {
 
@@ -87,13 +86,15 @@ public class FunctionFactoryCache {
                         runtimeConstantFunctionNames.add(name);
                     }
                 } catch (SqlException e) {
-                    LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
+                    LOG.error().$((Sinkable) e)
+                            .$(" [signature=").$(factory.getSignature())
+                            .$(", class=").$(factory.getClass().getName())
+                            .I$();
                 }
             }
         }
     }
 
-    @TestOnly
     public LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> getFactories() {
         return factories;
     }

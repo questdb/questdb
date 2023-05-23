@@ -208,6 +208,26 @@ public class FunctionFactoryDescriptor {
         return (short) (mask & TYPE_MASK);
     }
 
+    public static String translateSignature(String signature) {
+        int openBraceIndex;
+        try {
+            openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        } catch (SqlException fail) {
+            throw new IllegalArgumentException(signature);
+        }
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(signature);
+        signatureBuilder.clear(openBraceIndex + 1);
+        for (int i = openBraceIndex + 1, n = signature.length() - 1; i < n; i++) {
+            signatureBuilder.put(translateArgumentType(signature.charAt(i)));
+            if (i + 1 < n) {
+                signatureBuilder.put(", ");
+            }
+        }
+        signatureBuilder.put(')');
+        return signatureBuilder.toString();
+    }
+
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
         if (sig == null) {
             throw SqlException.$(0, "NULL signature");
@@ -264,5 +284,86 @@ public class FunctionFactoryDescriptor {
 
     private static long toUnsignedLong(int type) {
         return ((long) type) & 0xffffffffL;
+    }
+
+    private static String translateArgumentType(char c) {
+        String arg;
+        switch (c | 32) {
+            case 'd':
+                arg = "double";
+                break;
+            case 'b':
+                arg = "byte";
+                break;
+            case 'e':
+                arg = "short";
+                break;
+            case 'a':
+                arg = "char";
+                break;
+            case 'f':
+                arg = "float";
+                break;
+            case 'i':
+                arg = "int";
+                break;
+            case 'l':
+                arg = "long";
+                break;
+            case 's':
+                arg = "string";
+                break;
+            case 't':
+                arg = "boolean";
+                break;
+            case 'k':
+                arg = "symbol";
+                break;
+            case 'm':
+                arg = "date";
+                break;
+            case 'n':
+                arg = "timestamp";
+                break;
+            case 'u':
+                arg = "binary";
+                break;
+            case 'v':
+                arg = "var_arg";
+                break;
+            case 'c':
+                arg = "cursor";
+                break;
+            case 'r':
+                arg = "record";
+                break;
+            case 'h':
+                arg = "long256";
+                break;
+            case 'g':
+                arg = "geohash";
+                break;
+            case 'o':
+                arg = "null";
+                break;
+            case 'p':
+                arg = "reg_class";
+                break;
+            case 'q':
+                arg = "reg_procedure";
+                break;
+            case 'w':
+                arg = "array_string";
+                break;
+            case 'j':
+                arg = "long128";
+                break;
+            case 'z':
+                arg = "uuid";
+                break;
+            default:
+                throw new IllegalArgumentException("offending: '" + c + '\'');
+        }
+        return (Character.isLowerCase(c) ? "const " : "var ") + arg;
     }
 }
