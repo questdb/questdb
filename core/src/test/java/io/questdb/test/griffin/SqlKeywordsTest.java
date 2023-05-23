@@ -40,6 +40,101 @@ import static io.questdb.griffin.SqlKeywords.*;
 public class SqlKeywordsTest {
 
     @Test
+    public void testAdd() {
+        Assert.assertTrue(isAddKeyword("add"));
+        Assert.assertTrue(isAddKeyword("aDD"));
+        Assert.assertTrue(isAddKeyword("ADD"));
+        Assert.assertTrue(isAddKeyword("Add"));
+        Assert.assertTrue(isAddKeyword("ADd"));
+        Assert.assertTrue(isAddKeyword("adD"));
+        Assert.assertFalse(isAddKeyword("adds"));
+        Assert.assertFalse(isAddKeyword("ad"));
+        Assert.assertFalse(isAddKeyword("ade"));
+
+    }
+
+    @Test
+    public void testAlign() {
+        Assert.assertTrue(isAlignKeyword("align"));
+        Assert.assertTrue(isAlignKeyword("Align"));
+        Assert.assertTrue(isAlignKeyword("ALign"));
+        Assert.assertTrue(isAlignKeyword("ALIgn"));
+        Assert.assertTrue(isAlignKeyword("ALIGn"));
+        Assert.assertTrue(isAlignKeyword("ALIGN"));
+        Assert.assertFalse(isAlignKeyword("aligm"));
+        Assert.assertFalse(isAlignKeyword("algin"));
+        Assert.assertFalse(isAlignKeyword("aligns"));
+
+    }
+
+    @Test
+    public void testAll() {
+        Assert.assertTrue(isAllKeyword("all"));
+        Assert.assertTrue(isAllKeyword("All"));
+        Assert.assertTrue(isAllKeyword("ALl"));
+        Assert.assertTrue(isAllKeyword("ALL"));
+        Assert.assertTrue(isAllKeyword("aLL"));
+        Assert.assertTrue(isAllKeyword("AlL"));
+        Assert.assertFalse(isAllKeyword("al"));
+        Assert.assertFalse(isAllKeyword("alll"));
+        Assert.assertFalse(isAllKeyword("lal"));
+
+    }
+
+    @Test
+    public void testAlter() {
+        Assert.assertTrue(isAlterKeyword("alter"));
+        Assert.assertTrue(isAlterKeyword("Alter"));
+        Assert.assertTrue(isAlterKeyword("ALter"));
+        Assert.assertTrue(isAlterKeyword("ALTER"));
+        Assert.assertTrue(isAlterKeyword("aLTer"));
+        Assert.assertTrue(isAlterKeyword("AlTER"));
+        Assert.assertFalse(isAlterKeyword("alters"));
+        Assert.assertFalse(isAlterKeyword("altre"));
+        Assert.assertFalse(isAlterKeyword("alt"));
+
+    }
+
+    @Test
+    public void testAnd() {
+        Assert.assertTrue(isAndKeyword("and"));
+        Assert.assertTrue(isAndKeyword("aNd"));
+        Assert.assertTrue(isAndKeyword("AND"));
+        Assert.assertTrue(isAndKeyword("anD"));
+        Assert.assertTrue(isAndKeyword("And"));
+        Assert.assertTrue(isAndKeyword("AnD"));
+        Assert.assertFalse(isAndKeyword("ands"));
+        Assert.assertFalse(isAndKeyword("nand"));
+        Assert.assertFalse(isAndKeyword("adn"));
+
+    }
+
+    @Test
+    public void testAs() {
+        Assert.assertTrue(isAsKeyword("as"));
+        Assert.assertTrue(isAsKeyword("aS"));
+        Assert.assertTrue(isAsKeyword("AS"));
+        Assert.assertTrue(isAsKeyword("As"));
+        Assert.assertFalse(isAsKeyword("ads"));
+        Assert.assertFalse(isAsKeyword("sas"));
+        Assert.assertFalse(isAsKeyword("ad"));
+
+    }
+
+    @Test
+    public void testConcatKeyword() {
+        Assert.assertTrue(isConcatKeyword("concat"));
+        Assert.assertTrue(isConcatKeyword("CONCAT"));
+        Assert.assertTrue(isConcatKeyword("ConcaT"));
+        Assert.assertTrue(isConcatKeyword("cONCAt"));
+        Assert.assertTrue(isConcatKeyword("CONcat"));
+        Assert.assertTrue(isConcatKeyword("conCAT"));
+        Assert.assertFalse(isConcatKeyword("con cat"));
+        Assert.assertFalse(isConcatKeyword("concatt"));
+        Assert.assertFalse(isConcatKeyword("c o n c a t"));
+    }
+
+    @Test
     public void testIs() throws Exception {
         Map<String, String> specialCases = new HashMap<>();
         specialCases.put("isColonColon", "::");
@@ -189,6 +284,21 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testMaxIdentifierLength() {
+        Assert.assertTrue(isMaxIdentifierLength("max_identifier_length"));
+        Assert.assertTrue(isMaxIdentifierLength("Max_Identifier_Length"));
+        Assert.assertTrue(isMaxIdentifierLength("MAX_IDENTIFIER_LENGTH"));
+        Assert.assertTrue(isMaxIdentifierLength("MAX_Identifier_Length"));
+        Assert.assertTrue(isMaxIdentifierLength("Max_IDENTIFIER_Length"));
+        Assert.assertTrue(isMaxIdentifierLength("Max_Identifier_LENGTH"));
+        Assert.assertFalse(isMaxIdentifierLength("Max-Identifier-Length"));
+        Assert.assertFalse(isMaxIdentifierLength("Max_Identifier_Lenght"));
+        Assert.assertFalse(isMaxIdentifierLength("Max_Identifier_Lengths"));
+        Assert.assertFalse(isMaxIdentifierLength("Max_Length_Identifier"));
+
+    }
+
+    @Test
     public void testPrev() {
         Assert.assertFalse(isPrevKeyword("123"));
         Assert.assertFalse(isPrevKeyword("1234"));
@@ -197,4 +307,72 @@ public class SqlKeywordsTest {
         Assert.assertFalse(isPrevKeyword("pre1"));
         Assert.assertTrue(isPrevKeyword("prev"));
     }
+
+    @Test
+    public void testStandardConformingStrings() {
+        Assert.assertTrue(isStandardConformingStrings("standard_conforming_strings"));
+        Assert.assertTrue(isStandardConformingStrings("Standard_Conforming_Strings"));
+        Assert.assertTrue(isStandardConformingStrings("STANDARD_Conforming_Strings"));
+        Assert.assertTrue(isStandardConformingStrings("Standard_CONFORMING_Strings"));
+        Assert.assertTrue(isStandardConformingStrings("Standard_Conforming_STRINGS"));
+        Assert.assertTrue(isStandardConformingStrings("STANDARD_CONFORMING_STRINGS"));
+        Assert.assertFalse(isStandardConformingStrings("Standard-Conforming-Strings"));
+        Assert.assertFalse(isStandardConformingStrings("Standard_Conforming_String"));
+        Assert.assertFalse(isStandardConformingStrings("tsandard_Conforming_Strings"));
+        Assert.assertFalse(isStandardConformingStrings("Conforming_standard_Strings"));
+
+    }
+
+    @Test
+    public void testStartsWithGeoHashKeyword() {
+        Assert.assertTrue(startsWithGeoHashKeyword("geohash test"));
+        Assert.assertTrue(startsWithGeoHashKeyword("geohashtest"));
+        Assert.assertTrue(startsWithGeoHashKeyword("GEOHASH test"));
+        Assert.assertTrue(startsWithGeoHashKeyword("geoHASH test"));
+        Assert.assertTrue(startsWithGeoHashKeyword("GEOhash test"));
+        Assert.assertTrue(startsWithGeoHashKeyword("geohash"));
+        Assert.assertFalse(startsWithGeoHashKeyword("geo test"));
+        Assert.assertFalse(startsWithGeoHashKeyword("hash test"));
+        Assert.assertFalse(startsWithGeoHashKeyword("geohahs test"));
+    }
+
+    @Test
+    public void testTransactionIsolation() {
+        Assert.assertTrue(isTransactionIsolation("transaction_isolation"));
+        Assert.assertTrue(isTransactionIsolation("Transaction_Isolation"));
+        Assert.assertTrue(isTransactionIsolation("TransactioN_IsolatioN"));
+        Assert.assertTrue(isTransactionIsolation("TRANSACTION_ISOLATION"));
+        Assert.assertTrue(isTransactionIsolation("transaction_ISOLATION"));
+        Assert.assertTrue(isTransactionIsolation("TRANSACTION_isolation"));
+        Assert.assertFalse(isTransactionIsolation("Transaction_Isolations"));
+        Assert.assertFalse(isTransactionIsolation("TransactionIsolation"));
+        Assert.assertFalse(isTransactionIsolation("transaction-isolation"));
+
+    }
+
+    @Test
+    public void testValidateExtractPart() {
+        Assert.assertTrue(validateExtractPart("microseconds"));
+        Assert.assertTrue(validateExtractPart("milliseconds"));
+        Assert.assertTrue(validateExtractPart("second"));
+        Assert.assertTrue(validateExtractPart("minute"));
+        Assert.assertTrue(validateExtractPart("hour"));
+        Assert.assertTrue(validateExtractPart("hoUR"));
+        Assert.assertTrue(validateExtractPart("day"));
+        Assert.assertTrue(validateExtractPart("doy"));
+        Assert.assertTrue(validateExtractPart("dow"));
+        Assert.assertTrue(validateExtractPart("week"));
+        Assert.assertTrue(validateExtractPart("month"));
+        Assert.assertTrue(validateExtractPart("quarter"));
+        Assert.assertTrue(validateExtractPart("year"));
+        Assert.assertTrue(validateExtractPart("isoyear"));
+        Assert.assertTrue(validateExtractPart("isodow"));
+        Assert.assertTrue(validateExtractPart("decade"));
+        Assert.assertTrue(validateExtractPart("century"));
+        Assert.assertTrue(validateExtractPart("millennium"));
+        Assert.assertTrue(validateExtractPart("epoch"));
+        Assert.assertFalse(validateExtractPart("test"));
+        Assert.assertFalse(validateExtractPart("days"));
+    }
+
 }
