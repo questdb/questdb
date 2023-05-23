@@ -37,6 +37,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
 
     private static final RecordMetadata METADATA;
     private static final int NAME_COLUMN;
+    private static final int RT_CONSTANT_COLUMN;
     private static final int SIGNATURE_COLUMN;
     private static final int SIGNATURE_TRANSLATED_COLUMN;
     private static final int TYPE_COLUMN;
@@ -189,6 +190,14 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                 private CharSequence funcName;
 
                 @Override
+                public boolean getBool(int col) {
+                    if (col == RT_CONSTANT_COLUMN) {
+                        return funcFactory.isRuntimeConstant();
+                    }
+                    throw new IllegalArgumentException("offending: " + col);
+                }
+
+                @Override
                 public CharSequence getStr(int col) {
                     if (col == NAME_COLUMN) {
                         return funcName;
@@ -227,11 +236,13 @@ public class FunctionListFunctionFactory implements FunctionFactory {
         NAME_COLUMN = 0;
         SIGNATURE_COLUMN = 1;
         SIGNATURE_TRANSLATED_COLUMN = 2;
-        TYPE_COLUMN = 3;
+        RT_CONSTANT_COLUMN = 3;
+        TYPE_COLUMN = 4;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("signature", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("signature_translated", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("runtime_constant", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
         METADATA = metadata;
 
