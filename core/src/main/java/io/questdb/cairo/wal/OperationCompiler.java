@@ -44,11 +44,7 @@ class OperationCompiler implements Closeable {
     private final Rnd rnd;
     private final SqlCompiler sqlCompiler;
 
-    OperationCompiler(
-            CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
-    ) {
+    OperationCompiler(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         renameSupportExecutionContext = new TableRenameSupportExecutionContext(
