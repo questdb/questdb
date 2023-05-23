@@ -1190,7 +1190,7 @@ public class WalWriter implements TableWriterAPI {
     private void releaseWalLock() {
         if (ff.close(walLockFd)) {
             walLockFd = -1;
-            LOG.info().$("released WAL lock [walId=").$(walId)
+            LOG.debug().$("released WAL lock [walId=").$(walId)
                     .$(", fd=").$(walLockFd)
                     .$(']').$();
         } else {
