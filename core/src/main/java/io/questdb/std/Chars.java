@@ -62,6 +62,24 @@ public final class Chars {
         }
     }
 
+    /**
+     * Avoid this when possible due to the allocation of a new char array
+     * This should be only used when a JDK method forces you to use a byte array
+     * <p>
+     * It's responsbility of the caller to ensure that the input string is ASCII
+     *
+     * @param ascii ascii string to convert to byte array
+     * @return byte array representation of the input string
+     */
+    public static byte[] asciiToByteArray(CharSequence ascii) {
+        byte[] encodedPubKeyBytes = new byte[ascii.length()];
+        for (int i = 0; i < ascii.length(); i++) {
+            assert ascii.charAt(i) < 128;
+            encodedPubKeyBytes[i] = (byte) ascii.charAt(i);
+        }
+        return encodedPubKeyBytes;
+    }
+
     public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
         if (sequence == null) {
             return;
