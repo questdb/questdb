@@ -24,11 +24,28 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.network.NetworkFacade;
+
 public class DefaultPgWireAuthenticationFactory implements PgWireAuthenticationFactory {
     public static final PgWireAuthenticationFactory INSTANCE = new DefaultPgWireAuthenticationFactory();
 
     @Override
-    public ClearTextPgWireAuthenticator getPgWireAuthenticator(PGConnectionContext.ResponseAsciiSink responseAsciiSink, PGWireConfiguration configuration) {
-        return new ClearTextPgWireAuthenticator(responseAsciiSink, configuration);
+    public Authenticator getPgWireAuthenticator(
+            NetworkFacade nf,
+            PGWireConfiguration configuration,
+            NetworkSqlExecutionCircuitBreaker circuitBreaker,
+            CircuitBreakerRegistry registry,
+            OptionsListener optionsListener
+    ) {
+        return new CleartextPasswordPgWireAuthenticator(
+                nf,
+                configuration,
+                circuitBreaker,
+                registry,
+                optionsListener,
+                new StaticUserDatabase(configuration)
+        );
     }
 }

@@ -24,21 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.Mutable;
-
-public interface PgWireAuthenticator extends Mutable {
-    SecurityContext getSecurityContext();
-
-    boolean isAuthenticated();
-
-    AuthenticationResult onAfterInitMessage();
-
-    AuthenticationResult processMessage(CharSequence usernameFromInitMessage, long msgStart, long msgLimit) throws BadProtocolException;
-
-    enum AuthenticationResult {
-        AUTHENTICATION_SUCCESS,
-        AUTHENTICATION_FAILED,
-        NEED_READ
-    }
+public interface OptionsListener {
+    void setStatementTimeout(long statementTimeout);
 }
