@@ -1977,6 +1977,12 @@ public class SqlParser {
             } else {
                 node.args.remove(paramCount - 1);
                 node.paramCount = paramCount - 1;
+
+                if (node.paramCount < 3) {
+                    node.rhs = node.args.get(0);
+                    node.lhs = node.args.get(1);
+                    node.args.clear();
+                }
             }
         }
     }

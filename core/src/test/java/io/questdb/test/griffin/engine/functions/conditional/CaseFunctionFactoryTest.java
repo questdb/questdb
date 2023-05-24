@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
@@ -325,6 +326,44 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testCaseWithNoElseInSelectClause() throws SqlException {
+        assertQuery("c\n0\nNaN\nNaN\n",
+                "select case x when 1 then 0 end c from long_sequence(3)", null, true, true);
+
+        assertQuery("c\nNaN\nNaN\nNaN\n",
+                "select case x when -1 then 0 end c from long_sequence(3)", null, true, true);
+
+        assertQuery("c\n0\n0\n0\n",
+                "select case when x<5 then 0 end c from long_sequence(3)", null, true, true);
+
+        assertQuery("c\n0\nNaN\nNaN\n",
+                "select case when x<2 then 0 end c from long_sequence(3)", null, true, true);
+
+        assertQuery("c\n1\n",
+                "select case when true then 1 end c", null, true, true);
+
+        assertQuery("c\nNaN\n",
+                "select case when false then 2 end c", null, true, true);
+    }
+
+    @Test
+    public void testCaseWithNoElseInWhereClause() throws Exception {
+        assertFailure("select x from long_sequence(3) where case x when 1 then 0 end", null, 37, "boolean expression expected");
+
+        assertQuery("x\n1\n",
+                "select x from long_sequence(3) where case when x<2 then true end", null, true, false);
+
+        assertQuery("x\n1\n2\n",
+                "select x from long_sequence(3) where case when x<3 then true else false end", null, true, false);
+
+        assertQuery("x\n1\n",
+                "select x from long_sequence(3) where case when x<2 then true when x<3 then false end", null, true, false);
+
+        assertQuery("x\n",
+                "select x from long_sequence(3) where case when false then true end", null, false, false);
     }
 
     @Test
