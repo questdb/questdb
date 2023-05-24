@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
@@ -72,7 +73,7 @@ public class FunctionListFunctionFactoryTest extends AbstractGriffinTest {
         return names;
     }
 
-    private static Set<String> expectedFunctions() {
+    private static Set<String> expectedFunctions() throws SqlException {
         Set<String> lines = new HashSet<>();
         StringBuilder sb = new StringBuilder();
         for (FunctionFactory factory : ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())) {

@@ -27,7 +27,9 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.mp.WorkerPool;
+import org.jetbrains.annotations.Nullable;
 
 public class TestServerMain extends ServerMain {
     public TestServerMain(String... args) {
@@ -39,7 +41,12 @@ public class TestServerMain extends ServerMain {
     }
 
     @Override
-    protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+    protected void setupWalApplyJob(
+            WorkerPool workerPool,
+            CairoEngine engine,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache ffCache
+    ) {
         // do nothing
     }
 }

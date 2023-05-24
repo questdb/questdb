@@ -215,7 +215,7 @@ public class QuestDBTestNode {
         private final SqlExecutionContext sqlExecutionContext;
 
         private Griffin(Cairo cairo, SqlExecutionCircuitBreaker circuitBreaker) {
-            compiler = cairo.configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(cairo.engine, cairo.snapshotAgent);
+            compiler = cairo.configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(cairo.engine, null, cairo.snapshotAgent);
             bindVariableService = new BindVariableServiceImpl(cairo.configuration);
             sqlExecutionContext = new SqlExecutionContextImpl(cairo.engine, 1)
                     .with(

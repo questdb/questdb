@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -33,22 +34,26 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class TelemetryJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
     private final Telemetry<TelemetryTask> telemetry;
-    private final TelemetryConfigLogger telemetryConfigLogger;
     private final Telemetry<TelemetryWalTask> telemetryWal;
-
+    private final TelemetryConfigLogger telemetryConfigLogger;
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
+        this(engine, null);
+    }
+
+    public TelemetryJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
         telemetry = engine.getTelemetry();
         telemetryWal = engine.getTelemetryWal();
         telemetryConfigLogger = new TelemetryConfigLogger(engine);
 
-        try (final SqlCompiler compiler = new SqlCompiler(engine, null)) {
+        try (final SqlCompiler compiler = new SqlCompiler(engine, functionFactoryCache, null)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             sqlExecutionContext.with(
                     engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),

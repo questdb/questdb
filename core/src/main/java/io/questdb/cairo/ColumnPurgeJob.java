@@ -27,10 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -39,6 +36,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.ColumnPurgeTask;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -72,7 +70,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
     private TableWriter writer;
 
-    public ColumnPurgeJob(CairoEngine engine) throws SqlException {
+    public ColumnPurgeJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.inQueue = engine.getMessageBus().getColumnPurgeQueue();
@@ -83,7 +81,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
         this.retryDelay = configuration.getColumnPurgeRetryDelay();
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
-        this.sqlCompiler = new SqlCompiler(engine, null);
+        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(
                 configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),

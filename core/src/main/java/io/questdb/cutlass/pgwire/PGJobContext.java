@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -49,9 +50,10 @@ public class PGJobContext implements Closeable {
     public PGJobContext(
             PGWireConfiguration configuration,
             CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent
     ) {
-        this.compiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, snapshotAgent);
+        this.compiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent);
 
         final Metrics metrics = engine.getMetrics();
 

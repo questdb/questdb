@@ -33,12 +33,12 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -893,7 +893,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @NotNull
     private ColumnPurgeJob createPurgeJob() throws SqlException {
-        return new ColumnPurgeJob(engine);
+        return new ColumnPurgeJob(engine, null);
     }
 
     private ColumnPurgeTask createTask(

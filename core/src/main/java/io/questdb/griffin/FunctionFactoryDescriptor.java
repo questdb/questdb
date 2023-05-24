@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 
@@ -32,10 +33,12 @@ public class FunctionFactoryDescriptor {
     private static final int ARRAY_MASK = 1 << 31;
     private static final int CONST_MASK = 1 << 30;
     private static final int TYPE_MASK = ~(ARRAY_MASK | CONST_MASK);
+    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private final long[] argTypes;
     private final FunctionFactory factory;
     private final int openBraceIndex;
     private final int sigArgCount;
+
 
     public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {
         this.factory = factory;
@@ -208,24 +211,23 @@ public class FunctionFactoryDescriptor {
         return (short) (mask & TYPE_MASK);
     }
 
-    public static String translateSignature(String signature) {
-        int openBraceIndex;
-        try {
-            openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        } catch (SqlException fail) {
-            throw new IllegalArgumentException(signature);
-        }
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
-        signatureBuilder.put(signature);
-        signatureBuilder.clear(openBraceIndex + 1);
+    public static String translateSignature(String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringSink sb = Misc.getThreadLocalBuilder();
+        sb.put(signature);
+        sb.clear(openBraceIndex + 1);
         for (int i = openBraceIndex + 1, n = signature.length() - 1; i < n; i++) {
-            signatureBuilder.put(translateArgumentType(signature.charAt(i)));
+            char c = signature.charAt(i);
+            String type = typeNameMap.get(c | 32);
+            if (type == null) {
+                throw new IllegalArgumentException("offending: '" + c + '\'');
+            }
+            sb.put((Character.isLowerCase(c) ? "const " : "var ") + type);
             if (i + 1 < n) {
-                signatureBuilder.put(", ");
+                sb.put(", ");
             }
         }
-        signatureBuilder.put(')');
-        return signatureBuilder.toString();
+        return sb.put(')').toString();
     }
 
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
@@ -286,84 +288,30 @@ public class FunctionFactoryDescriptor {
         return ((long) type) & 0xffffffffL;
     }
 
-    private static String translateArgumentType(char c) {
-        String arg;
-        switch (c | 32) {
-            case 'd':
-                arg = "double";
-                break;
-            case 'b':
-                arg = "byte";
-                break;
-            case 'e':
-                arg = "short";
-                break;
-            case 'a':
-                arg = "char";
-                break;
-            case 'f':
-                arg = "float";
-                break;
-            case 'i':
-                arg = "int";
-                break;
-            case 'l':
-                arg = "long";
-                break;
-            case 's':
-                arg = "string";
-                break;
-            case 't':
-                arg = "boolean";
-                break;
-            case 'k':
-                arg = "symbol";
-                break;
-            case 'm':
-                arg = "date";
-                break;
-            case 'n':
-                arg = "timestamp";
-                break;
-            case 'u':
-                arg = "binary";
-                break;
-            case 'v':
-                arg = "var_arg";
-                break;
-            case 'c':
-                arg = "cursor";
-                break;
-            case 'r':
-                arg = "record";
-                break;
-            case 'h':
-                arg = "long256";
-                break;
-            case 'g':
-                arg = "geohash";
-                break;
-            case 'o':
-                arg = "null";
-                break;
-            case 'p':
-                arg = "reg_class";
-                break;
-            case 'q':
-                arg = "reg_procedure";
-                break;
-            case 'w':
-                arg = "array_string";
-                break;
-            case 'j':
-                arg = "long128";
-                break;
-            case 'z':
-                arg = "uuid";
-                break;
-            default:
-                throw new IllegalArgumentException("offending: '" + c + '\'');
-        }
-        return (Character.isLowerCase(c) ? "const " : "var ") + arg;
+    static {
+        typeNameMap.put('d', "double");
+        typeNameMap.put('b', "byte");
+        typeNameMap.put('e', "short");
+        typeNameMap.put('a', "char");
+        typeNameMap.put('f', "float");
+        typeNameMap.put('i', "int");
+        typeNameMap.put('l', "long");
+        typeNameMap.put('s', "string");
+        typeNameMap.put('t', "boolean");
+        typeNameMap.put('k', "symbol");
+        typeNameMap.put('m', "date");
+        typeNameMap.put('n', "timestamp");
+        typeNameMap.put('u', "binary");
+        typeNameMap.put('v', "var_arg");
+        typeNameMap.put('c', "cursor");
+        typeNameMap.put('r', "record");
+        typeNameMap.put('h', "long256");
+        typeNameMap.put('g', "geohash");
+        typeNameMap.put('o', "null");
+        typeNameMap.put('p', "reg_class");
+        typeNameMap.put('q', "reg_procedure");
+        typeNameMap.put('w', "array_string");
+        typeNameMap.put('j', "long128");
+        typeNameMap.put('z', "uuid");
     }
 }

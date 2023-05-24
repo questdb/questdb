@@ -403,11 +403,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
-        return new ApplyWal2TableJob(node.getEngine(), 1, 1);
+        return new ApplyWal2TableJob(node.getEngine(), 1, 1, null);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {
-        return new ApplyWal2TableJob(engine, 1, 1);
+        return new ApplyWal2TableJob(engine, 1, 1, null);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {

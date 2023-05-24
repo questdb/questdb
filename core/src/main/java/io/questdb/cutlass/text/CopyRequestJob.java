@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -39,6 +40,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -65,7 +67,11 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private TableWriter writer;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
 
-    public CopyRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
+    public CopyRequestJob(
+            final CairoEngine engine,
+            int workerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) throws SqlException {
         this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
         this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
         this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
@@ -74,7 +80,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
 
-        this.sqlCompiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, null);
+        this.sqlCompiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";

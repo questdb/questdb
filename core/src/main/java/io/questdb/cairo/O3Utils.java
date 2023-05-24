@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,7 +43,8 @@ public class O3Utils {
     public static void setupWorkerPool(
             WorkerPool workerPool,
             CairoEngine cairoEngine,
-            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
+            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration,
+            @Nullable FunctionFactoryCache functionFactoryCache
     ) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
@@ -51,7 +53,7 @@ public class O3Utils {
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
         if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
-            final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);
+            final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
             workerPool.freeOnExit(columnPurgeJob);
             workerPool.assign(columnPurgeJob);
         }

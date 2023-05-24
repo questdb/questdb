@@ -119,10 +119,14 @@ public class SqlCompiler implements Closeable {
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
-        this(engine, null);
+        this(engine, null, null);
     }
 
     public SqlCompiler(CairoEngine engine, @Nullable DatabaseSnapshotAgent snapshotAgent) {
+        this(engine, engine.getFunctionFactoryCache(), snapshotAgent);
+    }
+
+    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -137,7 +141,10 @@ public class SqlCompiler implements Closeable {
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
 
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-        this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+        this.functionParser = new FunctionParser(
+                configuration,
+                functionFactoryCache != null ? functionFactoryCache : engine.getFunctionFactoryCache()
+        );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
         this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 

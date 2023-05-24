@@ -163,7 +163,7 @@ public class HttpQueryTestBuilder {
                 }
 
                 if (cairoConfiguration.getSqlCopyInputRoot() != null) {
-                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount);
+                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount, null);
                     workerPool.assign(copyRequestJob);
                     workerPool.freeOnExit(copyRequestJob);
                 }

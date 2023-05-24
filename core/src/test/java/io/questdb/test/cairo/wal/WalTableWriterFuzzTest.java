@@ -977,7 +977,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             }
         }
 
-        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
+        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1, null);
         try {
             job.drain(0);
         } finally {

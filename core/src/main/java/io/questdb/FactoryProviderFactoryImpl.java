@@ -25,12 +25,17 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 
 public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
     public static final FactoryProviderFactory INSTANCE = new FactoryProviderFactoryImpl();
 
     @Override
-    public FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine) {
+    public FactoryProvider getInstance(
+            ServerConfiguration configuration,
+            CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache
+    ) {
         return new FactoryProviderImpl(configuration);
     }
 }

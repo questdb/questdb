@@ -125,6 +125,7 @@ public class Table2IlpTest {
                 conf,
                 engine,
                 workerPool,
+                compiler.getFunctionFactoryCache(),
                 snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         engine,
@@ -157,7 +158,7 @@ public class Table2IlpTest {
                 return 500;
             }
         }, engine, workerPool, workerPool);
-        O3Utils.setupWorkerPool(workerPool, engine, null);
+        O3Utils.setupWorkerPool(workerPool, engine, null, null);
         workerPool.start(LOG);
     }
 

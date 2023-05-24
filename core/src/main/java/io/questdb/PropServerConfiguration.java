@@ -39,6 +39,7 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -70,6 +71,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+
+    static {
+        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
+        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
+        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
+        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
+    }
+
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -173,7 +182,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3OpenColumnQueueCapacity;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
-    private final long o3PartitionSplitMinSize;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
@@ -400,6 +408,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int multipartHeaderBufferSize;
     private long multipartIdleSpinCount;
     private int netTestConnectionBufferSize;
+    private final long o3PartitionSplitMinSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -455,6 +464,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
+
     public PropServerConfiguration(
             String root,
             Properties properties,
@@ -462,7 +472,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        this(root, properties, env, log, buildInformation, FilesFacadeImpl.INSTANCE, (configuration, engine) -> DefaultFactoryProvider.INSTANCE);
+        this(root, properties, env, log, buildInformation, FilesFacadeImpl.INSTANCE, (configuration, engine, functionFactoryCache) -> DefaultFactoryProvider.INSTANCE);
     }
 
     public PropServerConfiguration(
@@ -1190,8 +1200,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public void init(CairoEngine engine) {
-        this.factoryProvider = fpf.getInstance(this, engine);
+    public void init(CairoEngine engine, FunctionFactoryCache functionFactoryCache) {
+        this.factoryProvider = fpf.getInstance(this, engine, functionFactoryCache);
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int workerCount) throws ServerConfigurationException {
@@ -1528,6 +1538,25 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
         }
 
+        private static <KeyT> void registerReplacements(
+                Map<KeyT, String> map,
+                KeyT old,
+                ConfigProperty... replacements) {
+            StringBuilder sb = new StringBuilder("Replaced by ");
+            for (int index = 0; index < replacements.length; ++index) {
+                if (index > 0) {
+                    sb.append(index < (replacements.length - 1)
+                            ? ", "
+                            : " and ");
+                }
+                String replacement = replacements[index].getPropertyPath();
+                sb.append('`');
+                sb.append(replacement);
+                sb.append('`');
+            }
+            map.put(old, sb.toString());
+        }
+
         public ValidationResult validate(Properties properties) {
             // Settings that used to be valid but no longer are.
             Map<String, String> obsolete = new HashMap<>();
@@ -1599,25 +1628,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return new ValidationResult(isError, sb.toString());
         }
 
-        private static <KeyT> void registerReplacements(
-                Map<KeyT, String> map,
-                KeyT old,
-                ConfigProperty... replacements) {
-            StringBuilder sb = new StringBuilder("Replaced by ");
-            for (int index = 0; index < replacements.length; ++index) {
-                if (index > 0) {
-                    sb.append(index < (replacements.length - 1)
-                            ? ", "
-                            : " and ");
-                }
-                String replacement = replacements[index].getPropertyPath();
-                sb.append('`');
-                sb.append(replacement);
-                sb.append('`');
-            }
-            map.put(old, sb.toString());
-        }
-
         protected Optional<ConfigProperty> lookupConfigProperty(String propName) {
             return PropertyKey.getByString(propName).map(prop -> prop);
         }
@@ -1643,6 +1653,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropCairoConfiguration implements CairoConfiguration {
         private final LongSupplier copyIDSupplier = () -> getRandom().nextPositiveLong();
+
+        @Override
+        public LongSupplier getCopyIDSupplier() {
+            return copyIDSupplier;
+        }
 
         @Override
         public boolean attachPartitionCopy() {
@@ -1752,11 +1767,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getConfRoot() {
             return confRoot;
-        }
-
-        @Override
-        public LongSupplier getCopyIDSupplier() {
-            return copyIDSupplier;
         }
 
         @Override
@@ -3991,12 +4001,5 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean haltOnError() {
             return sharedWorkerHaltOnError;
         }
-    }
-
-    static {
-        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
-        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
-        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
-        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
     }
 }

@@ -91,11 +91,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
+        ffCache = new FunctionFactoryCache(
+                configuration,
+                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+        );
         this.configuration = configuration;
-        ffCache = new FunctionFactoryCache(configuration, ServiceLoader.load(
-                FunctionFactory.class,
-                FunctionFactory.class.getClassLoader()
-        ));
         this.copyContext = new CopyContext(configuration);
         this.metrics = metrics;
         this.tableSequencerAPI = new TableSequencerAPI(this, configuration);

@@ -33,8 +33,13 @@ public class SqlCompilerFactoryImpl implements SqlCompilerFactory {
     @Override
     public SqlCompiler getInstance(
             CairoEngine engine,
+            @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
-        return new SqlCompiler(engine, snapshotAgent);
+        return new SqlCompiler(
+                engine,
+                functionFactoryCache,
+                snapshotAgent
+        );
     }
 }

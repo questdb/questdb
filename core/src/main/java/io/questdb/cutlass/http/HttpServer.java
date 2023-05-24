@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -125,6 +126,7 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             int sharedWorkerCount,
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
+            FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent
     ) {
         server.bind(new HttpRequestProcessorFactory() {
@@ -164,6 +166,7 @@ public class HttpServer implements Closeable {
                         cairoEngine,
                         workerPool.getWorkerCount(),
                         sharedWorkerCount,
+                        functionFactoryCache,
                         snapshotAgent
                 );
             }

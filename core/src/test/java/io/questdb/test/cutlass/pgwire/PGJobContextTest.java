@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGConnectionContext;
+import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -5374,6 +5376,7 @@ nodejs code:
                     conf,
                     engine,
                     workerPool,
+                    compiler.getFunctionFactoryCache(),
                     snapshotAgent
             )) {
                 workerPool.start(LOG);
@@ -8989,6 +8992,7 @@ create table tab as (
                 conf,
                 engine,
                 workerPool,
+                compiler.getFunctionFactoryCache(),
                 snapshotAgent,
                 createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry),
                 registry
@@ -9136,6 +9140,7 @@ create table tab as (
                      conf,
                      engine,
                      pool,
+                     compiler.getFunctionFactoryCache(),
                      snapshotAgent,
                      createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry),
                      registry

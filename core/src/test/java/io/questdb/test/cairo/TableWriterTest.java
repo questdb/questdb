@@ -4034,7 +4034,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             engine.releaseInactive();
-            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine, null)) {
                 purgeJob.run(0);
             }
 

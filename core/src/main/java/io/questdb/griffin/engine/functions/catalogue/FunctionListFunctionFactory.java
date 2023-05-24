@@ -213,7 +213,12 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                         return funcFactory.getSignature();
                     }
                     if (col == SIGNATURE_TRANSLATED_COLUMN) {
-                        return FunctionFactoryDescriptor.translateSignature(funcFactory.getSignature());
+                        try {
+                            return FunctionFactoryDescriptor.translateSignature(funcFactory.getSignature());
+                        } catch (SqlException err) {
+                            // this cannot happen, all signatures are extracted programmatically
+                            return err.getFlyweightMessage().toString();
+                        }
                     }
                     if (col == TYPE_COLUMN) {
                         return FunctionFactoryType.getType(funcFactory).name();
