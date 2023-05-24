@@ -214,6 +214,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                         return funcFactory.getSignature();
                     }
                     if (col == SIGNATURE_TRANSLATED_COLUMN) {
+                        sink.clear();
                         return FunctionFactoryDescriptor.translateSignature(funcName, funcFactory.getSignature(), sink);
                     }
                     if (col == TYPE_COLUMN) {

@@ -112,12 +112,14 @@ public class FunctionFactoryDescriptorTest {
 
     @Test
     public void testTranslateSignatureWithArray() {
+        sink.clear();
         FunctionFactoryDescriptor.translateSignature("=", "=(Ss[]aV)", sink);
         Assert.assertEquals("=(string, const string[], const char, var_arg)", sink.toString());
     }
 
     private static void assertFailTranslateSignature(CharSequence funcName, String signature, String expectedErrorMsg) {
         try {
+            sink.clear();
             FunctionFactoryDescriptor.translateSignature(funcName, signature, sink);
             Assert.fail();
         } catch (IllegalArgumentException err) {
