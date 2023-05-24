@@ -41,8 +41,8 @@ public class MapFactory {
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes
     ) {
-        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();// : configuration.getSqlMapKeyCapacity();
-        final int pageSize = configuration.getSqlSmallMapPageSize();// : configuration.getSqlMapPageSize();
+        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
+        final int pageSize = configuration.getSqlSmallMapPageSize();
         CharSequence mapType = configuration.getDefaultMapType();
         if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
             return new FastMap(
