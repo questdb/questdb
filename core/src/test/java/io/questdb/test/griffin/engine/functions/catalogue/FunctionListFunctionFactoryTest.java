@@ -26,8 +26,8 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -73,22 +73,22 @@ public class FunctionListFunctionFactoryTest extends AbstractGriffinTest {
         return names;
     }
 
-    private static Set<String> expectedFunctions() throws SqlException {
+    private static Set<String> expectedFunctions() {
         Set<String> lines = new HashSet<>();
-        StringBuilder sb = new StringBuilder();
+        StringSink sink2 = new StringSink();
         for (FunctionFactory factory : ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())) {
             String signature = factory.getSignature();
             String name = signature.substring(0, signature.indexOf('('));
             if (isExcluded(name)) {
                 continue;
             }
-            sb.setLength(0);
-            sb.append(name).append('\t');
-            sb.append(signature).append('\t');
-            sb.append(FunctionFactoryDescriptor.translateSignature(signature)).append('\t');
-            sb.append(factory.isRuntimeConstant()).append('\t');
-            sb.append(FunctionListFunctionFactory.FunctionFactoryType.getType(factory)).append('\n');
-            lines.add(sb.toString());
+            sink2.clear();
+            sink2.put(name).put('\t');
+            sink2.put(signature).put('\t');
+            FunctionFactoryDescriptor.translateSignature(name, signature, sink2).put('\t');
+            sink2.put(factory.isRuntimeConstant()).put('\t');
+            sink2.put(FunctionListFunctionFactory.FunctionFactoryType.getType(factory).name()).put('\n');
+            lines.add(sink2.toString());
         }
         return lines;
     }

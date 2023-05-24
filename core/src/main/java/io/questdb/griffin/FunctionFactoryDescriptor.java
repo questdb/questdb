@@ -211,23 +211,38 @@ public class FunctionFactoryDescriptor {
         return (short) (mask & TYPE_MASK);
     }
 
-    public static String translateSignature(String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink sb = Misc.getThreadLocalBuilder();
-        sb.put(signature);
-        sb.clear(openBraceIndex + 1);
+    public static StringSink translateSignature(CharSequence funcName, String signature, StringSink sink) {
+        int openBraceIndex;
+        try {
+            openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        } catch (SqlException err) {
+            throw new IllegalArgumentException("offending: '" + signature + "', reason: " + err.getMessage());
+        }
+        sink.put(funcName).put('(');
         for (int i = openBraceIndex + 1, n = signature.length() - 1; i < n; i++) {
             char c = signature.charAt(i);
             String type = typeNameMap.get(c | 32);
             if (type == null) {
                 throw new IllegalArgumentException("offending: '" + c + '\'');
             }
-            sb.put((Character.isLowerCase(c) ? "const " : "var ") + type);
+            if (c != '[') {
+                if (Character.isLowerCase(c)) {
+                    sink.put("const ");
+                }
+            } else {
+                if (i < 3 || i + 2 > n || signature.charAt(i + 1) != ']') {
+                    throw new IllegalArgumentException("offending array: '" + c + '\'');
+                }
+                sink.clear(sink.length() - 2); // remove the preceding comma
+                i++; // skip closing bracket
+            }
+            sink.put(type);
             if (i + 1 < n) {
-                sb.put(", ");
+                sink.put(", ");
             }
         }
-        return sb.put(')').toString();
+        sink.put(')');
+        return sink;
     }
 
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
@@ -313,5 +328,6 @@ public class FunctionFactoryDescriptor {
         typeNameMap.put('w', "array_string");
         typeNameMap.put('j', "long128");
         typeNameMap.put('z', "uuid");
+        typeNameMap.put('[' | 32, "[]");
     }
 }

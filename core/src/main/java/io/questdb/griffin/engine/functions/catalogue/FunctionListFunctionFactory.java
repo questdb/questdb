@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 
 public class FunctionListFunctionFactory implements FunctionFactory {
 
@@ -95,7 +96,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
     }
 
     private static class FunctionsCursorFactory extends AbstractRecordCursorFactory {
-        private final FunctionsRecordCursor cursor;
+        private final FunctionsRecordCursor cursor = new FunctionsRecordCursor();
         private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories;
         private final ObjList<CharSequence> funcNames;
 
@@ -103,7 +104,6 @@ public class FunctionListFunctionFactory implements FunctionFactory {
             super(METADATA);
             this.factories = factories;
             this.funcNames = factories.keys();
-            cursor = new FunctionsRecordCursor();
         }
 
         @Override
@@ -193,6 +193,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
             }
 
             private class FunctionRecord implements Record {
+                private final StringSink sink = new StringSink();
                 private FunctionFactory funcFactory;
                 private CharSequence funcName;
 
@@ -213,12 +214,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                         return funcFactory.getSignature();
                     }
                     if (col == SIGNATURE_TRANSLATED_COLUMN) {
-                        try {
-                            return FunctionFactoryDescriptor.translateSignature(funcFactory.getSignature());
-                        } catch (SqlException err) {
-                            // this cannot happen, all signatures are extracted programmatically
-                            return err.getFlyweightMessage().toString();
-                        }
+                        return FunctionFactoryDescriptor.translateSignature(funcName, funcFactory.getSignature(), sink);
                     }
                     if (col == TYPE_COLUMN) {
                         return FunctionFactoryType.getType(funcFactory).name();
@@ -239,6 +235,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                 private void init(CharSequence funcName, FunctionFactory factory) {
                     this.funcName = funcName;
                     this.funcFactory = factory;
+                    sink.clear();
                 }
             }
         }
