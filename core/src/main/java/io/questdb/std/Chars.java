@@ -72,12 +72,12 @@ public final class Chars {
      * @return byte array representation of the input string
      */
     public static byte[] asciiToByteArray(CharSequence ascii) {
-        byte[] encodedPubKeyBytes = new byte[ascii.length()];
+        byte[] dst = new byte[ascii.length()];
         for (int i = 0; i < ascii.length(); i++) {
             assert ascii.charAt(i) < 128;
-            encodedPubKeyBytes[i] = (byte) ascii.charAt(i);
+            dst[i] = (byte) ascii.charAt(i);
         }
-        return encodedPubKeyBytes;
+        return dst;
     }
 
     public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
