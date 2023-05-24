@@ -164,7 +164,6 @@ public class FastMap implements Map, Reopenable {
         free = (int) (this.keyCapacity * loadFactor);
         offsets = new DirectLongList(this.keyCapacity, listMemoryTag);
         offsets.setPos(this.keyCapacity);
-        offsets.zero(0);
         nResizes = 0;
         this.maxResizes = maxResizes;
 
@@ -624,16 +623,6 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putStr(CharSequence value, int lo, int hi) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putStrLowerCase(CharSequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putStrLowerCase(CharSequence value, int lo, int hi) {
             throw new UnsupportedOperationException();
         }
 

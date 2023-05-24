@@ -149,10 +149,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-            if (!isMapBuilt) {
-                buildMapOfSlaveRecords();
-                isMapBuilt = true;
-            }
+            buildMapOfSlaveRecords();
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
@@ -192,20 +189,23 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         private void buildMapOfSlaveRecords() {
-            final Record record = slaveCursor.getRecord();
-            while (slaveCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+            if (!isMapBuilt) {
+                final Record record = slaveCursor.getRecord();
+                while (slaveCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
 
-                MapKey key = joinKeyMap.withKey();
-                key.put(record, slaveKeySink);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    final long offset = slaveChain.put(record.getRowId(), -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
-                } else {
-                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
+                    MapKey key = joinKeyMap.withKey();
+                    key.put(record, slaveKeySink);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        final long offset = slaveChain.put(record.getRowId(), -1);
+                        value.putLong(0, offset);
+                        value.putLong(1, offset);
+                    } else {
+                        value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
+                    }
                 }
+                isMapBuilt = true;
             }
         }
 

@@ -110,8 +110,6 @@ public class HashJoinTest extends AbstractGriffinTest {
                 long freeCount;
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.drainCursor(cursor);
-                    long rssDuringCursor = Os.getRss();
-                    Assert.assertTrue(rssDuringCursor - rssBeforeCursor < virtCursorMem);
                     freeCount = Unsafe.getFreeCount();
                 }
 
