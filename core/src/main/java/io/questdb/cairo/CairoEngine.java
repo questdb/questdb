@@ -612,6 +612,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
+    public void notifyDropped(TableToken tableToken) {
+        tableNameRegistry.dropTable(tableToken);
+    }
+
     public void notifyWalTxnCommitted(TableToken tableToken, long txn) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
