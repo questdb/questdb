@@ -161,8 +161,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    boolean isClosed();
-
     boolean recordCursorSupportsRandomAccess();
 
     default boolean supportPageFrameCursor() {

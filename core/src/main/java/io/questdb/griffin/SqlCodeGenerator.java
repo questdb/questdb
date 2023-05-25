@@ -3629,13 +3629,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return null;
             }
         } catch (Throwable e) {
-            //factories could be already closed as part of 'union' factory in nested call
-            if (!factoryA.isClosed()) {
-                Misc.free(factoryA);
-            }
-            if (!factoryB.isClosed()) {
-                Misc.free(factoryB);
-            }
+            Misc.free(factoryA);
+            Misc.free(factoryB);
             Misc.freeObjList(castFunctionsA);
             Misc.freeObjList(castFunctionsB);
             throw e;
@@ -4707,11 +4702,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         @Override
         public RecordMetadata getMetadata() {
             return null;
-        }
-
-        @Override
-        public boolean isClosed() {
-            return factory.isClosed();
         }
 
         @Override
