@@ -175,7 +175,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
                     try {
-                        final SqlCompiler updateCompiler = new SqlCompiler(engine, null, snapshotAgent);
+                        final SqlCompiler updateCompiler = new SqlCompiler(engine, snapshotAgent);
                         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
@@ -223,7 +223,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     });
 
                     try {
-                        final SqlCompiler readerCompiler = new SqlCompiler(engine, null, snapshotAgent);
+                        final SqlCompiler readerCompiler = new SqlCompiler(engine, snapshotAgent);
                         barrier.await();
                         try (TableReader rdr = getReader("up")) {
                             while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
