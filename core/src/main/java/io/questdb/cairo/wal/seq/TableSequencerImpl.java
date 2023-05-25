@@ -276,6 +276,22 @@ public class TableSequencerImpl implements TableSequencer {
         return txn;
     }
 
+    @Override
+    public void reload() {
+        tableTransactionLog.reload(path);
+        try (var metaChangeCursor = getMetadataChangeLog(metadata.getMetadataVersion())) {
+            boolean updated = false;
+            while (metaChangeCursor.hasNext()) {
+                var change = metaChangeCursor.next();
+                change.apply(metadataSvc, true);
+                updated = true;
+            }
+            if (updated) {
+                metadata.syncToMetaFile();
+            }
+        }
+    }
+
     public void open() {
         try {
             walIdGenerator.open(path);

@@ -79,9 +79,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void create(TableStructure model, TableToken tableToken, Path path, int pathLen, int tableId) {
+        create(model, tableToken, path, pathLen, tableId, true);
+    }
+
+    public void create(TableStructure model, TableToken tableToken, Path path, int pathLen, int tableId, boolean writeInitialMetadata) {
         copyFrom(model, tableToken, tableId, 0, false);
         openSmallFile(ff, path, pathLen, metaMem, WalUtils.INITIAL_META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        TableUtils.writeMetadata(model, ColumnType.VERSION, tableId, metaMem);
+        if (writeInitialMetadata) {
+            TableUtils.writeMetadata(model, ColumnType.VERSION, tableId, metaMem);
+        }
         metaMem.sync(false);
         metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
         switchTo(path, pathLen);

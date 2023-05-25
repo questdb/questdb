@@ -290,6 +290,16 @@ public class TableSequencerAPI implements QuietCloseable {
         return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
     }
 
+    public void reload(TableToken tableToken) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                tableSequencer.reload();
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+        }
+    }
+
     public void reloadMetadataConditionally(
             final TableToken tableToken,
             long expectedStructureVersion,

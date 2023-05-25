@@ -302,6 +302,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             break;
 
                         case DROP_TABLE_WALID:
+                            engine.notifyDropped(tableToken);
                             return tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
 
                         case 0:
