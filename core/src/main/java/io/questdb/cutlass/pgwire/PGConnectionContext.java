@@ -2042,7 +2042,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case CompiledQuery.PSEUDO_SELECT:
                 final RecordCursorFactory factory = cq.getRecordCursorFactory();
-                // factory may be null in the COPY 'id' CANCEL; case
                 if (factory != null) {
                     // this query is non-cacheable
                     typesAndSelectIsCached = false;

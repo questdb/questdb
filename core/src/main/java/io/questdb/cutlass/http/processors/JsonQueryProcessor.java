@@ -524,7 +524,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         if (factory == null) {
-            // Must be COPY 'id' CANCEL; case
             updateMetricsAndSendConfirmation(state, cq, keepAliveHeader);
             return;
         }
