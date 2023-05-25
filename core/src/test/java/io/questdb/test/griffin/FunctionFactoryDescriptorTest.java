@@ -33,10 +33,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class FunctionFactoryDescriptorTest {
+
+    private static final StringSink sink = new StringSink();
 
     @Test
     public void testSignatureWithArrayAsAFirstArgument() throws SqlException {
@@ -96,6 +100,31 @@ public class FunctionFactoryDescriptorTest {
         Assert.assertTrue(isArray(descriptor, 1));
         Assert.assertTrue(isConstant(descriptor, 1));
         assertType(descriptor, 1);
+    }
+
+    @Test
+    public void testTranslateBrokenSignatureWithArray() {
+        assertFailTranslateSignature("=", "=(Ss]aV)", "offending: ']'");
+        assertFailTranslateSignature("abs", "abs(S[)", "offending array: '['");
+        assertFailTranslateSignature(">", "=([])", "offending array: '['");
+        assertFailTranslateSignature("not", "=(s])", "offending: ']'");
+    }
+
+    @Test
+    public void testTranslateSignatureWithArray() {
+        sink.clear();
+        FunctionFactoryDescriptor.translateSignature("=", "=(Ss[]aV)", sink);
+        Assert.assertEquals("=(string, const string[], const char, var_arg)", sink.toString());
+    }
+
+    private static void assertFailTranslateSignature(CharSequence funcName, String signature, String expectedErrorMsg) {
+        try {
+            sink.clear();
+            FunctionFactoryDescriptor.translateSignature(funcName, signature, sink);
+            Assert.fail();
+        } catch (IllegalArgumentException err) {
+            TestUtils.assertEquals(expectedErrorMsg, err.getMessage());
+        }
     }
 
     private static void assertType(FunctionFactoryDescriptor descriptor, int argIndex) {

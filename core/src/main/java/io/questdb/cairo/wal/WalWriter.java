@@ -312,10 +312,6 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
-    public int getSegmentId() {
-        return segmentId;
-    }
-
     public long getSegmentRowCount() {
         return segmentRowCount;
     }
@@ -458,7 +454,7 @@ public class WalWriter implements TableWriterAPI {
                 try {
                     final int timestampIndex = metadata.getTimestampIndex();
                     LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                            .$(path).$(Files.SEPARATOR).$(segmentId)
+                            .$(path).$(Files.SEPARATOR).$(oldSegmentId)
                             .$(", newSegment=").$(newSegmentId)
                             .$(", rowCount=").$(uncommittedRows).I$();
 
@@ -732,77 +728,6 @@ public class WalWriter implements TableWriterAPI {
         return txn;
     }
 
-    private void configureSymbolTable() {
-        boolean initialized = false;
-        try {
-            int denseSymbolIndex = 0;
-
-            for (int i = 0; i < columnCount; i++) {
-                int columnType = metadata.getColumnType(i);
-                if (!ColumnType.isSymbol(columnType)) {
-                    // Maintain sparse list of symbol writers
-                    // Note: we don't need to set initialSymbolCounts and symbolMapNullFlags values
-                    // here since we already filled it with -1 and false initially
-                    symbolMapReaders.extendAndSet(i, null);
-                    symbolMaps.extendAndSet(i, null);
-                    utf8SymbolMaps.extendAndSet(i, null);
-                } else {
-                    if (txReader == null) {
-                        txReader = new TxReader(ff);
-                        columnVersionReader = new ColumnVersionReader();
-                    }
-
-                    if (!initialized) {
-                        MillisecondClock milliClock = configuration.getMillisecondClock();
-                        long spinLockTimeout = configuration.getSpinLockTimeout();
-
-                        // todo: use own path
-                        Path path = Path.PATH2.get();
-                        path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
-
-                        // Does not matter which PartitionBy, as long as it is partitioned
-                        // WAL tables must be partitioned
-                        txReader.ofRO(path, PartitionBy.DAY);
-                        path.of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME).$();
-                        columnVersionReader.ofRO(ff, path);
-
-                        initialized = true;
-                        long structureVersion = getMetadataVersion();
-
-                        do {
-                            TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
-                            if (txReader.getColumnStructureVersion() != structureVersion) {
-                                initialized = false;
-                                break;
-                            }
-                            columnVersionReader.readSafe(milliClock, spinLockTimeout);
-                        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
-                    }
-
-                    if (initialized) {
-                        int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
-                        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
-                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
-                    } else {
-                        // table on disk structure version does not match the structure version of the WalWriter
-                        // it is not possible to re-use table symbol table because the column name may not match.
-                        // The symbol counts stored as dense in _txn file and removal of symbols
-                        // shifts the counts that's why it's not possible to find out the symbol count if metadata versions
-                        // don't match.
-                        configureSymbolMapWriter(i, metadata.getColumnName(i), 0, COLUMN_NAME_TXN_NONE);
-                    }
-                }
-
-                if (columnType == ColumnType.SYMBOL || columnType == -ColumnType.SYMBOL) {
-                    denseSymbolIndex++;
-                }
-            }
-        } finally {
-            Misc.free(columnVersionReader);
-            Misc.free(txReader);
-        }
-    }
-
     private void checkDistressed() {
         if (!distressed) {
             return;
@@ -969,9 +894,75 @@ public class WalWriter implements TableWriterAPI {
         symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
     }
 
-    private long getColumnStructureVersion() {
-        // Sequencer metadata version is the same as column structure version of the table.
-        return metadata.getMetadataVersion();
+    private void configureSymbolTable() {
+        boolean initialized = false;
+        try {
+            int denseSymbolIndex = 0;
+
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = metadata.getColumnType(i);
+                if (!ColumnType.isSymbol(columnType)) {
+                    // Maintain sparse list of symbol writers
+                    // Note: we don't need to set initialSymbolCounts and symbolMapNullFlags values
+                    // here since we already filled it with -1 and false initially
+                    symbolMapReaders.extendAndSet(i, null);
+                    symbolMaps.extendAndSet(i, null);
+                    utf8SymbolMaps.extendAndSet(i, null);
+                } else {
+                    if (txReader == null) {
+                        txReader = new TxReader(ff);
+                        columnVersionReader = new ColumnVersionReader();
+                    }
+
+                    if (!initialized) {
+                        MillisecondClock milliClock = configuration.getMillisecondClock();
+                        long spinLockTimeout = configuration.getSpinLockTimeout();
+
+                        // todo: use own path
+                        Path path = Path.PATH2.get();
+                        path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                        // Does not matter which PartitionBy, as long as it is partitioned
+                        // WAL tables must be partitioned
+                        txReader.ofRO(path, PartitionBy.DAY);
+                        path.of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME).$();
+                        columnVersionReader.ofRO(ff, path);
+
+                        initialized = true;
+                        long structureVersion = getMetadataVersion();
+
+                        do {
+                            TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
+                            if (txReader.getColumnStructureVersion() != structureVersion) {
+                                initialized = false;
+                                break;
+                            }
+                            columnVersionReader.readSafe(milliClock, spinLockTimeout);
+                        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+                    }
+
+                    if (initialized) {
+                        int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
+                        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
+                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
+                    } else {
+                        // table on disk structure version does not match the structure version of the WalWriter
+                        // it is not possible to re-use table symbol table because the column name may not match.
+                        // The symbol counts stored as dense in _txn file and removal of symbols
+                        // shifts the counts that's why it's not possible to find out the symbol count if metadata versions
+                        // don't match.
+                        configureSymbolMapWriter(i, metadata.getColumnName(i), 0, COLUMN_NAME_TXN_NONE);
+                    }
+                }
+
+                if (columnType == ColumnType.SYMBOL || columnType == -ColumnType.SYMBOL) {
+                    denseSymbolIndex++;
+                }
+            }
+        } finally {
+            Misc.free(columnVersionReader);
+            Misc.free(txReader);
+        }
     }
 
     private MemoryMA createSecondaryMem(int columnType) {
@@ -1020,6 +1011,11 @@ public class WalWriter implements TableWriterAPI {
 
     private void freeSymbolMapReaders() {
         Misc.freeObjListIfCloseable(symbolMapReaders);
+    }
+
+    private long getColumnStructureVersion() {
+        // Sequencer metadata version is the same as column structure version of the table.
+        return metadata.getMetadataVersion();
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -1177,7 +1173,12 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void releaseSegmentLock(int segmentId, int segmentLockFd) {
-        if (!ff.close(segmentLockFd)) {
+        if (ff.close(segmentLockFd)) {
+            LOG.debug().$("released segment lock [walId=").$(walId)
+                    .$(", segmentId=").$(segmentId)
+                    .$(", fd=").$(segmentLockFd)
+                    .$(']').$();
+        } else {
             LOG.error()
                     .$("cannot close segment lock fd [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
@@ -1189,6 +1190,14 @@ public class WalWriter implements TableWriterAPI {
     private void releaseWalLock() {
         if (ff.close(walLockFd)) {
             walLockFd = -1;
+            LOG.debug().$("released WAL lock [walId=").$(walId)
+                    .$(", fd=").$(walLockFd)
+                    .$(']').$();
+        } else {
+            LOG.error()
+                    .$("cannot close WAL lock fd [walId=").$(walId)
+                    .$(", fd=").$(walLockFd)
+                    .$(", errno=").$(ff.errno()).I$();
         }
     }
 
