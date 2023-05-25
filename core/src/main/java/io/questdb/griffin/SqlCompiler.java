@@ -1304,7 +1304,7 @@ public class SqlCompiler implements Closeable {
         } else {
             copyFactory = compileCopy(executionContext.getSecurityContext(), copyModel);
         }
-        return compiledQuery.ofCopyLocal(copyFactory);
+        return compiledQuery.ofPseudoSelect(copyFactory);
     }
 
     private long copyOrdered(
