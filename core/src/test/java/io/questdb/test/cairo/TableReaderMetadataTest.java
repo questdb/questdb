@@ -422,7 +422,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     long structVersion;
                     try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
                         manipulator.restructure(writer);
-                        structVersion = writer.getStructureVersion();
+                        structVersion = writer.getMetadataVersion();
                     }
                     long pTransitionIndex = metadata.createTransitionIndex(structVersion);
                     try {

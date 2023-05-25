@@ -525,7 +525,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpStructureVersion();
+        bumpColumnStructureVersion();
 
         metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex);
 
@@ -1211,6 +1211,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
     }
 
+    public long getColumnStructureVersion() {
+        return txWriter.getColumnStructureVersion();
+    }
+
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
@@ -1243,6 +1247,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return metadata;
     }
 
+    @Override
+    public long getMetadataVersion() {
+        return txWriter.getMetadataVersion();
+    }
+
     public long getO3RowCount() {
         return hasO3() ? getO3RowCount0() : 0L;
     }
@@ -1262,7 +1271,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
-        return splitMinSizeBytes / avgRecordSize;
+        return splitMinSizeBytes /
+                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata)));
     }
 
     public long getPartitionSize(int partitionIndex) {
@@ -1290,11 +1300,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public MemoryMA getStorageColumn(int index) {
         return columns.getQuick(index);
-    }
-
-    @Override
-    public long getStructureVersion() {
-        return txWriter.getStructureVersion();
     }
 
     @Override
@@ -1842,7 +1847,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpStructureVersion();
+        bumpColumnStructureVersion();
 
         metadata.removeColumn(index);
         if (timestamp) {
@@ -1920,7 +1925,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpStructureVersion();
+        bumpColumnStructureVersion();
 
         // Call finish purge to remove old column files before renaming them in metadata
         finishColumnPurge();
@@ -2729,6 +2734,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void bumpColumnStructureVersion() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.bumpColumnStructureVersion(this.denseSymbolMapWriters);
+        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
+    }
+
     private void bumpMasterRef() {
         if ((masterRef & 1) == 0) {
             masterRef++;
@@ -2737,11 +2749,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void bumpStructureVersion() {
+    private void bumpMetadataVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-        assert txWriter.getStructureVersion() == metadata.getStructureVersion();
+        txWriter.bumpMetadataVersion(this.denseSymbolMapWriters);
+        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
@@ -3124,9 +3136,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
         ddlMem.putLong(metaMem.getLong(META_OFFSET_O3_MAX_LAG));
-        ddlMem.putLong(txWriter.getStructureVersion() + 1);
+        ddlMem.putLong(txWriter.getMetadataVersion() + 1);
         ddlMem.putBool(metaMem.getBool(META_OFFSET_WAL_ENABLED));
-        metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
+        metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
     }
 
     /**
@@ -3407,7 +3419,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpStructureVersion();
+        bumpMetadataVersion();
         metadata.setTableVersion();
     }
 
@@ -3591,6 +3603,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
                 hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+                long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
+                columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
             }
 
             if (ColumnType.isSymbol(columnType)) {
@@ -6677,7 +6691,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // if there are no rows in the partition yet.
                         // The record size used to estimate the partition size
                         // to split partition in O3 commit when necessary
-                        dataSizeBytes = Long.BYTES + 20;
+                        dataSizeBytes = TableUtils.ESTIMATED_VAR_COL_SIZE;
                     }
                 }
             }
@@ -6908,7 +6922,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException e) {
             throwDistressException(e);
         }
-        bumpStructureVersion();
+        bumpMetadataVersion();
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {

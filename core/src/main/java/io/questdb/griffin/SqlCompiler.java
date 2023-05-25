@@ -1851,7 +1851,7 @@ public class SqlCompiler implements Closeable {
             return new UpdateOperation(
                     updateTableToken,
                     metadata.getTableId(),
-                    metadata.getStructureVersion(),
+                    metadata.getMetadataVersion(),
                     lexer.getPosition()
             );
         }
@@ -1891,8 +1891,8 @@ public class SqlCompiler implements Closeable {
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
         try (TableRecordMetadata metadata = engine.getMetadata(token)) {
-            final long structureVersion = metadata.getStructureVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), structureVersion);
+            final long metadataVersion = metadata.getMetadataVersion();
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
@@ -2972,7 +2972,7 @@ public class SqlCompiler implements Closeable {
 
                         // _txn
                         mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                        TableUtils.createTxn(mem, symbolMapCount, 0L, 0L, TableUtils.INITIAL_TXN, 0L, metadata.getStructureVersion(), 0L, 0L);
+                        TableUtils.createTxn(mem, symbolMapCount, 0L, 0L, TableUtils.INITIAL_TXN, 0L, metadata.getMetadataVersion(), 0L, 0L);
 
                         // _cv
                         mem.smallFile(ff, auxPath.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
@@ -3010,7 +3010,7 @@ public class SqlCompiler implements Closeable {
                             mem.smallFile(ff, auxPath.trimTo(len).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                             WalWriterMetadata.syncToMetaFile(
                                     mem,
-                                    metadata.getStructureVersion(),
+                                    metadata.getMetadataVersion(),
                                     metadata.getColumnCount(),
                                     metadata.getTimestampIndex(),
                                     metadata.getTableId(),

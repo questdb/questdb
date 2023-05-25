@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.ex.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -346,7 +347,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
                     headerParser.getHeader("Authorization"),
-                    configuration.readOnlySecurityContext()
+                    SecurityContextFactory.HTTP
             );
         }
     }

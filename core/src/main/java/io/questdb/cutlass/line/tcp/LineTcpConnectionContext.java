@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
@@ -46,6 +47,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
+    private final Authenticator authenticator;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final long checkIdleInterval;
     private final long commitInterval;
@@ -67,7 +69,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long lastQueueFullLogMillis = 0;
     private long nextCheckIdleTime;
     private long nextCommitTime;
-    private final Authenticator authenticator;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         this.configuration = configuration;
@@ -86,7 +87,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
-        this.authenticator = configuration.getFactoryProvider().getAuthenticatorFactory().getLineTCPAuthenticator(recvBufStart, recvBufEnd);
+        this.authenticator = configuration.getFactoryProvider().getAuthenticatorFactory().getLineTCPAuthenticator();
     }
 
     public void checkIdle(long millis) {
@@ -182,29 +183,18 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 netIoJob.releaseWalTableDetails();
             }
         } else {
-            try {
-                IOContextResult result = authenticator.handleIO(netIoJob);
-                if (authenticator.isAuthenticated()) {
-                    assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal());
-                    recvBufPos = authenticator.getRecvBufPos();
-                    resetParser(authenticator.getRecvBufPseudoStart());
-                    return parseMeasurements(netIoJob);
-                }
-                return result;
-            } catch (AuthenticatorException e) {
-                return IOContextResult.NEEDS_DISCONNECT;
-            }
+            // uncommon branch in a separate method to avoid polluting common path
+            return handleAuthentication(netIoJob);
         }
     }
 
     @Override
     public LineTcpConnectionContext of(int fd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-        authenticator.init(fd);
+        authenticator.init(fd, recvBufStart, recvBufEnd, 0, 0);
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null);
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
         }
         return super.of(fd, dispatcher);
     }
@@ -231,6 +221,34 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             } else {
                 LOG.info().$('[').$(fd).$("] peer disconnected").$();
             }
+        }
+    }
+
+    private IOContextResult handleAuthentication(NetworkIOJob netIoJob) {
+        try {
+            int result = authenticator.handleIO();
+            switch (result) {
+                case Authenticator.NEEDS_WRITE:
+                    return IOContextResult.NEEDS_WRITE;
+                case Authenticator.OK:
+                    assert authenticator.isAuthenticated();
+                    assert securityContext == DenyAllSecurityContext.INSTANCE;
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), SecurityContextFactory.ILP);
+                    recvBufPos = authenticator.getRecvBufPos();
+                    resetParser(authenticator.getRecvBufPseudoStart());
+                    return parseMeasurements(netIoJob);
+                case Authenticator.NEEDS_READ:
+                    return IOContextResult.NEEDS_READ;
+                case Authenticator.NEEDS_DISCONNECT:
+                    return IOContextResult.NEEDS_DISCONNECT;
+                case Authenticator.QUEUE_FULL:
+                    return IOContextResult.QUEUE_FULL;
+                default:
+                    LOG.error().$("unexpected authenticator result [result=").$(result).I$();
+                    return IOContextResult.NEEDS_DISCONNECT;
+            }
+        } catch (AuthenticatorException e) {
+            return IOContextResult.NEEDS_DISCONNECT;
         }
     }
 
@@ -333,13 +351,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
 
-                        if (!read()) {
-                            if (peerDisconnected) {
-                                return IOContextResult.NEEDS_DISCONNECT;
-                            }
-                            return IOContextResult.NEEDS_READ;
+                        if (peerDisconnected) {
+                            return IOContextResult.NEEDS_DISCONNECT;
                         }
-                        break;
+                        return IOContextResult.NEEDS_READ;
                     }
                 }
             } catch (CairoException ex) {

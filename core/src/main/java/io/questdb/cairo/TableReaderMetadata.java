@@ -38,11 +38,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int maxUncommittedRows;
     private MemoryMR metaMem;
+    private int metadataVersion;
     private long o3MaxLag;
     private int partitionBy;
     private Path path;
     private int plen;
-    private long structureVersion;
     private int tableId;
     private TableToken tableToken;
     private MemoryMR transitionMeta;
@@ -79,7 +79,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         columnMetadata.setPos(columnCount);
         int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-        this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        this.metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
@@ -160,14 +160,14 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         transitionMeta = Misc.free(transitionMeta);
     }
 
-    public long createTransitionIndex(long txnStructureVersion) {
+    public long createTransitionIndex(long txnMetadataVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getMRInstance();
         }
 
         transitionMeta.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
-        if (transitionMeta.size() >= TableUtils.META_OFFSET_STRUCTURE_VERSION + 8
-                && txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
+        if (transitionMeta.size() >= TableUtils.META_OFFSET_METADATA_VERSION + 8
+                && txnMetadataVersion != transitionMeta.getLong(TableUtils.META_OFFSET_METADATA_VERSION)) {
             // No match
             return -1;
         }
@@ -199,17 +199,17 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public long getMetadataVersion() {
+        return metadataVersion;
+    }
+
+    @Override
     public long getO3MaxLag() {
         return o3MaxLag;
     }
 
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    @Override
-    public long getStructureVersion() {
-        return structureVersion;
     }
 
     @Override
@@ -237,7 +237,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
             this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
-            this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+            this.metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
             this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);

@@ -59,6 +59,7 @@ public final class TableUtils {
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
+    public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
     public static final int INITIAL_TXN = 0;
@@ -69,11 +70,11 @@ public final class TableUtils {
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+    public static final long META_OFFSET_METADATA_VERSION = 32; // LONG
     public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     public static final long META_OFFSET_PARTITION_BY = 4;
-    public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
@@ -499,6 +500,20 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static long estimateAvgRecordSize(RecordMetadata metadata) {
+        long recSize = 0;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (ColumnType.isVariableLength(columnType)) {
+                // Estimate size of variable length column as 28 bytes
+                recSize += ESTIMATED_VAR_COL_SIZE;
+            } else if (columnType > 0) {
+                recSize += ColumnType.sizeOf(columnType);
+            }
+        }
+        return recSize;
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
@@ -1027,10 +1042,42 @@ public final class TableUtils {
         }
     }
 
+    public static void removeColumnFromMetadata(
+            CharSequence columnName,
+            LowerCaseCharSequenceIntHashMap columnNameIndexMap,
+            ObjList<TableColumnMetadata> columnMetadata
+    ) {
+        final int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+        }
+
+        columnNameIndexMap.remove(columnName);
+        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
+        deletedMeta.markDeleted();
+    }
+
     public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {
         if (ff.exists(path) && !ff.closeRemove(fd, path)) {
             throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
         }
+    }
+
+    public static void renameColumnInMetadata(
+            CharSequence columnName,
+            CharSequence newName,
+            LowerCaseCharSequenceIntHashMap columnNameIndexMap,
+            ObjList<TableColumnMetadata> columnMetadata
+    ) {
+        final int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+        }
+        final String newNameStr = newName.toString();
+        columnMetadata.getQuick(columnIndex).setName(newNameStr);
+
+        columnNameIndexMap.removeEntry(columnName);
+        columnNameIndexMap.put(newNameStr, columnIndex);
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
@@ -1571,6 +1618,7 @@ public final class TableUtils {
     }
 
     static {
+        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }
