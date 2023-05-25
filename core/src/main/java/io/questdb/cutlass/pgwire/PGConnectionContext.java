@@ -1230,7 +1230,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
-            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || queryTag == TAG_PSEUDO_SELECT);
+            // it's fine to compile pseudo-SELECT queries multiple times since they must be executed lazily
+            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_PSEUDO_SELECT && typesAndSelect == null));
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
