@@ -254,7 +254,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinMetadataPageSize;
     private final long sqlLatestByRowCount;
     private final int sqlLexerPoolCapacity;
-    private final int sqlMapKeyCapacity;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlMaxNegativeLimit;
@@ -810,7 +809,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, 0.7);
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
-            this.sqlMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY, 2048 * 1024);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 1024);
             this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
@@ -1534,6 +1532,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_MAP_PAGE_SIZE,
+                    PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE);
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY,
+                    PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY);
         }
 
         private static <KeyT> void registerReplacements(
@@ -2285,11 +2289,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlLexerPoolCapacity() {
             return sqlLexerPoolCapacity;
-        }
-
-        @Override
-        public int getSqlMapKeyCapacity() {
-            return sqlMapKeyCapacity;
         }
 
         @Override

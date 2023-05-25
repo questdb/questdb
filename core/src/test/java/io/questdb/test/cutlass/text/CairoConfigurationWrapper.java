@@ -692,11 +692,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlMapKeyCapacity() {
-        return conf.getSqlMapKeyCapacity();
-    }
-
-    @Override
     public int getSqlMapMaxPages() {
         return conf.getSqlMapMaxPages();
     }

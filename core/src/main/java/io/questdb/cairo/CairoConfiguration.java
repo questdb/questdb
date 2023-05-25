@@ -372,8 +372,6 @@ public interface CairoConfiguration {
 
     int getSqlLexerPoolCapacity();
 
-    int getSqlMapKeyCapacity();
-
     int getSqlMapMaxPages();
 
     int getSqlMapMaxResizes();
