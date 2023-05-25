@@ -939,7 +939,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
+        assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, false, sqlExecutionContext);
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
@@ -950,12 +950,12 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         assertQuery5(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize, sizeCanBeVariable);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        assertQuery6(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, false);
+    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        assertQuery6(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
     }
 
-    protected void assertQuery(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        assertQuery6(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, false);
+    protected void assertQuery(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        assertQuery6(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
     }
 
     protected void assertQuery(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean expectSize) throws SqlException {

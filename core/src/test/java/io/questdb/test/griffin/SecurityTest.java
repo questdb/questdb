@@ -59,10 +59,6 @@ public class SecurityTest extends AbstractGriffinTest {
         inputRoot = TestUtils.getCsvRoot();
         AbstractGriffinTest.setUpStatic();
         CairoConfiguration readOnlyConfiguration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public int getSqlJoinMetadataMaxResizes() {
-                return 10;
-            }
 
             @Override
             public int getSqlJoinMetadataPageSize() {
@@ -72,11 +68,6 @@ public class SecurityTest extends AbstractGriffinTest {
             @Override
             public int getSqlMapMaxResizes() {
                 return 2;
-            }
-
-            @Override
-            public int getSqlMapPageSize() {
-                return 64;
             }
 
             @Override
@@ -342,6 +333,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                     null,
                     false,
+                    false,
                     readOnlyExecutionContext
             );
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
@@ -352,6 +344,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                         null,
+                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -461,6 +454,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     "select sym2, d from tb1 where d < 0.01 order by sym2",
                     null,
                     true,
+                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -470,6 +464,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select sym2, d from tb1 order by sym2",
                         null,
                         true,
+                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -499,6 +494,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     "select distinct sym1, sym2 from tb1 where d < 0.07",
                     null,
                     true,
+                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -508,6 +504,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select distinct sym1, sym2 from tb1",
                         null,
                         true,
+                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -538,6 +535,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false,
+                        true,
                         sqlExecutionContext
                 );
                 try {
@@ -546,6 +544,7 @@ public class SecurityTest extends AbstractGriffinTest {
                             "TOO MUCH",
                             "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
+                            false,
                             false,
                             readOnlyExecutionContext
                     );
@@ -580,6 +579,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false,
+                        false,
                         sqlExecutionContext
                 );
                 try {
@@ -588,6 +588,7 @@ public class SecurityTest extends AbstractGriffinTest {
                             "TOO MUCH",
                             "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
+                            false,
                             false,
                             readOnlyExecutionContext
                     );
@@ -615,11 +616,13 @@ public class SecurityTest extends AbstractGriffinTest {
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+
             assertQuery(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false,
+                    true,
                     sqlExecutionContext
             );
             try {
@@ -628,6 +631,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
+                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -655,6 +659,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select ts, d from tb1 LATEST ON ts PARTITION BY d",
                         "ts",
                         true,
+                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -693,6 +698,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false,
+                    false,
                     sqlExecutionContext
             );
             try {
@@ -701,6 +707,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
+                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -726,6 +733,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     "select sym, d from tb1 where d < 0.3 ORDER BY d",
                     null,
                     true,
+                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -735,6 +743,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select sym, d from tb1 where d < 0.5 ORDER BY d",
                         null,
                         true,
+                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -761,6 +770,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear)",
                         "ts",
                         true,
+                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -787,7 +797,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
                         null,
-                        false, readOnlyExecutionContext);
+                        false,
+                        false,
+                        readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "limit of 2 resizes exceeded");
@@ -811,6 +823,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null)",
                         null,
+                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -838,6 +851,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev)",
                         null,
                         false,
+                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -863,6 +877,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0)",
                         null,
+                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -893,6 +908,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                     null,
                     false,
+                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -901,6 +917,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
                         null,
+                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -931,6 +948,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1",
                     null,
                     true,
+                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -940,6 +958,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
                         null,
                         true,
+                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -1029,7 +1048,10 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
                     null,
-                    false, sqlExecutionContext);
+                    false,
+                    false,
+                    sqlExecutionContext
+            );
             memoryRestrictedCompiler.setFullFatJoins(fullFat);
             try {
                 assertQuery(
@@ -1037,7 +1059,10 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
                         null,
-                        false, readOnlyExecutionContext);
+                        false,
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -1072,12 +1097,15 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Override
-    protected void assertQuery(SqlCompiler compiler,
-                               String expected,
-                               String query,
-                               String expectedTimestamp,
-                               boolean supportsRandomAccess,
-                               SqlExecutionContext sqlExecutionContext) throws SqlException {
+    protected void assertQuery(
+            SqlCompiler compiler,
+            String expected,
+            String query,
+            String expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean expectSize,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         memoryRestrictedEngine.reloadTableNames();
         assertQuery6(
                 compiler,
@@ -1086,6 +1114,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 expectedTimestamp,
                 sqlExecutionContext,
                 supportsRandomAccess,
-                false);
+                expectSize
+        );
     }
 }

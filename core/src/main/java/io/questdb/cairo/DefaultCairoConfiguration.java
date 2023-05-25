@@ -715,11 +715,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlMapPageSize() {
-        return 16 * Numbers.SIZE_1MB;
-    }
-
-    @Override
     public int getSqlMaxNegativeLimit() {
         return 10_000;
     }

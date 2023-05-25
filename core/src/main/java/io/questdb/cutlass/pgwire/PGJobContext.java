@@ -29,10 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.PeerIsSlowToWriteException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.WeakSelfReturningObjectPool;
@@ -85,7 +81,7 @@ public class PGJobContext implements Closeable {
     public void handleClientOperation(
             PGConnectionContext context,
             int operation
-    ) throws PeerIsSlowToWriteException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+    ) throws Exception {
         context.handleClientOperation(
                 compiler,
                 typesAndSelectCache,

@@ -399,7 +399,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                     query,
                     null,
                     true,
-                    false
+                    true
             );
         });
     }
@@ -493,7 +493,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                     query,
                     null,
                     true,
-                    false
+                    true
             );
         });
     }

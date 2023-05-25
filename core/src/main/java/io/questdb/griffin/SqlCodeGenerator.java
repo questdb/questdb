@@ -645,6 +645,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         valueTypes.clear();
         valueTypes.add(ColumnType.LONG);
         valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.LONG); // record count for the key
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             if (joinType == JOIN_INNER) {

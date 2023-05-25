@@ -83,27 +83,29 @@ public class WithClauseTest extends AbstractGriffinTest {
     @Test
     public void testWithAliasOverridingTable4() throws Exception {
         assertMemoryLeak(() -> assertQuery13("address\tbalance\taddress1\tbalance1\n",
-                "WITH balance2 as ( SELECT * FROM balance WHERE address = 2 ) " +
-                        "SELECT * FROM (" +
-                        "(" +
-                        "WITH balance as (select * from balance where address = 1) " +
-                        "SELECT b1.*, b2.* " +
-                        "FROM balance b1 " +
-                        "JOIN balance2 b2 on b1.address = b2.address " +
-                        "JOIN balance b3 on b1.address = b3.address " +//to force 2nd balance with clause parsing
-                        ") UNION ALL  " +
-                        "SELECT * " +
-                        "FROM balance b1 " +
-                        "JOIN balance2 b2 on b1.address = b2.address " +
-                        ")",
-                "CREATE TABLE balance (\n" +
-                        "  address LONG,\n" +
-                        "  balance DOUBLE\n" +
-                        ");",
-                null,
-                "insert into balance values ( 1, 1.0 ), (2, 2.0);",
-                "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n",
-                false, false));
+                        "WITH balance2 as ( SELECT * FROM balance WHERE address = 2 ) " +
+                                "SELECT * FROM (" +
+                                "(" +
+                                "WITH balance as (select * from balance where address = 1) " +
+                                "SELECT b1.*, b2.* " +
+                                "FROM balance b1 " +
+                                "JOIN balance2 b2 on b1.address = b2.address " +
+                                "JOIN balance b3 on b1.address = b3.address " +//to force 2nd balance with clause parsing
+                                ") UNION ALL  " +
+                                "SELECT * " +
+                                "FROM balance b1 " +
+                                "JOIN balance2 b2 on b1.address = b2.address " +
+                                ")",
+                        "CREATE TABLE balance (\n" +
+                                "  address LONG,\n" +
+                                "  balance DOUBLE\n" +
+                                ");",
+                        null,
+                        "insert into balance values ( 1, 1.0 ), (2, 2.0);",
+                        "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n",
+                        false, true
+                )
+        );
     }
 
     @Test

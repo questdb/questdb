@@ -121,6 +121,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
+        private long size = -1;
         private LongChain.TreeCursor slaveChainCursor;
         private Record slaveRecord;
 
@@ -136,6 +137,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         public void close() {
             if (isOpen) {
                 isOpen = false;
+                size = -1;
                 joinKeyMap.close();
                 slaveChain.close();
                 super.close();
@@ -174,7 +176,26 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public long size() {
-            return -1;
+            if (size > -1) {
+                return size;
+            }
+
+            buildMapOfSlaveRecords();
+            long size = 0;
+            try {
+                masterCursor.toTop();
+                while (masterCursor.hasNext()) {
+                    MapKey key = joinKeyMap.withKey();
+                    key.put(masterRecord, masterKeySink);
+                    MapValue value = key.findValue();
+                    if (value != null) {
+                        size += value.getLong(2);
+                    }
+                }
+                return this.size = size;
+            } finally {
+                masterCursor.toTop();
+            }
         }
 
         @Override
@@ -190,23 +211,29 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         private void buildMapOfSlaveRecords() {
             if (!isMapBuilt) {
-                final Record record = slaveCursor.getRecord();
-                while (slaveCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-
-                    MapKey key = joinKeyMap.withKey();
-                    key.put(record, slaveKeySink);
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        final long offset = slaveChain.put(record.getRowId(), -1);
-                        value.putLong(0, offset);
-                        value.putLong(1, offset);
-                    } else {
-                        value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
-                    }
-                }
-                isMapBuilt = true;
+                buildMapOfSlaveRecords0();
             }
+        }
+
+        private void buildMapOfSlaveRecords0() {
+            final Record record = slaveCursor.getRecord();
+            while (slaveCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
+                MapKey key = joinKeyMap.withKey();
+                key.put(record, slaveKeySink);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    final long offset = slaveChain.put(record.getRowId(), -1);
+                    value.putLong(0, offset);
+                    value.putLong(1, offset);
+                    value.putLong(2, 1);
+                } else {
+                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
+                    value.addLong(2, 1);
+                }
+            }
+            isMapBuilt = true;
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -222,6 +249,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
+            size = -1;
             isMapBuilt = false;
         }
     }

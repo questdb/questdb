@@ -93,7 +93,7 @@ public class DBeaverTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false
+                true
         );
     }
 

@@ -30,8 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.PGConnectionContext;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -8974,10 +8972,6 @@ create table tab as (
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
 
             @Override
             public int getWorkerCount() {
@@ -9122,10 +9116,6 @@ create table tab as (
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
 
             @Override
             public int getWorkerCount() {

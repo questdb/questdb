@@ -60,7 +60,8 @@ public class Long128Tests extends AbstractGriffinTest {
                             " from long_sequence(20)" +
                             ")",
                     null,
-                    false
+                    false,
+                    true
             );
         } finally {
             compiler.setFullFatJoins(false);
@@ -152,7 +153,8 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                false
+                false,
+                true
         );
     }
 
@@ -186,7 +188,8 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                false
+                false,
+                true
         );
     }
 
@@ -223,7 +226,8 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ")",
                 null,
-                false
+                false,
+                true
         );
     }
 

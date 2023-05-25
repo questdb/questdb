@@ -147,7 +147,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private RecordCursorFactory currentFactory = null;
     private boolean isEmptyQuery = false;
     private boolean isPausedQuery = false;
-    private long maxRows;
+    private long maxReceiveRows;
+    private long maxSendRows;
     private int parsePhaseBindVariableCount;
     //command tag used when returning row count to client,
     //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
@@ -162,7 +163,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
+    private final PGResumeProcessor resumeExecuteCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
     private boolean sendRNQ = true;/* send ReadyForQuery message */
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -171,7 +172,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
-    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
@@ -185,7 +185,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private TypesAndUpdate typesAndUpdate = null;
     private AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private boolean typesAndUpdateIsCached = false;
+    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private final PGResumeProcessor resumeComputeCursorSizeQueryRef = this::resumeComputeCursorSizeQuery;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
+    private final PGResumeProcessor setResumeComputeCursorSizeExecuteRef = this::setResumeComputeCursorSizeExecute;
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private NamedStatementWrapper wrapper;
 
@@ -359,7 +362,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             @Transient AssociativeCache<TypesAndUpdate> typesAndUpdateCache,
             @Transient WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool,
             int operation
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, QueryPausedException, BadProtocolException {
+    ) throws Exception {
         assert authenticator != null;
 
         this.typesAndSelectCache = selectAndTypesCache;
@@ -1185,6 +1188,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return true;
     }
 
+    private void computeCursorSize() throws QueryPausedException {
+        try {
+            final long cursorRowCount = currentCursor.size();
+            if (maxReceiveRows > 0) {
+                this.maxSendRows = cursorRowCount > 0 ? Long.min(maxReceiveRows, cursorRowCount) : maxReceiveRows;
+            } else {
+                this.maxSendRows = Long.MAX_VALUE;
+            }
+        } catch (DataUnavailableException e) {
+            isPausedQuery = true;
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        }
+    }
+
     private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException {
         this.sendParameterDescription = statementName != null;
@@ -1564,7 +1581,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long address,
             int len,
             @Transient SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, QueryPausedException, SqlException {
+    ) throws Exception {
         // we will wait until we receive the entire header
         if (len < PREFIXED_MESSAGE_HEADER_LEN) {
             // we need to be able to read header and length
@@ -2123,11 +2140,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void processExec(
-            long lo,
-            long msgLimit,
-            SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException, SqlException {
+    private void processExec(long lo, long msgLimit, SqlCompiler compiler) throws Exception {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
 
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
@@ -2137,21 +2150,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         lo = hi + 1;
-        final int maxRows = getInt(lo, msgLimit, "could not read max rows value");
+        maxReceiveRows = getInt(lo, msgLimit, "could not read max rows value");
 
         processSyncActions();
-        processExecute(maxRows, compiler);
+        processExecute(compiler);
         wrapper = null;
     }
 
-    private void processExecute(
-            int maxRows,
-            SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void processExecute(SqlCompiler compiler) throws Exception {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
             setupFactoryAndCursor(compiler);
-            sendCursor(maxRows, resumeCursorExecuteRef, resumeCommandCompleteRef);
+            sendCursor(resumeCursorExecuteRef, resumeExecuteCompleteRef, setResumeComputeCursorSizeExecuteRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert(compiler);
@@ -2234,7 +2244,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long lo,
             long limit,
             @Transient SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException {
+    ) throws Exception {
         prepareForNewQuery();
         isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
         CharacterStoreEntry e = characterStore.newEntry();
@@ -2357,7 +2367,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareCommandComplete(true);
     }
 
-    private void resumeCursorExecute(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void resumeComputeCursorSizeQuery(boolean queryWasPaused) throws Exception {
+        computeCursorSize();
+        resumeProcessor = resumeCursorQueryRef;
+        responseAsciiSink.bookmark();
+        sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), resumeQueryCompleteRef);
+    }
+
+    private void resumeCursorExecute(boolean queryWasPaused) throws Exception {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         if (!queryWasPaused) {
@@ -2366,15 +2383,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             appendSingleRecord(record, columnCount);
         }
         responseAsciiSink.bookmark();
-        sendCursor0(record, columnCount, resumeCommandCompleteRef);
+        sendCursor0(record, columnCount, resumeExecuteCompleteRef);
     }
 
-    private void resumeCursorQuery(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        resumeCursorQuery0(queryWasPaused);
-        sendReadyForNewQuery();
-    }
-
-    private void resumeCursorQuery0(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void resumeCursorQuery(boolean queryWasPaused) throws Exception {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         if (!queryWasPaused) {
@@ -2384,6 +2396,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, resumeQueryCompleteRef);
+        sendReadyForNewQuery();
     }
 
     private void resumeQueryComplete(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -2428,10 +2441,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void sendCursor(
-            int maxRows,
             PGResumeProcessor cursorResumeProcessor,
-            PGResumeProcessor commandCompleteResumeProcessor
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+            PGResumeProcessor commandCompleteResumeProcessor,
+            PGResumeProcessor computeCursorSizeResumeProcessor
+    ) throws Exception {
         // the assumption for now is that any record will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and it's a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
@@ -2439,25 +2452,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // slow anyway.
 
         rowCount = 0;
-        final Record record = currentCursor.getRecord();
-        final RecordMetadata metadata = currentFactory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-        final long cursorRowCount = currentCursor.size();
-        if (maxRows > 0) {
-            this.maxRows = cursorRowCount > 0 ? Long.min(maxRows, cursorRowCount) : maxRows;
-        } else {
-            this.maxRows = Long.MAX_VALUE;
-        }
+        // this might fail due to missing data
+        resumeProcessor = computeCursorSizeResumeProcessor;
+        computeCursorSize();
+
         resumeProcessor = cursorResumeProcessor;
         responseAsciiSink.bookmark();
-        sendCursor0(record, columnCount, commandCompleteResumeProcessor);
+        sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), commandCompleteResumeProcessor);
     }
 
-    private void sendCursor0(
-            Record record,
-            int columnCount,
-            PGResumeProcessor commandCompleteResumeProcessor
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void sendCursor0(Record record, int columnCount, PGResumeProcessor commandCompleteResumeProcessor) throws Exception {
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
         }
@@ -2474,7 +2478,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         appendSingleRecord(record, columnCount);
                         responseAsciiSink.bookmark();
                     }
-                    if (rowCount >= maxRows) {
+                    if (rowCount >= maxSendRows) {
                         break;
                     }
                 } catch (SqlException e) {
@@ -2489,7 +2493,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         }
 
-        completed = maxRows <= 0 || rowCount < maxRows;
+        completed = maxSendRows <= 0 || rowCount < maxSendRows;
         if (completed) {
             clearCursorAndFactory();
             // at this point buffer can contain unsent data,
@@ -2509,6 +2513,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareReadyForQuery();
         sendAndReset();
+    }
+
+    private void setResumeComputeCursorSizeExecute(boolean queryWasPaused) throws Exception {
+        computeCursorSize();
+        resumeProcessor = resumeCursorExecuteRef;
+        responseAsciiSink.bookmark();
+        sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), resumeExecuteCompleteRef);
     }
 
     private void setUuidBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -2692,7 +2703,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @FunctionalInterface
     private interface PGResumeProcessor {
-        void resume(boolean queryWasPaused) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException;
+        void resume(boolean queryWasPaused) throws Exception;
     }
 
     public static class NamedStatementWrapper implements Mutable {
@@ -2728,7 +2739,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 SqlCompiler compiler,
                 CompiledQuery cq,
                 CharSequence text
-        ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+        ) throws Exception {
             try {
                 PGConnectionContext.this.queryText = text;
                 LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
@@ -2741,7 +2752,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     queryTag = TAG_SELECT;
                     setupFactoryAndCursor(compiler);
                     prepareRowDescription();
-                    sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
+                    maxReceiveRows = 0; // unlimited
+                    sendCursor(resumeCursorQueryRef, resumeQueryCompleteRef, resumeComputeCursorSizeQueryRef);
                 } else if (typesAndInsert != null) {
                     executeInsert(compiler);
                 } else if (typesAndUpdate != null) {
@@ -2758,7 +2770,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             } catch (QueryPausedException e) {
                 // keep circuit breaker's timer as is
                 throw e;
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 sqlExecutionContext.getCircuitBreaker().unsetTimer();
                 throw e;
             }

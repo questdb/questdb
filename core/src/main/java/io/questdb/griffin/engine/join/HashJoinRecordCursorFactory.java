@@ -125,6 +125,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private boolean isOpen;
         private Record masterRecord;
         private boolean useSlaveCursor;
+        private long size = -1;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             super(columnSplit);
@@ -151,10 +152,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!isMapBuilt) {
-                buildMapOfSlaveRecords();
-                isMapBuilt = true;
-            }
+            buildMapOfSlaveRecords();
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
@@ -176,9 +174,36 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             return false;
         }
 
+        private void buildMapOfSlaveRecords() {
+            if (!isMapBuilt) {
+                buildMapOfSlaveRecords0();
+                isMapBuilt = true;
+            }
+        }
+
         @Override
         public long size() {
-            return -1;
+            if(size != -1) {
+                return size;
+            }
+
+            buildMapOfSlaveRecords();
+
+            long size = 0;
+            try {
+                masterCursor.toTop();
+                while (masterCursor.hasNext()) {
+                    MapKey key = joinKeyMap.withKey();
+                    key.put(masterRecord, masterSink);
+                    MapValue value = key.findValue();
+                    if (value != null) {
+                        size += value.getLong(2);
+                    }
+                }
+                return size;
+            } finally {
+                masterCursor.toTop();
+            }
         }
 
         @Override
@@ -192,7 +217,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        private void buildMapOfSlaveRecords() {
+        private void buildMapOfSlaveRecords0() {
             final Record record = slaveCursor.getRecord();
             while (slaveCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -204,8 +229,10 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     long offset = slaveChain.put(record, -1);
                     value.putLong(0, offset);
                     value.putLong(1, offset);
+                    value.putLong(2, 1);
                 } else {
                     value.putLong(1, slaveChain.put(record, value.getLong(1)));
+                    value.addLong(2, 1);
                 }
             }
         }
@@ -224,6 +251,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             recordA.of(masterRecord, slaveRecord);
             slaveChain.setSymbolTableResolver(slaveCursor);
             useSlaveCursor = false;
+            size = -1;
             isMapBuilt = false;
         }
     }

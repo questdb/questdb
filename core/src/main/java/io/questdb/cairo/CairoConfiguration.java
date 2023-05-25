@@ -378,8 +378,6 @@ public interface CairoConfiguration {
 
     int getSqlMapMaxResizes();
 
-    int getSqlMapPageSize();
-
     int getSqlMaxNegativeLimit();
 
     int getSqlModelPoolCapacity();

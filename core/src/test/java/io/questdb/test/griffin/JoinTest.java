@@ -2211,7 +2211,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
             // master records should be filtered out because slave records missing
-            assertQuery(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null);
+            assertQuery(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null, false, true);
         });
     }
 
@@ -2269,7 +2269,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
             compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))", sqlExecutionContext);
 
-            assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null);
+            assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null, false, true);
         });
     }
 
@@ -2350,7 +2350,7 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x join y on (kk)", null);
+            assertQuery(expected, "select * from x join y on (kk)", null, false, true);
         });
     }
 
@@ -2421,7 +2421,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
             compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))", sqlExecutionContext);
 
-            assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null);
+            assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false, true);
         });
     }
 
@@ -2473,7 +2473,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20", null, false);
+            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20", null, true);
 
             compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
             compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)", sqlExecutionContext);
@@ -2489,7 +2489,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "9\t100\t8\t667\t659\n" +
                             "9\t100\t8\t456\t448\n",
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
-                    null);
+                    null,
+                    false,
+                    true
+            );
         });
     }
 
@@ -2587,7 +2590,7 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x join y on (kk)", null);
+            assertQuery(expected, "select * from x join y on (kk)", null, false, true);
         });
     }
 
@@ -2635,7 +2638,7 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true);
+            assertQuery(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true, true);
         });
     }
 
@@ -2657,7 +2660,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))", sqlExecutionContext);
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
-            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null, false);
+            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null, true);
 
             compiler.compile("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)", sqlExecutionContext);
             compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -2668,7 +2671,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "14\t197\t50\n" +
                             "14\t197\t68\n",
                     "select x.c, x.a, b from x join y on y.m = x.c",
-                    null);
+                    null,
+                    false,
+                    true
+            );
         });
     }
 
@@ -2771,7 +2777,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false);
+            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, true);
 
             compiler.compile("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
             compiler.compile("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -2781,7 +2787,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "L\tL\tL\t148\t38\t121\t83\n" +
                             "L\tL\tL\t148\t52\t121\t69\n",
                     "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
-                    null);
+                    null,
+                    false,
+                    true
+            );
 
         });
     }
@@ -2815,7 +2824,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300", null, false);
+            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300", null, true);
 
             compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
             compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)", sqlExecutionContext);
@@ -2835,7 +2844,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "9\t100\t8\t667\t108\n" +
                             "9\t100\t8\t456\t108\n",
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300",
-                    null);
+                    null,
+                    false,
+                    true
+            );
 
         });
     }
@@ -2894,7 +2906,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
             compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))", sqlExecutionContext);
 
-            assertQuery(expected, "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c)", "ts");
+            assertQuery(expected, "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c)", "ts", false, true);
         });
     }
 
@@ -2995,7 +3007,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQueryAndCache(expected, query, null, true);
         }));
     }
 
@@ -3021,7 +3033,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQueryAndCache(expected, query, null, true);
         }));
     }
 

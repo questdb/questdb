@@ -707,11 +707,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlMapPageSize() {
-        return conf.getSqlMapPageSize();
-    }
-
-    @Override
     public int getSqlMaxNegativeLimit() {
         return conf.getSqlMaxNegativeLimit();
     }

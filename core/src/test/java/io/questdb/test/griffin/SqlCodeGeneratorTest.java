@@ -90,7 +90,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
@@ -110,7 +110,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
@@ -434,7 +434,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
