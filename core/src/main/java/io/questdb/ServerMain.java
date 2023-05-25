@@ -238,7 +238,7 @@ public class ServerMain implements Closeable {
     }
 
     public static PgWireAuthenticationFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration) {
-        return new StaticPgWireAuthenticationFactory(new StaticUserDatabase(configuration.getPGWireConfiguration()));
+        return new UserDatabasePgWireAuthenticationFactory(new StaticUserDatabase(configuration.getPGWireConfiguration()));
     }
 
     public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
