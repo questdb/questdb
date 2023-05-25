@@ -279,10 +279,10 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void reload() {
         tableTransactionLog.reload(path);
-        try (var metaChangeCursor = getMetadataChangeLog(metadata.getMetadataVersion())) {
+        try (TableMetadataChangeLog metaChangeCursor = getMetadataChangeLog(metadata.getMetadataVersion())) {
             boolean updated = false;
             while (metaChangeCursor.hasNext()) {
-                var change = metaChangeCursor.next();
+                TableMetadataChange change = metaChangeCursor.next();
                 change.apply(metadataSvc, true);
                 updated = true;
             }
