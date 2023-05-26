@@ -28,9 +28,10 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.test.cutlass.line.tcp.load.LineData;
-import io.questdb.test.cutlass.line.tcp.load.TableData;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -42,6 +43,8 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cutlass.line.tcp.load.LineData;
+import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -152,7 +155,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         compilers = new SqlCompiler[numOfUpdateThreads];
         executionContexts = new SqlExecutionContext[numOfUpdateThreads];
         for (int i = 0; i < numOfUpdateThreads; i++) {
-            compilers[i] = new SqlCompiler(engine, null, null);
+            compilers[i] = new SqlCompiler(engine, null);
             executionContexts[i] = TestUtils.createSqlExecutionCtx(engine, numOfUpdateThreads);
         }
     }

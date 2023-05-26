@@ -154,6 +154,17 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public CompiledQuery ofPseudoSelect(@Nullable RecordCursorFactory factory) {
+        this.type = PSEUDO_SELECT;
+        this.recordCursorFactory = factory;
+        this.affectedRowsCount = -1;
+        return this;
+    }
+
+    public CompiledQuery ofSet() {
+        return of(SET);
+    }
+
     public CompiledQuery ofTableResume() {
         type = TABLE_RESUME;
         return this;
@@ -201,13 +212,6 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofCommit() {
         return of(COMMIT);
-    }
-
-    CompiledQuery ofCopyLocal(@Nullable RecordCursorFactory factory) {
-        this.type = COPY_LOCAL;
-        this.recordCursorFactory = factory;
-        this.affectedRowsCount = -1;
-        return this;
     }
 
     CompiledQuery ofCopyRemote(TextLoader textLoader) {
@@ -259,10 +263,6 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofRollback() {
         return of(ROLLBACK);
-    }
-
-    public CompiledQuery ofSet() {
-        return of(SET);
     }
 
     CompiledQuery ofSnapshotComplete() {

@@ -42,7 +42,6 @@ import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
@@ -56,7 +55,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.File;
-import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
@@ -64,7 +62,6 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ServerConfiguration config;
     private final CairoEngine engine;
-    private final FunctionFactoryCache ffCache;
     private final ObjList<Closeable> freeOnExitList = new ObjList<>();
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -85,14 +82,13 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
+        // obtain function factory cache
         engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
-
-        // create function factory cache
-        ffCache = new FunctionFactoryCache(
-                cairoConfig,
-                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-        );
-
+        FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
+        // TODO: now the engine has access to the FFC, so all methods bellow
+        //       that pass it in their signature should be simplified. Not
+        //       done for compatibility with enterprise
         config.init(engine, ffCache);
 
         // snapshots
