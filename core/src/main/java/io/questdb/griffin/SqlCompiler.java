@@ -76,13 +76,13 @@ public class SqlCompiler implements Closeable {
     };
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
+    protected final AlterOperationBuilder alterOperationBuilder;
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
     protected final CairoEngine engine;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
-    private final AlterOperationBuilder alterOperationBuilder;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
@@ -832,7 +832,7 @@ public class SqlCompiler implements Closeable {
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                return unknownDropColumnSuffix(securityContext, tableToken, dropColumnStatement);
             }
         } while (true);
 
@@ -2506,7 +2506,7 @@ public class SqlCompiler implements Closeable {
             }
 
             if (tok != null && !Chars.equals(tok, ';')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2745,6 +2745,15 @@ public class SqlCompiler implements Closeable {
     }
 
     @SuppressWarnings({"unused"})
+    protected CompiledQuery unknownDropColumnSuffix(
+            SecurityContext securityContext,
+            TableToken tableToken,
+            AlterOperationBuilder dropColumnStatement
+    ) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+    }
+
+    @SuppressWarnings({"unused"})
     protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' expected");
@@ -2760,7 +2769,7 @@ public class SqlCompiler implements Closeable {
             int tableNamePosition,
             boolean hasIfExists
     ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
     }
 
     @SuppressWarnings({"unused", "RedundantThrows"})
