@@ -2,6 +2,7 @@
 set -Eeo pipefail
 export QDB_PACKAGE=${QDB_PACKAGE:-docker}
 
+
 QUESTDB_DATA_DIR=${QUESTDB_DATA_DIR:-"/var/lib/questdb"}
 IGNORE_DATA_ROOT_MOUNT_CHECK=${IGNORE_DATA_ROOT_MOUNT_CHECK:-"false"}
 RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
@@ -49,6 +50,11 @@ else
         echo "Java binary arguments found, Non default arguments config run"
         set -- "$@"
     fi
+fi
+
+# Prepend additional JVM flags if JVM_PREPEND variable is set
+if [ -n "$JVM_PREPEND" ]; then
+    set -- "$JVM_PREPEND" "$@"
 fi
 
 if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ "$RUN_AS_ROOT" = "false" ] ; then
