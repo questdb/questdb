@@ -25,11 +25,11 @@
 package io.questdb.test.std;
 
 import io.questdb.std.*;
-import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.FileNameExtractorCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -72,6 +72,34 @@ public class CharsTest {
         sink.clear();
         Chars.base64Encode(testBinarySequence, (int) testBinarySequence.length(), sink);
         byte[] decoded = Base64.getDecoder().decode(sink.toString());
+        Assert.assertArrayEquals(bytes, decoded);
+    }
+
+    @Test
+    public void testBase64UrlEncode() {
+        final StringSink sink = new StringSink();
+        final TestBinarySequence testBinarySequence = new TestBinarySequence();
+        sink.clear();
+        Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
+        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q");
+        sink.clear();
+        Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
+        Assert.assertEquals(sink.toString(), "dGhpcw");
+        // ignore the null
+        Chars.base64UrlEncode(null, 4, sink);
+        Assert.assertEquals(sink.toString(), "dGhpcw");
+
+        // random part
+        Random rand = new Random(System.currentTimeMillis());
+        int len = rand.nextInt(100) + 1;
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte) rand.nextInt(0xFF);
+        }
+        testBinarySequence.of(bytes);
+        sink.clear();
+        Chars.base64UrlEncode(testBinarySequence, (int) testBinarySequence.length(), sink);
+        byte[] decoded = Base64.getUrlDecoder().decode(sink.toString());
         Assert.assertArrayEquals(bytes, decoded);
     }
 
@@ -178,29 +206,6 @@ public class CharsTest {
     }
 
     @Test
-    public void testUtf8Support() {
-
-        StringBuilder expected = new StringBuilder();
-        for (int i = 0; i < 0xD800; i++) {
-            expected.append((char) i);
-        }
-
-        String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        try {
-            byte[] bytes = in.getBytes(Files.UTF_8);
-            for (int i = 0, n = bytes.length; i < n; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
-            }
-            CharSink b = new StringSink();
-            Chars.utf8toUtf16(p, p + bytes.length, b);
-            TestUtils.assertEquals(in, b.toString());
-        } finally {
-            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
     public void testUtf8CharDecode() {
         long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -264,14 +269,27 @@ public class CharsTest {
         }
     }
 
-    private static void testUtf8Char(String x, long p, boolean failExpected) {
-        byte[] bytes = x.getBytes(Files.UTF_8);
-        for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
-            Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+    @Test
+    public void testUtf8Support() {
+
+        StringBuilder expected = new StringBuilder();
+        for (int i = 0; i < 0xD800; i++) {
+            expected.append((char) i);
         }
-        int res = Chars.utf8CharDecode(p, p + bytes.length);
-        boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);
-        Assert.assertTrue(failExpected != eq);
+
+        String in = expected.toString();
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
+        try {
+            byte[] bytes = in.getBytes(Files.UTF_8);
+            for (int i = 0, n = bytes.length; i < n; i++) {
+                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            }
+            CharSink b = new StringSink();
+            Chars.utf8toUtf16(p, p + bytes.length, b);
+            TestUtils.assertEquals(in, b.toString());
+        } finally {
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -296,6 +314,16 @@ public class CharsTest {
         } finally {
             Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static void testUtf8Char(String x, long p, boolean failExpected) {
+        byte[] bytes = x.getBytes(Files.UTF_8);
+        for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
+            Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+        }
+        int res = Chars.utf8CharDecode(p, p + bytes.length);
+        boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);
+        Assert.assertTrue(failExpected != eq);
     }
 
     private void assertThat(String expected, ObjList<Path> list) {

@@ -35,6 +35,7 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public final class Chars {
     static final char[] base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+    static final char[] base64Url = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".toCharArray();
 
     private Chars() {
     }
@@ -81,35 +82,15 @@ public final class Chars {
     }
 
     public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
-        if (sequence == null) {
-            return;
-        }
-        final long len = Math.min(maxLength, sequence.length());
-        int pad = 0;
-        for (int i = 0; i < len; i += 3) {
-
-            int b = ((sequence.byteAt(i) & 0xFF) << 16) & 0xFFFFFF;
-            if (i + 1 < len) {
-                b |= (sequence.byteAt(i + 1) & 0xFF) << 8;
-            } else {
-                pad++;
-            }
-            if (i + 2 < len) {
-                b |= (sequence.byteAt(i + 2) & 0xFF);
-            } else {
-                pad++;
-            }
-
-            for (int j = 0; j < 4 - pad; j++) {
-                int c = (b & 0xFC0000) >> 18;
-                buffer.put(base64[c]);
-                b <<= 6;
-            }
-        }
-
+        int pad = base64Encode(sequence, maxLength, buffer, base64);
         for (int j = 0; j < pad; j++) {
             buffer.put("=");
         }
+    }
+
+    public static void base64UrlEncode(BinarySequence sequence, final int maxLength, CharSink buffer) {
+        base64Encode(sequence, maxLength, buffer, base64Url);
+        // base64 url does not use padding
     }
 
     public static int compare(CharSequence l, CharSequence r) {
@@ -1019,6 +1000,35 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    private static int base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer, char[] alphabet) {
+        if (sequence == null) {
+            return 0;
+        }
+        final long len = Math.min(maxLength, sequence.length());
+        int pad = 0;
+        for (int i = 0; i < len; i += 3) {
+
+            int b = ((sequence.byteAt(i) & 0xFF) << 16) & 0xFFFFFF;
+            if (i + 1 < len) {
+                b |= (sequence.byteAt(i + 1) & 0xFF) << 8;
+            } else {
+                pad++;
+            }
+            if (i + 2 < len) {
+                b |= (sequence.byteAt(i + 2) & 0xFF);
+            } else {
+                pad++;
+            }
+
+            for (int j = 0; j < 4 - pad; j++) {
+                int c = (b & 0xFC0000) >> 18;
+                buffer.put(alphabet[c]);
+                b <<= 6;
+            }
+        }
+        return pad;
     }
 
     private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
