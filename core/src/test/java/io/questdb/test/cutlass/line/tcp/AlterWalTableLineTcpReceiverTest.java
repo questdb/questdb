@@ -43,7 +43,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -179,7 +178,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 tm.col("watts", ColumnType.LONG);
                 tm.timestamp();
                 tm.wal();
-                TableToken ignored = CreateTableTestUtils.create(engine, tm);
+                TableToken ignored = TestUtils.create(tm, engine);
             }
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {

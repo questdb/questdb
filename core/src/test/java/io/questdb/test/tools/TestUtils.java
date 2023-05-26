@@ -732,7 +732,7 @@ public final class TestUtils {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }
         TableUtils.createTable(
-                model.getConfiguration(),
+                engine.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
@@ -741,6 +741,9 @@ public final class TestUtils {
                 tableToken.getDirName()
         );
         engine.registerTableToken(tableToken);
+        if (model.isWalEnabled()) {
+            engine.getTableSequencerAPI().registerTable(tableId, model, tableToken);
+        }
         return tableToken;
     }
 

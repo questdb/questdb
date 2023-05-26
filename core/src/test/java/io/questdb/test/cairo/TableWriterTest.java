@@ -1337,7 +1337,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCannotMapTxFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
-            int count = 2;
+            int count = 1;
             int fd = -1;
 
             @Override
@@ -1389,7 +1389,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenTodo() throws Exception {
         // trick constructor into thinking "_todo" file exists
         testConstructor(new TestFilesFacadeImpl() {
-            int counter = 2;
+            int counter = 1;
 
             @Override
             public int openRW(LPSZ path, long opts) {
@@ -1404,7 +1404,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCannotOpenTxFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
-            int count = 2;
+            int count = 1;
 
             @Override
             public int openRW(LPSZ name, long opts) {
