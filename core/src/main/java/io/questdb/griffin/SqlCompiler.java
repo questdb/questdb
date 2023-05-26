@@ -78,25 +78,25 @@ public class SqlCompiler implements Closeable {
     private static final IntList castGroups = new IntList();
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
+    protected final CairoEngine engine;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
+    protected final Path path = new Path();
     private final AlterOperationBuilder alterOperationBuilder;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
     private final SqlCodeGenerator codeGenerator;
-    private final CairoEngine engine;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
-    private final Path path = new Path();
-    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final QueryBuilder queryBuilder = new QueryBuilder();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -1744,13 +1744,13 @@ public class SqlCompiler implements Closeable {
             lexer.unparseLast(); // tok has table name
         }
         final int tableNamePosition = lexer.getPosition();
-        CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
-        TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+        final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
 
         tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+            return unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
         }
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
         if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
             if (hasIfExists) {
                 return compiledQuery.ofDrop();
@@ -2750,6 +2750,17 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put("'table' expected");
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+    }
+
+    @SuppressWarnings({"unused"})
+    protected CompiledQuery unknownDropTableSuffix(
+            SqlExecutionContext executionContext,
+            CharSequence tok,
+            CharSequence tableName,
+            int tableNamePosition,
+            boolean hasIfExists
+    ) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
     }
 
     @SuppressWarnings({"unused", "RedundantThrows"})

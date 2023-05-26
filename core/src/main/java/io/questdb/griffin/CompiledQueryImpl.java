@@ -154,6 +154,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public CompiledQuery ofDrop() {
+        return of(DROP);
+    }
+
     public CompiledQuery ofPseudoSelect(@Nullable RecordCursorFactory factory) {
         this.type = PSEUDO_SELECT;
         this.recordCursorFactory = factory;
@@ -232,10 +236,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     CompiledQuery ofDeallocate(CharSequence statementName) {
         this.statementName = Chars.toString(statementName);
         return of(DEALLOCATE);
-    }
-
-    CompiledQuery ofDrop() {
-        return of(DROP);
     }
 
     CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
