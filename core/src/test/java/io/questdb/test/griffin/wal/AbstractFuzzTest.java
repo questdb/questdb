@@ -132,6 +132,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
     private static void reloadPartitions(TableReader rdr1) {
         if (rdr1.isActive()) {
+            LOG.info().$("reloading partitions [table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
             for (int i = 0; i < rdr1.getPartitionCount(); i++) {
                 rdr1.openPartition(i);
             }
@@ -140,8 +141,10 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
     private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
         if (reloadRnd.nextBoolean()) {
+            reloadPartitions(rdr1);
             LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
             rdr1.goPassive();
+
             if (reloadRnd.nextBoolean()) {
                 rdr1.goActive();
                 LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
@@ -188,7 +191,6 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                     operation.apply(rnd, writer, -1);
-                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.1);
                 }
 
                 if (transaction.rollback) {
@@ -196,6 +198,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 } else {
                     writer.commit();
                 }
+                purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
             }
         }
     }
@@ -211,11 +214,8 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     protected static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
             purgeJob.run(0);
-            reloadPartitions(rdr1);
-            reloadPartitions(rdr2);
-
             reloadReader(reloadRnd, rdr1, "1");
-            reloadReader(reloadRnd, rdr1, "2");
+            reloadReader(reloadRnd, rdr2, "2");
         }
     }
 
