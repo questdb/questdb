@@ -640,7 +640,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 while (done.get() == 0 && errors.size() == 0) {
                     int reader = runRnd.nextInt(tableCount);
                     purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
-                    Os.sleep(1);
+                    Os.sleep(50);
                 }
             }
         } catch (Throwable e) {
