@@ -832,7 +832,7 @@ public class SqlCompiler implements Closeable {
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                return unknownDropColumnSuffix(securityContext, tableToken, dropColumnStatement);
+                return unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
             }
         } while (true);
 
@@ -2747,6 +2747,7 @@ public class SqlCompiler implements Closeable {
     @SuppressWarnings({"unused"})
     protected CompiledQuery unknownDropColumnSuffix(
             SecurityContext securityContext,
+            CharSequence tok,
             TableToken tableToken,
             AlterOperationBuilder dropColumnStatement
     ) throws SqlException {
