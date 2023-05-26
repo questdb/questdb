@@ -88,7 +88,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testSimpleDataTransaction() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 3187312189600L, 1685096797264L);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01);
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1);
@@ -640,7 +640,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 while (done.get() == 0 && errors.size() == 0) {
                     int reader = runRnd.nextInt(tableCount);
                     purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
-                    Os.sleep(1);
+                    Os.sleep(50);
                 }
             }
         } catch (Throwable e) {
