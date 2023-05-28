@@ -57,7 +57,11 @@ function read_link {
 }
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag]"
+    if [ "$(uname)" == "Darwin" ]; then
+        echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag] [-mof max-open-files]"
+    else
+        echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag]"
+    fi
     echo
     exit 55
 }
@@ -132,6 +136,15 @@ function export_args {
                 export QDB_PROCESS_LABEL="QuestDB-Runtime-$2"
                 shift
                 ;;
+            -mof)
+                if [ "$(uname)" == "Darwin" ]; then
+                    export N_MAX_OPEN_FILES="$2"
+                else
+                    echo "Warning: the option $1 is valid only on MacOS."
+                    usage
+                fi
+                shift
+            ;;
             *)
                 echo "Unexpected option: $key"
                 usage
@@ -169,7 +182,7 @@ function start {
     mkdir -p ${QDB_LOG}
 
     JAVA_LIB="$BASE/questdb.jar"
-
+    
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
     -ea -Dnoebug
@@ -178,6 +191,27 @@ function start {
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
     "
+
+    if [ "$(uname)" == "Darwin" ]; then
+        # echo "OS: $(uname)"
+        n_mof=$(sysctl -n kern.maxfilesperproc)
+        # echo "$n_mof"
+        if [ -z "$N_MAX_OPEN_FILES" ]; then
+            # echo "n_mof: $n_mof"
+            N_MAX_OPEN_FILES="$n_mof"
+        else
+            echo "N_MAX_OPEN_FILES: $N_MAX_OPEN_FILES"
+            if [ $n_mof -lt $N_MAX_OPEN_FILES ]; then
+                echo "Warning: the max number of open files should not exceed $N_MAX_OPEN_FILES. To modify this limit, please modify the system level configuration."
+                N_MAX_OPEN_FILES=$n_mof
+            fi
+        fi
+        ulimit -n $N_MAX_OPEN_FILES
+        # echo "#Max-Open-Files: $(ulimit -n)"
+        JAVA_OPTS="$JAVA_OPTS 
+        -XX:-MaxFDLimit
+        "
+    fi
 
     JAVA_MAIN="io.questdb/io.questdb.ServerMain"
     DATE=`date +%Y-%m-%dT%H-%M-%S`
