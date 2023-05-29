@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
@@ -552,7 +551,7 @@ public class WalWriter implements TableWriterAPI {
         this.tableToken = tableToken;
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
+    private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA mem1, MemoryMA mem2) {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
@@ -1755,7 +1754,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void putLong128(int columnIndex, long lo, long hi) {
-            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
+            MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
             setRowValueNotNull(columnIndex);
@@ -1860,11 +1859,11 @@ public class WalWriter implements TableWriterAPI {
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
-        private MemoryA getPrimaryColumn(int columnIndex) {
+        private MemoryMA getPrimaryColumn(int columnIndex) {
             return columns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
 
-        private MemoryA getSecondaryColumn(int columnIndex) {
+        private MemoryMA getSecondaryColumn(int columnIndex) {
             return columns.getQuick(getSecondaryColumnIndex(columnIndex));
         }
 
