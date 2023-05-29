@@ -116,8 +116,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 
-    /* used for describing query execution plan */
-
     /**
      * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
      * The calling code must not hold on to copies of the cursor.
@@ -164,6 +162,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     boolean recordCursorSupportsRandomAccess();
+
+    default void revertFromSampleByIndexDataFrameCursorFactory() {
+    }
 
     default boolean supportPageFrameCursor() {
         return false;
