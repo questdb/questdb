@@ -69,6 +69,25 @@ public class EncodingTest {
         Encoding.base64UrlDecode(null, buffer);
         Assert.assertEquals(0, buffer.position());
 
+        // single char with no padding
+        buffer.clear();
+        Encoding.base64UrlDecode("YQ", buffer);
+        buffer.flip();
+        Assert.assertEquals(1, buffer.remaining());
+        Assert.assertEquals('a', buffer.get());
+
+        // empty string
+        buffer.clear();
+        Encoding.base64UrlDecode("", buffer);
+        buffer.flip();
+        Assert.assertEquals(0, buffer.remaining());
+
+        // empty string with padding
+        buffer.clear();
+        Encoding.base64UrlDecode("===", buffer);
+        buffer.flip();
+        Assert.assertEquals(0, buffer.remaining());
+
         // random part
         Random rand = new Random(System.currentTimeMillis());
         int len = rand.nextInt(100) + 1;

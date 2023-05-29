@@ -16,6 +16,18 @@ public final class Encoding {
 
     }
 
+    /**
+     * Decodes base64u encoded string into a byte buffer.
+     * <p>
+     * This method does not check for padding. It's up to the caller to ensure that the target
+     * buffer has enough space to accommodate decoded data. Otherwise, {@link java.nio.BufferOverflowException}
+     * will be thrown.
+     *
+     * @param encoded base64 encoded string
+     * @param target  target buffer
+     * @throws CairoException                   if encoded string is invalid
+     * @throws java.nio.BufferOverflowException if target buffer is too small
+     */
     public static void base64Decode(CharSequence encoded, ByteBuffer target) {
         base64Decode(encoded, target, base64Inverted);
     }
@@ -27,6 +39,18 @@ public final class Encoding {
         }
     }
 
+    /**
+     * Decodes base64url encoded string into a byte buffer.
+     * <p>
+     * This method does not check for padding. It's up to the caller to ensure that the target
+     * buffer has enough space to accommodate decoded data. Otherwise, {@link java.nio.BufferOverflowException}
+     * will be thrown.
+     *
+     * @param encoded base64url encoded string
+     * @param target  target buffer
+     * @throws CairoException                   if encoded string is invalid
+     * @throws java.nio.BufferOverflowException if target buffer is too small
+     */
     public static void base64UrlDecode(CharSequence encoded, ByteBuffer target) {
         base64Decode(encoded, target, base64UrlInverted);
     }
@@ -49,17 +73,20 @@ public final class Encoding {
                 break;
             }
         }
+        if (length == 1) {
+            // a single byte encoded in base64 will be 2 chars long
+            // length 1 = invalid encoding
+            throw CairoException.nonCritical().put("invalid base64 encoding");
+        }
         for (int i = 0; i < length; ) {
-            byte b = invertLookup(invertedAlphabet, encoded.charAt(i++));
-            assert b != -1;
-            int wrk = b << 18;
-            wrk |= invertedAlphabet[encoded.charAt(i++)] << 12;
+            int wrk = invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 18;
+            wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 12;
             target.put((byte) (wrk >>> 16));
             if (i < length) {
-                wrk |= invertedAlphabet[encoded.charAt(i++)] << 6;
+                wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 6;
                 target.put((byte) ((wrk >>> 8) & 0xFF));
                 if (i < length) {
-                    wrk |= invertedAlphabet[encoded.charAt(i++)];
+                    wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++));
                     target.put((byte) (wrk & 0xFF));
                 }
             }
@@ -107,7 +134,7 @@ public final class Encoding {
         return inverted;
     }
 
-    private static byte invertLookup(byte[] invertedAlphabet, char ch) {
+    private static byte invertedLookup(byte[] invertedAlphabet, char ch) {
         if (ch > 127) {
             throw CairoException.nonCritical().put("not ascii letter while decoding base64 [ch=").put(Character.getNumericValue(ch)).put(']');
         }
