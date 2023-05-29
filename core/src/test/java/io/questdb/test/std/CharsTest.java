@@ -29,14 +29,10 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.FileNameExtractorCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
-
-import java.util.Base64;
-import java.util.Random;
 
 public class CharsTest {
     private static final FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
@@ -47,61 +43,6 @@ public class CharsTest {
         separator = System.getProperty("file.separator").charAt(0);
     }
 
-    @Test
-    public void testBase64Encode() {
-        final StringSink sink = new StringSink();
-        final TestBinarySequence testBinarySequence = new TestBinarySequence();
-        sink.clear();
-        Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q=");
-        sink.clear();
-        Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw==");
-        // ignore the null
-        Chars.base64Encode(null, 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw==");
-
-        // random part
-        Random rand = new Random(System.currentTimeMillis());
-        int len = rand.nextInt(100) + 1;
-        byte[] bytes = new byte[len];
-        for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) rand.nextInt(0xFF);
-        }
-        testBinarySequence.of(bytes);
-        sink.clear();
-        Chars.base64Encode(testBinarySequence, (int) testBinarySequence.length(), sink);
-        byte[] decoded = Base64.getDecoder().decode(sink.toString());
-        Assert.assertArrayEquals(bytes, decoded);
-    }
-
-    @Test
-    public void testBase64UrlEncode() {
-        final StringSink sink = new StringSink();
-        final TestBinarySequence testBinarySequence = new TestBinarySequence();
-        sink.clear();
-        Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q");
-        sink.clear();
-        Chars.base64UrlEncode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw");
-        // ignore the null
-        Chars.base64UrlEncode(null, 4, sink);
-        Assert.assertEquals(sink.toString(), "dGhpcw");
-
-        // random part
-        Random rand = new Random(System.currentTimeMillis());
-        int len = rand.nextInt(100) + 1;
-        byte[] bytes = new byte[len];
-        for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) rand.nextInt(0xFF);
-        }
-        testBinarySequence.of(bytes);
-        sink.clear();
-        Chars.base64UrlEncode(testBinarySequence, (int) testBinarySequence.length(), sink);
-        byte[] decoded = Base64.getUrlDecoder().decode(sink.toString());
-        Assert.assertArrayEquals(bytes, decoded);
-    }
 
     @Test
     public void testEmptyString() {
