@@ -417,7 +417,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReader(CharSequence tableName) {
-        return getReader(verifyTableName(tableName));
+        return getReader(verifyTableNameForRead(tableName));
     }
 
     public TableReader getReader(TableToken tableToken) {
@@ -523,7 +523,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
-        return getTableWriterAPI(verifyTableName(tableName), lockReason);
+        return getTableWriterAPI(verifyTableNameForRead(tableName), lockReason);
     }
 
     public Telemetry<TelemetryTask> getTelemetry() {
@@ -698,12 +698,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void reloadTableNames(ObjList<TableToken> convertedTables) {
         tableNameRegistry.reloadTableNameCache(convertedTables);
-    }
-
-    public int removeDirectory(@Transient Path path, CharSequence dir) {
-        path.of(configuration.getRoot()).concat(dir);
-        final FilesFacade ff = configuration.getFilesFacade();
-        return ff.rmdir(path.slash$());
     }
 
     public void removeTableToken(TableToken tableToken) {
@@ -929,6 +923,15 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
+    }
+
+    @NotNull
+    private TableToken verifyTableNameForRead(CharSequence tableName) {
+        TableToken token = getTableTokenIfExists(tableName);
+        if (token == null || token == TableNameRegistry.LOCKED_TOKEN) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
+        return token;
     }
 
     private class EngineMaintenanceJob extends SynchronizedJob {
