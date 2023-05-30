@@ -21,7 +21,6 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.BinarySearch;
@@ -36,21 +35,21 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 
-public class InTimestampTimestampFunctionFactory implements FunctionFactory {
-    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+public class InLongFunctionFactory implements FunctionFactory {
+
+    public static long tryParseLong(CharSequence seq, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
+            return Numbers.parseLong(seq, 0, seq.length());
         } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
+            throw SqlException.position(position).put("invalid LONG value");
         }
     }
 
     @Override
     public String getSignature() {
-        return "in(NV)";
+        return "in(LV)";
     }
 
     @Override
@@ -60,15 +59,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
-                case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
+                case ColumnType.SHORT:
+                case ColumnType.BYTE:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
                     break;
                 default:
-                    throw SqlException.position(0).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
+                    throw SqlException.position(0).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
             }
             if (!func.isConstant()) {
                 allConst = false;
@@ -77,19 +77,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (allConst) {
-            return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
-        }
-
-        if (args.size() == 2 && ColumnType.isString(args.get(1).getType())) {
-            // special case - one argument and it a string
-            return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
+            return new InLongConstFunction(args.getQuick(0), parseToLong(args, argPositions));
         }
 
         // have to copy, args is mutable
-        return new InTimestampVarFunction(new ObjList<>(args));
+        return new InLongVarFunction(new ObjList<>(args));
     }
 
-    private LongList parseToTs(ObjList<Function> args, IntList argPositions) throws SqlException {
+    private LongList parseToLong(ObjList<Function> args, IntList argPositions) throws SqlException {
         LongList res = new LongList(args.size() - 1);
         res.extendAndSet(args.size() - 2, 0);
 
@@ -97,19 +92,17 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             long val = Numbers.LONG_NaN;
             switch (ColumnType.tagOf(func.getType())) {
-                case ColumnType.DATE:
-                    val = func.getDate(null);
-                    val = (val == Numbers.LONG_NaN) ? val : val * 1000L;
-                    break;
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
-                    val = func.getTimestamp(null);
+                case ColumnType.SHORT:
+                case ColumnType.BYTE:
+                    val = func.getLong(null);
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
                     CharSequence tsValue = func.getStr(null);
-                    val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
+                    val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
             }
             res.setQuick(i - 1, val);
@@ -119,11 +112,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return res;
     }
 
-    private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+    private static class InLongConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final LongList inList;
         private final Function tsFunc;
 
-        public InTimestampConstFunction(Function tsFunc, LongList longList) {
+        public InLongConstFunction(Function tsFunc, LongList longList) {
             this.tsFunc = tsFunc;
             this.inList = longList;
         }
@@ -149,10 +142,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InTimestampVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
+    private static class InLongVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
 
-        public InTimestampVarFunction(ObjList<Function> args) {
+        public InLongVarFunction(ObjList<Function> args) {
             this.args = args;
         }
 
@@ -163,21 +156,23 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long ts = args.getQuick(0).getTimestamp(rec);
+            long ts = args.getQuick(0).getLong(rec);
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
                 long val = Numbers.LONG_NaN;
                 switch (ColumnType.tagOf(func.getType())) {
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.LONG:
+                    case ColumnType.BYTE:
+                    case ColumnType.SHORT:
                     case ColumnType.INT:
-                        val = func.getTimestamp(rec);
+                    case ColumnType.LONG:
+                    case ColumnType.TIMESTAMP:
+                        val = func.getLong(rec);
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
                         CharSequence str = func.getStr(rec);
-                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NaN;
+                        val = Numbers.parseLongQuiet(str);
                         break;
                 }
                 if (val == ts) {
@@ -198,3 +193,4 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 }
+

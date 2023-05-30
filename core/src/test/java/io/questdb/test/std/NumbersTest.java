@@ -112,6 +112,38 @@ public class NumbersTest {
         Assert.assertEquals(32, Numbers.ceilPow2(17));
     }
 
+    @Test
+    public void testDoubleCompare() {
+        Assert.assertEquals(-1, Numbers.compare(0d, 1d));
+        Assert.assertEquals(1, Numbers.compare(1d, 0d));
+        Assert.assertEquals(0, Numbers.compare(1d, 1d));
+        Assert.assertEquals(0, Numbers.compare(0.0d, 0.0d));
+        Assert.assertEquals(-1, Numbers.compare(-0.0d, 0.0d));
+        Assert.assertEquals(1, Numbers.compare(Double.MAX_VALUE, Double.MIN_VALUE));
+        Assert.assertEquals(0, Numbers.compare(Double.MAX_VALUE, Double.MAX_VALUE));
+        Assert.assertEquals(0, Numbers.compare(Double.MIN_VALUE, Double.MIN_VALUE));
+        Assert.assertEquals(-1, Numbers.compare(Double.MIN_VALUE, Double.MAX_VALUE));
+        Assert.assertEquals(0, Numbers.compare(Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY));
+        Assert.assertEquals(1, Numbers.compare(Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY));
+        Assert.assertEquals(-1, Numbers.compare(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Double.NaN, Double.NaN));
+        Assert.assertEquals(-1, Numbers.compare(1d, Double.NaN));
+        Assert.assertEquals(-1, Numbers.compare(Double.MIN_VALUE, Double.NaN));
+        Assert.assertEquals(-1, Numbers.compare(Double.MAX_VALUE, Double.NaN));
+    }
+
+    @Test
+    public void testDoubleEquals() {
+        Assert.assertTrue(Numbers.equals(1d, 1d));
+        Assert.assertTrue(Numbers.equals(0.0d, -0.0d));
+        Assert.assertTrue(Numbers.equals(Double.MAX_VALUE, Double.MAX_VALUE));
+        Assert.assertTrue(Numbers.equals(Double.MIN_VALUE, Double.MIN_VALUE));
+        Assert.assertTrue(Numbers.equals(Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY));
+        Assert.assertTrue(Numbers.equals(Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY));
+        Assert.assertTrue(Numbers.equals(Double.NaN, Double.NaN));
+    }
+
     @Test(expected = NumericException.class)
     public void testEmptyDouble() throws Exception {
         Numbers.parseDouble("D");
@@ -150,6 +182,24 @@ public class NumbersTest {
         Assert.assertFalse(Numbers.extractLong256(invalidInput, invalidInput.length(), sink));
         Assert.assertTrue(Numbers.extractLong256(validInputZero, validInputZero.length(), sink));
         Assert.assertTrue(Numbers.extractLong256(validInputMax, validInputMax.length(), sink));
+    }
+
+    @Test
+    public void testFloatCompare() {
+        Assert.assertEquals(-1, Numbers.compare(0f, 1f));
+        Assert.assertEquals(1, Numbers.compare(1f, 0f));
+        Assert.assertEquals(0, Numbers.compare(1f, 1f));
+        Assert.assertEquals(0, Numbers.compare(0.0f, 0.0f));
+        Assert.assertEquals(-1, Numbers.compare(-0.0f, 0.0f));
+        Assert.assertEquals(1, Numbers.compare(Float.MAX_VALUE, Float.MIN_VALUE));
+        Assert.assertEquals(0, Numbers.compare(Float.MAX_VALUE, Float.MAX_VALUE));
+        Assert.assertEquals(0, Numbers.compare(Float.MIN_VALUE, Float.MIN_VALUE));
+        Assert.assertEquals(-1, Numbers.compare(Float.MIN_VALUE, Float.MAX_VALUE));
+        Assert.assertEquals(0, Numbers.compare(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY));
+        Assert.assertEquals(1, Numbers.compare(Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY));
+        Assert.assertEquals(-1, Numbers.compare(Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Float.NaN, Float.NaN));
     }
 
     @Test
