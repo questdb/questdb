@@ -40,6 +40,8 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -58,6 +60,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class CairoEngine implements Closeable, WriterSource {
@@ -67,6 +70,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final CairoConfiguration configuration;
     private final CopyContext copyContext;
     private final EngineMaintenanceJob engineMaintenanceJob;
+    private final FunctionFactoryCache ffCache;
     private final MessageBusImpl messageBus;
     private final MetadataPool metadataPool;
     private final Metrics metrics;
@@ -89,6 +93,10 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
+        ffCache = new FunctionFactoryCache(
+                configuration,
+                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+        );
         this.configuration = configuration;
         this.copyContext = new CopyContext(configuration);
         this.metrics = metrics;
@@ -363,6 +371,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Job getEngineMaintenanceJob() {
         return engineMaintenanceJob;
+    }
+
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return ffCache;
     }
 
     public MessageBus getMessageBus() {
