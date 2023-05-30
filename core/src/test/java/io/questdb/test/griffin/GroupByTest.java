@@ -757,12 +757,26 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGroupByInvalidFilter() throws Exception {
+    public void testGroupByInvalidOrderByExpression() throws Exception {
         assertFailure(
                 "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
                 "CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);",
                 69,
                 "Invalid date"
+        );
+    }
+
+    @Test
+    public void testGroupByOrderByExpression() throws Exception {
+        assertQuery(
+                "ref0\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
+                "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('1970-01-01T00:00:00.000002Z');",
+                "CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);",
+                null,
+                true,
+                true
         );
     }
 

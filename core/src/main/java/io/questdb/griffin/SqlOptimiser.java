@@ -2002,23 +2002,24 @@ public class SqlOptimiser {
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type == ExpressionNode.OPERATION) {
-                sqlNodeStack.push(node.rhs);
-                node = node.lhs;
-            }
-            if (node == null) {
-                break;
-            }
-
-            if (node.type != ExpressionNode.CONSTANT
+            if (node.type != ExpressionNode.OPERATION
+                    && node.type != ExpressionNode.CONSTANT
                     && !(node.type == ExpressionNode.FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token))) {
                 return false;
             }
 
-            if (sqlNodeStack.isEmpty()) {
-                node = null;
+            if (node.lhs != null) {
+                sqlNodeStack.push(node.lhs);
+            }
+
+            if (node.rhs != null) {
+                node = node.rhs;
             } else {
-                node = sqlNodeStack.poll();
+                if (!sqlNodeStack.isEmpty()) {
+                    node = this.sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
             }
         }
 
