@@ -157,6 +157,17 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public TableToken applyNameChange(TableWriter tableWriter, CharSequence newTableName, int nameVersion) {
+        TableToken tableToken = tableWriter.getTableToken();
+        int tableNameVersion = tableSequencerAPI.getTableNameVersion(tableToken);
+        if (tableNameVersion == nameVersion - 1) {
+            TableToken newTableToken = tableNameRegistry.rename(tableToken.getTableName(), newTableName, tableToken);
+            tableWriter.overwriteTableNameFile(newTableToken);
+            return newTableToken;
+        }
+        return null;
+    }
+
     @TestOnly
     public boolean clear() {
         boolean b1 = readerPool.releaseAll();
@@ -737,7 +748,10 @@ public class CairoEngine implements Closeable, WriterSource {
             if (tableToken.isWal()) {
                 newTableToken = tableNameRegistry.rename(tableName, newName, tableToken);
                 TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);
-                tableSequencerAPI.renameWalTable(tableToken, newTableToken);
+                int nameVersion = tableSequencerAPI.renameWalTable(tableToken, newTableToken);
+                try (var walWriter = getWalWriter(tableToken)) {
+                    walWriter.rename(newName, nameVersion);
+                }
             } else {
                 String lockedReason = lock(tableToken, "renameTable");
                 if (null == lockedReason) {
