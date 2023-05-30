@@ -757,6 +757,16 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByInvalidFilter() throws Exception {
+        assertFailure(
+                "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
+                "CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);",
+                69,
+                "Invalid date"
+        );
+    }
+
+    @Test
     public void testGroupByWithAliasClash1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t as (" +

@@ -2001,13 +2001,17 @@ public class SqlOptimiser {
 
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
-        while (null != node) {
+        while (node != null) {
             if (node.type == ExpressionNode.OPERATION) {
                 sqlNodeStack.push(node.rhs);
                 node = node.lhs;
             }
+            if (node == null) {
+                break;
+            }
 
-            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token)))) {
+            if (node.type != ExpressionNode.CONSTANT
+                    && !(node.type == ExpressionNode.FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token))) {
                 return false;
             }
 
