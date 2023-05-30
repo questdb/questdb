@@ -1224,12 +1224,6 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testEqualsToEpochInterval() throws Exception {
-        runWhereTest("timestamp in 1424649600000000",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
-    }
-
-    @Test
     public void testEqualsZeroOverlapEquals() throws Exception {
         IntrinsicModel m = modelOf("sym = 'x' and sym = 'y'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -1568,6 +1562,12 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
         assertFilter(m, "'c' $2 concat sym in not 'c' $1 concat sym in and");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInEpochRawValue() throws Exception {
+        runWhereTest("timestamp in 1424649600000000",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
