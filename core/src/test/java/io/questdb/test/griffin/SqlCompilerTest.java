@@ -4414,6 +4414,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
+        assertFailure("select 1 from tab where (\"\")",
+                "create table tab (i int)",
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where (\"a\")",
+                null,
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where ('')", null,
+                25, "boolean expression expected");
+
+        assertFailure("select 1 from tab where ('a')", null,
+                25, "boolean expression expected");
+    }
+
+    @Test
     public void testSymbolToStringAutoCast() throws Exception {
         final String expected = "cc\tk\n" +
                 "PEHN_\t1970-01-01T00:00:00.000000Z\n" +
