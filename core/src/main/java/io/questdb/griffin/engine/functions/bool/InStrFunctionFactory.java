@@ -64,7 +64,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                 case ColumnType.SYMBOL:
                     CharSequence value = func.getStr(null);
                     if (value == null) {
-                        throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed");
+                        set.addNull();
                     }
                     set.add(Chars.toString(value));
                     break;
