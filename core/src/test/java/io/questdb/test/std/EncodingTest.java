@@ -103,7 +103,7 @@ public class EncodingTest {
             Encoding.base64UrlDecode("a\u00A0", buffer);
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "non ascii character while decoding base64");
+            TestUtils.assertContains(e.getFlyweightMessage(), "non-ascii character while decoding base64");
         }
 
         // ascii but not base64
