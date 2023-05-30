@@ -26,10 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -1845,7 +1842,7 @@ public class SqlOptimiser {
         return func;
     }
 
-    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
+    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) throws SqlException {
         orderByAdvice.clear();
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
         final int len = orderBy.size();
@@ -1853,9 +1850,22 @@ public class SqlOptimiser {
             return orderByAdvice;
         }
 
-        LowerCaseCharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = model.getAliasToColumnMap();
+        LowerCaseCharSequenceObjHashMap<CharSequence> nameToAliasMap = model.getColumnNameToAliasMap();
         for (int i = 0; i < len; i++) {
-            QueryColumn queryColumn = map.get(orderBy.getQuick(i).token);
+            ExpressionNode orderByNode = orderBy.getQuick(i);
+            QueryColumn queryColumn = aliasToColumnMap.get(orderByNode.token);
+            if (queryColumn == null) {
+                CharSequence alias = nameToAliasMap.get(orderByNode.token);
+                if (alias != null) {
+                    queryColumn = aliasToColumnMap.get(alias);
+                }
+            }
+            if (queryColumn == null) {
+                throw SqlException.position(orderByNode.position)
+                        .put("Unexpected order by column: ").put(orderByNode.token);
+            }
+
             if (queryColumn.getAst().type == LITERAL) {
                 orderByAdvice.add(queryColumn.getAst());
             } else {
@@ -2681,7 +2691,7 @@ public class SqlOptimiser {
     }
 
     // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
-    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) {
+    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) throws SqlException {
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
         int orderByMnemonic;
         int n = columns.size();
@@ -3526,6 +3536,14 @@ public class SqlOptimiser {
                             // this will determine is column is referenced by select at all
                             index = map.keyIndex(column, dot + 1, column.length());
                         }
+
+                        if (index > -1) {
+                            QueryColumn qc = this.getQueryColumn(baseParent, column, dot);
+                            if (qc != null) {
+                                index = map.keyIndex(qc.getAst().token);
+                            }
+                        }
+
 
                         if (index < 0) {
                             // we have found alias, rewrite order by column

@@ -28,6 +28,8 @@ import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class GroupByTest extends AbstractGriffinTest {
 
     @Test
@@ -999,6 +1001,57 @@ public class GroupByTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
+        assertCompile("create table tst ( ts timestamp ) timestamp(ts);");
+        assertCompile("insert into tst values ('2023-05-29T15:30:00.000000Z')");
+
+        assertCompile("create table data ( dts timestamp, s symbol ) timestamp(dts);");
+        assertCompile("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
+
+        //single table 
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY ts " +
+                        "ORDER BY ts", "", true, true);
+
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT tst.ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY tst.ts " +
+                        "ORDER BY tst.ts", "", true, true);
+
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT tst.ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY ts " +
+                        "ORDER BY tst.ts", "", true, true);
+
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY tst.ts " +
+                        "ORDER BY ts", "", true, true);
+
+        //joins
+        for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
+            assertQuery("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                    "SELECT ts AS ref0, dts " +
+                            "FROM tst " +
+                            join +
+                            "GROUP BY tst.ts, data.dts " +
+                            "ORDER BY ts", "", true, true);
+
+            assertQuery("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                    "SELECT ts AS ref0, dts " +
+                            "FROM tst " +
+                            join +
+                            "GROUP BY ts, data.dts " +
+                            "ORDER BY tst.ts", "", true, true);
+        }
     }
 
     @Test
