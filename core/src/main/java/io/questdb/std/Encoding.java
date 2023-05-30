@@ -13,7 +13,6 @@ public final class Encoding {
     static final byte[] base64UrlInverted = createInvertedAlphabet(base64Url);
 
     private Encoding() {
-
     }
 
     /**
@@ -133,7 +132,7 @@ public final class Encoding {
 
     private static byte invertedLookup(byte[] invertedAlphabet, char ch) {
         if (ch > 127) {
-            throw CairoException.nonCritical().put("non ascii character while decoding base64 [ch=").put((int) (ch)).put(']');
+            throw CairoException.nonCritical().put("non-ascii character while decoding base64 [ch=").put((int) (ch)).put(']');
         }
         byte index = invertedAlphabet[ch];
         if (index == -1) {

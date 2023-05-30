@@ -79,7 +79,6 @@ public final class Chars {
         return dst;
     }
 
-
     public static int compare(CharSequence l, CharSequence r) {
         if (l == r) {
             return 0;
