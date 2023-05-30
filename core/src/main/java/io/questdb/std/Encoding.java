@@ -73,12 +73,9 @@ public final class Encoding {
                 break;
             }
         }
-        if (length == 1) {
-            // a single byte encoded in base64 will be 2 chars long
-            // length 1 = invalid encoding
-            throw CairoException.nonCritical().put("invalid base64 encoding");
-        }
-        for (int i = 0; i < length; ) {
+
+        // we need at least 2 bytes to decode anything
+        for (int i = 0, last = length - 1; i < last; ) {
             int wrk = invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 18;
             wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 12;
             target.put((byte) (wrk >>> 16));
@@ -136,11 +133,11 @@ public final class Encoding {
 
     private static byte invertedLookup(byte[] invertedAlphabet, char ch) {
         if (ch > 127) {
-            throw CairoException.nonCritical().put("not ascii letter while decoding base64 [ch=").put(Character.getNumericValue(ch)).put(']');
+            throw CairoException.nonCritical().put("non ascii character while decoding base64 [ch=").put((int) (ch)).put(']');
         }
         byte index = invertedAlphabet[ch];
         if (index == -1) {
-            throw CairoException.nonCritical().put("invalid base64 character: ").put(ch);
+            throw CairoException.nonCritical().put("invalid base64 character [ch=").put(ch).put(']');
         }
         return index;
     }

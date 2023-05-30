@@ -1,5 +1,6 @@
 package io.questdb.test.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Encoding;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -8,6 +9,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Random;
 
@@ -71,7 +73,7 @@ public class EncodingTest {
 
         // single char with no padding
         buffer.clear();
-        Encoding.base64UrlDecode("YQ", buffer);
+        Encoding.base64UrlDecode(Base64.getUrlEncoder().encodeToString("a".getBytes(StandardCharsets.UTF_8)), buffer);
         buffer.flip();
         Assert.assertEquals(1, buffer.remaining());
         Assert.assertEquals('a', buffer.get());
@@ -82,11 +84,36 @@ public class EncodingTest {
         buffer.flip();
         Assert.assertEquals(0, buffer.remaining());
 
+        // single byte in input treated as empty string
+        // why? base64 encoder will encode single byte as two chars
+        buffer.clear();
+        Encoding.base64UrlDecode("a", buffer);
+        buffer.flip();
+        Assert.assertEquals(0, buffer.remaining());
+
         // empty string with padding
         buffer.clear();
         Encoding.base64UrlDecode("===", buffer);
         buffer.flip();
         Assert.assertEquals(0, buffer.remaining());
+
+        // non-ascii in input
+        buffer.clear();
+        try {
+            Encoding.base64UrlDecode("a\u00A0", buffer);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "non ascii character while decoding base64");
+        }
+
+        // ascii but not base64
+        buffer.clear();
+        try {
+            Encoding.base64UrlDecode("a\u0001", buffer);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 character [ch=\u0001]");
+        }
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
