@@ -109,8 +109,53 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeManageAccess() {
-        throw CairoException.authorization().put("Manage access permission denied").setCacheable(true);
+    public void authorizeAddUser() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeRemoveUser() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeAssignRole() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeUnassignRole() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeCreateGroup() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeDropGroup() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeCreateUser() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeDropUser() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeCreateRole() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeDropRole() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
