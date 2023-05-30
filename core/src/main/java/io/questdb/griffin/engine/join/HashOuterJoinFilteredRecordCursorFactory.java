@@ -163,7 +163,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                buildMapOfSlaveRecords();
+                TableUtils.populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
                 isMapBuilt = true;
             }
 
@@ -211,24 +211,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
                 slaveCursor.toTop();
                 joinKeyMap.clear();
                 slaveChain.clear();
-            }
-        }
-
-        private void buildMapOfSlaveRecords() {
-            final Record record = slaveCursor.getRecord();
-            while (slaveCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-
-                MapKey key = joinKeyMap.withKey();
-                key.put(record, slaveKeySink);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    long offset = slaveChain.put(record, -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
-                } else {
-                    value.putLong(1, slaveChain.put(record, value.getLong(1)));
-                }
             }
         }
 

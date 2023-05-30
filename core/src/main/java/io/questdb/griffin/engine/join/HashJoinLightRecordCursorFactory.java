@@ -42,7 +42,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     private final HashJoinRecordCursor cursor;
     private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
-    private final RecordSink masterKeySink;
+    private final RecordSink masterSink;
     private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
@@ -53,7 +53,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
             @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
-            RecordSink masterKeySink,
+            RecordSink masterSink,
             RecordSink slaveKeySink,
             int columnSplit,
             JoinContext joinContext
@@ -61,7 +61,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        this.masterKeySink = masterKeySink;
+        this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);
         this.joinContext = joinContext;
@@ -160,7 +160,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
             while (masterCursor.hasNext()) {
                 MapKey key = joinKeyMap.withKey();
-                key.put(masterRecord, masterKeySink);
+                key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
                     slaveChainCursor = slaveChain.getCursor(value.getLong(0));
@@ -179,23 +179,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             if (size > -1) {
                 return size;
             }
-
             buildMapOfSlaveRecords();
-            long size = 0;
-            try {
-                masterCursor.toTop();
-                while (masterCursor.hasNext()) {
-                    MapKey key = joinKeyMap.withKey();
-                    key.put(masterRecord, masterKeySink);
-                    MapValue value = key.findValue();
-                    if (value != null) {
-                        size += value.getLong(2);
-                    }
-                }
-                return this.size = size;
-            } finally {
-                masterCursor.toTop();
-            }
+            return size = TableUtils.computeCursorSizeFromMap(masterCursor, joinKeyMap, masterSink);
         }
 
         @Override
@@ -211,29 +196,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         private void buildMapOfSlaveRecords() {
             if (!isMapBuilt) {
-                buildMapOfSlaveRecords0();
+                TableUtils.populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                isMapBuilt = true;
             }
-        }
-
-        private void buildMapOfSlaveRecords0() {
-            final Record record = slaveCursor.getRecord();
-            while (slaveCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-
-                MapKey key = joinKeyMap.withKey();
-                key.put(record, slaveKeySink);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    final long offset = slaveChain.put(record.getRowId(), -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
-                    value.putLong(2, 1);
-                } else {
-                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
-                    value.addLong(2, 1);
-                }
-            }
-            isMapBuilt = true;
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
