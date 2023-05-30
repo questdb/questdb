@@ -81,8 +81,34 @@ public interface SecurityContext {
     default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    @SuppressWarnings("unused")
-    default void authorizeManageAccess() {
+    default void authorizeAddUser() {
+    }
+
+    default void authorizeRemoveUser() {
+    }
+
+    default void authorizeAssignRole() {
+    }
+
+    default void authorizeUnassignRole() {
+    }
+
+    default void authorizeCreateGroup() {
+    }
+
+    default void authorizeDropGroup() {
+    }
+
+    default void authorizeCreateUser() {
+    }
+
+    default void authorizeDropUser() {
+    }
+
+    default void authorizeCreateRole() {
+    }
+
+    default void authorizeDropRole() {
     }
 
     default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
