@@ -42,7 +42,10 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -52,7 +55,7 @@ import java.util.concurrent.atomic.AtomicLong;
 // using current execution time.
 // This improves coverage. To debug failures in CI find the line logging random seeds
 // and change line
-// Rnd rnd = TestUtils.generateRandom(LOG);
+// Rnd rnd = generateRandom(LOG);
 // to
 // Rnd rnd = new Rnd(A, B);
 // where A, B are seeds in the failed run log.
@@ -68,7 +71,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef = WalWriterFuzzTest::checkNoSuspendedTables;
-    private Rnd testRnd;
 
 
     @BeforeClass
@@ -77,19 +79,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         AbstractGriffinTest.setUpStatic();
     }
 
-    @After
-    public void logSeeds() {
-        if (this.testRnd != null) {
-            long s0 = this.testRnd.getSeed0();
-            long s1 = this.testRnd.getSeed1();
-            LOG.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
-            System.out.printf("random seeds: %dL, %dL%n", s0, s1);
-        }
-    }
-
     @Before
     public void setUp() {
-        this.testRnd = null;
         configOverrideO3ColumnMemorySize(512 * 1024);
         setFuzzProperties(100, 1000, 2);
         super.setUp();
@@ -97,7 +88,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testSimpleDataTransaction() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01);
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1);
@@ -108,12 +99,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
         setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
-        runFuzz(TestUtils.generateRandom(LOG));
+        runFuzz(generateRandom(LOG));
     }
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
@@ -122,7 +113,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalApplyEjectsMultipleTables() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
@@ -130,7 +121,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
@@ -140,7 +131,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteEqualTimestamp() throws Exception {
         configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.5);
         setFuzzCounts(
                 true,
@@ -158,7 +149,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteFullRandom() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setRandomAppendPageSize(rnd);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         fullRandomFuzz(rnd);
@@ -166,7 +157,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteFullRandomMultipleTables() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(4));
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         fullRandomFuzz(rnd, tableCount);
@@ -175,7 +166,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteManySmallTransactions() throws Exception {
         configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01);
         setFuzzCounts(
                 true,
@@ -194,24 +185,18 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteManyTablesInOrder() throws Exception {
         configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setRandomAppendPageSize(rnd);
-        long s0 = rnd.getSeed0();
-        long s1 = rnd.getSeed1();
         int tableCount = 3;
-        try {
-            setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01);
-            setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
-            String tableNameBase = testName.getMethodName();
-            runFuzz(rnd, tableNameBase, tableCount, false, false);
-        } finally {
-            System.out.printf("random seeds: %dL, %dL%n", s0, s1);
-        }
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01);
+        setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
+        String tableNameBase = testName.getMethodName();
+        runFuzz(rnd, tableNameBase, tableCount, false, false);
     }
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);
@@ -219,7 +204,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteRollbackTruncateHeavy() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15, 0.01);
         setFuzzCounts(rnd.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);
@@ -229,7 +214,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testWalWriteTinyO3Memory() throws Exception {
         final int o3MemorySize = 256;
         configOverrideO3ColumnMemorySize(o3MemorySize);
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01);
         setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
         runFuzz(rnd, testName.getMethodName(), 1, false, false);
@@ -238,7 +223,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWriteO3DataOnlyBig() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01, 0.01);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
@@ -284,7 +269,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     if (!walWriter.goActive(transaction.structureVersion)) {
                         throw CairoException.critical(0).put("cannot apply structure change");
                     }
-                    if (walWriter.getStructureVersion() != transaction.structureVersion) {
+                    if (walWriter.getMetadataVersion() != transaction.structureVersion) {
                         throw CairoException.critical(0)
                                 .put("cannot update wal writer to correct structure version");
                     }
@@ -321,7 +306,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     private static void forceReleaseTableWriter(Rnd applyRnd) {
         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
         // where it can be fully closed before continuing the WAL application Test TableWriter closures.
-        engine.releaseAllWriters();
         if (applyRnd.nextDouble() < 0.8) {
             engine.releaseAllWriters();
         }
@@ -464,62 +448,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void runFuzz(Rnd rnd) throws Exception {
-        this.testRnd = rnd;
-        configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
-
-        assertMemoryLeak(() -> {
-            String tableNameBase = testName.getMethodName();
-            String tableNameWal = tableNameBase + "_wal";
-            String tableNameWal2 = tableNameBase + "_wal_parallel";
-            String tableNameNoWal = tableNameBase + "_nonwal";
-
-            createInitialTable(tableNameWal, true, initialRowCount);
-            createInitialTable(tableNameWal2, true, initialRowCount);
-            createInitialTable(tableNameNoWal, false, initialRowCount);
-
-            ObjList<FuzzTransaction> transactions;
-            try (TableReader reader = newTableReader(configuration, tableNameWal)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-
-                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
-                long end = start + partitionCount * Timestamps.DAY_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
-            }
-
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
-            sharedWorkerPool.start(LOG);
-
-            try {
-                long startMicro = System.nanoTime() / 1000;
-                applyNonWal(transactions, tableNameNoWal, rnd);
-                long endNonWalMicro = System.nanoTime() / 1000;
-                long nonWalTotal = endNonWalMicro - startMicro;
-
-                applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd), rnd);
-
-                long endWalMicro = System.nanoTime() / 1000;
-                long walTotal = endWalMicro - endNonWalMicro;
-
-                String limit = "";
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
-
-                startMicro = System.nanoTime() / 1000;
-                applyWalParallel(transactions, tableNameWal2, rnd);
-                endWalMicro = System.nanoTime() / 1000;
-                long totalWalParallel = endWalMicro - startMicro;
-
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
-
-                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
-            } finally {
-                sharedWorkerPool.halt();
-            }
-        });
-    }
-
     private void fullRandomFuzz(Rnd rnd) throws Exception {
         setFuzzProbabilities(
                 0.5 * rnd.nextDouble(),
@@ -585,33 +513,62 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void runPurgePartitionJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd runRnd, String tableNameBase, int tableCount, boolean multiTable) {
-        ObjList<TableReader> readers = new ObjList<>();
-        try {
-            node1.getConfigurationOverrides().setWalPurgeInterval(0L);
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
-                for (int i = 0; i < tableCount; i++) {
-                    String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
-                    readers.add(getReader(tableNameWal));
-                    readers.add(getReader(tableNameWal));
-                }
+    private void runFuzz(Rnd rnd) throws Exception {
+        configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
-                while (done.get() == 0 && errors.size() == 0) {
-                    int reader = runRnd.nextInt(tableCount);
-                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
-                    Os.sleep(1);
-                }
+        assertMemoryLeak(() -> {
+            String tableNameBase = testName.getMethodName();
+            String tableNameWal = tableNameBase + "_wal";
+            String tableNameWal2 = tableNameBase + "_wal_parallel";
+            String tableNameNoWal = tableNameBase + "_nonwal";
+
+            createInitialTable(tableNameWal, true, initialRowCount);
+            createInitialTable(tableNameWal2, true, initialRowCount);
+            createInitialTable(tableNameNoWal, false, initialRowCount);
+
+            ObjList<FuzzTransaction> transactions;
+            try (TableReader reader = newTableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+
+                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+                long end = start + partitionCount * Timestamps.DAY_MICROS;
+                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
             }
-        } catch (Throwable e) {
-            errors.add(e);
-        } finally {
-            Misc.freeObjList(readers);
-            Path.clearThreadLocals();
-        }
+
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            sharedWorkerPool.start(LOG);
+
+            try {
+                long startMicro = System.nanoTime() / 1000;
+                applyNonWal(transactions, tableNameNoWal, rnd);
+                long endNonWalMicro = System.nanoTime() / 1000;
+                long nonWalTotal = endNonWalMicro - startMicro;
+
+                applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd), rnd);
+
+                long endWalMicro = System.nanoTime() / 1000;
+                long walTotal = endWalMicro - endNonWalMicro;
+
+                String limit = "";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+
+                startMicro = System.nanoTime() / 1000;
+                applyWalParallel(transactions, tableNameWal2, rnd);
+                endWalMicro = System.nanoTime() / 1000;
+                long totalWalParallel = endWalMicro - startMicro;
+
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+
+                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+            } finally {
+                sharedWorkerPool.halt();
+            }
+        });
     }
 
     private void runFuzz(Rnd rnd, String tableNameBase, int tableCount, boolean randomiseProbs, boolean randomiseCounts) throws Exception {
-        this.testRnd = rnd;
         assertMemoryLeak(() -> {
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
             for (int i = 0; i < tableCount; i++) {
@@ -667,6 +624,31 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
             }
         });
+    }
+
+    private void runPurgePartitionJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd runRnd, String tableNameBase, int tableCount, boolean multiTable) {
+        ObjList<TableReader> readers = new ObjList<>();
+        try {
+            node1.getConfigurationOverrides().setWalPurgeInterval(0L);
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
+                for (int i = 0; i < tableCount; i++) {
+                    String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
+                    readers.add(getReader(tableNameWal));
+                    readers.add(getReader(tableNameWal));
+                }
+
+                while (done.get() == 0 && errors.size() == 0) {
+                    int reader = runRnd.nextInt(tableCount);
+                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
+                    Os.sleep(50);
+                }
+            }
+        } catch (Throwable e) {
+            errors.add(e);
+        } finally {
+            Misc.freeObjList(readers);
+            Path.clearThreadLocals();
+        }
     }
 
     private void runWalPurgeJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {

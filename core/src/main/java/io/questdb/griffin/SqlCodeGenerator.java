@@ -515,7 +515,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // at this point listColumnFilterB has column indexes of the master record that are JOIIN keys
+        // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
         // so masterSink writes key columns of master record to a sink
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
@@ -1662,7 +1662,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     releaseSlave = false;
                                     validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 } else {
-                                    assert false;
+                                    if (!master.recordCursorSupportsRandomAccess()) {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("left side of splice join doesn't support random access");
+                                    } else if (!slave.recordCursorSupportsRandomAccess()) {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of splice join doesn't support random access");
+                                    } else {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("splice join doesn't support full fat mode");
+                                    }
                                 }
                                 break;
                             default:
@@ -1695,12 +1701,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                         }
                     }
-                } catch (Throwable th) {
+                } catch (Throwable e) {
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);
                     }
-                    throw th;
+                    throw e;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
                 }
@@ -1747,6 +1753,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilter = model.getConstWhereClause();
             if (constFilter != null) {
                 Function function = functionParser.parseFunction(constFilter, null, executionContext);
+                if (!ColumnType.isBoolean(function.getType())) {
+                    throw SqlException.position(constFilter.position).put("boolean expression expected");
+                }
                 function.init(null, executionContext);
                 if (!function.getBool(null)) {
                     // do not copy metadata here

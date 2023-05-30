@@ -22,23 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.Mutable;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.str.Path;
 
-public interface PgWireAuthenticator extends Mutable {
-    SecurityContext getSecurityContext();
+public class BasicWalInitializer implements WalInitializer {
+    public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
 
-    boolean isAuthenticated();
-
-    AuthenticationResult onAfterInitMessage();
-
-    AuthenticationResult processMessage(CharSequence usernameFromInitMessage, long msgStart, long msgLimit) throws BadProtocolException;
-
-    enum AuthenticationResult {
-        AUTHENTICATION_SUCCESS,
-        AUTHENTICATION_FAILED,
-        NEED_READ
+    @Override
+    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
     }
 }

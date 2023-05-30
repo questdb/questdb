@@ -2360,6 +2360,19 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinInnerConstantFilterWithNonBooleanExpressionFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);", sqlExecutionContext);
+
+            assertFailure(
+                    "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now()",
+                    "boolean expression expected",
+                    73
+            );
+        });
+    }
+
+    @Test
     public void testJoinInnerDifferentColumnNames() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "c\ta\tb\td\tcolumn\n" +
@@ -4361,6 +4374,59 @@ public class JoinTest extends AbstractGriffinTest {
                             "20\tgoogl\t2.6750000000000003\t0.26\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n",
                     query,
                     null);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinFailsBecauseSubqueryDoesntSupportRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trade (\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  instrument SYMBOL,\n" +
+                    "  price DOUBLE,\n" +
+                    "  qty DOUBLE\n" +
+                    ") timestamp (ts) PARTITION BY MONTH", sqlExecutionContext);
+
+            assertFailure("SELECT *\n" +
+                    "FROM \n" +
+                    "(\n" +
+                    "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
+                    "  FROM trade\n" +
+                    "  WHERE instrument = 'A'\n" +
+                    "  SAMPLE by 5m ALIGN TO CALENDAR\n" +
+                    ") \n" +
+                    "SPLICE JOIN trade ", "left side of splice join doesn't support random access", 137);
+
+            assertFailure("SELECT *\n" +
+                    "FROM trade " +
+                    "SPLICE JOIN " +
+                    "(\n" +
+                    "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
+                    "  FROM trade\n" +
+                    "  WHERE instrument = 'A'\n" +
+                    "  SAMPLE BY 5m ALIGN TO CALENDAR\n" +
+                    ") \n", "right side of splice join doesn't support random access", 20);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinFailsInFullFatMode() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trade (\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  instrument SYMBOL,\n" +
+                    "  price DOUBLE,\n" +
+                    "  qty DOUBLE\n" +
+                    ") timestamp (ts) PARTITION BY MONTH", sqlExecutionContext);
+
+            compiler.setFullFatJoins(true);
+            try {
+                assertFailure("SELECT *" +
+                        "FROM trade t1 " +
+                        "SPLICE JOIN trade t2", "splice join doesn't support full fat mode", 22);
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
         });
     }
 

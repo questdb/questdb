@@ -72,6 +72,8 @@ public class InCharFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
                 }
                 set.add(CharConstant.ZERO.getChar(null));
+            } else if (ColumnType.isNull(func.getType())) {
+                set.add(CharConstant.ZERO.getChar(null));
             } else {
                 throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
             }

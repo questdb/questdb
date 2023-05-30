@@ -182,6 +182,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3OpenColumnQueueCapacity;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
+    private final long o3PartitionSplitMinSize;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
@@ -408,7 +409,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int multipartHeaderBufferSize;
     private long multipartIdleSpinCount;
     private int netTestConnectionBufferSize;
-    private final long o3PartitionSplitMinSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -464,7 +464,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
-
     public PropServerConfiguration(
             String root,
             Properties properties,
@@ -991,7 +990,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_UDP_MSG_BUFFER_SIZE, 2048);
             this.lineUdpMsgCount = getInt(properties, env, PropertyKey.LINE_UDP_MSG_COUNT, 10_000);
             this.lineUdpReceiveBufferSize = getIntSize(properties, env, PropertyKey.LINE_UDP_RECEIVE_BUFFER_SIZE, 8 * Numbers.SIZE_1MB);
-            this.lineUdpEnabled = getBoolean(properties, env, PropertyKey.LINE_UDP_ENABLED, true);
+            this.lineUdpEnabled = getBoolean(properties, env, PropertyKey.LINE_UDP_ENABLED, false);
             this.lineUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.LINE_UDP_OWN_THREAD_AFFINITY, -1);
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
@@ -1032,8 +1031,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 32768);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
-                    throw new IllegalArgumentException(
-                            PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath() + " (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
+                    lineTcpMsgBufferSize = lineTcpMaxMeasurementSize;
                 }
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 1);
@@ -1538,25 +1536,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
         }
 
-        private static <KeyT> void registerReplacements(
-                Map<KeyT, String> map,
-                KeyT old,
-                ConfigProperty... replacements) {
-            StringBuilder sb = new StringBuilder("Replaced by ");
-            for (int index = 0; index < replacements.length; ++index) {
-                if (index > 0) {
-                    sb.append(index < (replacements.length - 1)
-                            ? ", "
-                            : " and ");
-                }
-                String replacement = replacements[index].getPropertyPath();
-                sb.append('`');
-                sb.append(replacement);
-                sb.append('`');
-            }
-            map.put(old, sb.toString());
-        }
-
         public ValidationResult validate(Properties properties) {
             // Settings that used to be valid but no longer are.
             Map<String, String> obsolete = new HashMap<>();
@@ -1628,6 +1607,25 @@ public class PropServerConfiguration implements ServerConfiguration {
             return new ValidationResult(isError, sb.toString());
         }
 
+        private static <KeyT> void registerReplacements(
+                Map<KeyT, String> map,
+                KeyT old,
+                ConfigProperty... replacements) {
+            StringBuilder sb = new StringBuilder("Replaced by ");
+            for (int index = 0; index < replacements.length; ++index) {
+                if (index > 0) {
+                    sb.append(index < (replacements.length - 1)
+                            ? ", "
+                            : " and ");
+                }
+                String replacement = replacements[index].getPropertyPath();
+                sb.append('`');
+                sb.append(replacement);
+                sb.append('`');
+            }
+            map.put(old, sb.toString());
+        }
+
         protected Optional<ConfigProperty> lookupConfigProperty(String propName) {
             return PropertyKey.getByString(propName).map(prop -> prop);
         }
@@ -1653,11 +1651,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropCairoConfiguration implements CairoConfiguration {
         private final LongSupplier copyIDSupplier = () -> getRandom().nextPositiveLong();
-
-        @Override
-        public LongSupplier getCopyIDSupplier() {
-            return copyIDSupplier;
-        }
 
         @Override
         public boolean attachPartitionCopy() {
@@ -1767,6 +1760,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getConfRoot() {
             return confRoot;
+        }
+
+        @Override
+        public LongSupplier getCopyIDSupplier() {
+            return copyIDSupplier;
         }
 
         @Override

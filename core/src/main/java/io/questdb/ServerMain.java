@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -35,10 +37,11 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
@@ -52,7 +55,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.File;
-import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
@@ -60,7 +62,6 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ServerConfiguration config;
     private final CairoEngine engine;
-    private final FunctionFactoryCache ffCache;
     private final ObjList<Closeable> freeOnExitList = new ObjList<>();
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -81,14 +82,13 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
+        // obtain function factory cache
         engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
-
-        // create function factory cache
-        ffCache = new FunctionFactoryCache(
-                cairoConfig,
-                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-        );
-
+        FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
+        // TODO: now the engine has access to the FFC, so all methods bellow
+        //       that pass it in their signature should be simplified. Not
+        //       done for compatibility with enterprise
         config.init(engine, ffCache);
 
         // snapshots
@@ -221,16 +221,35 @@ public class ServerMain implements Closeable {
         AuthenticatorFactory authenticatorFactory;
         // create default authenticator for Line TCP protocol
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
+            // we need "root/" here, not "root/db/"
+            final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new File(
-                            configuration.getCairoConfiguration().getRoot(),
-                            configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
+                    new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
             );
         } else {
             authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;
         }
         return authenticatorFactory;
+    }
+
+    public static PgWireAuthenticationFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration) {
+        return new StaticPgWireAuthenticationFactory(new StaticUserDatabase(configuration.getPGWireConfiguration()));
+    }
+
+    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
+        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
+        if (readOnlyInstance) {
+            return ReadOnlySecurityContextFactory.INSTANCE;
+        } else {
+            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
+            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
+            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
+            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
+            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
+            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
+            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
+        }
     }
 
     public static void main(String[] args) {

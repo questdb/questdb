@@ -100,7 +100,5 @@ public class LowerCaseAsciiCharSequenceIntHashMapTest {
                 Assert.assertTrue(referenceMap.containsKey(v.toString()));
             }
         }
-
     }
-
 }

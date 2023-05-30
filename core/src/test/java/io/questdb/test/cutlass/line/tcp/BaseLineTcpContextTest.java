@@ -233,7 +233,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         };
     }
 
-    protected boolean handleContextIO() {
+    protected boolean handleContextIO0() {
         switch (context.handleIO(noNetworkIOJob)) {
             case NEEDS_READ:
                 context.getDispatcher().registerChannel(context, IOOperation.READ);
@@ -368,7 +368,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         // Guard against slow writers on disconnect
         int maxIterations = 2000;
         while (maxIterations-- > 0) {
-            if (!handleContextIO()) {
+            if (!handleContextIO0()) {
                 break;
             }
             LockSupport.parkNanos(1_000_000);

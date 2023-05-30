@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.log.Log;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -36,6 +37,8 @@ import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
+import org.junit.Before;
 
 public class AbstractFuzzTest extends AbstractGriffinTest {
     protected final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
@@ -54,11 +57,33 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     private double notSetProb;
     private double nullSetProb;
     private double rollbackProb;
+    private long s0;
+    private long s1;
     private int strLen;
     private int symbolCountMax;
     private int symbolStrLenMax;
     private int transactionCount;
     private double truncateProb;
+
+    @Before
+    public void clearSeeds() {
+        s0 = 0;
+        s1 = 0;
+    }
+
+    public Rnd generateRandom(Log log, long s0, long s1) {
+        Rnd rnd = TestUtils.generateRandom(log, s0, s1);
+        this.s0 = rnd.getSeed0();
+        this.s1 = rnd.getSeed1();
+        return rnd;
+    }
+
+    public Rnd generateRandom(Log log) {
+        Rnd rnd = TestUtils.generateRandom(log);
+        s0 = rnd.getSeed0();
+        s1 = rnd.getSeed1();
+        return rnd;
+    }
 
     public ObjList<FuzzTransaction> generateSet(Rnd rnd, RecordMetadata metadata, long start, long end, String tableName) {
         return FuzzTransactionGenerator.generateSet(
@@ -85,6 +110,14 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         );
     }
 
+    @After
+    public void logSeeds() {
+        if (this.s0 != 0 || this.s1 != 0) {
+            LOG.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+            System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+        }
+    }
+
     private static void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
         long randomRow = rnd.nextLong(recordCount);
         sink.clear();
@@ -99,6 +132,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
     private static void reloadPartitions(TableReader rdr1) {
         if (rdr1.isActive()) {
+            LOG.info().$("reloading partitions [table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
             for (int i = 0; i < rdr1.getPartitionCount(); i++) {
                 rdr1.openPartition(i);
             }
@@ -107,8 +141,10 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
     private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
         if (reloadRnd.nextBoolean()) {
+            reloadPartitions(rdr1);
             LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
             rdr1.goPassive();
+
             if (reloadRnd.nextBoolean()) {
                 rdr1.goActive();
                 LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
@@ -155,7 +191,6 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                     operation.apply(rnd, writer, -1);
-                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.1);
                 }
 
                 if (transaction.rollback) {
@@ -163,6 +198,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 } else {
                     writer.commit();
                 }
+                purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
             }
         }
     }
@@ -178,11 +214,8 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     protected static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
             purgeJob.run(0);
-            reloadPartitions(rdr1);
-            reloadPartitions(rdr2);
-
             reloadReader(reloadRnd, rdr1, "1");
-            reloadReader(reloadRnd, rdr1, "2");
+            reloadReader(reloadRnd, rdr2, "2");
         }
     }
 

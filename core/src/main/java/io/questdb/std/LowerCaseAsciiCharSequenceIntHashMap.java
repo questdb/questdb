@@ -52,10 +52,6 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         Arrays.fill(values, noEntryValue);
     }
 
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
-    }
-
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
     }

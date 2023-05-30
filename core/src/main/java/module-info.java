@@ -497,6 +497,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InStrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InCharFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InLongFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory,
@@ -645,6 +647,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.KeywordsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
@@ -721,8 +725,7 @@ open module io.questdb {
 
             // analytic functions
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
-            // this factory seems to corrupt memory, symptoms of which are visible on M1 CPU
-            //io.questdb.griffin.engine.functions.analytic.RankFunctionFactory,
+            io.questdb.griffin.engine.functions.analytic.RankFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,

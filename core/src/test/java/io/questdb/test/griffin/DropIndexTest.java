@@ -85,7 +85,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
-        compiler2 = new SqlCompiler(engine, null, snapshotAgent);
+        compiler2 = new SqlCompiler(engine, snapshotAgent);
         sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(dirName);
@@ -540,14 +540,14 @@ public class DropIndexTest extends AbstractGriffinTest {
             txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionedBy);
             path.trimTo(pathLen);
             txReader.unsafeLoadAll();
-            Assert.assertEquals(expectedStructureVersion, txReader.getStructureVersion());
+            Assert.assertEquals(expectedStructureVersion, txReader.getMetadataVersion());
             Assert.assertEquals(expectedReaderVersion, txReader.getTxn());
             Assert.assertEquals(expectedReaderVersion, txReader.getVersion());
             Assert.assertEquals(expectedColumnVersion, txReader.getColumnVersion());
             try (TableReader reader = getReader(tableName)) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 Assert.assertEquals(partitionedBy, metadata.getPartitionBy());
-                Assert.assertEquals(expectedStructureVersion, metadata.getStructureVersion());
+                Assert.assertEquals(expectedStructureVersion, metadata.getMetadataVersion());
                 int columnIndex = metadata.getColumnIndex(columnName);
                 Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
                 Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
@@ -558,7 +558,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
         TableToken tableToken = engine.verifyTableName(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
-                (String) configuration.getRoot(),
+                configuration.getRoot(),
                 tableToken.getDirName()
         );
         try (Stream<?> stream = Files.find(

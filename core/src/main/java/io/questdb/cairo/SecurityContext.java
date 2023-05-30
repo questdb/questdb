@@ -45,23 +45,18 @@ public interface SecurityContext {
     default void authorizeAlterTableDropPartition(TableToken tableToken) {
     }
 
-    // TODO: columnNames should be removed, or this permission should change to column level
     default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    // TODO: columnNames should be removed, or this permission should change to column level
     default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    // TODO: columnNames should be removed, or this permission should change to column level
     default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    // TODO: columnNames should be removed, or this permission should change to column level
     default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    // TODO: columnNames should be removed, or this permission should change to column level
     // the names are pairs from-to
     default void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
@@ -82,13 +77,38 @@ public interface SecurityContext {
     default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
     }
 
-    // when insert SQL doesn't specify any columns (this means all columns) the 'columnName' list
-    // will be empty
+    // columnNames.size() = 0 means all columns
     default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    @SuppressWarnings("unused")
-    default void authorizeManageAccess() {
+    default void authorizeAddUser() {
+    }
+
+    default void authorizeRemoveUser() {
+    }
+
+    default void authorizeAssignRole() {
+    }
+
+    default void authorizeUnassignRole() {
+    }
+
+    default void authorizeCreateGroup() {
+    }
+
+    default void authorizeDropGroup() {
+    }
+
+    default void authorizeCreateUser() {
+    }
+
+    default void authorizeDropUser() {
+    }
+
+    default void authorizeCreateRole() {
+    }
+
+    default void authorizeDropRole() {
     }
 
     default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
@@ -103,7 +123,7 @@ public interface SecurityContext {
     default void authorizeTableDrop(TableToken tableToken) {
     }
 
-    // TODO: columnName should be removed, or this permission should change to column level
+    // columnName = null means all columns
     default void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
     }
 

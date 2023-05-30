@@ -34,8 +34,10 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.analytic.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
@@ -1557,8 +1559,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testFunctions() throws Exception {
-        assertMemoryLeak(() -> {//test table for show_columns
-            compile("create table bbb( a int )");
+        assertMemoryLeak(() -> { // test table for show_columns
+            compile("create table bbb (a int)");
         });
 
         final StringSink sink = new StringSink();
@@ -1701,6 +1703,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                     sigArgType = ColumnType.CHAR;
                                 } else if (factory instanceof InTimestampTimestampFunctionFactory) {
                                     sigArgType = ColumnType.TIMESTAMP;
+                                } else if (factory instanceof InDoubleFunctionFactory) {
+                                    sigArgType = ColumnType.DOUBLE;
                                 } else {
                                     sigArgType = ColumnType.STRING;
                                 }
@@ -1754,7 +1758,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
                         argPositions.setAll(args.size(), 0);
 
-                        if (factory instanceof RowNumberFunctionFactory) {
+                        if (factory instanceof RowNumberFunctionFactory || factory instanceof RankFunctionFactory) {
                             sqlExecutionContext.configureAnalyticContext(null, null, null, true, true);
                         }
 
@@ -4625,6 +4629,29 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
+    @Test
+    public void testSelectDoubleInList() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t ( d double)");
+
+            assertPlan("select * from t where d in (5, -1, 1, null)",
+                    "Async Filter\n" +
+                            "  filter: d in [-1.0,1.0,5.0,NaN]\n" +
+                            "  workers: 1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n");
+
+            assertPlan("select * from t where d not in (5, -1, 1, null)",
+                    "Async Filter\n" +
+                            "  filter: not (d in [-1.0,1.0,5.0,NaN])\n" +
+                            "  workers: 1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n");
+        });
+    }
+
     @Test // there's no interval scan because sysdate is evaluated per-row
     public void testSelectDynamicTsInterval1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
@@ -5192,6 +5219,29 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "  filter: length(s)=2\n" +
                         "    Cursor-order scan\n" +
                         "    Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectLongInList() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t ( l long)");
+
+            assertPlan("select * from t where l in (5, -1, 1, null)",
+                    "Async Filter\n" +
+                            "  filter: l in [NaN,-1,1,5]\n" +
+                            "  workers: 1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n");
+
+            assertPlan("select * from t where l not in (5, -1, 1, null)",
+                    "Async Filter\n" +
+                            "  filter: not (l in [NaN,-1,1,5])\n" +
+                            "  workers: 1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n");
+        });
     }
 
     @Test

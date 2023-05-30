@@ -71,8 +71,8 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffAllocateFailure = new TestFilesFacadeImpl() {
-        private boolean failNextAlloc = false;
         private final AtomicInteger increment = new AtomicInteger();
+        private boolean failNextAlloc = false;
 
         @Override
         public boolean allocate(int fd, long size) {
@@ -249,6 +249,7 @@ public class O3FailureTest extends AbstractO3Test {
     public void setUp() {
         super.setUp();
         fixFailure.set(true);
+        commitMode = CommitMode.NOSYNC;
     }
 
     @Test
@@ -352,7 +353,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithoutPool(
                 O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
-                failToMmap("1970-01-07" + Files.SEPARATOR + "v.d.1")
+                failToMMap("1970-01-07" + Files.SEPARATOR + "v.d.1")
         );
     }
 
@@ -362,7 +363,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
-                failToMmap("1970-01-07" + Files.SEPARATOR + "v.d.1")
+                failToMMap("1970-01-07" + Files.SEPARATOR + "v.d.1")
         );
     }
 
@@ -433,6 +434,28 @@ public class O3FailureTest extends AbstractO3Test {
                 return fd;
             }
         });
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailToSyncContended() throws Exception {
+        counter.set(1);
+        commitMode = CommitMode.SYNC;
+        executeWithPool(
+                0,
+                O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
+                failToFSync("1970-01-07.15" + Files.SEPARATOR + "i.d")
+        );
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailToSyncParallel() throws Exception {
+        counter.set(1);
+        commitMode = CommitMode.SYNC;
+        executeWithPool(
+                4,
+                O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
+                failToFSync("1970-01-07.15" + Files.SEPARATOR + "i.d")
+        );
     }
 
     @Test
@@ -685,7 +708,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(152 + 12 + 20 + 19);
+        counter.set(152 + 12 + 20 + 19 + 8);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -1011,13 +1034,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(174 + 12 + 19);
+        counter.set(174 + 12 + 19 + 8);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(174 + 12 + 19);
+        counter.set(174 + 12 + 19 + 8);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -1035,25 +1058,25 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(174 + 45 + 12 + 27);
+        counter.set(174 + 45 + 12 + 27 + 12);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(165 + 45 + 12 + 21);
+        counter.set(165 + 45 + 12 + 21 + 9);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(165 + 45 + 12 + 18);
+        counter.set(165 + 45 + 12 + 18 + 8);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(165 + 45 + 12 + 21);
+        counter.set(165 + 45 + 12 + 21 + 9);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -1129,13 +1152,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(193 + 45 + 18 + 27);
+        counter.set(193 + 45 + 18 + 27 + 12);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(176 + 45 + 18 + 26);
+        counter.set(176 + 45 + 18 + 26 + 12);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -1210,7 +1233,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testSetAppendPositionFails() throws Exception {
-        counter.set(169 + 12 + 20 + 19);
+        counter.set(169 + 12 + 20 + 19 + 8);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -4154,7 +4177,33 @@ public class O3FailureTest extends AbstractO3Test {
         });
     }
 
-    private FilesFacade failToMmap(String fileName) {
+    private FilesFacade failToFSync(String fileName) {
+        AtomicInteger targetFd = new AtomicInteger();
+        AtomicInteger counter = new AtomicInteger(1);
+
+        return new TestFilesFacadeImpl() {
+
+            @Override
+            public void fsync(int fd) {
+                if (fd == targetFd.get()) {
+                    targetFd.set(0);
+                    throw CairoException.critical(22).put("cannot fsync");
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                final int fd = super.openRW(name, opts);
+                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                    targetFd.set(fd);
+                }
+                return fd;
+            }
+        };
+    }
+
+    private FilesFacade failToMMap(String fileName) {
         AtomicInteger targetFd = new AtomicInteger();
         AtomicInteger counter = new AtomicInteger(2);
 
