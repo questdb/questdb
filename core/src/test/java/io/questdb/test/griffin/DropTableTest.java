@@ -25,17 +25,22 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DropTableTest extends AbstractGriffinTest {
+
+    private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+
 
     @Test
     public void testDropBusyReader() throws Exception {
@@ -147,6 +152,52 @@ public class DropTableTest extends AbstractGriffinTest {
 
             cc = compiler.compile("drop table 'x.csv'", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+        });
+    }
+
+    @Test
+    public void testMultiDropBusyReader() throws Exception {
+        String tab0 = "public table";
+        String tab1 = "shy table";
+        String tab2 = "japanese table 向上";
+        assertMemoryLeak(() -> {
+            compile("create table '" + tab0 + "' (s string)", sqlExecutionContext);
+            compile("create table '" + tab1 + "' (s string)", sqlExecutionContext);
+            compile("create table '" + tab2 + "' (s string)", sqlExecutionContext);
+
+            try (RecordCursorFactory factory = compiler.compile("'" + tab0 + '\'', sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    compile("drop tables 'large table', '" + tab0 + "', '" + tab1 + "', '" + tab1 + "', '" + tab2 + "', table", sqlExecutionContext);
+                }
+            } catch (CairoException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "failed to drop tables ['" + tab0 + "'], see logs for details");
+            }
+            tableBucket.clear();
+            engine.getTableTokens(tableBucket, true);
+            Assert.assertEquals(1, tableBucket.size());
+            Assert.assertEquals(tab0, tableBucket.get(0).getTableName());
+        });
+    }
+
+    @Test
+    public void testMultiDropBusyWriter() throws Exception {
+        String tab0 = "public table";
+        String tab1 = "shy table";
+        String tab2 = "japanese table 向上";
+        assertMemoryLeak(() -> {
+            compile("create table '" + tab0 + "' (s string)", sqlExecutionContext);
+            compile("create table '" + tab1 + "' (s string)", sqlExecutionContext);
+            compile("create table '" + tab2 + "' (s string)", sqlExecutionContext);
+
+            try (TableWriter ignored = getWriter(tab0)) {
+                compile("drop tables 'large table', '" + tab0 + "', '" + tab1 + "', '" + tab1 + "', '" + tab2 + "', table;", sqlExecutionContext);
+            } catch (CairoException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "failed to drop tables ['" + tab0 + "'], see logs for details");
+            }
+            tableBucket.clear();
+            engine.getTableTokens(tableBucket, true);
+            Assert.assertEquals(1, tableBucket.size());
+            Assert.assertEquals(tab0, tableBucket.get(0).getTableName());
         });
     }
 }

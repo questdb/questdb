@@ -36,12 +36,12 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -66,24 +66,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAliasInImplicitGroupByFormula() throws SqlException {
-        // table alias in group-by formula should be replaced to align with "choose" model
-        assertQuery(
-                "select-group-by column, count(event1) count from (select-virtual [event1 + event column, event1] event1 + event column, event1 from (select-choose [b.event event, a.event event1] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a) a",
-                "select \n" +
-                        "  a.event + b.event,\n" +
-                        "  count(a.event)\n" +
-                        "from\n" +
-                        "  telemetry as a\n" +
-                        "  inner join telemetry as b on a.created = b.created\n" +
-                        "where\n" +
-                        "  a.event > 0\n" +
-                        "  and b.event < 1\n",
-                modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
-        );
-    }
-
-    @Test
     public void testAliasInExplicitGroupByFormula() throws SqlException {
         // table alias in group-by formula should be replaced to align with "choose" model
         assertQuery(
@@ -98,6 +80,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    and b.event < 1\n" +
                         "    group by\n" +
                         "    a.event + b.event",
+                modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
+        );
+    }
+
+    @Test
+    public void testAliasInImplicitGroupByFormula() throws SqlException {
+        // table alias in group-by formula should be replaced to align with "choose" model
+        assertQuery(
+                "select-group-by column, count(event1) count from (select-virtual [event1 + event column, event1] event1 + event column, event1 from (select-choose [b.event event, a.event event1] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a) a",
+                "select \n" +
+                        "  a.event + b.event,\n" +
+                        "  count(a.event)\n" +
+                        "from\n" +
+                        "  telemetry as a\n" +
+                        "  inner join telemetry as b on a.created = b.created\n" +
+                        "where\n" +
+                        "  a.event > 0\n" +
+                        "  and b.event < 1\n",
                 modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
         );
     }
@@ -156,16 +156,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual cast(a,long) a1, a, b from (select [a, b] from x)",
                 "select a::long as a1, * from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testDuplicateColumnErrorPos() throws Exception {
-        assertFailure(
-                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
-                null,
-                79,
-                "Duplicate column [name=col4]"
         );
     }
 
@@ -2590,11 +2580,54 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDropTablesMissingComma() throws Exception {
+        assertSyntaxError(
+                "drop tables tab1 tab2",
+                17,
+                "unexpected token [tab2]",
+                modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDropTablesMissingName() throws Exception {
+        assertSyntaxError(
+                "drop tables tab1, ",
+                18,
+                "table name expected",
+                modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDropTablesTableIsSingular() throws Exception {
+        assertSyntaxError(
+                "drop table tab1, tab2",
+                15,
+                "unexpected token [,]",
+                modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testDuplicateAlias() throws Exception {
         assertSyntaxError("customers a" +
                         " cross join orders a", 30, "Duplicate table or alias: a",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnErrorPos() throws Exception {
+        assertFailure(
+                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
+                null,
+                79,
+                "Duplicate column [name=col4]"
         );
     }
 
