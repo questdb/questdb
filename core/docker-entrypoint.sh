@@ -2,7 +2,6 @@
 set -Eeo pipefail
 export QDB_PACKAGE=${QDB_PACKAGE:-docker}
 
-
 QUESTDB_DATA_DIR=${QUESTDB_DATA_DIR:-"/var/lib/questdb"}
 IGNORE_DATA_ROOT_MOUNT_CHECK=${IGNORE_DATA_ROOT_MOUNT_CHECK:-"false"}
 RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
@@ -10,12 +9,10 @@ DO_CHOWN=${DO_CHOWN:-"true"}
 QUESTDB_UID="${QUESTDB_UID:-"$(id -u questdb)"}"
 QUESTDB_GID="${QUESTDB_GID:-"$(id -g questdb)"}"
 
-
 # directories inside QUESTDB_DATA_DIR that we will chown
 DEFAULT_LOCAL_DIRS=${DEFAULT_LOCAL_DIRS:-"/conf /public /db /snapshot"}
 array=( ${DEFAULT_LOCAL_DIRS} )
 read -ra LOCALDIRS < <( echo -n "( "; printf -- "-ipath ${QUESTDB_DATA_DIR}%s* -o " "${array[@]:0:$((${#array[@]} - 1))}"; echo -n "-ipath ${QUESTDB_DATA_DIR}${array[@]: -1}*"; echo " )";)
-
 
 # backwards compatibility with previous versions
 if [ ${IGNORE_FIND_AND_OWN_DIR+x} ]
@@ -29,7 +26,6 @@ find_and_own_dir() {
     [ $(stat --format '%u:%g' ${QUESTDB_DATA_DIR}) == "$USER:$GROUP" ] || chown "$USER:$GROUP" ${QUESTDB_DATA_DIR}
     find ${QUESTDB_DATA_DIR} "${LOCALDIRS[@]}" \( ! -user $USER -o ! -group $GROUP \) -exec chown $USER:$GROUP '{}' \;
 }
-
 
 # Temporary only
 # Most of the users will have the data mounted under /root/.questdb as default
@@ -50,11 +46,6 @@ else
         echo "Java binary arguments found, Non default arguments config run"
         set -- "$@"
     fi
-fi
-
-# Prepend additional JVM flags if JVM_PREPEND variable is set
-if [ -n "$JVM_PREPEND" ]; then
-    set -- "$JVM_PREPEND" "$@"
 fi
 
 if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ "$RUN_AS_ROOT" = "false" ] ; then
