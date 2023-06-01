@@ -26,14 +26,17 @@ package io.questdb;
 
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.WalInitializerFactory;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
+import io.questdb.cutlass.auth.LineAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.griffin.SqlCompilerFactory;
 
 public interface FactoryProvider {
-    AuthenticatorFactory getAuthenticatorFactory();
+    HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
-    PgWireAuthenticationFactory getPgWireAuthenticationFactory();
+    LineAuthenticatorFactory getLineAuthenticatorFactory();
+
+    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
     SecurityContextFactory getSecurityContextFactory();
 

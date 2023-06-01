@@ -1548,7 +1548,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker);
         sendRNQ = true;
 
-        // authenticator may have some non-auth data left in the buffer - make we don't overwrite it
+        // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
         recvBufferWriteOffset = authenticator.getRecvBufPos() - recvBuffer;
         recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
         return true;

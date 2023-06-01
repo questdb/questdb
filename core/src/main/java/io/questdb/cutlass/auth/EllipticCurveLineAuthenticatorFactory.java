@@ -24,11 +24,23 @@
 
 package io.questdb.cutlass.auth;
 
-public class DefaultAuthenticatorFactory implements AuthenticatorFactory {
-    public static final AuthenticatorFactory INSTANCE = new DefaultAuthenticatorFactory();
+import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
+import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
+import io.questdb.network.NetworkFacade;
+
+public class EllipticCurveLineAuthenticatorFactory implements LineAuthenticatorFactory {
+    private final NetworkFacade networkFacade;
+    private final StaticPublicKeyRepo publicKeyRepo;
+
+    public EllipticCurveLineAuthenticatorFactory(NetworkFacade networkFacade, String authDbPath) {
+        this.networkFacade = networkFacade;
+        publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
+    }
 
     @Override
     public Authenticator getLineTCPAuthenticator() {
-        return AnonymousAuthenticator.INSTANCE;
+        return new EllipticCurveAuthenticator(
+                networkFacade,
+                publicKeyRepo);
     }
 }

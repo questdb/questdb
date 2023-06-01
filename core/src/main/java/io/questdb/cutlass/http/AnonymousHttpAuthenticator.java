@@ -22,13 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.http;
 
-public class AuthenticationException extends Exception {
+public class AnonymousHttpAuthenticator implements HttpAuthenticator {
 
-    public static final AuthenticationException INSTANCE = new AuthenticationException("invalid username/password");
+    public static final AnonymousHttpAuthenticator INSTANCE = new AnonymousHttpAuthenticator();
 
-    public AuthenticationException(String message) {
-        super(message);
+    @Override
+    public boolean authenticate(HttpRequestHeader headers) {
+        return true;
+    }
+
+    @Override
+    public CharSequence getPrincipal() {
+        return null;
     }
 }

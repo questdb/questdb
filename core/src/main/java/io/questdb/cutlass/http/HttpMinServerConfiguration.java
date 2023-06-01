@@ -35,5 +35,7 @@ public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
 
     WaitProcessorConfiguration getWaitProcessorConfiguration();
 
+    boolean isHealthCheckAuthenticationRequired();
+
     boolean isPessimisticHealthCheckEnabled();
 }
