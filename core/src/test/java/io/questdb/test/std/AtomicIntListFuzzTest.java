@@ -150,6 +150,7 @@ public class AtomicIntListFuzzTest {
                             anomalies.incrementAndGet();
                         }
                     }
+                    Os.pause();
                 }
             } catch (Exception e) {
                 anomalies.incrementAndGet();

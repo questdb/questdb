@@ -134,7 +134,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final double l = left.getDouble(rec);
             final double r = right.getDouble(rec);
-            return negated != (l != l && r != r || Math.abs(l - r) < 0.0000000001 || l == r);
+            return negated != Numbers.equals(l, r);
         }
     }
 
