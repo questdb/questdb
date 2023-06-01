@@ -107,6 +107,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public void replaceAlias(TableToken alias, TableToken replaceWith) {
         if (nameTableTokenMap.remove(alias.getTableName(), alias)) {
             nameStore.logDropTable(alias);
+            nameStore.appendEntry(replaceWith);
             reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
         }
     }

@@ -1218,8 +1218,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("rename table " + tableName + " to " + newTableName);
             compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
-            TableToken newTabledirectoryName = engine.verifyTableName(newTableName);
-            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
+            TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
             drainWalQueue();
 
@@ -1239,14 +1239,14 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 refreshTablesInBaseEngine();
 
                 TableToken newTabledirectoryName2 = engine.verifyTableName(newTableName);
-                Assert.assertEquals(newTabledirectoryName, newTabledirectoryName2);
+                Assert.assertEquals(newTableDirectoryName, newTabledirectoryName2);
                 assertSql(newTableName, "x\tsym2\tts\n" +
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                         "100\t\t2022-02-25T00:00:00.000000Z\n");
             }
 
             assertSql("select name, directoryName from tables() order by name", "name\tdirectoryName\n" +
-                    newTableName + "\t" + newTabledirectoryName.getDirName() + "\n");
+                    newTableName + "\t" + newTableDirectoryName.getDirName() + "\n");
             assertSql("select table from all_tables()", "table\n" +
                     newTableName + "\n");
             assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
