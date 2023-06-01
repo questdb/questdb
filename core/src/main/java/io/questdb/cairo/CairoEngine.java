@@ -157,6 +157,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @SuppressWarnings("unused")
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
     }
@@ -739,7 +740,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     boolean renamed = false;
                     try {
                         if (newNameStr != null) {
-                            try (var walWriter = getWalWriter(tableToken)) {
+                            try (WalWriter walWriter = getWalWriter(tableToken)) {
                                 long seqTxn = walWriter.renameTable(tableName, newNameStr);
                                 LOG.info().$("renamed table [from='").$(tableName).$("', to='").$(newName)
                                         .$("', wal=").$(walWriter.getWalId())
