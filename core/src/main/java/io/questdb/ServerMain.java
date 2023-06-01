@@ -217,7 +217,7 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("server is ready to be started").$();
     }
 
-    public static LineAuthenticatorFactory getAuthenticatorFactory(ServerConfiguration configuration) {
+    public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
         LineAuthenticatorFactory authenticatorFactory;
         // create default authenticator for Line TCP protocol
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {

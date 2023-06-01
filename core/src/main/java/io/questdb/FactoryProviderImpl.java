@@ -40,7 +40,7 @@ public class FactoryProviderImpl implements FactoryProvider {
     private final SecurityContextFactory securityContextFactory;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
-        this.lineAuthenticatorFactory = ServerMain.getAuthenticatorFactory(configuration);
+        this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
         this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration);
     }
