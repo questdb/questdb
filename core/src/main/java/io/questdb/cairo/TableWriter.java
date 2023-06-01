@@ -525,7 +525,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
         metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity);
 
@@ -1847,7 +1847,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
         metadata.removeColumn(index);
         if (timestamp) {
@@ -1925,7 +1925,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
         // Call finish purge to remove old column files before renaming them in metadata
         finishColumnPurge();
@@ -1936,6 +1936,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+    }
+
+    @Override
+    public void renameTable(CharSequence oldName, CharSequence newName) {
+        LOG.debug().$("renaming table [path=").utf8(path).$(", seqTxn=").$(txWriter.getSeqTxn()).I$();
+        try {
+            TableUtils.overwriteTableNameFile(path, ddlMem, ff, newName);
+        } finally {
+            path.trimTo(rootLen);
+        }
+        // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
+        bumpColumnStructureVersion();
     }
 
     @Override
@@ -2747,6 +2759,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             cancelRowAndBump();
         }
+    }
+
+    private void bumpMetadataAndColumnStructureVersion() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.bumpMetadataAndColumnStructureVersion(this.denseSymbolMapWriters);
+        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private void bumpMetadataVersion() {

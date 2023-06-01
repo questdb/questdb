@@ -71,6 +71,8 @@ public interface MetadataService {
             boolean isSequential
     );
 
+    void renameTable(CharSequence oldName, CharSequence newName);
+
     void addIndex(CharSequence columnName, int indexValueBlockSize);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);

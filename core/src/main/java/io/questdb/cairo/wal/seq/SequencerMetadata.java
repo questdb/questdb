@@ -83,7 +83,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void create(TableStructure model, TableToken tableToken, Path path, int pathLen, int tableId, boolean writeInitialMetadata) {
-        copyFrom(model, tableToken, tableId, 0, false);
+        copyFrom(model, tableToken, tableId);
         openSmallFile(ff, path, pathLen, metaMem, WalUtils.INITIAL_META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         if (writeInitialMetadata) {
             TableUtils.writeMetadata(model, ColumnType.VERSION, tableId, metaMem);
@@ -126,7 +126,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         return true;
     }
 
-    public void open(Path path, int pathLen) {
+    public void open(Path path, int pathLen, TableToken tableToken) {
         reset();
         openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
 
@@ -143,6 +143,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
         suspended = roMetaMem.getBool(SEQ_META_SUSPENDED);
+        this.tableToken = tableToken;
 
         if (readonly) {
             // close early
@@ -160,6 +161,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
+    public void renameTable(CharSequence newName) {
+        if (!Chars.equals(newName, tableToken.getTableName())) {
+            tableToken = new TableToken(Chars.toString(newName), tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
+        }
+        structureVersion.incrementAndGet();
+    }
+
     private void switchTo(Path path, int pathLen) {
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         syncToMetaFile();
@@ -170,6 +178,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void updateTableToken(TableToken newTableToken) {
+        assert newTableToken != null;
         this.tableToken = newTableToken;
     }
 
@@ -192,12 +201,12 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount++;
     }
 
-    private void copyFrom(TableStructure model, TableToken tableToken, int tableId, long structureVersion, boolean suspended) {
+    private void copyFrom(TableStructure model, TableToken tableToken, int tableId) {
         reset();
         this.tableToken = tableToken;
         this.timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
-        this.suspended = suspended;
+        this.suspended = false;
 
         for (int i = 0, n = model.getColumnCount(); i < n; i++) {
             final CharSequence name = model.getColumnName(i);
@@ -205,7 +214,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             addColumn0(name, type);
         }
 
-        this.structureVersion.set(structureVersion);
+        this.structureVersion.set(0);
         columnCount = columnMetadata.size();
     }
 

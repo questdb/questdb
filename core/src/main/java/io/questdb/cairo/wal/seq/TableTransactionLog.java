@@ -329,6 +329,7 @@ public class TableTransactionLog implements Closeable {
                     } else {
                         // Set empty. This is not an error, it just means that there are no changes.
                         txnMetaOffset = txnMetaOffsetHi = 0;
+                        return;
                     }
                 }
 

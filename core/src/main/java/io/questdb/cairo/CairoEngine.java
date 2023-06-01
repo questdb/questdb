@@ -157,15 +157,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableToken applyNameChange(TableWriter tableWriter, CharSequence newTableName, int nameVersion) {
-        TableToken tableToken = tableWriter.getTableToken();
-        int tableNameVersion = tableSequencerAPI.getTableNameVersion(tableToken);
-        if (tableNameVersion == nameVersion - 1) {
-            TableToken newTableToken = tableNameRegistry.rename(tableToken.getTableName(), newTableName, tableToken);
-            tableWriter.overwriteTableNameFile(newTableToken);
-            return newTableToken;
-        }
-        return null;
+    public void applyTableRename(TableToken token, TableToken updatedTableToken) {
+        tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
     }
 
     @TestOnly
@@ -708,12 +701,6 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
-    public int removeDirectory(@Transient Path path, CharSequence dir) {
-        path.of(configuration.getRoot()).concat(dir);
-        final FilesFacade ff = configuration.getFilesFacade();
-        return ff.rmdir(path.slash$());
-    }
-
     public void removeTableToken(TableToken tableToken) {
         tableNameRegistry.purgeToken(tableToken);
         PoolListener listener = getPoolListener();
@@ -746,18 +733,39 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken newTableToken;
         if (tableToken != null) {
             if (tableToken.isWal()) {
-                newTableToken = tableNameRegistry.rename(tableName, newName, tableToken);
-                TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);
-                int nameVersion = tableSequencerAPI.renameWalTable(tableToken, newTableToken);
-                try (var walWriter = getWalWriter(tableToken)) {
-                    walWriter.rename(newName, nameVersion);
+                String newNameStr = Chars.toString(newName);
+                newTableToken = tableNameRegistry.addTableAlias(newNameStr, tableToken);
+                if (newTableToken != null) {
+                    boolean renamed = false;
+                    try {
+                        if (newNameStr != null) {
+                            try (var walWriter = getWalWriter(tableToken)) {
+                                long seqTxn = walWriter.renameTable(tableName, newNameStr);
+                                LOG.info().$("renamed table [from='").$(tableName).$("', to='").$(newName)
+                                        .$("', wal=").$(walWriter.getWalId())
+                                        .$("', seqTxn=").$(seqTxn)
+                                        .I$();
+                                renamed = true;
+                            }
+                            TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken.getTableName());
+                        }
+                    } finally {
+                        if (renamed) {
+                            tableNameRegistry.replaceAlias(tableToken, newTableToken);
+                        } else {
+                            LOG.info().$("failed to rename table [from='").$(tableName).$("', to='").$(newName).$("']").$();
+                            tableNameRegistry.removeAlias(newTableToken);
+                        }
+                    }
+                } else {
+                    throw CairoException.nonCritical().put("cannot rename table, new name is already in use [table=").put(tableName).put(", newName=").put(newName).put("]");
                 }
             } else {
                 String lockedReason = lock(tableToken, "renameTable");
                 if (null == lockedReason) {
                     try {
                         newTableToken = rename0(path, tableToken, tableName, otherPath, newName);
-                        TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);
+                        TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken.getTableName());
                     } finally {
                         unlock(securityContext, tableToken, null, false);
                     }

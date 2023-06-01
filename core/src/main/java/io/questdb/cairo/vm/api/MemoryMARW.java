@@ -28,7 +28,7 @@ import io.questdb.std.FilesFacade;
 import org.jetbrains.annotations.Nullable;
 
 //mapped appendable readable writable
-public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR {
+public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR, MemoryMAR {
 
     void of(FilesFacade ff, int fd, @Nullable CharSequence name, long size, int memoryTag);
 

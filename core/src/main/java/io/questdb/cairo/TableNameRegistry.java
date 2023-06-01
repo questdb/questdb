@@ -33,6 +33,8 @@ import java.io.Closeable;
 public interface TableNameRegistry extends Closeable {
     TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false);
 
+    TableToken addTableAlias(String newName, TableToken tableToken);
+
     /**
      * cleans the registry and releases all resources
      */
@@ -135,6 +137,8 @@ public interface TableNameRegistry extends Closeable {
      */
     void reloadTableNameCache(ObjList<TableToken> convertedTables);
 
+    void removeAlias(TableToken tableToken);
+
     /**
      * Updates table name in registry.
      *
@@ -144,6 +148,8 @@ public interface TableNameRegistry extends Closeable {
      * @return updated table token
      */
     TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken);
+
+    void replaceAlias(TableToken alias, TableToken replaceWith);
 
     /**
      * Resets table name storage memory to initial value. Used to not false detect memory leaks in tests.

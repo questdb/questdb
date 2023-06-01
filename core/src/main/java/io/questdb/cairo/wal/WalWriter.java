@@ -134,6 +134,7 @@ public class WalWriter implements TableWriterAPI {
             metadata = new WalWriterMetadata(ff);
 
             tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -151,6 +152,18 @@ public class WalWriter implements TableWriterAPI {
             doClose(false);
             throw e;
         }
+    }
+
+
+    public long renameTable(CharSequence oldName, String newTableName) {
+        if (!Chars.equals(oldName, tableToken.getTableName())) {
+            throw CairoException.tableDoesNotExist(oldName);
+        }
+        alterOp.clear();
+        alterOp.ofRenameTable(tableToken, newTableName);
+        long txn = apply(alterOp, true);
+        assert Chars.equals(newTableName, tableToken.getTableName());
+        return txn;
     }
 
     @Override
@@ -547,8 +560,8 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    public void updateTableToken(TableToken tableToken) {
-        this.tableToken = tableToken;
+    public void updateTableToken(TableToken ignoredTableToken) {
+        // goActive will update table token
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA mem1, MemoryMA mem2) {
@@ -1456,6 +1469,14 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void renameTable(CharSequence oldName, CharSequence newName) {
+            if (!Chars.equals(oldName, metadata.getTableToken().getTableName())) {
+                throw CairoException.tableDoesNotExist(oldName);
+            }
+            structureVersion++;
+        }
+
+        @Override
         public TableRecordMetadata getMetadata() {
             return metadata;
         }
@@ -1568,6 +1589,12 @@ public class WalWriter implements TableWriterAPI {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
             }
+        }
+
+        @Override
+        public void renameTable(CharSequence oldName, CharSequence newName) {
+            tableToken = new TableToken(Chars.toString(newName), metadata.getTableToken().getDirName(), metadata.getTableToken().getTableId(), metadata.getTableToken().isWal());
+            metadata.renameTable(tableToken);
         }
 
         @Override

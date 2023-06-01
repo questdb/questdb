@@ -52,6 +52,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short DROP_PARTITION = 2;
     public final static short REMOVE_SYMBOL_CACHE = 7;
     public final static short RENAME_COLUMN = 9;
+    public final static short RENAME_TABLE = 13;
     public final static short SET_PARAM_COMMIT_LAG = 11;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -122,6 +123,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
                     break;
+                case RENAME_TABLE:
+                    applyRenameTable(svc);
+                    break;
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
@@ -134,10 +138,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         } catch (CairoException e) {
             final LogRecord log = e.isCritical() ? LOG.critical() : LOG.error();
             log.$("could not alter table [table=").$(svc.getTableToken())
-                .$(", command=").$(command)
-                .$(", errno=").$(e.getErrno())
-                .$(", message=`").$(e.getFlyweightMessage()).$('`')
-                .I$();
+                    .$(", command=").$(command)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", message=`").$(e.getFlyweightMessage()).$('`')
+                    .I$();
             throw e;
         }
         return 0;
@@ -211,6 +215,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case ADD_COLUMN:
             case RENAME_COLUMN:
             case DROP_COLUMN:
+            case RENAME_TABLE:
                 return true;
             default:
                 return false;
@@ -250,6 +255,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(indexed ? 1 : -1);
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
+    }
+
+    public void ofRenameTable(TableToken tableToken, CharSequence newTableName) {
+        of(AlterOperation.RENAME_TABLE, tableToken, tableToken.getTableId(), 0);
+        assert newTableName != null && newTableName.length() > 0;
+        extraStrInfo.strings.add(tableToken.getTableName());
+        extraStrInfo.strings.add(newTableName);
     }
 
     @Override
@@ -420,6 +432,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             CharSequence newName = activeExtraStrInfo.getStrB(i++);
             svc.renameColumn(columnName, newName);
         }
+    }
+
+    private void applyRenameTable(MetadataService svc) {
+        svc.renameTable(activeExtraStrInfo.getStrA(0), activeExtraStrInfo.getStrB(1));
     }
 
     private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {

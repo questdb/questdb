@@ -231,6 +231,8 @@ public class TableSequencerImpl implements TableSequencer {
                             .put(']');
                 }
                 metadata.syncToDisk();
+                // TableToken can become updated as a result of alter.
+                tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
             } else {
                 return NO_TXN;
@@ -277,9 +279,9 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void reload() {
+    public TableToken reload() {
         tableTransactionLog.reload(path);
-        try (TableMetadataChangeLog metaChangeCursor = getMetadataChangeLog(metadata.getMetadataVersion())) {
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
             boolean updated = false;
             while (metaChangeCursor.hasNext()) {
                 TableMetadataChange change = metaChangeCursor.next();
@@ -290,12 +292,13 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.syncToMetaFile();
             }
         }
+        return tableToken = metadata.getTableToken();
     }
 
-    public void open() {
+    public void open(TableToken tableToken) {
         try {
             walIdGenerator.open(path);
-            metadata.open(path, rootLen);
+            metadata.open(path, rootLen, tableToken);
             tableTransactionLog.open(path);
         } catch (CairoException ex) {
             closeLocked();
@@ -322,13 +325,6 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw th;
         }
-    }
-
-    @Override
-    public void rename(TableToken newTableToken) {
-        checkDropped();
-        tableToken = newTableToken;
-        this.metadata.updateTableToken(newTableToken);
     }
 
     @Override

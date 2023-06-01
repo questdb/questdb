@@ -375,13 +375,15 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
 
             for (int i = 0; i < tableCount; i++) {
-                int nameCount = 0;
+                ObjList<String> names = new ObjList<>();
                 for (int j = 0; j < threadCount; j++) {
-                    if (engine.getTableTokenIfExists("renamed_" + j + "_" + i) != null) {
-                        nameCount++;
+                    String tableName = "renamed_" + j + "_" + i;
+                    TableToken tableTokenIfExists = engine.getTableTokenIfExists(tableName);
+                    if (tableTokenIfExists != null) {
+                        names.add(tableName + " -> " + tableTokenIfExists.getDirName());
                     }
                 }
-                Assert.assertEquals("table named tab" + i + " tokens", 1, nameCount);
+                Assert.assertEquals("table named tab" + i + " tokens: " + names, 1, names.size());
             }
         });
     }

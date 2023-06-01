@@ -72,9 +72,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+    public void bumpMetadataAndColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion = Numbers.decodeHighInt(structureVersion) != 0 ? Numbers.encodeLowHighInts(getMetadataVersion() + 1, getColumnStructureVersion() + 1) : structureVersion + 1;
+        commit(denseSymbolMapWriters);
+    }
+
+    public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+        recordStructureVersion++;
+        structureVersion = Numbers.encodeLowHighInts(getMetadataVersion(), getColumnStructureVersion() + 1);
         commit(denseSymbolMapWriters);
     }
 

@@ -438,7 +438,7 @@ public final class TableUtils {
         }
     }
 
-    public static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
+    public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
         mem.sync(false);
@@ -827,7 +827,7 @@ public final class TableUtils {
         }
 
         if (verbose) {
-            LOG.debug().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+            LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
         }
         return fd;
     }
@@ -1037,14 +1037,14 @@ public final class TableUtils {
         }
     }
 
-    public static void overwriteTableNameFile(Path tablePath, MemoryMARW memory, FilesFacade ff, TableToken newTableToken) {
+    public static void overwriteTableNameFile(Path tablePath, MemoryMAR memory, FilesFacade ff, @NotNull CharSequence tableName) {
         // Update name in _name file.
         // This is potentially racy but the file only read on startup when the tables.d file is missing
         // so very limited circumstances.
         Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();
         memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);
         memory.jumpTo(0);
-        createTableNameFile(memory, newTableToken.getTableName());
+        createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 

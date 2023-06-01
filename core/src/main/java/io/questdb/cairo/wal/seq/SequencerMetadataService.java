@@ -26,10 +26,11 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.std.Chars;
 
 public class SequencerMetadataService implements MetadataServiceStub {
     private final SequencerMetadata metadata;
-    private final TableToken tableToken;
+    private TableToken tableToken;
 
     public SequencerMetadataService(SequencerMetadata metadata, TableToken tableToken) {
         this.metadata = metadata;
@@ -47,6 +48,13 @@ public class SequencerMetadataService implements MetadataServiceStub {
             boolean isSequential
     ) {
         metadata.addColumn(name, type);
+    }
+
+    @Override
+    public void renameTable(CharSequence oldName, CharSequence newName) {
+        assert Chars.equals(oldName, metadata.getTableToken().getTableName());
+        metadata.renameTable(newName);
+        this.tableToken = metadata.getTableToken();
     }
 
     public TableRecordMetadata getMetadata() {
