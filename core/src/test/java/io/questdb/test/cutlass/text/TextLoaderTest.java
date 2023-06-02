@@ -545,7 +545,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
                 }
             }
         });

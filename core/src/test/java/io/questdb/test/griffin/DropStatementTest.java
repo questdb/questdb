@@ -37,62 +37,85 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DropTableTest extends AbstractGriffinTest {
+public class DropStatementTest extends AbstractGriffinTest {
+    /* **
+     * DROP can be followed by:
+     * - TABLE name [;]
+     * - TABLES name(,name)* [;]
+     * - DATABASE [;]
+     */
 
     private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
 
+    @Test
+    public void testDropDatabase() throws Exception {
+        String tab0 = "public table";
+        String tab1 = "shy table";
+        String tab2 = "japanese table 向上";
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE '" + tab0 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab1 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab2 + "' (s string)", sqlExecutionContext);
+
+            compile("DROP DATABASE", sqlExecutionContext);
+            tableBucket.clear();
+            engine.getTableTokens(tableBucket, true);
+            Assert.assertEquals(0, tableBucket.size());
+        });
+    }
 
     @Test
-    public void testDropBusyReader() throws Exception {
+    public void testDropTableBusyReader() throws Exception {
+        String tab0 = "large table";
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'large table' (a int)", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("CREATE TABLE '" + tab0 + "' (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
-            try (RecordCursorFactory factory = compiler.compile("'large table'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("'" + tab0 + '\'', sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    compiler.compile("drop table 'large table'", sqlExecutionContext);
+                    compiler.compile("DROP TABLE '" + tab0 + "'", sqlExecutionContext);
                 }
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
             }
         });
     }
 
     @Test
-    public void testDropBusyWriter() throws Exception {
+    public void testDropTableBusyWriter() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'large table' (a int)", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("CREATE TABLE 'large table' (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
             try (TableWriter ignored = getWriter("large table")) {
-                compiler.compile("drop table 'large table'", sqlExecutionContext);
+                compiler.compile("DROP TABLE 'large table'", sqlExecutionContext);
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
             }
         });
     }
 
     @Test
-    public void testDropExisting() throws Exception {
+    public void testDropTableExisting() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table instrument (a int)", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("CREATE TABLE instrument (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
-            cc = compiler.compile("drop table instrument", sqlExecutionContext);
+            cc = compiler.compile("DROP TABLE instrument", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
 
     @Test
-    public void testDropIfExists() throws Exception {
+    public void testDropTableIfExists() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("drop table if exists 'una tabla de queso';", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("DROP TABLE IF EXISTS 'una tabla de queso';", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
 
     @Test
-    public void testDropMissingFrom() throws Exception {
+    public void testDropTableMissingFrom() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("drop i_am_missing", sqlExecutionContext);
@@ -104,73 +127,76 @@ public class DropTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropQuoted() throws Exception {
+    public void testDropTableQuoted() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'large table' (a int)", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("CREATE TABLE 'large table' (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
-            cc = compiler.compile("drop table 'large table'", sqlExecutionContext);
+            cc = compiler.compile("DROP TABLE 'large table'", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
 
     @Test
-    public void testDropUtf8() throws Exception {
+    public void testDropTableUtf8() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table научный (a int)", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("CREATE TABLE научный (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
-            cc = compiler.compile("drop table научный", sqlExecutionContext);
+            cc = compiler.compile("DROP TABLE научный", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
 
     @Test
-    public void testDropUtf8Quoted() throws Exception {
+    public void testDropTableUtf8Quoted() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'научный руководитель'(a int)", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("CREATE TABLE 'научный руководитель'(a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
-            cc = compiler.compile("drop table 'научный руководитель'", sqlExecutionContext);
+            cc = compiler.compile("DROP TABLE 'научный руководитель'", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
 
     @Test
-    public void testDropWithDotFailure() throws Exception {
+    public void testDropTableWithDotFailure() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'x.csv' (a int)", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("CREATE TABLE 'x.csv' (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
             try {
-                compiler.compile("drop table x.csv", sqlExecutionContext);
+                compiler.compile("DROP TABLE x.csv", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token");
             }
 
-            cc = compiler.compile("drop table 'x.csv'", sqlExecutionContext);
+            cc = compiler.compile("DROP TABLE 'x.csv'", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
 
     @Test
-    public void testMultiDropBusyReader() throws Exception {
+    public void testDropTablesBusyReader() throws Exception {
         String tab0 = "public table";
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            compile("create table '" + tab0 + "' (s string)", sqlExecutionContext);
-            compile("create table '" + tab1 + "' (s string)", sqlExecutionContext);
-            compile("create table '" + tab2 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab0 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab1 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab2 + "' (s string)", sqlExecutionContext);
 
             try (RecordCursorFactory factory = compiler.compile("'" + tab0 + '\'', sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    compile("drop tables 'large table', '" + tab0 + "', '" + tab1 + "', '" + tab1 + "', '" + tab2 + "', table", sqlExecutionContext);
+                    compile("DROP TABLES 'large table', '" + tab0 + "', '" + tab1 + "', '" + tab1 + "', '" + tab2 + "', table", sqlExecutionContext);
                 }
             } catch (CairoException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(), "failed to drop tables ['" + tab0 + "'], see logs for details");
+                TestUtils.assertContains(
+                        expected.getFlyweightMessage(),
+                        "failed to drop tables ['" + tab0 + "'=[-1] could not lock 'public table' [reason='busyReader']]"
+                );
             }
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
@@ -180,19 +206,22 @@ public class DropTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMultiDropBusyWriter() throws Exception {
+    public void testDropTablesBusyWriter() throws Exception {
         String tab0 = "public table";
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            compile("create table '" + tab0 + "' (s string)", sqlExecutionContext);
-            compile("create table '" + tab1 + "' (s string)", sqlExecutionContext);
-            compile("create table '" + tab2 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab0 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab1 + "' (s string)", sqlExecutionContext);
+            compile("CREATE TABLE '" + tab2 + "' (s string)", sqlExecutionContext);
 
             try (TableWriter ignored = getWriter(tab0)) {
-                compile("drop tables 'large table', '" + tab0 + "', '" + tab1 + "', '" + tab1 + "', '" + tab2 + "', table;", sqlExecutionContext);
+                compile("DROP TABLES 'large table', '" + tab0 + "', '" + tab1 + "', '" + tab1 + "', '" + tab2 + "', table;", sqlExecutionContext);
             } catch (CairoException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(), "failed to drop tables ['" + tab0 + "'], see logs for details");
+                TestUtils.assertContains(
+                        expected.getFlyweightMessage(),
+                        "failed to drop tables ['" + tab0 + "'=[-1] could not lock 'public table' [reason='test']]"
+                );
             }
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);

@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -49,6 +48,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -1762,7 +1762,7 @@ if __name__ == "__main__":
                         connection.prepareStatement("drop table xyz").execute();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
+                        TestUtils.assertContains(e.getMessage(), "could not lock 'xyz'");
                         Assert.assertEquals("00000", e.getSQLState());
                     }
                 }
