@@ -64,13 +64,14 @@ public class SendAndReceiveRequestBuilder {
     private boolean expectSendDisconnect;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
+    private int port = 9001;
     private boolean printOnly;
     private int requestCount = 1;
     private long statementTimeout = -1L;
 
     public int connectAndSendRequest(String request) {
         final int fd = nf.socketTcp(true);
-        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
+        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", port);
         try {
             TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
             if (clientLingerSeconds > -1) {
@@ -95,7 +96,7 @@ public class SendAndReceiveRequestBuilder {
     public void execute(String request, CharSequence expectedResponse) {
         final int fd = nf.socketTcp(true);
         try {
-            long sockAddrInfo = nf.sockaddr("127.0.0.1", 9001);
+            long sockAddrInfo = nf.sockaddr("127.0.0.1", port);
             try {
                 Assert.assertTrue(fd > -1);
                 TestUtils.assertConnect(nf, fd, sockAddrInfo);
@@ -218,7 +219,7 @@ public class SendAndReceiveRequestBuilder {
     public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
         final int fd = nf.socketTcp(true);
         try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            long sockAddr = nf.sockaddr("127.0.0.1", port);
             Assert.assertTrue(fd > -1);
             TestUtils.assertConnect(nf, fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
@@ -350,6 +351,12 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withPauseBetweenSendAndReceive(long pauseBetweenSendAndReceive) {
         this.pauseBetweenSendAndReceive = pauseBetweenSendAndReceive;
+        return this;
+    }
+
+    @SuppressWarnings("unused")
+    public SendAndReceiveRequestBuilder withPort(int port) {
+        this.port = port;
         return this;
     }
 

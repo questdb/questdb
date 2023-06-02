@@ -51,14 +51,14 @@ public class HttpSecurityTest extends AbstractTest {
             return null;
         }
     };
-    private static final String INVALID_CREDENTIALS_HEADER = "Authorization: Basic YmFyOmJheg==";
+    private static final String INVALID_CREDENTIALS_HEADER = "Authorization: Basic YmFyOmJheg=="; // bar:baz
     private static final String UNAUTHORIZED_RESPONSE = "HTTP/1.1 401 Unauthorized\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"\r\n";
-    private static final String VALID_CREDENTIALS = "Basic Zm9vOmJhcg==";
+    private static final String VALID_CREDENTIALS = "Basic Zm9vOmJhcg=="; // foo:bar
     private static final HttpAuthenticatorFactory SINGLE_USER_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
