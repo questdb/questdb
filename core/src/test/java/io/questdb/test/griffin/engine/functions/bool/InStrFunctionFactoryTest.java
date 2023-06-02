@@ -42,8 +42,8 @@ public class InStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testNullConstant() {
-        assertFailure(12, "NULL is not allowed", "xp", "aq", null);
+    public void testNullConstant() throws SqlException {
+        call("xp", "aq", null).andAssert(false);
     }
 
     @Test

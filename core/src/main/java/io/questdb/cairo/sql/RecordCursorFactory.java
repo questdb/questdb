@@ -174,6 +174,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /* Adds description of this factory to EXPLAIN output. */
     @Override
     default void toPlan(PlanSink sink) {
         sink.type(getClass().getName());
