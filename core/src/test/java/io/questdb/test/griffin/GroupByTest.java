@@ -474,7 +474,7 @@ public class GroupByTest extends AbstractGriffinTest {
                     "order by ordr.date_report";
             assertPlan(query,
                     "Sort light\n" +
-                            "  keys: [date_report]\n" +
+                            "  keys: [date_report1]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,date_report,count]\n" +
                             "        GroupBy vectorized: false\n" +
@@ -1052,6 +1052,109 @@ public class GroupByTest extends AbstractGriffinTest {
                             "GROUP BY ts, data.dts " +
                             "ORDER BY tst.ts", "", true, true);
         }
+    }
+
+    @Test
+    public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
+        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
+        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT tab.created AS ref0 " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY tab.created";
+
+        assertPlan(query,
+                "Sort light\n" +
+                        "  keys: [ref0]\n" +
+                        "    Distinct\n" +
+                        "      keys: ref0\n" +
+                        "        VirtualRecord\n" +
+                        "          functions: [created]\n" +
+                        "            GroupBy vectorized: false\n" +
+                        "              keys: [created]\n" +
+                        "                Async JIT Filter\n" +
+                        "                  filter: created!=null\n" +
+                        "                  workers: 1\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: tab\n");
+
+        assertQuery("ref0\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n",
+                query, null, true, false);
+    }
+
+    @Test
+    public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
+        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
+        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY dateadd('h', 1, tab.created)";
+
+        assertPlan(query,
+                "Sort light\n" +
+                        "  keys: [ref0]\n" +
+                        "    Distinct\n" +
+                        "      keys: ref0\n" +
+                        "        VirtualRecord\n" +
+                        "          functions: [dateadd('h',1,created)]\n" +
+                        "            GroupBy vectorized: false\n" +
+                        "              keys: [created]\n" +
+                        "                Async JIT Filter\n" +
+                        "                  filter: created!=null\n" +
+                        "                  workers: 1\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: tab\n");
+
+        assertQuery("ref0\n" +
+                        "1970-01-01T01:00:00.000001Z\n" +
+                        "1970-01-01T01:00:00.000002Z\n" +
+                        "1970-01-01T01:00:00.000003Z\n",
+                query, null, true, false);
+    }
+
+    @Test
+    public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
+        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
+        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT tab.created " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY tab.created";
+
+        assertPlan(query,
+                "Sort light\n" +
+                        "  keys: [created]\n" +
+                        "    Distinct\n" +
+                        "      keys: created\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [created]\n" +
+                        "            Async JIT Filter\n" +
+                        "              filter: created!=null\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n");
+
+        assertQuery("created\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n",
+                query, null, true, false);
     }
 
     @Test
