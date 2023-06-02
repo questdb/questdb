@@ -57,11 +57,11 @@ public class SendAndReceiveRequestBuilder {
             "\r\n";
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
-    private final int maxWaitTimeoutMs = 30_000;
     private int clientLingerSeconds = -1;
     private int compareLength = -1;
     private boolean expectReceiveDisconnect;
     private boolean expectSendDisconnect;
+    private int maxWaitTimeoutMs = 30_000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private int port = 9001;
@@ -341,6 +341,12 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withExpectSendDisconnect(boolean expectDisconnect) {
         this.expectSendDisconnect = expectDisconnect;
+        return this;
+    }
+
+    @SuppressWarnings("unused")
+    public SendAndReceiveRequestBuilder withMaxWaitTimeout(int maxWaitTimeoutMs) {
+        this.maxWaitTimeoutMs = maxWaitTimeoutMs;
         return this;
     }
 
