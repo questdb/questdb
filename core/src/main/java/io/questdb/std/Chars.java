@@ -34,7 +34,6 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.Numbers.hexDigits;
 
 public final class Chars {
-    static final char[] base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
 
     private Chars() {
     }
@@ -62,36 +61,22 @@ public final class Chars {
         }
     }
 
-    public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
-        if (sequence == null) {
-            return;
+    /**
+     * Avoid this when possible due to the allocation of a new char array
+     * This should be only used when a JDK method forces you to use a byte array
+     * <p>
+     * It's responsbility of the caller to ensure that the input string is ASCII
+     *
+     * @param ascii ascii string to convert to byte array
+     * @return byte array representation of the input string
+     */
+    public static byte[] asciiToByteArray(CharSequence ascii) {
+        byte[] dst = new byte[ascii.length()];
+        for (int i = 0; i < ascii.length(); i++) {
+            assert ascii.charAt(i) < 128;
+            dst[i] = (byte) ascii.charAt(i);
         }
-        final long len = Math.min(maxLength, sequence.length());
-        int pad = 0;
-        for (int i = 0; i < len; i += 3) {
-
-            int b = ((sequence.byteAt(i) & 0xFF) << 16) & 0xFFFFFF;
-            if (i + 1 < len) {
-                b |= (sequence.byteAt(i + 1) & 0xFF) << 8;
-            } else {
-                pad++;
-            }
-            if (i + 2 < len) {
-                b |= (sequence.byteAt(i + 2) & 0xFF);
-            } else {
-                pad++;
-            }
-
-            for (int j = 0; j < 4 - pad; j++) {
-                int c = (b & 0xFC0000) >> 18;
-                buffer.put(base64[c]);
-                b <<= 6;
-            }
-        }
-
-        for (int j = 0; j < pad; j++) {
-            buffer.put("=");
-        }
+        return dst;
     }
 
     public static int compare(CharSequence l, CharSequence r) {
