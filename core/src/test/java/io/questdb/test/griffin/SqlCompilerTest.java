@@ -4645,6 +4645,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
+        assertFailure("select 1 from tab where (\"\")",
+                "create table tab (i int)",
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where (\"a\")",
+                null,
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where ('')", null,
+                25, "boolean expression expected");
+
+        assertFailure("select 1 from tab where ('a')", null,
+                25, "boolean expression expected");
+    }
+
+    @Test
     public void testSelectLongInListContainingNull() throws Exception {
         assertQuery("c\n1\nNaN\n",
                 "select * from x where c in (1,null, 1::byte, 1::short, 1::int, 1::long)",

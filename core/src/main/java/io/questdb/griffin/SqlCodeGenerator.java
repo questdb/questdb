@@ -4522,7 +4522,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-
     }
 
     private void restoreWhereClause(ExpressionNode node) {
