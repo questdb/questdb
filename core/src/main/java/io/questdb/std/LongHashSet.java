@@ -24,10 +24,12 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.CharSink;
+
 import java.util.Arrays;
 
 
-public class LongHashSet extends AbstractLongHashSet {
+public class LongHashSet extends AbstractLongHashSet implements Sinkable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final LongList list;
@@ -126,6 +128,11 @@ public class LongHashSet extends AbstractLongHashSet {
             super.removeAt(index);
             list.remove(key);
         }
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        list.toSink(sink);
     }
 
     @Override
