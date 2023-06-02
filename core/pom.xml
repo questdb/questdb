@@ -35,7 +35,7 @@
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
-        <test.include></test.include>
+        <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>0.2.1</web.console.version>
     </properties>
 
