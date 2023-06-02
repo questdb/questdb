@@ -28,6 +28,7 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           excludeTests: "**/griffin/**,**/cairo/**"
+          includeTests: "%regex[.*[^o].class]"
           javadoc_step: ""
           javadoc_profile: ""
     pool:

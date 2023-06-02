@@ -28,6 +28,7 @@ jobs:
           jdk: "1.11"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**"
+          includeTests: "%regex[.*[^o].class]"
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin-noO3-noFuzz:
@@ -65,6 +66,7 @@ jobs:
           jdk: "1.11"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**"
+          includeTests: "%regex[.*[^o].class]"
           javadoc_step: ""
           javadoc_profile: ""
         linux-jdk8:
