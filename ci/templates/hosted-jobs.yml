@@ -28,7 +28,7 @@ jobs:
           jdk: "1.11"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**"
-          javadoc_step: ""pwd
+          javadoc_step: ""
           javadoc_profile: ""
         windows-griffin-noO3-noFuzz:
           imageName: "windows-latest"
