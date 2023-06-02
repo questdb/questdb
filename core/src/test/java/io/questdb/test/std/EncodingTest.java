@@ -2,6 +2,7 @@ package io.questdb.test.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Encoding;
+import io.questdb.std.str.DirectByteCharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
@@ -17,6 +18,48 @@ public class EncodingTest {
     @Test
     public void testBase64Decode() {
         String encoded = "+W8kK89c79Jb97CrQM3aGuPJE85fEdFoXwSsEWjU736IXm4v7+mZKiOL82uYhGaxmIYUUJh5/Xj44tX0NrD4lQ==";
+        ByteBuffer buffer = ByteBuffer.allocate(1024);
+        Encoding.base64Decode(encoded, buffer);
+        buffer.flip();
+
+        byte[] decode = Base64.getDecoder().decode(encoded);
+        Assert.assertEquals(decode.length, buffer.remaining());
+        for (byte b : decode) {
+            Assert.assertEquals(b, buffer.get());
+        }
+    }
+
+    @Test
+    public void testBase64DecodeByteSink() {
+        String encoded = "+W8kK89c79Jb97CrQM3aGuPJE85fEdFoXwSsEWjU736IXm4v7+mZKiOL82uYhGaxmIYUUJh5/Xj44tX0NrD4lQ==";
+        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+            Encoding.base64Decode(encoded, sink);
+
+            byte[] decode = Base64.getDecoder().decode(encoded);
+            Assert.assertEquals(decode.length, sink.length());
+            for (int i = 0; i < decode.length; i++) {
+                Assert.assertEquals(decode[i], sink.byteAt(i));
+            }
+        }
+    }
+
+    @Test
+    public void testBase64DecodeByteSinkUtf8() {
+        String encoded = Base64.getEncoder().encodeToString("аз съм грут:गाजर का हलवा".getBytes());
+        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+            Encoding.base64Decode(encoded, sink);
+
+            byte[] decode = Base64.getDecoder().decode(encoded);
+            Assert.assertEquals(decode.length, sink.length());
+            for (int i = 0; i < decode.length; i++) {
+                Assert.assertEquals(decode[i], sink.byteAt(i));
+            }
+        }
+    }
+
+    @Test
+    public void testBase64DecodeUtf8() {
+        String encoded = Base64.getEncoder().encodeToString("аз съм грут:गाजर का हलवा".getBytes());
         ByteBuffer buffer = ByteBuffer.allocate(1024);
         Encoding.base64Decode(encoded, buffer);
         buffer.flip();

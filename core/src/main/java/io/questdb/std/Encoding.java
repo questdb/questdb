@@ -2,6 +2,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectByteCharSink;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -31,6 +32,10 @@ public final class Encoding {
         base64Decode(encoded, target, base64Inverted);
     }
 
+    public static void base64Decode(CharSequence encoded, DirectByteCharSink target) {
+        base64Decode(encoded, target, base64Inverted);
+    }
+
     public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
         int pad = base64Encode(sequence, maxLength, buffer, base64);
         for (int j = 0; j < pad; j++) {
@@ -57,6 +62,36 @@ public final class Encoding {
     public static void base64UrlEncode(BinarySequence sequence, final int maxLength, CharSink buffer) {
         base64Encode(sequence, maxLength, buffer, base64Url);
         // base64 url does not use padding
+    }
+
+    private static void base64Decode(CharSequence encoded, DirectByteCharSink target, byte[] invertedAlphabet) {
+        if (encoded == null) {
+            return;
+        }
+        assert target != null;
+
+        // skip trailing '=' they are just for padding and have no meaning
+        int length = encoded.length();
+        for (; length > 0; length--) {
+            if (encoded.charAt(length - 1) != '=') {
+                break;
+            }
+        }
+
+        // we need at least 2 bytes to decode anything
+        for (int i = 0, last = length - 1; i < last; ) {
+            int wrk = invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 18;
+            wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 12;
+            target.put((byte) (wrk >>> 16));
+            if (i < length) {
+                wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 6;
+                target.put((byte) ((wrk >>> 8) & 0xFF));
+                if (i < length) {
+                    wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++));
+                    target.put((byte) (wrk & 0xFF));
+                }
+            }
+        }
     }
 
     private static void base64Decode(CharSequence encoded, ByteBuffer target, byte[] invertedAlphabet) {

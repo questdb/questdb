@@ -46,7 +46,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private static final int INIT_GSS_REQUEST = 80877104;
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
-    private final static Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticator.class);
+    private static final Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticator.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
