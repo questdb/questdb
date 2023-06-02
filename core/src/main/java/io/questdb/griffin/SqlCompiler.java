@@ -2713,6 +2713,25 @@ public class SqlCompiler implements Closeable {
         throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
     }
 
+    @SuppressWarnings({"unused"})
+    protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'table' expected");
+        }
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+    }
+
+    @SuppressWarnings({"unused"})
+    protected CompiledQuery unknownDropTableSuffix(
+            SqlExecutionContext executionContext,
+            CharSequence tok,
+            CharSequence tableName,
+            int tableNamePosition,
+            boolean hasIfExists
+    ) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+    }
+
     @SuppressWarnings({"unused", "RedundantThrows"})
     protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         return null; // no-op
