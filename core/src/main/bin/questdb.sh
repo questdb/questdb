@@ -180,8 +180,11 @@ function start {
     "
 
     if [ "$(uname)" == "Darwin" ]; then
-        N_MAX_OPEN_FILES=$(sysctl -n kern.maxfilesperproc)
-        ulimit -n $N_MAX_OPEN_FILES
+        # JVM on MacOS has its own max open files limit, set to 10240
+        # This limit can be removed by passing the -XX:-MaxFDLimit option
+        # However, if this built-in limit is removed, the JVM starts to use the soft limit as if it was the hard limit,
+        # so we should set the soft limit to the same value as the hard limit
+        ulimit -n $(ulimit -H -n)
         JAVA_OPTS="$JAVA_OPTS 
         -XX:-MaxFDLimit
         "
