@@ -88,34 +88,87 @@ public class PGWireServer implements Closeable {
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
+                        LOG.info()
+                                .$("isConnected = ").$(context.getDispatcher().isConnected())
+                                .I$();
+                        if (!context.getDispatcher().isConnected()) {
+//                            metrics.pgWire().increasePGConnections();
+//                            LOG.info()
+//                                    .$("connected [made").$(context.getDispatcher().getConnectionCount())
+//                                    .I$();
+                            if (context.getDispatcher().getConnectionCount() != metrics.pgWire().totalPGConnections().getValue()) {
+                                for (int j = 0; j < context.getDispatcher().getConnectionCount(); j++) {
+                                    LOG.info()
+                                            .$("connected [ip").$(context.getDispatcher().getConnectionCount())
+                                            .I$();
+                                    metrics.pgWire().increasePGConnections();
+                                }
+                            }
+
+                        }
                         if (operation == IOOperation.HEARTBEAT) {
                             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+                            LOG.info()
+                                    .$("heart").$(context.getDispatcher().isListening())
+                                    .I$();
                             return false;
                         }
+                        // register channel is the connection
+//                        LOG.info()
+//                                .$("connected [test2").$(context.getDispatcher().getConnectionCount())
+//                                .I$();
                         jobContext.handleClientOperation(context, operation);
+                        LOG.info()
+                                .$("connected [test").$(context.getDispatcher().getConnectionCount())
+                                .I$();
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
+
+
                         return true;
                     } catch (PeerIsSlowToWriteException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
+                        LOG.info()
+                                .$("]test slow W").$(context.getDispatcher().getConnectionCount())
+                                .I$();
                     } catch (PeerIsSlowToReadException e) {
+                        LOG.info()
+                                .$("]test slow R").$(context.getDispatcher().getConnectionCount())
+                                .I$();
                         context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (QueryPausedException e) {
+                        LOG.info()
+                                .$("]test paused").$(context.getDispatcher().getConnectionCount())
+                                .I$();
                         context.setSuspendEvent(e.getEvent());
                         context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException e) {
+                        // this is the disconnect
                         context.getDispatcher().disconnect(
                                 context,
                                 operation == IOOperation.READ
                                         ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
                                         : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
                         );
+                        LOG.info()
+                                .$("disconnected test")
+                                .I$();
+                        metrics.pgWire().decreasePGConnections();
                     } catch (BadProtocolException e) {
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+                        // this is the disconnect
+                        LOG.info()
+                                .$("disconnected test")
+                                .I$();
                     } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
                         metrics.health().incrementUnhandledErrors();
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
+                        // this is the disconnect
+                        LOG.info()
+                                .$("disconnected test")
+                                .I$();
+                        metrics.pgWire().decreasePGConnections();
                     }
                     return false;
                 };
@@ -129,6 +182,7 @@ public class PGWireServer implements Closeable {
                         jobContext.flushQueryCache();
                         queryCacheEventSubSeq.done(seq);
                     }
+
                     return dispatcher.processIOQueue(processor);
                 }
             });
@@ -136,6 +190,7 @@ public class PGWireServer implements Closeable {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
             workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+
             workerPool.freeOnExit((QuietCloseable) () -> {
                 Misc.free(jobContext);
                 engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
