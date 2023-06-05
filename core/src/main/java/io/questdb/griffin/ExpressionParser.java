@@ -516,7 +516,7 @@ public class ExpressionParser {
                         // Pop the left parenthesis from the stack, but not onto the output queue.
                         //        If the token at the top of the stack is a function token, pop it onto the output queue.
                         //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                        while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
+                        while ((node = opStack.pop()) != null && (node.token.length() == 0 || node.token.charAt(0) != '(')) {
                             // special case - (*) expression
                             if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
                                 argStackDepth = onNode(listener, node, 2);
