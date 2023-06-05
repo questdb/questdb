@@ -1,6 +1,6 @@
 package org.questdb;
 
-import io.questdb.std.Encoding;
+import io.questdb.std.Chars;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -59,7 +59,7 @@ public class Base64Benchmark {
     @Benchmark
     public ByteBuffer questDB() {
         bb.clear();
-        Encoding.base64Decode(dataLarge, bb);
+        Chars.base64Decode(dataLarge, bb);
         return bb;
     }
 

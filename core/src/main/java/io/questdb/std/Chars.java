@@ -75,7 +75,7 @@ public final class Chars {
      * Avoid this when possible due to the allocation of a new char array
      * This should be only used when a JDK method forces you to use a byte array
      * <p>
-     * It's responsbility of the caller to ensure that the input string is ASCII
+     * It's responsibility of the caller to ensure that the input string is ASCII
      *
      * @param ascii ascii string to convert to byte array
      * @return byte array representation of the input string
