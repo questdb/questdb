@@ -9,7 +9,7 @@ jobs:
           os: macOS
           jdk: "1.11"
           testset: "all"
-          includeTests: "griffin.**.*?"
+          includeTests: "**/griffin/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo:
@@ -18,7 +18,7 @@ jobs:
           os: macOS
           jdk: "1.11"
           testset: "all"
-          includeTests: "cairo.**.*?"
+          includeTests: "**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-other:
@@ -30,13 +30,23 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-griffin:
+        windows-griffin-noO3-noFuzz:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
           testset: "all"
-          includeTests: "griffin.**.*?"
+          includeTests: "**/griffin/**"
+          excludeTests: "**/O3*Test**,**/Wal**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-griffin-O3-Fuzz:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.11"
+          testset: "all"
+          includeTests: "**/griffin/O3*Test**,**/Wal**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo:
@@ -45,7 +55,7 @@ jobs:
           os: Windows
           jdk: "1.11"
           testset: "all"
-          includeTests: "cairo.**.*?"
+          includeTests: "**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-other:
