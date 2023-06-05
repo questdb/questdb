@@ -1875,17 +1875,10 @@ public class SqlOptimiser {
             return orderByAdvice;
         }
 
-        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = model.getAliasToColumnMap();
-        LowerCaseCharSequenceObjHashMap<CharSequence> nameToAliasMap = model.getColumnNameToAliasMap();
+        LowerCaseCharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
             ExpressionNode orderByNode = orderBy.getQuick(i);
-            QueryColumn queryColumn = aliasToColumnMap.get(orderByNode.token);
-            if (queryColumn == null) {
-                CharSequence alias = nameToAliasMap.get(orderByNode.token);
-                if (alias != null) {
-                    queryColumn = aliasToColumnMap.get(alias);
-                }
-            }
+            QueryColumn queryColumn = map.get(orderByNode.token);
             if (queryColumn == null) {
                 throw SqlException.position(orderByNode.position)
                         .put("Unexpected order by column: ").put(orderByNode.token);

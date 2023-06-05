@@ -2160,12 +2160,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int i = 0; i < orderByColumnCount; i++) {
                     final CharSequence column = columnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
-                    if (index == -1) {
-                        CharSequence alias = model.getColumnNameToAliasMap().get(column);
-                        if (alias != null) {
-                            index = metadata.getColumnIndexQuiet(alias);
-                        }
-                    }
 
                     // check if column type is supported
                     if (ColumnType.isBinary(metadata.getColumnType(index))) {
