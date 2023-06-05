@@ -73,7 +73,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected long heartbeatIntervalMs;
     protected int serverFd;
     private long closeListenFdEpochMs;
-    private boolean connected;
     private volatile boolean listening;
     private int port;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
@@ -169,11 +168,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     @Override
-    public boolean isConnected() {
-        return connected;
-    }
-
-    @Override
     public boolean isListening() {
         return listening;
     }
@@ -205,7 +199,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         evt.context = context;
         evt.operation = operation;
         LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).I$();
-        connected = true;
         interestPubSeq.done(cursor);
     }
 
@@ -332,7 +325,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         if (context == null || context.invalid()) {
             return;
         }
-        connected = false;
         final int fd = context.getFd();
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))

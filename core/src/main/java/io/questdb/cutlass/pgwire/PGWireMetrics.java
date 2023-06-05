@@ -32,7 +32,6 @@ public class PGWireMetrics {
 
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
-
     private final Counter connectionsPGWire;
 
     public PGWireMetrics(MetricsRegistry metricsRegistry) {
@@ -50,53 +49,34 @@ public class PGWireMetrics {
     }
 
     public synchronized void decreasePGConnections() {
-
         connectionsPGWire.add(-1);
-//        System.out.println();
-//        System.out.println("decreasing total = " + connectionsPGWire.getValue());
-//        System.out.println();
     }
 
     public void increasePGConnections() {
         connectionsPGWire.inc();
-//        System.out.println();
-//        System.out.println("increasing total = " + connectionsPGWire.getValue());
-//        System.out.println();
     }
 
     public synchronized void makePGConnectionEqualToConnectionTotal(int connectionCount) {
-        if (connectionsPGWire.equals(connectionCount)) {
-            System.out.println();
-            System.out.println("equal total = " + connectionsPGWire.getValue());
-            System.out.println();
-            return;
-        }
+
         if (connectionsPGWire.getValue() < connectionCount) {
             for (long i = connectionsPGWire.getValue(); i < connectionCount; i++) {
                 connectionsPGWire.inc();
-                System.out.println();
-                System.out.println("increasing total = " + connectionsPGWire.getValue());
-                System.out.println();
             }
 
         }
+        // this deals with if the counter is thrown off
+        // it will bring it back to the correct value
         if (connectionsPGWire.getValue() > connectionCount) {
             for (long i = connectionsPGWire.getValue(); i < connectionCount; i++) {
                 if (connectionsPGWire.getValue() > 0) {
                     connectionsPGWire.add(-1);
-                    System.out.println();
-                    System.out.println("increasing total = " + connectionsPGWire.getValue());
-                    System.out.println();
                 }
 
             }
         }
-//        System.out.println();
-//        System.out.println(" total = " + connectionsPGWire.getValue());
-//        System.out.println();
     }
 
-    public Counter totalPGConnections() {
+    public synchronized Counter totalPGConnections() {
         return connectionsPGWire;
     }
 }
