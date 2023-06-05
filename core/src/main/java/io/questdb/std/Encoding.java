@@ -8,9 +8,9 @@ import java.util.Arrays;
 
 public final class Encoding {
     static final char[] base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
-    static final byte[] base64Inverted = createInvertedAlphabet(base64);
+    static final int[] base64Inverted = createInvertedAlphabet(base64);
     static final char[] base64Url = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".toCharArray();
-    static final byte[] base64UrlInverted = createInvertedAlphabet(base64Url);
+    static final int[] base64UrlInverted = createInvertedAlphabet(base64Url);
 
     private Encoding() {
     }
@@ -59,7 +59,7 @@ public final class Encoding {
         // base64 url does not use padding
     }
 
-    private static void base64Decode(CharSequence encoded, ByteBuffer target, byte[] invertedAlphabet) {
+    private static void base64Decode(CharSequence encoded, ByteBuffer target, int[] invertedAlphabet) {
         if (encoded == null) {
             return;
         }
@@ -73,19 +73,44 @@ public final class Encoding {
             }
         }
 
-        // we need at least 2 bytes to decode anything
-        for (int i = 0, last = length - 1; i < last; ) {
-            int wrk = invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 18;
-            wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 12;
-            target.put((byte) (wrk >>> 16));
-            if (i < length) {
-                wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++)) << 6;
+        int remainder = length % 4;
+        int sourcePos = 0;
+        int targetPos = target.position();
+
+        // first decode all 4 byte chunks. this is *the* hot loop, be careful when changing it
+        for (int end = length - remainder; sourcePos < end; sourcePos += 4, targetPos += 3) {
+            int b0 = invertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
+            int b1 = invertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
+            int b2 = invertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 2)) << 6;
+            int b4 = invertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 3));
+
+            int wrk = b0 | b1 | b2 | b4;
+            // we use absolute positions to wrote to the byte buffer in the hot loop, benchmarking shows that it is faster
+            target.put(targetPos, (byte) (wrk >>> 16));
+            target.put(targetPos + 1, (byte) ((wrk >>> 8) & 0xFF));
+            target.put(targetPos + 2, (byte) (wrk & 0xFF));
+        }
+        target.position(targetPos);
+        // now decode remainder
+        switch (remainder) {
+            case 0:
+                // nothing to do, yay!
+                break;
+            case 1:
+                // invalid encoding, we can't have 1 byte remainder as
+                // even 1 byte encodes to 2 chars
+                throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
+            case 2:
+                int wrk = invertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
+                wrk |= invertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
+                target.put((byte) (wrk >>> 16));
+                break;
+            case 3:
+                wrk = invertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
+                wrk |= invertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
+                wrk |= invertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 2)) << 6;
+                target.put((byte) (wrk >>> 16));
                 target.put((byte) ((wrk >>> 8) & 0xFF));
-                if (i < length) {
-                    wrk |= invertedLookup(invertedAlphabet, encoded.charAt(i++));
-                    target.put((byte) (wrk & 0xFF));
-                }
-            }
         }
     }
 
@@ -118,8 +143,8 @@ public final class Encoding {
         return pad;
     }
 
-    private static byte[] createInvertedAlphabet(char[] alphabet) {
-        byte[] inverted = new byte[128]; // ASCII only
+    private static int[] createInvertedAlphabet(char[] alphabet) {
+        int[] inverted = new int[128]; // ASCII only
         Arrays.fill(inverted, (byte) -1);
         int length = alphabet.length;
         for (int i = 0; i < length; i++) {
@@ -130,11 +155,11 @@ public final class Encoding {
         return inverted;
     }
 
-    private static byte invertedLookup(byte[] invertedAlphabet, char ch) {
+    private static int invertedLookup(int[] invertedAlphabet, char ch) {
         if (ch > 127) {
             throw CairoException.nonCritical().put("non-ascii character while decoding base64 [ch=").put((int) (ch)).put(']');
         }
-        byte index = invertedAlphabet[ch];
+        int index = invertedAlphabet[ch];
         if (index == -1) {
             throw CairoException.nonCritical().put("invalid base64 character [ch=").put(ch).put(']');
         }

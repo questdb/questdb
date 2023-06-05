@@ -84,12 +84,13 @@ public class EncodingTest {
         buffer.flip();
         Assert.assertEquals(0, buffer.remaining());
 
-        // single byte in input treated as empty string
-        // why? base64 encoder will encode single byte as two chars
+        // single char is invalid
         buffer.clear();
-        Encoding.base64UrlDecode("a", buffer);
-        buffer.flip();
-        Assert.assertEquals(0, buffer.remaining());
+        try {
+            Encoding.base64UrlDecode("a", buffer);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 encoding");
+        }
 
         // empty string with padding
         buffer.clear();
