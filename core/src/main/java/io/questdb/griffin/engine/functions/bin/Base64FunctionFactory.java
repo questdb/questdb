@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Encoding;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -84,21 +84,21 @@ public class Base64FunctionFactory implements FunctionFactory {
         public CharSequence getStr(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
             sinkA.clear();
-            Encoding.base64Encode(sequence, this.maxLength, sinkA);
+            Chars.base64Encode(sequence, this.maxLength, sinkA);
             return sinkA;
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
             final BinarySequence sequence = getArg().getBin(rec);
-            Encoding.base64Encode(sequence, this.maxLength, sink);
+            Chars.base64Encode(sequence, this.maxLength, sink);
         }
 
         @Override
         public CharSequence getStrB(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
             sinkB.clear();
-            Encoding.base64Encode(sequence, this.maxLength, sinkB);
+            Chars.base64Encode(sequence, this.maxLength, sinkB);
             return sinkB;
         }
 
