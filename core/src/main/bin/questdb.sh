@@ -169,7 +169,7 @@ function start {
     mkdir -p ${QDB_LOG}
 
     JAVA_LIB="$BASE/questdb.jar"
-
+    
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
     -ea -Dnoebug
@@ -178,6 +178,17 @@ function start {
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
     "
+
+    if [ "$(uname)" == "Darwin" ]; then
+        # JVM on MacOS has its own max open files limit, set to 10240
+        # This limit can be removed by passing the -XX:-MaxFDLimit option
+        # However, if this built-in limit is removed, the JVM starts to use the soft limit as if it was the hard limit,
+        # so we should set the soft limit to the same value as the hard limit
+        ulimit -n $(ulimit -H -n)
+        JAVA_OPTS="$JAVA_OPTS 
+        -XX:-MaxFDLimit
+        "
+    fi
 
     JAVA_MAIN="io.questdb/io.questdb.ServerMain"
     DATE=`date +%Y-%m-%dT%H-%M-%S`
