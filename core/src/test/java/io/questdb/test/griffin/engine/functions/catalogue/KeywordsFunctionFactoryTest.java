@@ -22,23 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.std.Mutable;
+import io.questdb.test.AbstractGriffinTest;
+import org.junit.Test;
 
-public interface PgWireAuthenticator extends Mutable {
-    SecurityContext getSecurityContext();
+import java.util.Arrays;
 
-    boolean isAuthenticated();
+import static io.questdb.griffin.engine.functions.catalogue.Constants.KEYWORDS;
 
-    AuthenticationResult onAfterInitMessage();
+public class KeywordsFunctionFactoryTest extends AbstractGriffinTest {
+    @Test
+    public void testSelectKeywords() throws Exception {
+        CharSequence[] keywords = KEYWORDS.clone();
+        Arrays.sort(keywords);
+        String expected = "keyword\n" + String.join("\n", keywords) + '\n';
+        assertSql("select keyword from keywords() order by keyword asc", expected);
+    }
 
-    AuthenticationResult processMessage(CharSequence usernameFromInitMessage, long msgStart, long msgLimit) throws BadProtocolException;
-
-    enum AuthenticationResult {
-        AUTHENTICATION_SUCCESS,
-        AUTHENTICATION_FAILED,
-        NEED_READ
+    @Test
+    public void testSelectKeywordsWithFilter() throws Exception {
+        assertSql("keywords() where keyword = 'add'", "keyword\nadd\n");
     }
 }

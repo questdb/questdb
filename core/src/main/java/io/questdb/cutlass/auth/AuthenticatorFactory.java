@@ -25,5 +25,5 @@
 package io.questdb.cutlass.auth;
 
 public interface AuthenticatorFactory {
-    Authenticator getLineTCPAuthenticator(long recvBufStart, long recvBufEnd);
+    Authenticator getLineTCPAuthenticator();
 }

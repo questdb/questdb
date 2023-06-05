@@ -24,20 +24,17 @@
 
 package io.questdb.cutlass.auth;
 
-import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
-import io.questdb.cutlass.line.tcp.NetworkIOJob;
-
 public class AnonymousAuthenticator implements Authenticator {
 
     public static final AnonymousAuthenticator INSTANCE = new AnonymousAuthenticator();
 
     @Override
-    public long getRecvBufPos() {
-        throw new UnsupportedOperationException();
+    public CharSequence getPrincipal() {
+        return null;
     }
 
     @Override
-    public LineTcpConnectionContext.IOContextResult handleIO(NetworkIOJob job) {
+    public long getRecvBufPos() {
         throw new UnsupportedOperationException();
     }
 
@@ -47,12 +44,13 @@ public class AnonymousAuthenticator implements Authenticator {
     }
 
     @Override
-    public void init(int fd) {
+    public int handleIO() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getPrincipal() {
-        return null;
+    public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+
     }
 
     @Override
