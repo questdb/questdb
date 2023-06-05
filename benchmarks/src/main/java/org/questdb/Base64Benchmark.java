@@ -18,10 +18,10 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class Base64Benchmark {
 
-    private ByteBuffer bb = ByteBuffer.allocateDirect(64 * 1024);
-    private String dataLarge;
-    private String dataMedium;
-    private String dataSmall;
+    @Param({"16", "512", "65536"})
+    public int size;
+    private ByteBuffer bb;
+    private String data;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -29,6 +29,7 @@ public class Base64Benchmark {
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
+                .addProfiler("gc")
                 .build();
 
         new Runner(opt).run();
@@ -36,30 +37,23 @@ public class Base64Benchmark {
 
     @Benchmark
     public byte[] jdkBaseline() {
-        return Base64.getDecoder().decode(dataLarge);
+        return Base64.getDecoder().decode(data);
     }
 
     @Setup
     public void prepareData() {
         Random random = new Random();
 
-        byte[] b = new byte[16];
+        byte[] b = new byte[size];
         random.nextBytes(b);
-        dataSmall = Base64.getEncoder().encodeToString(b);
-
-        b = new byte[512];
-        random.nextBytes(b);
-        dataMedium = Base64.getEncoder().encodeToString(b);
-
-        b = new byte[64 * 1024];
-        random.nextBytes(b);
-        dataLarge = Base64.getEncoder().encodeToString(b);
+        data = Base64.getEncoder().encodeToString(b);
+        bb = ByteBuffer.allocate(size);
     }
 
     @Benchmark
     public ByteBuffer questDB() {
         bb.clear();
-        Chars.base64Decode(dataLarge, bb);
+        Chars.base64Decode(data, bb);
         return bb;
     }
 
