@@ -31,6 +31,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
@@ -52,6 +53,11 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     public int getInt(Record rec) {
         final CharSequence symbolStr = symbolFunction.getStr(null);
         return symbolTable.keyOf(symbolStr);
+    }
+
+    @Override
+    public @Nullable StaticSymbolTable getStaticSymbolTable() {
+        return symbolTable;
     }
 
     @Override

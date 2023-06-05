@@ -57,15 +57,12 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
         if (value == null) {
             return NULL;
         }
-
         if (SqlKeywords.isTrueKeyword(value)) {
             return TRUE;
         }
-
         if (SqlKeywords.isFalseKeyword(value)) {
             return FALSE;
         }
-
         return new SymbolConstant(Chars.toString(value), 0);
     }
 
