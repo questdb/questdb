@@ -49,7 +49,7 @@ public class PGWireMetrics {
         return cachedUpdatesGauge;
     }
 
-    public void decreasePGConnections() {
+    public synchronized void decreasePGConnections() {
 
         connectionsPGWire.add(-1);
 //        System.out.println();
@@ -64,8 +64,11 @@ public class PGWireMetrics {
 //        System.out.println();
     }
 
-    public void makePGConnectionEqualToConnectionTotal(int connectionCount) {
+    public synchronized void makePGConnectionEqualToConnectionTotal(int connectionCount) {
         if (connectionsPGWire.equals(connectionCount)) {
+            System.out.println();
+            System.out.println("equal total = " + connectionsPGWire.getValue());
+            System.out.println();
             return;
         }
         if (connectionsPGWire.getValue() < connectionCount) {
