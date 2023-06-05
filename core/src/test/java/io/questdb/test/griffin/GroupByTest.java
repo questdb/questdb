@@ -642,6 +642,33 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByAllIndexedColumns() throws Exception {
+        assertQuery("time\ts1\tfirst\tfirst1\tfirst2\n" +
+                        "2023-05-16T00:00:00.000000Z\ta\tfoo\tNaN\t0.08486964232560668\n" +
+                        "2023-05-16T00:02:00.000000Z\tb\tfoo\t0.8899286912289663\t0.6254021542412018\n" +
+                        "2023-05-16T00:05:00.000000Z\tc\tfoo\t0.1985581797355932\t0.33608255572515877\n",
+                "SELECT first(ts) as time, s1, first(s2), first(d1), first(d2) " +
+                        "FROM x " +
+                        "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
+                        "AND s2 = ('foo') " +
+                        "GROUP BY s1, s2;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_symbol('a','b','c') s1," +
+                        "   rnd_symbol('foo','bar') s2," +
+                        "   rnd_double(1) d1," +
+                        "   rnd_double(1) d2," +
+                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
+                        "   from long_sequence(100)" +
+                        "), index(s1), index(s2) timestamp(ts) partition by DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupByColumnIdx1() throws Exception {
         assertQuery("key\tcount\n" +
                         "0\t50\n" +
