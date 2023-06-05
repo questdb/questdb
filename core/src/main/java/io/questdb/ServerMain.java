@@ -91,6 +91,8 @@ public class ServerMain implements Closeable {
         //       done for compatibility with enterprise
         config.init(engine, ffCache);
 
+        freeOnExit(config.getFactoryProvider());
+
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
 
