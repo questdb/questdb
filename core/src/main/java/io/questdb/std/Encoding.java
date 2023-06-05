@@ -85,7 +85,8 @@ public final class Encoding {
             int b4 = invertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 3));
 
             int wrk = b0 | b1 | b2 | b4;
-            // we use absolute positions to wrote to the byte buffer in the hot loop, benchmarking shows that it is faster
+            // we use absolute positions to wrote to the byte buffer in the hot loop
+            // benchmarking shows that it is faster than using relative positions
             target.put(targetPos, (byte) (wrk >>> 16));
             target.put(targetPos + 1, (byte) ((wrk >>> 8) & 0xFF));
             target.put(targetPos + 2, (byte) (wrk & 0xFF));
