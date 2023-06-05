@@ -515,7 +515,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // at this point listColumnFilterB has column indexes of the master record that are JOIIN keys
+        // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
         // so masterSink writes key columns of master record to a sink
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
@@ -2499,6 +2499,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration.getSampleByIndexSearchPageSize()
                         );
                     }
+                    factory.revertFromSampleByIndexDataFrameCursorFactory();
                 }
             }
 
@@ -4508,7 +4509,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-
     }
 
     private void restoreWhereClause(ExpressionNode node) {
