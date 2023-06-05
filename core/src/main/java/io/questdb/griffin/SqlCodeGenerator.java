@@ -2499,6 +2499,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration.getSampleByIndexSearchPageSize()
                         );
                     }
+                    factory.revertFromSampleByIndexDataFrameCursorFactory();
                 }
             }
 
