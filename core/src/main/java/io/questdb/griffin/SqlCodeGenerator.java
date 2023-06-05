@@ -515,7 +515,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // at this point listColumnFilterB has column indexes of the master record that are JOIIN keys
+        // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
         // so masterSink writes key columns of master record to a sink
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
@@ -1662,7 +1662,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     releaseSlave = false;
                                     validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 } else {
-                                    assert false;
+                                    if (!master.recordCursorSupportsRandomAccess()) {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("left side of splice join doesn't support random access");
+                                    } else if (!slave.recordCursorSupportsRandomAccess()) {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of splice join doesn't support random access");
+                                    } else {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("splice join doesn't support full fat mode");
+                                    }
                                 }
                                 break;
                             default:
@@ -2493,6 +2499,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration.getSampleByIndexSearchPageSize()
                         );
                     }
+                    factory.revertFromSampleByIndexDataFrameCursorFactory();
                 }
             }
 
@@ -4502,7 +4509,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-
     }
 
     private void restoreWhereClause(ExpressionNode node) {

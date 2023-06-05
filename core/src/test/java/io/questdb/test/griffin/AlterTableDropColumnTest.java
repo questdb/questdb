@@ -164,7 +164,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' or 'system' expected");
+        assertFailure("alter", 5, "'table' expected");
     }
 
     @Test

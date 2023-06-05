@@ -60,6 +60,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
+                case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
@@ -96,6 +97,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             long val = Numbers.LONG_NaN;
             switch (ColumnType.tagOf(func.getType())) {
+                case ColumnType.DATE:
+                    val = func.getDate(null);
+                    val = (val == Numbers.LONG_NaN) ? val : val * 1000L;
+                    break;
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
@@ -131,10 +136,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long ts = tsFunc.getTimestamp(rec);
-            if (ts == Numbers.LONG_NaN) {
-                return negated;
-            }
-
             return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
         }
 
@@ -163,9 +164,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long ts = args.getQuick(0).getTimestamp(rec);
-            if (ts == Numbers.LONG_NaN) {
-                return negated;
-            }
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
@@ -177,6 +175,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         val = func.getTimestamp(rec);
                         break;
                     case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
                         CharSequence str = func.getStr(rec);
                         val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NaN;
                         break;

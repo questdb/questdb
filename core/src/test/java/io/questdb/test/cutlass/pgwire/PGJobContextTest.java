@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.PGConnectionContext;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -50,7 +49,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -1239,7 +1237,7 @@ if __name__ == "__main__":
         final String script =
                 ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<520000000800000003\n" +
-                        ">70000000006f6800\n" +
+                        ">70000000006f\n" +
                         "<!!";
         assertHexScript(
                 getFragmentedSendFacade(),

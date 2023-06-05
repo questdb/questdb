@@ -24,21 +24,23 @@
 
 package io.questdb;
 
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.BasicWalInitializerFactory;
 import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticationFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 
 public class FactoryProviderImpl implements FactoryProvider {
     private final AuthenticatorFactory authenticatorFactory;
+    private final PgWireAuthenticationFactory pgWireAuthenticatorFactory;
+    private final SecurityContextFactory securityContextFactory;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.authenticatorFactory = ServerMain.getAuthenticatorFactory(configuration);
+        this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
+        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration);
     }
 
     @Override
@@ -48,12 +50,12 @@ public class FactoryProviderImpl implements FactoryProvider {
 
     @Override
     public PgWireAuthenticationFactory getPgWireAuthenticationFactory() {
-        return DefaultPgWireAuthenticationFactory.INSTANCE;
+        return pgWireAuthenticatorFactory;
     }
 
     @Override
     public SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
+        return securityContextFactory;
     }
 
     @Override

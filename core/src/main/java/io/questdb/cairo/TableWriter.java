@@ -1270,7 +1270,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
-        return splitMinSizeBytes / avgRecordSize;
+        return splitMinSizeBytes /
+                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata)));
     }
 
     public long getPartitionSize(int partitionIndex) {
@@ -3609,6 +3610,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
                 hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+                long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
+                columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
             }
 
             if (ColumnType.isSymbol(columnType)) {
@@ -6695,7 +6698,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // if there are no rows in the partition yet.
                         // The record size used to estimate the partition size
                         // to split partition in O3 commit when necessary
-                        dataSizeBytes = Long.BYTES + 20;
+                        dataSizeBytes = TableUtils.ESTIMATED_VAR_COL_SIZE;
                     }
                 }
             }
