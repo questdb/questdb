@@ -50,11 +50,47 @@ public class PGWireMetrics {
     }
 
     public void decreasePGConnections() {
+
         connectionsPGWire.add(-1);
+//        System.out.println();
+//        System.out.println("decreasing total = " + connectionsPGWire.getValue());
+//        System.out.println();
     }
 
     public void increasePGConnections() {
         connectionsPGWire.inc();
+//        System.out.println();
+//        System.out.println("increasing total = " + connectionsPGWire.getValue());
+//        System.out.println();
+    }
+
+    public void makePGConnectionEqualToConnectionTotal(int connectionCount) {
+        if (connectionsPGWire.equals(connectionCount)) {
+            return;
+        }
+        if (connectionsPGWire.getValue() < connectionCount) {
+            for (long i = connectionsPGWire.getValue(); i < connectionCount; i++) {
+                connectionsPGWire.inc();
+                System.out.println();
+                System.out.println("increasing total = " + connectionsPGWire.getValue());
+                System.out.println();
+            }
+
+        }
+        if (connectionsPGWire.getValue() > connectionCount) {
+            for (long i = connectionsPGWire.getValue(); i < connectionCount; i++) {
+                if (connectionsPGWire.getValue() > 0) {
+                    connectionsPGWire.add(-1);
+                    System.out.println();
+                    System.out.println("increasing total = " + connectionsPGWire.getValue());
+                    System.out.println();
+                }
+
+            }
+        }
+//        System.out.println();
+//        System.out.println(" total = " + connectionsPGWire.getValue());
+//        System.out.println();
     }
 
     public Counter totalPGConnections() {

@@ -91,21 +91,22 @@ public class PGWireServer implements Closeable {
                         LOG.info()
                                 .$("isConnected = ").$(context.getDispatcher().isConnected())
                                 .I$();
-                        if (!context.getDispatcher().isConnected()) {
-//                            metrics.pgWire().increasePGConnections();
-//                            LOG.info()
-//                                    .$("connected [made").$(context.getDispatcher().getConnectionCount())
-//                                    .I$();
-                            if (context.getDispatcher().getConnectionCount() != metrics.pgWire().totalPGConnections().getValue()) {
-                                for (int j = 0; j < context.getDispatcher().getConnectionCount(); j++) {
-                                    LOG.info()
-                                            .$("connected [ip").$(context.getDispatcher().getConnectionCount())
-                                            .I$();
-                                    metrics.pgWire().increasePGConnections();
-                                }
-                            }
-
-                        }
+//                        if (!context.getDispatcher().isConnected()) {
+////                            metrics.pgWire().increasePGConnections();
+////                            LOG.info()
+////                                    .$("connected [made").$(context.getDispatcher().getConnectionCount())
+////                                    .I$();
+//                            if (context.getDispatcher().getConnectionCount() != metrics.pgWire().totalPGConnections().getValue()) {
+//                                for (int j = 0; j < context.getDispatcher().getConnectionCount(); j++) {
+//                                    LOG.info()
+//                                            .$("connected [ip").$(context.getDispatcher().getConnectionCount())
+//                                            .I$();
+//                                    metrics.pgWire().increasePGConnections();
+//                                }
+//                            }
+//
+//                        }
+                        metrics.pgWire().makePGConnectionEqualToConnectionTotal(context.getDispatcher().getConnectionCount());
                         if (operation == IOOperation.HEARTBEAT) {
                             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
                             LOG.info()
@@ -152,6 +153,7 @@ public class PGWireServer implements Closeable {
                         LOG.info()
                                 .$("disconnected test")
                                 .I$();
+
                         metrics.pgWire().decreasePGConnections();
                     } catch (BadProtocolException e) {
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
@@ -159,6 +161,7 @@ public class PGWireServer implements Closeable {
                         LOG.info()
                                 .$("disconnected test")
                                 .I$();
+                        metrics.pgWire().decreasePGConnections();
                     } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
