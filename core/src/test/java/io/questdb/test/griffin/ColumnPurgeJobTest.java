@@ -178,27 +178,19 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             ff = new TestFilesFacadeImpl() {
-                private long completedFd;
 
                 @Override
                 public boolean allocate(int fd, long size) {
-                    if (completedFd == fd) {
+                    if (this.fd == fd) {
                         throw new RuntimeException("TEST ERROR");
                     }
                     return super.allocate(fd, size);
                 }
 
-                public boolean close(int fd) {
-                    if (fd == completedFd) {
-                        completedFd = -1;
-                    }
-                    return super.close(fd);
-                }
-
                 public int openRW(LPSZ name, long opts) {
                     int fd = super.openRW(name, opts);
                     if (Chars.endsWith(name, "completed.d")) {
-                        completedFd = fd;
+                        this.fd = fd;
                     }
                     return fd;
                 }
