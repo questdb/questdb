@@ -45,7 +45,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -413,7 +412,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         private final ConcurrentHashMap<SuspendEvent> suspendedPartitions = new ConcurrentHashMap<>();
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             suspendedPartitions.forEach((charSequence, suspendEvent) -> suspendEvent.close());
         }
 
