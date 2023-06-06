@@ -847,7 +847,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     @Test
     public void testWalTableCannotOpenSeqTxnFileToCheckTransactions() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
-            int fd;
 
             @Override
             public int openRO(LPSZ name) {
@@ -1182,7 +1181,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
-            int fd = -1;
 
             @Override
             public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
