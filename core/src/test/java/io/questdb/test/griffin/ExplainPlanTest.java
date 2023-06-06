@@ -7022,6 +7022,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void testSelectIndexedSymbolWithIntervalFilter(String timestampAndPartitionByClause) throws Exception {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
