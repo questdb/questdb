@@ -2878,6 +2878,9 @@ public class SqlOptimiser {
                     emitLiteralsTopDown(jc.aNodes.getQuick(k), model);
                     emitLiteralsTopDown(jc.bNodes.getQuick(k), model);
 
+                    emitLiteralsTopDown(jc.aNodes.getQuick(k), jm);
+                    emitLiteralsTopDown(jc.bNodes.getQuick(k), jm);
+
                     if (papaModel != null) {
                         emitLiteralsTopDown(jc.aNodes.getQuick(k), papaModel);
                         emitLiteralsTopDown(jc.bNodes.getQuick(k), papaModel);
