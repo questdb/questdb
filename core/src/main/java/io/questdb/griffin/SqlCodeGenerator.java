@@ -182,6 +182,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         throw SqlException.$(expr.position, "boolean expression expected");
     }
 
+    @NotNull
+    public Function compileJoinFilter(
+            ExpressionNode expr,
+            JoinRecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        try {
+            return compileBooleanFilter(expr, metadata, executionContext);
+        } catch (Throwable t) {
+            Misc.free(metadata);
+            throw t;
+        }
+    }
+
     public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
     }
@@ -1510,7 +1524,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_CROSS_LEFT:
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
-                                filter = functionParser.parseFunction(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
 
                                 master = new NestedLoopLeftJoinRecordCursorFactory(
                                         joinMetadata,
@@ -1677,7 +1691,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
-                                    filter = functionParser.parseFunction(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
 
                                 if (joinType == JOIN_OUTER &&
@@ -1716,9 +1730,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
                 if (filterExpr != null) {
                     if (executionContext.isParallelFilterEnabled() && master.supportPageFrameCursor()) {
-                        final Function filter = compileBooleanFilter(
+                        final Function filter = compileJoinFilter(
                                 filterExpr,
-                                master.getMetadata(),
+                                (JoinRecordMetadata) master.getMetadata(),
                                 executionContext
                         );
 
@@ -1743,7 +1757,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else {
                         master = new FilteredRecordCursorFactory(
                                 master,
-                                functionParser.parseFunction(filterExpr, master.getMetadata(), executionContext)
+                                compileJoinFilter(filterExpr, (JoinRecordMetadata) master.getMetadata(), executionContext)
                         );
                     }
                 }
@@ -2500,6 +2514,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration.getSampleByIndexSearchPageSize()
                         );
                     }
+                    factory.revertFromSampleByIndexDataFrameCursorFactory();
                 }
             }
 
@@ -4510,7 +4525,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-
     }
 
     private void restoreWhereClause(ExpressionNode node) {
