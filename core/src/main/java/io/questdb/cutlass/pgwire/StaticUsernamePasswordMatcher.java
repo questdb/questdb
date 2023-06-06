@@ -26,15 +26,13 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Chars;
 
-public class StaticUserDatabase implements UsernamePasswordMatcher {
+public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
     private final String defaultPassword;
     private final String defaultUsername;
-
     private final String roPassword;
     private final String roUsername;
 
-
-    public StaticUserDatabase(PGWireConfiguration configuration) {
+    public StaticUsernamePasswordMatcher(PGWireConfiguration configuration) {
         this.defaultUsername = configuration.getDefaultUsername();
         this.defaultPassword = configuration.getDefaultPassword();
         if (configuration.isReadOnlyUserEnabled()) {

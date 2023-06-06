@@ -45,7 +45,7 @@ public class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFac
                 circuitBreaker,
                 registry,
                 optionsListener,
-                new StaticUserDatabase(configuration)
+                new StaticUsernamePasswordMatcher(configuration)
         );
     }
 }
