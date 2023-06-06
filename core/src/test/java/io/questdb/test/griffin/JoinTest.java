@@ -42,6 +42,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class JoinTest extends AbstractGriffinTest {
@@ -2176,6 +2177,42 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinColumnPropagationIntoJoinModel() throws Exception {
+        assertCompile("CREATE TABLE trades (" +
+                "  symbol SYMBOL," +
+                "  price DOUBLE," +
+                "  amount DOUBLE," +
+                "  timestamp TIMESTAMP " +
+                ") timestamp (timestamp) PARTITION BY DAY;");
+
+        assertCompile("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
+
+        for (String joinType : Arrays.asList("JOIN", "LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
+            String query = ("SELECT amount, price1\n" +
+                    "FROM\n" +
+                    "(\n" +
+                    "  SELECT *\n" +
+                    "  FROM trades b \n" +
+                    "  #JOIN_TYPE# \n" +
+                    "  (\n" +
+                    "    SELECT * \n" +
+                    "    FROM trades \n" +
+                    "    WHERE price > 1\n" +
+                    "      AND symbol = 'ETH-USD'\n" +
+                    "  ) a ON #JOIN_CLAUSE#\n" +
+                    "  WHERE b.amount > 1\n" +
+                    "    AND b.symbol = 'ETH-USD'\n" +
+                    ")").replace("#JOIN_TYPE#", joinType);
+            String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tNaN\n" : "amount\tprice1\n2.0\t2.0\n";
+
+            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null);
+            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null);
+            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null);
+            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null);
+        }
+    }
+
+    @Test
     public void testJoinConstantFalse() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "c\ta\tb\tcolumn\n";
@@ -4047,6 +4084,35 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMultipleJoinsWithTopLevelSelect() throws Exception {
+        assertCompile("CREATE TABLE train ( " +
+                "  id INT, " +
+                "  date timestamp, " +
+                "  store_nbr INT, " +
+                "  family SYMBOL, " +
+                "  sales DOUBLE " +
+                ") timestamp (date) PARTITION BY YEAR");
+        assertCompile("insert into train values (1, '2015-05-31T00:00:00', 1, 'A', 1.0 )");
+
+        String query = "WITH train_lim as (select id, date, store_nbr, family, sales from train where date < '2017-07-16' AND date > '2012-12-29') " +
+                "SELECT s.id  " +
+                "FROM train_lim s " +
+                "#JOIN_TYPE# JOIN " +
+                "( " +
+                "    SELECT * FROM train_lim   " +
+                "    #JOIN_TYPE# JOIN  " +
+                "    ( " +
+                "        SELECT * FROM train_lim  " +
+                "    ) ON (store_nbr, family) " +
+                ") ON (store_nbr, family)";
+
+        assertRepeatedJoinQuery(query, "LT", true);
+        assertRepeatedJoinQuery(query, "ASOF", true);
+        assertRepeatedJoinQuery(query, "INNER", false);
+        assertRepeatedJoinQuery(query, "LEFT", false);
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table contact_events as (" +
@@ -4841,6 +4907,10 @@ public class JoinTest extends AbstractGriffinTest {
         } finally {
             compiler.setFullFatJoins(false);
         }
+    }
+
+    private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws SqlException {
+        assertQuery("id\n1\n", query.replace("#JOIN_TYPE#", left), null, false, expectSize);
     }
 
     private void testFullFat(TestMethod method) throws Exception {

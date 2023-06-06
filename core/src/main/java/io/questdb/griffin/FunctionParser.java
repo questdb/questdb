@@ -421,7 +421,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function createConstant(int position, final CharSequence tok) throws SqlException {
-
         final int len = tok.length();
 
         if (isNullKeyword(tok)) {

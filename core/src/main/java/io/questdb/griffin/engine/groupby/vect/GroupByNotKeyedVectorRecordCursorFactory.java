@@ -130,9 +130,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 VectorAggregateTask task = queue.get(cursor);
                 task.entry.run(workerId, subSeq, cursor);
                 reclaimed++;
-            } else if (cursor == -1) {
-                log.info().$("waiting for completion [queuedCount=").$(queuedCount).$(']').$();
-                doneLatch.await(queuedCount);
             } else {
                 Os.pause();
             }

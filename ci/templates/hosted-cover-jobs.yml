@@ -9,7 +9,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          includeTests: "griffin.**.*?"
+          includeTests: "**/griffin/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo:
@@ -18,7 +18,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          includeTests: "cairo.**.*?"
+          includeTests: "**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-other:

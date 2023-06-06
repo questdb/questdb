@@ -683,17 +683,16 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
-            int txnFd = -1;
 
             @Override
             public boolean close(int fd) {
-                if (fd == txnFd) {
+                if (fd > -1 && fd == this.fd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
                         walWriter1Ref.get().commit();
                         addColumnAndRow(walWriter1Ref.get(), "i1");
                     }
-                    txnFd = -1;
+                    this.fd = -1;
                 }
                 return super.close(fd);
             }
@@ -701,7 +700,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TXN_FILE_NAME)) {
-                    return txnFd = super.openRO(name);
+                    return this.fd = super.openRO(name);
                 }
                 return super.openRO(name);
             }
@@ -758,17 +757,16 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
-            int txnFd = -1;
 
             @Override
             public boolean close(int fd) {
-                if (fd == txnFd) {
+                if (fd > -1 && fd == this.fd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
                         addColumnAndRow(walWriter1Ref.get(), "i1");
                         addColumnAndRow(walWriter1Ref.get(), "i2");
                     }
-                    txnFd = -1;
+                    this.fd = -1;
                 }
                 return super.close(fd);
             }
@@ -776,7 +774,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TXN_FILE_NAME)) {
-                    return txnFd = super.openRO(name);
+                    return this.fd = super.openRO(name);
                 }
                 return super.openRO(name);
             }
