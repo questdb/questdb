@@ -33,7 +33,19 @@ public interface SecurityContext {
     default void assumeRole(CharSequence roleName) {
     }
 
+    default void authorizeAddPassword() {
+    }
+
+    default void authorizeAddUser() {
+    }
+
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
+    }
+
+    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     default void authorizeAlterTableAttachPartition(TableToken tableToken) {
@@ -42,19 +54,13 @@ public interface SecurityContext {
     default void authorizeAlterTableDetachPartition(TableToken tableToken) {
     }
 
-    default void authorizeAlterTableDropPartition(TableToken tableToken) {
-    }
-
-    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableDropPartition(TableToken tableToken) {
     }
 
     // the names are pairs from-to
@@ -64,13 +70,46 @@ public interface SecurityContext {
     default void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
+    default void authorizeAssignRole() {
+    }
+
     default void authorizeCopy() {
     }
 
     default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
+    default void authorizeCreateGroup() {
+    }
+
+    default void authorizeCreateJwk() {
+    }
+
+    default void authorizeCreateRole() {
+    }
+
+    default void authorizeCreateUser() {
+    }
+
     default void authorizeDatabaseSnapshot() {
+    }
+
+    default void authorizeDisableUser() {
+    }
+
+    default void authorizeDropGroup() {
+    }
+
+    default void authorizeDropJwk() {
+    }
+
+    default void authorizeDropRole() {
+    }
+
+    default void authorizeDropUser() {
+    }
+
+    default void authorizeEnableUser() {
     }
 
     @SuppressWarnings("unused")
@@ -81,34 +120,10 @@ public interface SecurityContext {
     default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    default void authorizeAddUser() {
+    default void authorizeRemovePassword() {
     }
 
     default void authorizeRemoveUser() {
-    }
-
-    default void authorizeAssignRole() {
-    }
-
-    default void authorizeUnassignRole() {
-    }
-
-    default void authorizeCreateGroup() {
-    }
-
-    default void authorizeDropGroup() {
-    }
-
-    default void authorizeCreateUser() {
-    }
-
-    default void authorizeDropUser() {
-    }
-
-    default void authorizeCreateRole() {
-    }
-
-    default void authorizeDropRole() {
     }
 
     default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
@@ -137,6 +152,9 @@ public interface SecurityContext {
     }
 
     default void authorizeTableVacuum(TableToken tableToken) {
+    }
+
+    default void authorizeUnassignRole() {
     }
 
     default void exitRole(CharSequence roleName) {
