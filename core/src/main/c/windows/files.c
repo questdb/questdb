@@ -62,8 +62,8 @@ jboolean set_file_pos(HANDLE fd, jlong offset) {
         return 1;
     }
     LONG highPos = (LONG) (offset >> 32);
-    DWORD r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
-    if (r == INVALID_SET_FILE_POINTER) {
+    DWORD r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN);
+    if (r == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR) {
         SaveLastError();
         return FALSE;
     }

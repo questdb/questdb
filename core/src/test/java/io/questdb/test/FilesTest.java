@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
+import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -52,7 +53,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class FilesTest {
+
     private static final String EOL = System.lineSeparator();
+    private static final Log LOG = LogFactory.getLog(FilesTest.class);
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -1273,12 +1276,18 @@ public class FilesTest {
             long diskSize = ff.getDiskFreeSpace(p2);
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
+
             try {
                 fd = ff.openRW(path, CairoConfiguration.O_NONE);
                 assert fd != -1;
+                LOG.info().$("allocating ").$(fileSize).$(" out of ").$(diskSize).$(" to ").$(path).$();
                 if (ff.allocate(fd, fileSize)) {
+                    LOG.info().$("allocation succeeded for ").$(path).$();
                     mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
                     Unsafe.getUnsafe().putLong(mem, 123455);
+                    LOG.info().$("mmap succeeded for ").$(path).$();
+                } else {
+                    LOG.info().$("allocation failed for ").$(path).$();
                 }
             } finally {
                 if (mem != -1) {
