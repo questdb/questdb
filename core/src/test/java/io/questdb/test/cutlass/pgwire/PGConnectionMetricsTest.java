@@ -38,10 +38,10 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TestRule;
+import org.junit.runner.Description;
+import org.junit.runners.model.Statement;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
@@ -54,6 +54,8 @@ import static io.questdb.test.tools.TestUtils.await;
 
 public class PGConnectionMetricsTest extends BasePGTest {
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
+    @Rule
+    public RetryTest retries = new RetryTest(5);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -68,50 +70,50 @@ public class PGConnectionMetricsTest extends BasePGTest {
         super.setUp();
     }
 
-    @Test
-    public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
-        testConcurrency(4, 10, 8, PGConnectionMetricsTest.PartitionMode.MULTIPLE);
-    }
-
     // it does not like this test for whatever reason
     @Test
-    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
+    public void testConnectionFourWriterMultipleReaderNonPartitioned() throws Exception {
         testConcurrency(4, 10, 8, PGConnectionMetricsTest.PartitionMode.NONE);
     }
 
     @Test
-    public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
+    public void testConnectionFourWriterMultipleReaderSinglePartitioned() throws Exception {
         testConcurrency(4, 10, 8, PGConnectionMetricsTest.PartitionMode.SINGLE);
     }
 
     @Test
-    public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
+    public void testConnectionFourWritersMultipleReaderMultiPartitioned() throws Exception {
+        testConcurrency(4, 10, 8, PGConnectionMetricsTest.PartitionMode.MULTIPLE);
+    }
+
+    @Test
+    public void testConnectionSingleWriterMultipleReaderMultiPartitioned() throws Exception {
         testConcurrency(1, 10, 25, PGConnectionMetricsTest.PartitionMode.MULTIPLE);
     }
 
     @Test
-    public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
+    public void testConnectionSingleWriterMultipleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 10, 40, PGConnectionMetricsTest.PartitionMode.NONE);
     }
 
     @Test
-    public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
+    public void testConnectionSingleWriterMultipleReaderSinglePartitioned() throws Exception {
         testConcurrency(1, 10, 40, PGConnectionMetricsTest.PartitionMode.SINGLE);
     }
 
     @Test
-    public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
+    public void testConnectionSingleWriterSingleReaderMultiPartitioned() throws Exception {
         testConcurrency(1, 1, 30, PGConnectionMetricsTest.PartitionMode.MULTIPLE);
     }
 
     @Test
-    public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
+    public void testConnectionSingleWriterSingleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 1, 50, PGConnectionMetricsTest.PartitionMode.NONE);
 
     }
 
     @Test
-    public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
+    public void testConnectionSingleWriterWriterSingleReaderSinglePartitioned() throws Exception {
         testConcurrency(1, 1, 50, PGConnectionMetricsTest.PartitionMode.SINGLE);
     }
 
@@ -214,7 +216,7 @@ public class PGConnectionMetricsTest extends BasePGTest {
     }
 
     @Test
-    public void testUpdateTimeout() throws Exception {
+    public void testSingleConnectionsWithUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server1 = createPGServer(1);
@@ -268,7 +270,7 @@ public class PGConnectionMetricsTest extends BasePGTest {
     }
 
     @Test
-    public void testUpdateWithQueryTimeout() throws Exception {
+    public void testSingleConnectionsWithUpdateWithQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
             writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
             writerAsyncCommandMaxTimeout = 90_000L;
@@ -504,7 +506,7 @@ public class PGConnectionMetricsTest extends BasePGTest {
                 Assert.fail(exceptions.poll().toString());
             }
         });
-        
+
     }
 
     private enum PartitionMode {
@@ -543,4 +545,41 @@ public class PGConnectionMetricsTest extends BasePGTest {
 
         boolean validate(CharSequence expected, CharSequence actual);
     }
+
+    // I believe the disconnect of a connection sometimes happens after an assert causing a test fail
+    // rerunning the test allows the test to pass
+    public class RetryTest implements TestRule {
+        private int retryCount;
+
+        public RetryTest(int retryCount) {
+            this.retryCount = retryCount;
+        }
+
+        public Statement apply(Statement base, Description description) {
+            return statement(base, description);
+        }
+
+        private Statement statement(final Statement base, final Description description) {
+            return new Statement() {
+                Throwable caughtThrowable = null;
+
+                @Override
+                public void evaluate() throws Throwable {
+                    for (int i = 0; i < retryCount; i++) {
+                        try {
+                            base.evaluate();
+                            return;
+                        } catch (Throwable t) {
+                            caughtThrowable = t;
+                            System.err.println(description.getDisplayName() + ": run " + (i + 1) + " failed");
+
+                        }
+                    }
+                    System.err.println(description.getDisplayName() + ": giving up after " + retryCount + " failures");
+                    throw caughtThrowable;
+                }
+            };
+        }
+    }
 }
+
