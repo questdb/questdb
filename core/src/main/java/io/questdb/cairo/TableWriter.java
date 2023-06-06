@@ -360,6 +360,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
 
+    @TestOnly
+    public static void dispatchO3CallbackQueue0(RingQueue<O3CallbackTask> queue, int queuedCount, Sequence subSeq, SOUnboundedCountDownLatch o3DoneLatch) {
+        while (!o3DoneLatch.done(queuedCount)) {
+            long cursor = subSeq.next();
+            if (cursor > -1) {
+                O3CallbackJob.runCallbackWithCol(queue.get(cursor), cursor, subSeq);
+            } else {
+                Os.pause();
+            }
+        }
+    }
+
     public static int getPrimaryColumnIndex(int index) {
         return index * 2;
     }
@@ -3231,16 +3243,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void dispatchO3CallbackQueue(RingQueue<O3CallbackTask> queue, int queuedCount) {
         // This is work stealing, can run tasks from other table writers
         final Sequence subSeq = this.messageBus.getO3CallbackSubSeq();
-        while (!o3DoneLatch.done(queuedCount)) {
-            long cursor = subSeq.next();
-            if (cursor > -1) {
-                O3CallbackJob.runCallbackWithCol(queue.get(cursor), cursor, subSeq);
-            } else if (cursor == -1) {
-                o3DoneLatch.await(queuedCount);
-            } else {
-                Os.pause();
-            }
-        }
+        dispatchO3CallbackQueue0(queue, queuedCount, subSeq, o3DoneLatch);
         checkO3Errors();
     }
 
