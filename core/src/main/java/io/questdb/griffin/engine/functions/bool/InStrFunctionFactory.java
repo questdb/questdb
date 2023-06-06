@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -55,13 +56,20 @@ public class InStrFunctionFactory implements FunctionFactory {
         if (n == 1) {
             return BooleanConstant.FALSE;
         }
-
+        ObjList<Function> deferredValues = null;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                    if (func.isRuntimeConstant()) {//bind variables
+                        if (deferredValues == null) {
+                            deferredValues = new ObjList<>();
+                        }
+                        deferredValues.add(func);
+                        continue;
+                    }
                     CharSequence value = func.getStr(null);
                     if (value == null) {
                         set.addNull();
@@ -76,19 +84,23 @@ public class InStrFunctionFactory implements FunctionFactory {
             }
         }
         Function var = args.getQuick(0);
-        if (var.isConstant()) {
+        if (var.isConstant() && deferredValues == null) {
             return BooleanConstant.of(set.contains(var.getStr(null)));
         }
-        return new Func(var, set);
+        return new Func(var, set, deferredValues);
     }
 
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final Function arg;
+        private final CharSequenceHashSet deferredSet;
+        private final ObjList<Function> deferredValues;
         private final CharSequenceHashSet set;
 
-        public Func(Function arg, CharSequenceHashSet set) {
+        public Func(Function arg, CharSequenceHashSet set, ObjList<Function> deferredValues) {
             this.arg = arg;
             this.set = set;
+            this.deferredValues = deferredValues;
+            this.deferredSet = deferredValues != null ? new CharSequenceHashSet() : null;
         }
 
         @Override
@@ -98,12 +110,33 @@ public class InStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return set.contains(arg.getStr(rec));
+            CharSequence val = arg.getStr(rec);
+            return set.contains(val) ||
+                    (deferredSet != null && deferredSet.contains(val));
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            if (deferredValues != null) {
+                deferredSet.clear();
+                for (int i = 0, n = deferredValues.size(); i < n; i++) {
+                    Function func = deferredValues.getQuick(i);
+                    func.init(symbolTableSource, executionContext);
+                    deferredSet.add(func.getStr(null));
+                }
+            }
         }
 
         @Override
         public void toPlan(PlanSink sink) {
+            if (deferredValues != null) {
+                sink.val('(');
+            }
             sink.val(arg).val(" in ").val(set);
+            if (deferredValues != null) {
+                sink.val(" or ").val(arg).val(" in ").val(deferredValues).val(')');
+            }
         }
     }
 }
