@@ -399,6 +399,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         testCases.add(new TestCase(query, allowEmptyResultSet));
     }
 
+    @SuppressWarnings("SameParameterValue")
     private static void addTestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
         testCases.add(new TestCase(query, allowEmptyResultSet, bindVariableValues));
     }
