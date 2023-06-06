@@ -163,6 +163,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     boolean recordCursorSupportsRandomAccess();
 
+    default void revertFromSampleByIndexDataFrameCursorFactory() {
+    }
+
     default boolean supportPageFrameCursor() {
         return false;
     }

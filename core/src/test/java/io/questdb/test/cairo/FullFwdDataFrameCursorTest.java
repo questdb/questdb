@@ -214,12 +214,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailAtRuntimeByWeek2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByWeek3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -514,7 +514,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeek3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -1253,7 +1253,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd eRnd = new Rnd();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
-                private int fd = -1;
                 private int mapCount = 0;
 
                 @Override
@@ -1281,7 +1280,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
                         this.fd = super.openRW(name, opts);
                         return this.fd;
@@ -1413,7 +1411,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
-                private int fd = -1;
 
                 @Override
                 public long getMapPageSize() {
@@ -1586,7 +1583,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd eRnd = new Rnd();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
-                private int fd = -1;
                 private int mapCount = 0;
 
                 @Override
