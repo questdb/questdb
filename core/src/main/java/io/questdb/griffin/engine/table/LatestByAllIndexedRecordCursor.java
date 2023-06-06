@@ -333,7 +333,7 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     private void processTasks(int queuedCount) {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence subSeq = bus.getLatestBySubSeq();
-        while (doneLatch.done(queuedCount)) {
+        while (!doneLatch.done(queuedCount)) {
             long seq = subSeq.next();
             if (seq > -1) {
                 if (circuitBreaker.checkIfTripped()) {
