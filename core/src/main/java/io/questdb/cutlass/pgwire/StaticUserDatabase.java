@@ -26,7 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Chars;
 
-public class StaticUserDatabase implements PgWireUserDatabase {
+public class StaticUserDatabase implements UsernamePasswordMatcher {
     private final String defaultPassword;
     private final String defaultUsername;
 

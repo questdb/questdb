@@ -61,7 +61,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
-    private final PgWireUserDatabase userDatabase;
+    private final UsernamePasswordMatcher userDatabase;
     private int fd;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -80,7 +80,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener,
-            PgWireUserDatabase userDatabase
+            UsernamePasswordMatcher userDatabase
     ) {
         this.userDatabase = userDatabase;
 

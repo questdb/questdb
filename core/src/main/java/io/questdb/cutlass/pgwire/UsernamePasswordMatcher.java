@@ -24,6 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-public interface PgWireUserDatabase {
+public interface UsernamePasswordMatcher {
     boolean match(CharSequence username, CharSequence password);
 }

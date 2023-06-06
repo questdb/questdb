@@ -6,9 +6,9 @@ import io.questdb.network.NetworkFacade;
 
 public class UserDatabasePgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
 
-    private final PgWireUserDatabase userDatabase;
+    private final UsernamePasswordMatcher userDatabase;
 
-    public UserDatabasePgWireAuthenticatorFactory(PgWireUserDatabase userDatabase) {
+    public UserDatabasePgWireAuthenticatorFactory(UsernamePasswordMatcher userDatabase) {
         this.userDatabase = userDatabase;
     }
 

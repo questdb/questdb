@@ -76,6 +76,37 @@ public class CharsTest {
     }
 
     @Test
+    public void testBase64DecodeByteSinkInvalidInput() {
+        String encoded = "a";
+        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+            Chars.base64Decode(encoded, sink);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 encoding");
+        }
+    }
+
+    @Test
+    public void testBase64DecodeByteSinkMiscLengths() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            sb.setLength(0);
+            for (int j = 0; j < i; j++) {
+                sb.append(j % 10);
+            }
+            String encoded = Base64.getEncoder().encodeToString(sb.toString().getBytes());
+            try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+                Chars.base64Decode(encoded, sink);
+
+                byte[] decode = Base64.getDecoder().decode(encoded);
+                Assert.assertEquals(decode.length, sink.length());
+                for (int j = 0; j < decode.length; j++) {
+                    Assert.assertEquals(decode[j], sink.byteAt(j));
+                }
+            }
+        }
+    }
+
+    @Test
     public void testBase64DecodeByteSinkUtf8() {
         String encoded = Base64.getEncoder().encodeToString("аз съм грут:गाजर का हलवा".getBytes());
         try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
@@ -85,6 +116,28 @@ public class CharsTest {
             Assert.assertEquals(decode.length, sink.length());
             for (int i = 0; i < decode.length; i++) {
                 Assert.assertEquals(decode[i], sink.byteAt(i));
+            }
+        }
+    }
+
+    @Test
+    public void testBase64DecodeMiscLengths() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            sb.setLength(0);
+            for (int j = 0; j < i; j++) {
+                sb.append(j % 10);
+            }
+            String encoded = Base64.getEncoder().encodeToString(sb.toString().getBytes());
+
+            ByteBuffer buffer = ByteBuffer.allocate(1024);
+            Chars.base64Decode(encoded, buffer);
+            buffer.flip();
+
+            byte[] decode = Base64.getDecoder().decode(encoded);
+            Assert.assertEquals(decode.length, buffer.remaining());
+            for (byte b : decode) {
+                Assert.assertEquals(b, buffer.get());
             }
         }
     }

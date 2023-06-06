@@ -1072,19 +1072,44 @@ public final class Chars {
             }
         }
 
-        // we need at least 2 bytes to decode anything
-        for (int i = 0, last = length - 1; i < last; ) {
-            int wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(i++)) << 18;
-            wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(i++)) << 12;
+        int remainder = length % 4;
+        int sourcePos = 0;
+
+        // first decode all 4 byte chunks. this is *the* hot loop, be careful when changing it
+        for (int end = length - remainder; sourcePos < end; sourcePos += 4) {
+            int b0 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
+            int b1 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
+            int b2 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 2)) << 6;
+            int b4 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 3));
+
+            int wrk = b0 | b1 | b2 | b4;
+            // we use absolute positions to write to the byte buffer in the hot loop
+            // benchmarking shows that it is faster than using relative positions
             target.put((byte) (wrk >>> 16));
-            if (i < length) {
-                wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(i++)) << 6;
+            target.put((byte) ((wrk >>> 8) & 0xFF));
+            target.put((byte) (wrk & 0xFF));
+        }
+        // now decode remainder
+        int wrk;
+        switch (remainder) {
+            case 0:
+                // nothing to do, yay!
+                break;
+            case 1:
+                // invalid encoding, we can't have 1 byte remainder as
+                // even 1 byte encodes to 2 chars
+                throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
+            case 2:
+                wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
+                wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
+                target.put((byte) (wrk >>> 16));
+                break;
+            case 3:
+                wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
+                wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
+                wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 2)) << 6;
+                target.put((byte) (wrk >>> 16));
                 target.put((byte) ((wrk >>> 8) & 0xFF));
-                if (i < length) {
-                    wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(i++));
-                    target.put((byte) (wrk & 0xFF));
-                }
-            }
         }
     }
 
@@ -1122,6 +1147,7 @@ public final class Chars {
         }
         target.position(targetPos);
         // now decode remainder
+        int wrk;
         switch (remainder) {
             case 0:
                 // nothing to do, yay!
@@ -1131,7 +1157,7 @@ public final class Chars {
                 // even 1 byte encodes to 2 chars
                 throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
             case 2:
-                int wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
+                wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
                 target.put((byte) (wrk >>> 16));
                 break;
