@@ -347,6 +347,8 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                         for (int i = 0; i < testCases.size(); i++) {
                             TestCase tc = testCases.getQuick(i);
 
+                            engine.releaseAllReaders();
+
                             engine.setReaderListener(null);
                             try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
                                 sink.clear();
