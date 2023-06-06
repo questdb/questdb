@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.auth;
 
+import io.questdb.std.Chars;
+
 import java.math.BigInteger;
 import java.security.*;
 import java.security.interfaces.ECKey;
@@ -52,9 +54,11 @@ public final class AuthUtils {
         }
     }
 
-    public static PublicKey toPublicKey(String encodedX, String encodedY) {
-        byte[] xBytes = Base64.getUrlDecoder().decode(encodedX);
-        byte[] yBytes = Base64.getUrlDecoder().decode(encodedY);
+    public static PublicKey toPublicKey(CharSequence encodedX, CharSequence encodedY) {
+        byte[] encodedXbytes = Chars.asciiToByteArray(encodedX);
+        byte[] encodedYbytes = Chars.asciiToByteArray(encodedY);
+        byte[] xBytes = Base64.getUrlDecoder().decode(encodedXbytes);
+        byte[] yBytes = Base64.getUrlDecoder().decode(encodedYbytes);
         try {
             BigInteger x = new BigInteger(1, xBytes);
             BigInteger y = new BigInteger(1, yBytes);

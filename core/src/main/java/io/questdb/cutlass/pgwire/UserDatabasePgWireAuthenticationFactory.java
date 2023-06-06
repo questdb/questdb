@@ -4,11 +4,11 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.network.NetworkFacade;
 
-public class StaticPgWireAuthenticationFactory implements PgWireAuthenticationFactory {
+public class UserDatabasePgWireAuthenticationFactory implements PgWireAuthenticationFactory {
 
     private final PgWireUserDatabase userDatabase;
 
-    public StaticPgWireAuthenticationFactory(PgWireUserDatabase userDatabase) {
+    public UserDatabasePgWireAuthenticationFactory(PgWireUserDatabase userDatabase) {
         this.userDatabase = userDatabase;
     }
 
