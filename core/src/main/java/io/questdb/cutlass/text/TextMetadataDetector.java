@@ -45,7 +45,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
-    private final ObjHashSet<CharSequence> uniqueColumnNames = new ObjHashSet<>();
+    private final LowerCaseCharSequenceHashSet uniqueColumnNames = new LowerCaseCharSequenceHashSet();
     private final DirectCharSink utf8Sink;
     private int fieldCount;
     private boolean forceHeader = false;

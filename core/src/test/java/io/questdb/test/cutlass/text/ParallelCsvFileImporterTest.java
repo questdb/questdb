@@ -1179,8 +1179,18 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportFileWithHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeatWithDifferentCase() throws Exception {
+        assertColumnNameException("test-header-dupvalues-differentcase.csv", true, "duplicate column name found [no=4,name=e]");
+    }
+
+    @Test
     public void testImportFileWithHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
         assertColumnNameException("test-header-dupvalues.csv", false, "duplicate column name found [no=4,name=e]");
+    }
+
+    @Test
+    public void testImportFileWithHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeatWithDifferentCase() throws Exception {
+        assertColumnNameException("test-header-dupvalues-differentcase.csv", false, "duplicate column name found [no=4,name=e]");
     }
 
     @Test
@@ -1267,8 +1277,18 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportFileWithoutHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeatWithDifferentCase() throws Exception {
+        assertColumnNameException("test-noheader-dupvalues-differentcase.csv", true, "duplicate column name found [no=3,name=_100i]");
+    }
+
+    @Test
     public void testImportFileWithoutHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
         assertColumnNameException("test-noheader-dupvalues.csv", false, "duplicate column name found [no=3,name=_100i]");
+    }
+
+    @Test
+    public void testImportFileWithoutHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeatWithDifferentCase() throws Exception {
+        assertColumnNameException("test-noheader-dupvalues-differentcase.csv", false, "duplicate column name found [no=3,name=_100i]");
     }
 
     @Test
