@@ -2970,7 +2970,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         } else {
-            entity = false;
+            final int tsIndex = metadata.getTimestampIndex();
+            entity = timestamp != null && tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
         }
 
         if (entity) {

@@ -1528,7 +1528,8 @@ public class SqlOptimiser {
             if (next.getBottomUpColumns().size() != columnCount) {
                 throw SqlException.$(next.getModelPosition(), "queries have different number of columns");
             }
-            parent.setUnionModel(rewriteOrderByPosition(next));
+            rewriteOrderByPosition(next);
+            parent.setUnionModel(next);
             parent = next;
             next = next.getUnionModel();
         }
@@ -3362,56 +3363,70 @@ public class SqlOptimiser {
      * @param model            input model
      * @param executionContext execution context
      */
-    private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        QueryModel current = model;
-
-        while (current != null) {
-            QueryModel nested = current.getNestedModel();
+    private void rewriteNegativeLimit(final QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (model != null) {
+            final QueryModel nested = model.getNestedModel();
             Function loFunction;
             ObjList<ExpressionNode> orderBy;
             long limitValue;
 
-            if (current.getLimitLo() != null
-                    && current.getLimitHi() == null
-                    && current.getUnionModel() == null
-                    && current.getJoinModels().size() == 1
-                    && current.getGroupBy().size() == 0
-                    && current.getSampleBy() == null
-                    && !hasAggregateQueryColumn(current)
-                    && !current.isDistinct()
-                    && nested != null
-                    && nested.getTimestamp() != null
-                    && nested.getWhereClause() == null
-                    && (loFunction = getLoFunction(current.getLimitLo(), executionContext)) != null
-                    && loFunction.isConstant()
-                    && (limitValue = loFunction.getLong(null)) < 0
-                    && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
-                    && ((orderBy = nested.getOrderBy()).size() == 0 ||
-                    (orderBy.size() == 1 && Chars.equals(orderBy.getQuick(0).token, nested.getTimestamp().token)))
+            if (
+                    model.getLimitLo() != null
+                            && model.getLimitHi() == null
+                            && model.getUnionModel() == null
+                            && model.getJoinModels().size() == 1
+                            && model.getGroupBy().size() == 0
+                            && model.getSampleBy() == null
+                            && !hasAggregateQueryColumn(model)
+                            && !model.isDistinct()
+                            && nested != null
+                            && nested.getJoinModels().size() == 1
+                            && nested.getTimestamp() != null
+                            && nested.getWhereClause() == null
+                            && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
+                            && loFunction.isConstant()
+                            && (limitValue = loFunction.getLong(null)) < 0
+                            && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
+                            && ((orderBy = nested.getOrderBy()).size() == 0 ||
+                            (
+                                    orderBy.size() == 1
+                                    && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
+                            )
+                    )
             ) {
-                IntList orderByDirection = nested.getOrderByDirection();
-                ExpressionNode limitNode = current.getLimitLo();
-                limitNode = limitNode.rhs != null ? limitNode.rhs : limitNode.lhs;
-                current.setLimit(null, null);
+                final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                characterStoreEntry.put(-limitValue);
+                ExpressionNode limitNode = nextLiteral(characterStoreEntry.toImmutable());
+                // override limit node type
+                limitNode.type = CONSTANT;
 
-                QueryModel limit = queryModelPool.next();
-                limit.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-                SqlUtil.addSelectStar(limit, queryColumnPool, expressionNodePool);
-                limit.setLimit(limitNode, null);
-                limit.setNestedModel(nested);
-                limit.setTimestamp(nested.getTimestamp());
-                limit.setExplicitTimestamp(nested.isExplicitTimestamp());
+                // insert two models between "model" and "nested", like so:
+                // model -> order -> limit -> nested + order
 
-                int timestampKey = current.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
-                if (timestampKey < 0) {
-                    int timestampIdx = current.getColumnAliasIndex(current.getColumnNameToAliasMap().valueAt(timestampKey));
-                    current.setTimestamp(current.getColumns().get(timestampIdx).getAst());
+                // the outer model loses its limit
+                model.setLimit(null, null);
+
+                QueryModel limitModel = queryModelPool.next();
+                limitModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                limitModel.setNestedModel(nested);
+                limitModel.setLimit(limitNode, null);
+
+                // copy columns to the "limit" model from the "nested" model
+                ObjList<CharSequence> nestedColumnNames = nested.getBottomUpColumnNames();
+                for (int i = 0, n = nestedColumnNames.size(); i < n; i++) {
+                    limitModel.addBottomUpColumn(nextColumn(nestedColumnNames.getQuick(i)));
                 }
-                //not needed if limit = -1
+
                 QueryModel order = null;
                 if (limitValue < -1) {
                     order = queryModelPool.next();
-                    order.setNestedModel(limit);
+                    order.setNestedModel(limitModel);
+                    ObjList<QueryColumn> limitColumns = limitModel.getBottomUpColumns();
+                    for (int i = 0, n = limitColumns.size(); i < n; i++) {
+                        order.addBottomUpColumn(limitColumns.getQuick(i));
+                    }
+                    order.setNestedModelIsSubQuery(true);
+                    model.setNestedModel(order);
                 }
 
                 if (orderBy.size() == 0) {
@@ -3421,8 +3436,19 @@ public class SqlOptimiser {
 
                     nested.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_DESCENDING);
                 } else {
+                    final IntList orderByDirection = nested.getOrderByDirection();
                     if (order != null) {
-                        order.addOrderBy(orderBy.getQuick(0), orderByDirection.getQuick(0));
+                        // it is possible that order by column has not been selected in the order model
+                        // for that reason we must add column lookup to allow order-by optimisation to resolve the column name
+                        final ExpressionNode orderByNode = nested.getTimestamp();
+                        final CharSequence orderByToken = orderByNode.token;
+                        // We are here because order-by matched timestamp, what we don't know is
+                        // if we matched timestamp via index or name. If we parse order-by token
+                        // AGAIN, that would be our index, otherwise - it is a name
+                        if (order.getAliasToColumnMap().excludes(orderByToken)) {
+                            order.getAliasToColumnMap().put(orderByToken, nextColumn(orderByToken));
+                        }
+                        order.addOrderBy(orderByNode, orderByDirection.getQuick(0));
                     }
 
                     int newOrder;
@@ -3434,16 +3460,13 @@ public class SqlOptimiser {
                     orderByDirection.setQuick(0, newOrder);
                 }
 
-                if (order != null) {
-                    current.setNestedModel(order);
-                } else {
-                    current.setNestedModel(limit);
+                if (order == null) {
+                    model.setNestedModel(limitModel);
                 }
 
-                current = nested.getNestedModel();
-                continue;
+                // assign different nested model because it might need to be re-written
+                rewriteNegativeLimit(nested, executionContext);
             }
-            current = nested;
         }
     }
 
@@ -3460,7 +3483,7 @@ public class SqlOptimiser {
      * @return outbound model
      * @throws SqlException when column names are ambiguous or not found at all.
      */
-    private QueryModel rewriteOrderBy(QueryModel model) throws SqlException {
+    private QueryModel rewriteOrderBy(final QueryModel model) throws SqlException {
         // find base model and check if there is "group-by" model in between
         // when we are dealing with "group by" model some implicit "order by" columns have to be dropped,
         // However, in the following example
@@ -3676,7 +3699,7 @@ public class SqlOptimiser {
         return result;
     }
 
-    private QueryModel rewriteOrderByPosition(QueryModel model) throws SqlException {
+    private void rewriteOrderByPosition(final QueryModel model) throws SqlException {
         QueryModel base = model;
         QueryModel baseParent = model;
         QueryModel baseGroupBy = null;
@@ -3764,11 +3787,9 @@ public class SqlOptimiser {
             //    would remain the same again.
             rewriteOrderByPosition(joinModels.getQuick(i));
         }
-
-        return model;
     }
 
-    private QueryModel rewriteOrderByPositionForUnionModels(QueryModel model) throws SqlException {
+    private void rewriteOrderByPositionForUnionModels(final QueryModel model) throws SqlException {
         QueryModel next = model.getUnionModel();
         if (next != null) {
             doRewriteOrderByPositionForUnionModels(model, model, next);
@@ -3778,7 +3799,6 @@ public class SqlOptimiser {
         if (next != null) {
             rewriteOrderByPositionForUnionModels(next);
         }
-        return model;
     }
 
     // flatParent = true means that parent model does not have selected columns
@@ -4349,9 +4369,11 @@ public class SqlOptimiser {
             // be implemented by nested model. Nested model must not implement limit
             // when parent model is order by or join.
             // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .
-            if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) &&
-                    baseModel.getJoinModels().size() < 2 &&
-                    !useDistinctModel) {
+            if (
+                    (baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) &&
+//                    baseModel.getJoinModels().size() < 2 &&
+                            !useDistinctModel
+            ) {
                 baseModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
             }
 
@@ -4648,31 +4670,23 @@ public class SqlOptimiser {
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
+            rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext);
+            optimiseJoins(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
-            rewrittenModel = rewriteOrderBy(
-                    rewriteOrderByPositionForUnionModels(
-                            rewriteOrderByPosition(
-                                    rewriteSelectClause(
-                                            rewrittenModel,
-                                            true,
-                                            sqlExecutionContext
-                                    )
-                            )
-                    )
-            );
+            rewriteOrderByPosition(rewrittenModel);
+            rewriteOrderByPositionForUnionModels(rewrittenModel);
+            rewrittenModel = rewriteOrderBy(rewrittenModel);
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
             createOrderHash(rewrittenModel);
-            optimiseJoins(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
-        } catch (SqlException e) {
+        } catch (Throwable e) {
             // at this point models may have functions than need to be freed
-            Misc.freeObjList(functionsInFlight);
-            functionsInFlight.clear();
+            Misc.freeObjListAndClear(functionsInFlight);
             throw e;
         }
     }
