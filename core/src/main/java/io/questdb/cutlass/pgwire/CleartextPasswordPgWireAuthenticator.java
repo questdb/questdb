@@ -383,7 +383,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             prepareLoginOk();
             state = State.WRITE_AND_AUTH_SUCCESS;
         } else {
-            LOG.error().$("bad password for user [user=").$(username).$(']').$();
+            LOG.info().$("bad password for user [user=").$(username).$(']').$();
             prepareWrongUsernamePasswordResponse();
             state = State.WRITE_AND_AUTH_FAILURE;
         }
