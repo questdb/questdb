@@ -2187,29 +2187,10 @@ public class JoinTest extends AbstractGriffinTest {
 
         assertCompile("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
 
-        for (String joinType : Arrays.asList("JOIN", "LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
-            String query = ("SELECT amount, price1\n" +
-                    "FROM\n" +
-                    "(\n" +
-                    "  SELECT *\n" +
-                    "  FROM trades b \n" +
-                    "  #JOIN_TYPE# \n" +
-                    "  (\n" +
-                    "    SELECT * \n" +
-                    "    FROM trades \n" +
-                    "    WHERE price > 1\n" +
-                    "      AND symbol = 'ETH-USD'\n" +
-                    "  ) a ON #JOIN_CLAUSE#\n" +
-                    "  WHERE b.amount > 1\n" +
-                    "    AND b.symbol = 'ETH-USD'\n" +
-                    ")").replace("#JOIN_TYPE#", joinType);
-            String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tNaN\n" : "amount\tprice1\n2.0\t2.0\n";
-
-            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null);
-            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null);
-            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null);
-            assertQuery(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null);
+        for (String joinType : Arrays.asList("LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
+            testJoinColumnPropagationIntoJoinModel0(joinType, false);
         }
+        testJoinColumnPropagationIntoJoinModel0("JOIN", true);
     }
 
     @Test
@@ -4120,7 +4101,7 @@ public class JoinTest extends AbstractGriffinTest {
 
         assertRepeatedJoinQuery(query, "LT", true);
         assertRepeatedJoinQuery(query, "ASOF", true);
-        assertRepeatedJoinQuery(query, "INNER", false);
+        assertRepeatedJoinQuery(query, "INNER", true);
         assertRepeatedJoinQuery(query, "LEFT", false);
     }
 
@@ -4932,6 +4913,30 @@ public class JoinTest extends AbstractGriffinTest {
         } finally {
             compiler.setFullFatJoins(false);
         }
+    }
+
+    private void testJoinColumnPropagationIntoJoinModel0(String joinType, boolean expectSize) throws SqlException {
+        String query = ("SELECT amount, price1\n" +
+                "FROM\n" +
+                "(\n" +
+                "  SELECT *\n" +
+                "  FROM trades b \n" +
+                "  #JOIN_TYPE# \n" +
+                "  (\n" +
+                "    SELECT * \n" +
+                "    FROM trades \n" +
+                "    WHERE price > 1\n" +
+                "      AND symbol = 'ETH-USD'\n" +
+                "  ) a ON #JOIN_CLAUSE#\n" +
+                "  WHERE b.amount > 1\n" +
+                "    AND b.symbol = 'ETH-USD'\n" +
+                ")").replace("#JOIN_TYPE#", joinType);
+        String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tNaN\n" : "amount\tprice1\n2.0\t2.0\n";
+
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, expectSize);
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, expectSize);
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, expectSize);
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, expectSize);
     }
 
     private void testJoinForCursorLeaks(String sql) throws Exception {
