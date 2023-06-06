@@ -3398,7 +3398,7 @@ public class SqlOptimiser {
                             && ((orderBy = nested.getOrderBy()).size() == 0 ||
                             (
                                     orderBy.size() == 1
-                                    && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
+                                            && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
                             )
                     )
             ) {
@@ -4377,11 +4377,7 @@ public class SqlOptimiser {
             // be implemented by nested model. Nested model must not implement limit
             // when parent model is order by or join.
             // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .
-            if (
-                    (baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) &&
-//                    baseModel.getJoinModels().size() < 2 &&
-                            !useDistinctModel
-            ) {
+            if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) && !useDistinctModel) {
                 baseModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
             }
 

@@ -119,7 +119,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @return true if a fast skip is supported by the cursor and was executed, false otherwise
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    default boolean skipTo(long rowCount) {
+    default boolean skipTo(long rowCount) throws DataUnavailableException{
         return false;
     }
 

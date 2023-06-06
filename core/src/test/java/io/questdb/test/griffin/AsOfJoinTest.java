@@ -1107,7 +1107,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void     testNestedLT_keySymbol() throws Exception {
+    public void testNestedLT_keySymbol() throws Exception {
         assertMemoryLeak(() -> {
             compiler.setFullFatJoins(true);
             compile("CREATE TABLE 'tests' (\n" +
