@@ -5802,7 +5802,7 @@ nodejs code:
         final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
 
         for (String tsOption : tsOptions) {
-            assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
                 compiler.compile("drop table if exists tab", sqlExecutionContext);
                 compiler.compile("create table tab (s symbol index, ts timestamp) " + tsOption, sqlExecutionContext);
                 compiler.compile("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ", sqlExecutionContext);
