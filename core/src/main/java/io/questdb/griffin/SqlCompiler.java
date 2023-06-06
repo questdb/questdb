@@ -2402,11 +2402,11 @@ public class SqlCompiler implements Closeable {
         tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'table' expected");
+            throw SqlException.$(lexer.getPosition(), "TABLE expected");
         }
 
         if (!isTableKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+            throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -2433,7 +2433,7 @@ public class SqlCompiler implements Closeable {
                 try {
                     tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
                 } catch (CairoException e) {
-                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
+                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
                     throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                 }
                 tok = SqlUtil.fetchNext(lexer);
@@ -2454,11 +2454,11 @@ public class SqlCompiler implements Closeable {
             if (tok != null && isKeepKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || !isSymbolKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'symbol' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "SYMBOL expected");
                 }
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || !isMapsKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'maps' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "MAPS expected");
                 }
                 keepSymbolTables = true;
                 tok = SqlUtil.fetchNext(lexer);
@@ -3341,7 +3341,7 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     tableName = keys.get(i);
                     reason = dropTablesFailedList.get(tableName);
-                    ex.put('\'').put(tableName).put("'=").put(reason);
+                    ex.put('"').put(tableName).put("\"=").put(reason);
                     if (i + 1 < n) {
                         ex.put(',');
                     }
