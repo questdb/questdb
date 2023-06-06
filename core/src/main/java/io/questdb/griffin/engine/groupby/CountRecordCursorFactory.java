@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -102,9 +99,14 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
                     count = size;
                 } else {
                     count = 0;
-                    while (baseCursor.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        count++;
+                    try {
+                        while (baseCursor.hasNext()) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            count++;
+                        }
+                    } catch (DataUnavailableException e) {
+                        baseCursor.toTop();
+                        throw e;
                     }
                 }
                 hasNext = false;
