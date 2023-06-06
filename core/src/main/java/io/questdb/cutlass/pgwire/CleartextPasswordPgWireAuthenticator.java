@@ -56,12 +56,12 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final UsernamePasswordMatcher matcher;
     private final NetworkFacade nf;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
-    private final UsernamePasswordMatcher userDatabase;
     private int fd;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -80,9 +80,9 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener,
-            UsernamePasswordMatcher userDatabase
+            UsernamePasswordMatcher matcher
     ) {
-        this.userDatabase = userDatabase;
+        this.matcher = matcher;
 
         this.nf = nf;
         this.characterStore = new CharacterStore(
@@ -377,7 +377,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
         dbcs.of(recvBufReadPos, hi);
-        if (userDatabase.match(username, dbcs)) {
+        if (matcher.match(username, dbcs)) {
             recvBufReadPos = msgLimit;
             compactRecvBuf();
             prepareLoginOk();

@@ -4,12 +4,12 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.network.NetworkFacade;
 
-public class UserDatabasePgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
+public class UsernamePasswordPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
 
-    private final UsernamePasswordMatcher userDatabase;
+    private final UsernamePasswordMatcher matcher;
 
-    public UserDatabasePgWireAuthenticatorFactory(UsernamePasswordMatcher userDatabase) {
-        this.userDatabase = userDatabase;
+    public UsernamePasswordPgWireAuthenticatorFactory(UsernamePasswordMatcher matcher) {
+        this.matcher = matcher;
     }
 
     @Override
@@ -20,6 +20,6 @@ public class UserDatabasePgWireAuthenticatorFactory implements PgWireAuthenticat
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener
     ) {
-        return new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreaker, registry, optionsListener, userDatabase);
+        return new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreaker, registry, optionsListener, matcher);
     }
 }
