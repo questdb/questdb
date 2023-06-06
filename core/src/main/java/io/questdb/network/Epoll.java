@@ -85,8 +85,12 @@ public final class Epoll implements Closeable {
         }
     }
 
+    public int poll(int timeout) {
+        return epf.epollWait(epollFd, events, capacity, timeout);
+    }
+
     public int poll() {
-        return epf.epollWait(epollFd, events, capacity, 0);
+        return poll(0);
     }
 
     public void removeListen(int sfd) {

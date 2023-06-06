@@ -172,7 +172,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     state = START_HEADERS;
                     // fall through
                 case PARTIAL_HEADERS:
-                    ptr = headerParser.parse(ptr, hi, false);
+                    ptr = headerParser.parse(ptr, hi, false, false);
                     if (headerParser.isIncomplete()) {
                         state = PARTIAL_HEADERS;
                         return false;
