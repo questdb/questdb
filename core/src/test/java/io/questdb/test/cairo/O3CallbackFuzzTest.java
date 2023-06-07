@@ -24,13 +24,12 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.O3CallbackJob;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.tasks.O3CallbackTask;
 import io.questdb.test.AbstractCairoTest;
@@ -39,7 +38,6 @@ import org.junit.Test;
 
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class O3CallbackFuzzTest extends AbstractCairoTest {
@@ -47,8 +45,6 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
     @Test
     public void testO3CallbackQueue() throws InterruptedException {
         Rnd rnd = TestUtils.generateRandom(null);
-        long s0 = rnd.getSeed0();
-        long s1 = rnd.getSeed1();
 
         int columnCount = rnd.nextInt(200) + 2;
         int complexity = rnd.nextInt(20);
@@ -57,26 +53,13 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
         AtomicReference<Throwable> th = new AtomicReference<>();
         ObjList<WriterObj> writerObjList = new ObjList<>();
 
+        CairoEngine cairoEngine = engine;
         for (int i = 0; i < writers; i++) {
-            writerObjList.add(new WriterObj(new Rnd(rnd.nextLong(), rnd.nextLong()), th, columnCount, complexity));
+            writerObjList.add(new WriterObj(new Rnd(rnd.nextLong(), rnd.nextLong()), th, columnCount, complexity, cairoEngine));
         }
 
         CyclicBarrier start = new CyclicBarrier(writers);
-        int workers = rnd.nextInt(5);
         ObjList<Thread> threadList = new ObjList<>();
-
-        var job = new O3CallbackJob(engine.getMessageBus());
-        AtomicBoolean done = new AtomicBoolean(false);
-
-        for (int i = 0; i < workers; i++) {
-            threadList.add(new Thread(() -> {
-                while (!done.get()) {
-                    if (!job.run(0)) {
-                        Os.pause();
-                    }
-                }
-            }));
-        }
 
         for (int thread = 0; thread < writers; thread++) {
             final WriterObj writerObj = writerObjList.getQuick(thread);
@@ -91,10 +74,9 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
             threadList.getLast().start();
         }
 
-        for (int thread = workers; thread < writers; thread++) {
+        for (int thread = 0; thread < writers; thread++) {
             threadList.get(thread).join();
         }
-        done.set(true);
 
         if (th.get() != null) {
             throw new RuntimeException(th.get());
@@ -102,17 +84,17 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
     }
 
     public static class WriterObj {
-        private final int columns;
+        final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
         private final int complexity;
+        private final CairoEngine engine;
         private final TableWriter.O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
         private final Rnd rnd;
         private final AtomicReference<Throwable> th;
         int columnCount;
-        SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
 
-        public WriterObj(Rnd rnd, AtomicReference<Throwable> th, int columns, int complexity) {
+        public WriterObj(Rnd rnd, AtomicReference<Throwable> th, int columns, int complexity, CairoEngine engine) {
+            this.engine = engine;
             this.rnd = rnd;
-            this.columns = columns;
             columnCount = rnd.nextInt(columns) + 1;
             this.th = th;
             this.complexity = complexity;
@@ -153,16 +135,7 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
             try {
                 // This is work stealing, can run tasks from other table writers
                 final Sequence subSeq = engine.getMessageBus().getO3CallbackSubSeq();
-                while (!o3DoneLatch.done(queuedCount)) {
-                    long cursor = subSeq.next();
-                    if (cursor > -1) {
-                        O3CallbackJob.runCallbackWithCol(queue.get(cursor), cursor, subSeq);
-                    } else if (cursor == -1) {
-                        o3DoneLatch.await(queuedCount);
-                    } else {
-                        Os.pause();
-                    }
-                }
+                TableWriter.dispatchO3CallbackQueue0(queue, queuedCount, subSeq, o3DoneLatch);
                 assert o3DoneLatch.getCount() == -queuedCount : "o3DoneLatch.getCount()=" + o3DoneLatch.getCount() + ", queuedCount=" + queuedCount;
             } catch (Throwable e) {
                 e.printStackTrace();
@@ -171,6 +144,7 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
         }
 
         private void o3MoveUncommitted0(int rndInt, int i1, long l, long l1, long l2, long l3) {
+            //noinspection unused
             double result = 0;
             for (int i = 0; i < rndInt * complexity; i++) {
                 result += Math.log(rndInt * Math.sin(rndInt * i) * Math.cos(rndInt * i) * Math.tan(rndInt * i) * Math.sqrt(rndInt * i));
