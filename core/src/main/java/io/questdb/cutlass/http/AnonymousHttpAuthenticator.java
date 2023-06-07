@@ -22,25 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.cutlass.http;
 
-import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
-import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
-import io.questdb.network.NetworkFacade;
+public class AnonymousHttpAuthenticator implements HttpAuthenticator {
 
-public class EllipticCurveAuthenticatorFactory implements AuthenticatorFactory {
-    private final NetworkFacade networkFacade;
-    private final StaticPublicKeyRepo publicKeyRepo;
+    public static final AnonymousHttpAuthenticator INSTANCE = new AnonymousHttpAuthenticator();
 
-    public EllipticCurveAuthenticatorFactory(NetworkFacade networkFacade, String authDbPath) {
-        this.networkFacade = networkFacade;
-        publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
+    @Override
+    public boolean authenticate(HttpRequestHeader headers) {
+        return true;
     }
 
     @Override
-    public Authenticator getLineTCPAuthenticator() {
-        return new EllipticCurveAuthenticator(
-                networkFacade,
-                publicKeyRepo);
+    public CharSequence getPrincipal() {
+        return null;
     }
 }

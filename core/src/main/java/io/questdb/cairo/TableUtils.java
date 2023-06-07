@@ -766,7 +766,7 @@ public final class TableUtils {
         }
 
         if (verbose) {
-            LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+            LOG.debug().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
         }
         return fd;
     }
@@ -1476,6 +1476,10 @@ public final class TableUtils {
                     symbolMapCount++;
                 }
             }
+            // truncate _meta file exactly, the file size never changes.
+            // Metadata updates are written to a new file and then swapped by renaming.
+            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
             mem.sync(false);

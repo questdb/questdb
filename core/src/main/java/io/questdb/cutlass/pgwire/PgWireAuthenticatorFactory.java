@@ -24,11 +24,12 @@
 
 package io.questdb.cutlass.pgwire;
 
-public class AuthenticationException extends Exception {
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.network.NetworkFacade;
 
-    public static final AuthenticationException INSTANCE = new AuthenticationException("invalid username/password");
-
-    public AuthenticationException(String message) {
-        super(message);
-    }
+public interface PgWireAuthenticatorFactory {
+    Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
+                                         NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+                                         OptionsListener optionsListener);
 }

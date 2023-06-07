@@ -71,14 +71,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
-
-    static {
-        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
-        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
-        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
-        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
-    }
-
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -182,6 +174,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3OpenColumnQueueCapacity;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
+    private final long o3PartitionSplitMinSize;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
@@ -327,6 +320,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short floatDefaultColumnType;
     private boolean httpAllowDeflateBeforeSend;
     private boolean httpFrozenClock;
+    private boolean httpHealthCheckAuthRequired;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
     private boolean httpMinNetConnectionHint;
@@ -352,6 +346,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpPessimisticHealthCheckEnabled;
     private boolean httpReadOnlySecurityContext;
     private boolean httpServerKeepAlive;
+    private boolean httpStaticAuthRequired;
     private String httpVersion;
     private int[] httpWorkerAffinity;
     private int httpWorkerCount;
@@ -408,7 +403,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int multipartHeaderBufferSize;
     private long multipartIdleSpinCount;
     private int netTestConnectionBufferSize;
-    private final long o3PartitionSplitMinSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -618,6 +612,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpWorkerSleepTimeout = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
                 this.sendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_SEND_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
                 this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
+                this.httpStaticAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_STATIC_AUTHENTICATION_REQUIRED, true);
                 this.httpFrozenClock = getBoolean(properties, env, PropertyKey.HTTP_FROZEN_CLOCK, false);
                 this.httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
                 this.httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
@@ -682,6 +677,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
                 this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
+                this.httpHealthCheckAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED, true);
                 this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
                 this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
                 this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
@@ -1032,8 +1028,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 32768);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
-                    throw new IllegalArgumentException(
-                            PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath() + " (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
+                    lineTcpMsgBufferSize = lineTcpMaxMeasurementSize;
                 }
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 1);
@@ -1538,25 +1533,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
         }
 
-        private static <KeyT> void registerReplacements(
-                Map<KeyT, String> map,
-                KeyT old,
-                ConfigProperty... replacements) {
-            StringBuilder sb = new StringBuilder("Replaced by ");
-            for (int index = 0; index < replacements.length; ++index) {
-                if (index > 0) {
-                    sb.append(index < (replacements.length - 1)
-                            ? ", "
-                            : " and ");
-                }
-                String replacement = replacements[index].getPropertyPath();
-                sb.append('`');
-                sb.append(replacement);
-                sb.append('`');
-            }
-            map.put(old, sb.toString());
-        }
-
         public ValidationResult validate(Properties properties) {
             // Settings that used to be valid but no longer are.
             Map<String, String> obsolete = new HashMap<>();
@@ -1628,6 +1604,25 @@ public class PropServerConfiguration implements ServerConfiguration {
             return new ValidationResult(isError, sb.toString());
         }
 
+        private static <KeyT> void registerReplacements(
+                Map<KeyT, String> map,
+                KeyT old,
+                ConfigProperty... replacements) {
+            StringBuilder sb = new StringBuilder("Replaced by ");
+            for (int index = 0; index < replacements.length; ++index) {
+                if (index > 0) {
+                    sb.append(index < (replacements.length - 1)
+                            ? ", "
+                            : " and ");
+                }
+                String replacement = replacements[index].getPropertyPath();
+                sb.append('`');
+                sb.append(replacement);
+                sb.append('`');
+            }
+            map.put(old, sb.toString());
+        }
+
         protected Optional<ConfigProperty> lookupConfigProperty(String propName) {
             return PropertyKey.getByString(propName).map(prop -> prop);
         }
@@ -1653,11 +1648,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     class PropCairoConfiguration implements CairoConfiguration {
         private final LongSupplier copyIDSupplier = () -> getRandom().nextPositiveLong();
-
-        @Override
-        public LongSupplier getCopyIDSupplier() {
-            return copyIDSupplier;
-        }
 
         @Override
         public boolean attachPartitionCopy() {
@@ -1767,6 +1757,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getConfRoot() {
             return confRoot;
+        }
+
+        @Override
+        public LongSupplier getCopyIDSupplier() {
+            return copyIDSupplier;
         }
 
         @Override
@@ -2873,6 +2868,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isHealthCheckAuthenticationRequired() {
+            return httpHealthCheckAuthRequired;
+        }
+
+        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
@@ -2953,6 +2953,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpServerEnabled;
+        }
+
+        @Override
+        public boolean isHealthCheckAuthenticationRequired() {
+            return httpHealthCheckAuthRequired;
         }
 
         @Override
@@ -3798,6 +3803,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public CharSequence getPublicDirectory() {
             return publicDirectory;
         }
+
+        @Override
+        public boolean isAuthenticationRequired() {
+            return httpStaticAuthRequired;
+        }
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
@@ -4001,5 +4011,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean haltOnError() {
             return sharedWorkerHaltOnError;
         }
+    }
+
+    static {
+        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
+        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
+        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
+        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
     }
 }

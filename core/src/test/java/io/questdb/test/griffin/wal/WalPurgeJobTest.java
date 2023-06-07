@@ -32,10 +32,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FindVisitor;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -46,6 +43,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -276,6 +275,87 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 Assert.assertEquals(3, counter.get());
             }
         });
+    }
+
+    @Test
+    public void testLastSegmentUnlockedPrevLocked() throws Exception {
+        /*
+          discovered=[
+              (1,1),(1,2),(1,3),(1,4),(1,5),(1,6:locked),(1,7),(wal1:locked),
+              (2,0),(2,1),(2,2),(2,3),(2,4:locked),(wal2:locked),
+              (3,0),(3,1),(3,2),(3,3:locked),(wal3:locked),
+              (4,0),(4,1),(4,2),(4,3),(4,4),(4,5),(4,6:locked),(wal4:locked)],
+          nextToApply=[
+              (1,1),(2,0),(3,0),(4,0)]
+         */
+        TestDeleter deleter = new TestDeleter();
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        TableToken tableToken = new TableToken("test", "test~1", 42, true);
+        logic.reset(tableToken);
+        logic.trackDiscoveredSegment(1, 1, false, false);
+        logic.trackDiscoveredSegment(1, 2, false, false);
+        logic.trackDiscoveredSegment(1, 3, false, false);
+        logic.trackDiscoveredSegment(1, 4, false, false);
+        logic.trackDiscoveredSegment(1, 5, false, false);
+        logic.trackDiscoveredSegment(1, 6, false, true);
+        logic.trackDiscoveredSegment(1, 7, false, false);
+        logic.trackDiscoveredWal(1, false, true);
+        logic.trackDiscoveredSegment(2, 0, false, false);
+        logic.trackDiscoveredSegment(2, 1, false, false);
+        logic.trackDiscoveredSegment(2, 2, false, false);
+        logic.trackDiscoveredSegment(2, 3, false, false);
+        logic.trackDiscoveredSegment(2, 4, false, true);
+        logic.trackDiscoveredWal(2, false, true);
+        logic.trackDiscoveredSegment(3, 0, false, false);
+        logic.trackDiscoveredSegment(3, 1, false, false);
+        logic.trackDiscoveredSegment(3, 2, false, false);
+        logic.trackDiscoveredSegment(3, 3, false, true);
+        logic.trackDiscoveredWal(3, false, true);
+        logic.trackDiscoveredSegment(4, 0, false, false);
+        logic.trackDiscoveredSegment(4, 1, false, false);
+        logic.trackDiscoveredSegment(4, 2, false, false);
+        logic.trackDiscoveredSegment(4, 3, false, false);
+        logic.trackDiscoveredSegment(4, 4, false, false);
+        logic.trackDiscoveredSegment(4, 5, false, false);
+        logic.trackDiscoveredSegment(4, 6, false, true);
+        logic.trackDiscoveredWal(4, false, true);
+        logic.trackNextToApplySegment(1, 1);
+        logic.trackNextToApplySegment(2, 0);
+        logic.trackNextToApplySegment(3, 0);
+        logic.trackNextToApplySegment(4, 0);
+        logic.run();
+
+//        logDeletionEvents(deleter.events);
+        int evIndex = 0;
+        assertNoMoreEvents(deleter, evIndex);
+    }
+
+    @Test
+    public void testLastSegmentUnlockedPrevLocked2() throws Exception {
+        /*
+          discovered=[
+              (1,1),(1,2:locked),(1,3),(wal1:locked),
+              (2,0:locked),(wal2:locked)],
+          nextToApply=[
+              (1,1),(2,0)]
+         */
+        TestDeleter deleter = new TestDeleter();
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        TableToken tableToken = new TableToken("test", "test~1", 42, true);
+        logic.reset(tableToken);
+        logic.trackDiscoveredSegment(1, 1, false, false);
+        logic.trackDiscoveredSegment(1, 2, false, true);
+        logic.trackDiscoveredSegment(1, 3, false, false);
+        logic.trackDiscoveredWal(1, false, true);
+        logic.trackDiscoveredSegment(2, 0, false, true);
+        logic.trackDiscoveredWal(2, false, true);
+        logic.trackNextToApplySegment(1, 1);
+        logic.trackNextToApplySegment(2, 0);
+        logic.run();
+
+//        logDeletionEvents(deleter.events);
+        int evIndex = 0;
+        assertNoMoreEvents(deleter, evIndex);
     }
 
     @Test
@@ -603,17 +683,16 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
-            int txnFd = -1;
 
             @Override
             public boolean close(int fd) {
-                if (fd == txnFd) {
+                if (fd > -1 && fd == this.fd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
                         walWriter1Ref.get().commit();
                         addColumnAndRow(walWriter1Ref.get(), "i1");
                     }
-                    txnFd = -1;
+                    this.fd = -1;
                 }
                 return super.close(fd);
             }
@@ -621,7 +700,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TXN_FILE_NAME)) {
-                    return txnFd = super.openRO(name);
+                    return this.fd = super.openRO(name);
                 }
                 return super.openRO(name);
             }
@@ -678,17 +757,16 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
-            int txnFd = -1;
 
             @Override
             public boolean close(int fd) {
-                if (fd == txnFd) {
+                if (fd > -1 && fd == this.fd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
                         addColumnAndRow(walWriter1Ref.get(), "i1");
                         addColumnAndRow(walWriter1Ref.get(), "i2");
                     }
-                    txnFd = -1;
+                    this.fd = -1;
                 }
                 return super.close(fd);
             }
@@ -696,7 +774,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TXN_FILE_NAME)) {
-                    return txnFd = super.openRO(name);
+                    return this.fd = super.openRO(name);
                 }
                 return super.openRO(name);
             }
@@ -965,8 +1043,71 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         });
     }
 
+    private void assertNoMoreEvents(TestDeleter deleter, int evIndex) {
+        if (deleter.events.size() > evIndex) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = evIndex; i < deleter.events.size(); i++) {
+                sb.append(deleter.events.get(i)).append(", ");
+            }
+            Assert.fail("Unexpected events: " + sb);
+        }
+    }
+
+    private void logDeletionEvents(List<DeletionEvent> events) {
+        System.err.println("Deletion events:");
+        for (DeletionEvent event : events) {
+            System.err.println("  " + event);
+        }
+    }
+
     static void addColumn(WalWriter writer, String columnName) {
         writer.addColumn(columnName, ColumnType.INT);
     }
 
+    private static class DeletionEvent {
+        final Integer segmentId;
+        final int walId;
+
+        public DeletionEvent(int walId) {
+            this.walId = walId;
+            this.segmentId = null;
+        }
+
+        public DeletionEvent(int walId, int segmentId) {
+            this.walId = walId;
+            this.segmentId = segmentId;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof DeletionEvent) {
+                DeletionEvent other = (DeletionEvent) obj;
+                return walId == other.walId && Objects.equals(segmentId, other.segmentId);
+            }
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            if (segmentId == null) {
+                return "wal" + walId;
+            } else {
+                return "wal" + walId + "/" + segmentId;
+            }
+        }
+    }
+
+    private static class TestDeleter implements WalPurgeJob.Deleter {
+        public final ObjList<DeletionEvent> events = new ObjList<>();
+
+        @Override
+        public void deleteSegmentDirectory(int walId, int segmentId) {
+            events.add(new DeletionEvent(walId, segmentId));
+        }
+
+        @Override
+        public void deleteWalDirectory(int walId) {
+            events.add(new DeletionEvent(walId));
+        }
+    }
 }

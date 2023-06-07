@@ -22,13 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-public class DefaultAuthenticatorFactory implements AuthenticatorFactory {
-    public static final AuthenticatorFactory INSTANCE = new DefaultAuthenticatorFactory();
+import io.questdb.test.AbstractGriffinTest;
+import org.junit.Test;
 
-    @Override
-    public Authenticator getLineTCPAuthenticator() {
-        return AnonymousAuthenticator.INSTANCE;
+import java.util.Arrays;
+
+import static io.questdb.griffin.engine.functions.catalogue.Constants.KEYWORDS;
+
+public class KeywordsFunctionFactoryTest extends AbstractGriffinTest {
+    @Test
+    public void testSelectKeywords() throws Exception {
+        CharSequence[] keywords = KEYWORDS.clone();
+        Arrays.sort(keywords);
+        String expected = "keyword\n" + String.join("\n", keywords) + '\n';
+        assertSql("select keyword from keywords() order by keyword asc", expected);
+    }
+
+    @Test
+    public void testSelectKeywordsWithFilter() throws Exception {
+        assertSql("keywords() where keyword = 'add'", "keyword\nadd\n");
     }
 }

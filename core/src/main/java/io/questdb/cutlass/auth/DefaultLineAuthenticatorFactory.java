@@ -24,6 +24,11 @@
 
 package io.questdb.cutlass.auth;
 
-public interface AuthenticatorFactory {
-    Authenticator getLineTCPAuthenticator();
+public class DefaultLineAuthenticatorFactory implements LineAuthenticatorFactory {
+    public static final LineAuthenticatorFactory INSTANCE = new DefaultLineAuthenticatorFactory();
+
+    @Override
+    public Authenticator getLineTCPAuthenticator() {
+        return AnonymousAuthenticator.INSTANCE;
+    }
 }
