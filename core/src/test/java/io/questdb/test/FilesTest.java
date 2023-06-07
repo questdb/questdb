@@ -88,7 +88,8 @@ public class FilesTest {
         // I found that on OSX (m1) with large disk allocate() call is painfully slow and
         // for that reason (until we understood the problem better) we won't run this test
         // on OSX
-        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
+        // In Windows CI, concurrent allocate calls could take almost 2 minutes to complete  
+        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64 && Os.type != Os.WINDOWS);
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
