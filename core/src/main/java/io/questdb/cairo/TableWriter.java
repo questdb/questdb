@@ -2311,7 +2311,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putStr(name);
             ddlMem.sync(false);
         } finally {
-            ddlMem.close();
+            // truncate _meta file exactly, the file size never changes.
+            // Metadata updates are written to a new file and then swapped by renaming.
+            ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
         return index;
     }
@@ -2399,6 +2401,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
         }
+        // set append position on columns so that the files are truncated to the correct size
+        // if the partition is closed after the commit.
+        setAppendPosition(txWriter.transientRowCount, false);
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(
