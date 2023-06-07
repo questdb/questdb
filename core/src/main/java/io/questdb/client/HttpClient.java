@@ -39,8 +39,11 @@ public class HttpClient implements QuietCloseable {
     private final int bufferSize = 4096;
     private final NetworkFacade nf;
     private final Request request = new Request();
-    private long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-    private long ptr = buffer;
+    private long bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+    private long bufHi = bufLo + bufferSize;
+    private long ptr = bufLo;
+    private long dataHi;
+    private long dataLo;
     private Epoll epoll = new Epoll(EpollFacadeImpl.INSTANCE, 128);
     private int fd = -1;
     private Response response = new Response();
@@ -50,23 +53,33 @@ public class HttpClient implements QuietCloseable {
     }
 
     public static void main(String[] args) {
+
         HttpClient client = new HttpClient(NetworkFacadeImpl.INSTANCE);
+
         Request req = client.newRequest();
+
         Response rsp = req
                 .GET()
                 .url("/exec")
-                .query("query", "select%201")
+                .query("query", "cpu%20limit%20100")
                 .header("Accept", "gzip, deflate, br")
                 .send("localhost", 9000);
+
         rsp.awaitHeaders(5000);
-        System.out.println(rsp.isChunked());
+
+        if (rsp.isChunked()) {
+            Response.Chunk chunk;
+            while ((chunk = rsp.fetchChunk(5000)) != null) {
+                System.out.println("addr: " + chunk.addr + ", size: " + chunk.size + ", available: " + chunk.available);
+            }
+        }
     }
 
     @Override
     public void close() {
-        if (buffer != 0) {
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-            buffer = 0;
+        if (bufLo != 0) {
+            Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
+            bufLo = 0;
         }
 
         if (fd != -1) {
@@ -79,7 +92,7 @@ public class HttpClient implements QuietCloseable {
     }
 
     public Request newRequest() {
-        ptr = buffer;
+        ptr = bufLo;
         request.state = Request.STATE_REQUEST;
         return request;
     }
@@ -87,6 +100,12 @@ public class HttpClient implements QuietCloseable {
     private void enqueue(int epollin) {
         if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, epollin) < 0) {
             throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
+        }
+    }
+
+    private void poll(int timeout) {
+        if (epoll.poll(timeout) != 1) {
+            throw new HttpClientException("timed out").errno(nf.errno());
         }
     }
 
@@ -194,9 +213,9 @@ public class HttpClient implements QuietCloseable {
         }
 
         private void doSend() {
-            int len = (int) (ptr - buffer);
+            int len = (int) (ptr - bufLo);
             if (len > 0) {
-                long p = buffer;
+                long p = bufLo;
                 while (len > 0) {
                     final int sent = nf.send(fd, p, len);
                     if (sent > 0) {
@@ -216,9 +235,9 @@ public class HttpClient implements QuietCloseable {
         }
 
         private void dump() {
-            int len = (int) (ptr - buffer);
+            int len = (int) (ptr - bufLo);
             for (int i = 0; i < len; i++) {
-                char c = (char) Unsafe.getUnsafe().getByte(buffer + i);
+                char c = (char) Unsafe.getUnsafe().getByte(bufLo + i);
                 switch (c) {
                     case '\r':
                         System.out.print("\\r");
@@ -238,29 +257,33 @@ public class HttpClient implements QuietCloseable {
         private final Chunk chunk = new Chunk();
         private final DirectByteCharSequence chunkSize = new DirectByteCharSequence();
         private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
-        private long headerEnd;
         private HttpHeaderParser headerParser = new HttpHeaderParser(4096, csPool);
 
         public void awaitHeaders(int timeout) {
+
+            // prepare chunk sink ready for reuse
+            //
+            chunk.clear();
+
             while (headerParser.isIncomplete()) {
                 // read response header; if we manage to read header
                 // fully in one shot, the outer while loop exists;
                 // otherwise loop re
-                int count = epoll.poll(timeout);
-                if (count == 1) {
-                    int len = nf.recv(fd, buffer, bufferSize);
-                    if (len < 0) {
-                        throw new HttpClientException("peer disconnect").errno(nf.errno());
+                poll(timeout);
+
+                final int len = nf.recv(fd, bufLo, bufferSize);
+                if (len < 0) {
+                    throw new HttpClientException("peer disconnect").errno(nf.errno());
+                }
+                // dataLo & dataHi are boundaries of unprocessed data left in the buffer
+                dataLo = headerParser.parse(bufLo, bufLo + len, false, true);
+                dataHi = bufLo + len;
+
+                if (headerParser.isIncomplete()) {
+                    // re-arm epoll
+                    if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
+                        throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
                     }
-                    headerEnd = headerParser.parse(buffer, buffer + len, false, true);
-                    if (headerParser.isIncomplete()) {
-                        // re-arm epoll
-                        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                            throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                        }
-                    }
-                } else {
-                    throw new HttpClientException("timed out").errno(nf.errno());
                 }
             }
         }
@@ -268,6 +291,85 @@ public class HttpClient implements QuietCloseable {
         @Override
         public void close() {
             headerParser = Misc.free(headerParser);
+        }
+
+        public Chunk fetchChunk(int timeout) {
+            if (chunk.endOfChunk) {
+                // new chunk
+                if (dataHi > dataLo) {
+                    // there is unprocessed data in the buffer
+                    if (readChunk(dataLo, dataHi)) {
+
+                        // if chunk size is smaller that the unprocessed data size
+                        // we will reduce unprocessed data size by chunk size; otherwise
+                        // we clear the unprocessed data
+                        long chunkHi = chunk.addr + chunk.size;
+                        if (chunkHi < dataHi) {
+                            dataLo = chunkHi;
+                        } else {
+                            dataLo = bufLo;
+                            dataHi = bufLo;
+                        }
+                        return chunk.size > 2 ? chunk : null;
+                    } else {
+                        // re-arm epoll to read more from the server
+                        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
+                            throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
+                        }
+
+                        // move unprocessed data to the front of the buffer
+                        // to maximise
+                        if (dataLo > bufLo) {
+                            final long len = dataHi - dataLo;
+                            Vect.memmove(bufLo, dataLo, len);
+                            dataLo = bufLo;
+                            dataHi = bufLo + len;
+                        }
+
+                        while (true) {
+                            poll(timeout);
+                            int len = nf.recv(fd, dataHi, (int) (bufferSize - (dataHi - bufLo)));
+                            if (len > 0) {
+                                dataHi += len;
+                                // try to read chunk prefix
+                                if (readChunk(dataLo, dataHi)) {
+
+                                    // if chunk size is smaller that the unprocessed data size
+                                    // we will reduce unprocessed data size by chunk size; otherwise
+                                    // we clear the unprocessed data
+                                    long chunkHi = chunk.addr + chunk.available;
+                                    if (chunkHi < dataHi) {
+                                        dataLo = chunkHi;
+                                    } else {
+                                        dataLo = bufLo;
+                                        dataHi = bufLo;
+                                    }
+                                    return chunk.size > 0 ? chunk : null;
+                                }
+                            } else if (len == 0) {
+                                // did not get anything, re-arm and wait
+                                if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
+                                    throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
+                                }
+                            } else {
+                                throw new HttpClientException("peer disconnect [errno=").put(nf.errno()).put(']');
+                            }
+                        }
+                    }
+                } else {
+                    // no remaining data in the buffer, we have to queue the read from socket and wait
+                    // todo: impl the above
+                    assert false;
+                }
+            } else {
+                // keep consuming remaining chunk bytes
+                chunk.consumed += chunk.available;
+                if (dataHi > dataLo) {
+                    // there is remaining data in the buffer, read next chunk
+                }
+
+            }
+            return null;
         }
 
         public HttpRequestHeader header() {
@@ -281,9 +383,13 @@ public class HttpClient implements QuietCloseable {
             return Chars.equalsNc("chunked", header().getHeader("Transfer-Encoding"));
         }
 
-        public Chunk readChunk() {
-            long p = headerEnd;
-            final long hi = buffer + bufferSize;
+        private void init() {
+            csPool.clear();
+            headerParser.clear();
+        }
+
+        private boolean readChunk(long lo, long hi) {
+            long p = lo;
             long x = -1;
             long len = -1;
             while (p < hi) {
@@ -297,30 +403,37 @@ public class HttpClient implements QuietCloseable {
                             throw new HttpClientException("malformed chunk");
                         }
                         // parse the hex chunk length
-                        chunkSize.of(headerEnd, x);
+                        // last char, at(x) is `\r`, exclude
+                        chunkSize.of(lo, x - 1);
                         try {
                             len = Numbers.parseHexLong(chunkSize);
                             chunk.addr = p;
-                            chunk.size = len;
-                            chunk.available = Math.min(len, bufferSize - (p - buffer));
+                            // the chunk length does NOT include trailing chars `\r\n`
+                            chunk.size = len + 2;
+                            chunk.available = Math.min(len, bufferSize - (p - bufLo));
+                            chunk.endOfChunk = len == chunk.available;
+                            chunk.consumed = 0;
+                            return true;
                         } catch (NumericException e) {
                             throw new HttpClientException("could not parse chunk size");
                         }
 
                 }
             }
-            return chunk;
+            return false;
         }
 
-        private void init() {
-            csPool.clear();
-            headerParser.clear();
-        }
-
-        public class Chunk {
+        public class Chunk implements Mutable {
             long addr;
             long available;
+            long consumed = 0;
+            boolean endOfChunk;
             long size;
+
+            @Override
+            public void clear() {
+                endOfChunk = true;
+            }
         }
     }
 }
