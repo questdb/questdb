@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
@@ -54,7 +55,9 @@ public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
     private String copyInputRoot;
+    private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
+    private Boolean healthCheckAuthRequired;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
     private Metrics metrics;
@@ -64,6 +67,7 @@ public class HttpQueryTestBuilder {
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private SqlExecutionContextImpl sqlExecutionContext;
     private long startWriterWaitTimeout = 500;
+    private Boolean staticContentAuthRequired;
     private boolean telemetry;
     private String temp;
     private HttpRequestProcessorBuilder textImportProcessor;
@@ -86,6 +90,9 @@ public class HttpQueryTestBuilder {
             final String baseDir = temp;
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
                     .withBaseDir(baseDir)
+                    .withFactoryProvider(factoryProvider)
+                    .withStaticContentAuthRequired(staticContentAuthRequired != null ? staticContentAuthRequired : true)
+                    .withHealthCheckAuthRequired(healthCheckAuthRequired != null ? healthCheckAuthRequired : true)
                     .build();
             if (metrics == null) {
                 metrics = Metrics.enabled();
@@ -260,6 +267,18 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/status";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new HealthCheckProcessor(httpConfiguration);
+                    }
+                });
+
                 QueryCache.configure(httpConfiguration, metrics);
 
                 workerPool.start(LOG);
@@ -297,8 +316,18 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withFactoryProvider(FactoryProvider factoryProvider) {
+        this.factoryProvider = factoryProvider;
+        return this;
+    }
+
     public HttpQueryTestBuilder withFilesFacade(FilesFacade ff) {
         this.filesFacade = ff;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withHealthCheckAuthRequired(boolean healthCheckAuthRequired) {
+        this.healthCheckAuthRequired = healthCheckAuthRequired;
         return this;
     }
 
@@ -329,6 +358,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withQueryTimeout(long queryTimeout) {
         this.queryTimeout = queryTimeout;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withStaticContentAuthRequired(boolean staticContentAuthRequired) {
+        this.staticContentAuthRequired = staticContentAuthRequired;
         return this;
     }
 

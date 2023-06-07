@@ -22,14 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
+import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
 import io.questdb.network.NetworkFacade;
 
-public interface PgWireAuthenticationFactory {
-    Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                         NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
-                                         OptionsListener optionsListener);
+public class EllipticCurveLineAuthenticatorFactory implements LineAuthenticatorFactory {
+    private final NetworkFacade networkFacade;
+    private final StaticPublicKeyRepo publicKeyRepo;
+
+    public EllipticCurveLineAuthenticatorFactory(NetworkFacade networkFacade, String authDbPath) {
+        this.networkFacade = networkFacade;
+        publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
+    }
+
+    @Override
+    public Authenticator getLineTCPAuthenticator() {
+        return new EllipticCurveAuthenticator(
+                networkFacade,
+                publicKeyRepo);
+    }
 }

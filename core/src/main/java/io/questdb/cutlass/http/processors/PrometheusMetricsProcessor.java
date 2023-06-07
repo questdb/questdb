@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.metrics.Scrapable;
 import io.questdb.network.PeerDisconnectedException;
@@ -34,9 +35,11 @@ import io.questdb.network.PeerIsSlowToReadException;
 public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
     private final Scrapable metrics;
+    private final boolean requiresAuthentication;
 
-    public PrometheusMetricsProcessor(Scrapable metrics) {
+    public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration) {
         this.metrics = metrics;
+        this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
     }
 
     @Override
@@ -48,5 +51,10 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         metrics.scrapeIntoPrometheus(r);
 
         r.done();
+    }
+
+    @Override
+    public boolean requiresAuthentication() {
+        return requiresAuthentication;
     }
 }
