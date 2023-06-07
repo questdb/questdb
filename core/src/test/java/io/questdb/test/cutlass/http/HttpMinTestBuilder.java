@@ -31,14 +31,14 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import org.junit.rules.TemporaryFolder;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -72,7 +72,7 @@ public class HttpMinTestBuilder {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable);
+                        return new PrometheusMetricsProcessor(scrapable, httpConfiguration);
                     }
                 });
 
