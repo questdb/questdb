@@ -55,6 +55,10 @@ public interface HttpRequestProcessor {
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
     }
 
+    default boolean requiresAuthentication() {
+        return true;
+    }
+
     default void resumeRecv(HttpConnectionContext context) {
     }
 

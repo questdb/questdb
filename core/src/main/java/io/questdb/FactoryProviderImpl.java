@@ -27,29 +27,36 @@ package io.questdb;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.BasicWalInitializerFactory;
 import io.questdb.cairo.wal.WalInitializerFactory;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PgWireAuthenticationFactory;
+import io.questdb.cutlass.auth.LineAuthenticatorFactory;
+import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 
 public class FactoryProviderImpl implements FactoryProvider {
-    private final AuthenticatorFactory authenticatorFactory;
-    private final PgWireAuthenticationFactory pgWireAuthenticatorFactory;
+    private final LineAuthenticatorFactory lineAuthenticatorFactory;
+    private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
-        this.authenticatorFactory = ServerMain.getAuthenticatorFactory(configuration);
+        this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
         this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration);
     }
 
     @Override
-    public AuthenticatorFactory getAuthenticatorFactory() {
-        return authenticatorFactory;
+    public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+        return DefaultHttpAuthenticatorFactory.INSTANCE;
     }
 
     @Override
-    public PgWireAuthenticationFactory getPgWireAuthenticationFactory() {
+    public LineAuthenticatorFactory getLineAuthenticatorFactory() {
+        return lineAuthenticatorFactory;
+    }
+
+    @Override
+    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
     }
 
