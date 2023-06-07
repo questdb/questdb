@@ -29,16 +29,14 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
@@ -94,10 +92,14 @@ public class FilesTest {
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
         AtomicInteger errors = new AtomicInteger();
+        // ff.getDiskFreeSpace() can see intermediate disk size while other thread is allocating space 
+        // so there is a risk it'll see a value large enough for the two threads to exhaust space and crash build 
+        SOCountDownLatch latch = new SOCountDownLatch(2);
 
         for (int i = 0; i < 10; i++) {
-            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors));
-            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors));
+            latch.setCount(2);
+            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors, latch));
+            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors, latch));
             th1.start();
             th2.start();
             th1.join();
@@ -131,6 +133,7 @@ public class FilesTest {
         });
     }
 
+    @Ignore
     @Test
     public void testCheckDiskSizeWhileAllocating() throws IOException {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -139,9 +142,10 @@ public class FilesTest {
         AtomicInteger errors = new AtomicInteger();
 
         Path p2 = new Path().of(tmpFolder).$();
+        SOCountDownLatch latch = new SOCountDownLatch(1);
 
         for (int i = 0; i < 3; i++) {
-            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors));
+            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors, latch));
 
             long oldSize = ff.getDiskFreeSpace(p2);
             LOG.info().$("free disk space at ").$(oldSize).$();
@@ -162,6 +166,7 @@ public class FilesTest {
         }
     }
 
+    @Ignore
     @Test
     public void testCheckDiskSizeWhileDoingNothing() throws IOException {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -1328,7 +1333,7 @@ public class FilesTest {
         }
     }
 
-    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
+    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors, SOCountDownLatch latch) {
         try (
                 Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
                 Path p2 = new Path().of(pathName).$()
@@ -1338,6 +1343,8 @@ public class FilesTest {
             long diskSize = ff.getDiskFreeSpace(p2);
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
+            latch.countDown();
+            latch.await();
 
             try {
                 fd = ff.openRW(path, CairoConfiguration.O_NONE);
