@@ -22,8 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.http;
 
-public interface PgWireUserDatabase {
-    boolean match(CharSequence username, CharSequence password);
+public interface HttpAuthenticatorFactory {
+    HttpAuthenticator getHttpAuthenticator();
 }

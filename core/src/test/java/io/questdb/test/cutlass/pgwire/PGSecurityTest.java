@@ -48,28 +48,25 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.fail;
 
 public class PGSecurityTest extends BasePGTest {
+
     private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
-    private static final SecurityContextFactory READ_ONLY_USER_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(false, "user", false);
-
-
     private static final FactoryProvider READ_ONLY_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
             return READ_ONLY_SECURITY_CONTEXT_FACTORY;
         }
     };
-
-    private static final FactoryProvider READ_ONLY_USER_FACTORY_PROVIDER = new DefaultFactoryProvider() {
-        @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return READ_ONLY_USER_SECURITY_CONTEXT_FACTORY;
-        }
-    };
-
     private static final PGWireConfiguration READ_ONLY_CONF = new Port0PGWireConfiguration() {
         @Override
         public FactoryProvider getFactoryProvider() {
             return READ_ONLY_FACTORY_PROVIDER;
+        }
+    };
+    private static final SecurityContextFactory READ_ONLY_USER_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(false, "user", false);
+    private static final FactoryProvider READ_ONLY_USER_FACTORY_PROVIDER = new DefaultFactoryProvider() {
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return READ_ONLY_USER_SECURITY_CONTEXT_FACTORY;
         }
     };
     private static final PGWireConfiguration READ_ONLY_USER_CONF = new Port0PGWireConfiguration() {

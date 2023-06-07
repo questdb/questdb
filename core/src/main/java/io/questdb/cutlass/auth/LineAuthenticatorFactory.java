@@ -24,32 +24,6 @@
 
 package io.questdb.cutlass.auth;
 
-import io.questdb.std.QuietCloseable;
-
-public interface Authenticator extends QuietCloseable {
-
-    int NEEDS_DISCONNECT = 3;
-    int NEEDS_READ = 0;
-    int NEEDS_WRITE = 1;
-    int OK = -1;
-    int QUEUE_FULL = 2;
-
-    default void clear() {
-    }
-
-    @Override
-    default void close() {
-    }
-
-    CharSequence getPrincipal();
-
-    long getRecvBufPos();
-
-    long getRecvBufPseudoStart();
-
-    int handleIO() throws AuthenticatorException;
-
-    void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
-
-    boolean isAuthenticated();
+public interface LineAuthenticatorFactory {
+    Authenticator getLineTCPAuthenticator();
 }
