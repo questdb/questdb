@@ -67,7 +67,12 @@ public class HttpClientException extends RuntimeException {
         return errNoRender + " " + message;
     }
 
-    public HttpClientException put(long value) {
+    public HttpClientException put(char value) {
+        message.put(value);
+        return this;
+    }
+
+    public HttpClientException put(int value) {
         message.put(value);
         return this;
     }

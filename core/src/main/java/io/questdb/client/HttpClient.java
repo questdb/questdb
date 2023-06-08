@@ -24,53 +24,69 @@
 
 package io.questdb.client;
 
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.Epoll;
+import io.questdb.network.EpollAccessor;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class HttpClient implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
-    private final int bufferSize = 2 * 1024 * 1024;
+    private final int bufferSize;
+    private final int defaultTimeout;
     private final NetworkFacade nf;
     private final Request request = new Request();
-    private long bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-    private long ptr = bufLo;
+    private long bufLo;
     private long dataHi;
     private long dataLo;
     private Epoll epoll = new Epoll(EpollFacadeImpl.INSTANCE, 128);
     private int fd = -1;
+    private long ptr = bufLo;
     private Response response = new Response();
 
-    public HttpClient(NetworkFacade nf) {
-        this.nf = nf;
+    public HttpClient() {
+        this(DefaultHttpClientConfiguration.INSTANCE);
+    }
+
+    public HttpClient(HttpClientConfiguration configuration) {
+        this.nf = configuration.getNetworkFacade();
+        this.defaultTimeout = configuration.getTimeout();
+        this.bufferSize = configuration.getBufferSize();
+        this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     public static void main(String[] args) {
 
-        HttpClient client = new HttpClient(NetworkFacadeImpl.INSTANCE);
+        HttpClient client = new HttpClient();
 
         Request req = client.newRequest();
 
         Response rsp = req
                 .GET()
                 .url("/exec")
+//                .query("query", "cpu%20limit%20400000")
                 .query("query", "cpu")
                 .header("Accept", "gzip, deflate, br")
-                .send("localhost", 9000);
+                .send("localhost", 9000, 5000);
 
-        rsp.awaitHeaders(5000);
+        rsp.awaitHeaders();
 
         if (rsp.isChunked()) {
             Response.Chunk chunk;
 
             long t = System.currentTimeMillis();
-            while ((chunk = rsp.recv(5000)) != null) {
+            while ((chunk = rsp.recv()) != null) {
                 System.out.println("addr: " + chunk.addr + ", size: " + chunk.size + ", consumed: " + chunk.consumed + ", available: " + chunk.available);
 //                for (long p = 0, n = chunk.available; p < n; p++) {
 //                    System.out.print((char)Unsafe.getUnsafe().getByte(chunk.addr + p));
@@ -102,9 +118,23 @@ public class HttpClient implements QuietCloseable {
         return request;
     }
 
-    private void enqueue(int epollin) {
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, epollin) < 0) {
-            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
+    private void compactBuffer() {
+        // move unprocessed data to the front of the buffer
+        // to maximise
+        if (dataLo > bufLo) {
+            final long len = dataHi - dataLo;
+            assert len > -1;
+            if (len > 0) {
+                Vect.memmove(bufLo, dataLo, len);
+            }
+            dataLo = bufLo;
+            dataHi = bufLo + len;
+        }
+    }
+
+    private void epollMod() {
+        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
+            throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
         }
     }
 
@@ -167,7 +197,7 @@ public class HttpClient implements QuietCloseable {
             return this;
         }
 
-        public Response send(CharSequence host, int port) {
+        public Response send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
             if (fd == -1) {
                 connect(host, port);
@@ -179,8 +209,8 @@ public class HttpClient implements QuietCloseable {
             }
 
             crlf();
-            dump();
-            doSend();
+//            dump();
+            doSend(timeout);
             response.init();
             return response;
         }
@@ -217,26 +247,30 @@ public class HttpClient implements QuietCloseable {
             return put(CRLF);
         }
 
-        private void doSend() {
+        private void doSend(int timeout) {
             int len = (int) (ptr - bufLo);
             if (len > 0) {
                 long p = bufLo;
                 while (len > 0) {
                     final int sent = nf.send(fd, p, len);
+                    if (sent < 0) {
+                        throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
+                    }
                     if (sent > 0) {
                         p += sent;
                         len -= sent;
-                    } else {
-                        if (sent == -2) {
-                            throw new HttpClientException("peer disconnect").errno(nf.errno());
+                    }
+
+                    if (len > 0) {
+                        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
+                            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
                         }
-                        // wait for read
-                        enqueue(EpollAccessor.EPOLLIN);
+                        poll(timeout);
                     }
                 }
             }
-            // wait for response
-            enqueue(EpollAccessor.EPOLLOUT);
+//            // wait for response
+//            enqueue(EpollAccessor.EPOLLOUT);
         }
 
         private void dump() {
@@ -264,7 +298,15 @@ public class HttpClient implements QuietCloseable {
         private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
         private HttpHeaderParser headerParser = new HttpHeaderParser(4096, csPool);
 
+        public void awaitHeaders() {
+            awaitHeaders(defaultTimeout);
+        }
+
         public void awaitHeaders(int timeout) {
+
+            if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
+                throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
+            }
 
             // prepare chunk sink ready for reuse
             //
@@ -286,9 +328,7 @@ public class HttpClient implements QuietCloseable {
 
                 if (headerParser.isIncomplete()) {
                     // re-arm epoll
-                    if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                        throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                    }
+                    epollMod();
                 }
             }
         }
@@ -309,227 +349,68 @@ public class HttpClient implements QuietCloseable {
             return Chars.equalsNc("chunked", header().getHeader("Transfer-Encoding"));
         }
 
+        public Chunk recv() {
+            return recv(defaultTimeout);
+        }
+
         public Chunk recv(int timeout) {
             if (chunk.endOfChunk) {
-                // new chunk
-                if (dataHi > dataLo) {
-                    // there is unprocessed data in the buffer
-                    if (readChunkSize(dataLo, dataHi)) {
+                return chunkStart(timeout);
+            }
+            return chunkContinue(timeout);
+        }
 
-                        // if chunk size is smaller that the unprocessed data size
-                        // we will reduce unprocessed data size by chunk size; otherwise
-                        // we clear the unprocessed data
-                        long chunkHi = chunk.addr + chunk.size;
-                        if (chunkHi < dataHi) {
-                            dataLo = chunkHi;
-                        } else {
-                            dataLo = bufLo;
-                            dataHi = bufLo;
-                        }
-                        return chunk.size > 2 ? chunk : null;
+        @NotNull
+        private HttpClient.Response.Chunk chunkContinue(int timeout) {
+            chunk.consumed += chunk.available;
+            compactBuffer();
+            while (true) {
+                epollMod();
+                poll(timeout);
+                int len = recvOrDie();
+                if (len > 0) {
+                    // we are consuming the remaining chunk bytes;
+                    // chunk size includes `\r\n\`, which must not be included in
+                    // "available" bytes of the last chunk
+
+                    // configure chunk boundaries
+                    boolean endOfChunk = chunk.size - chunk.consumed <= len;
+                    chunk.endOfChunk = endOfChunk;
+                    chunk.addr = dataHi;
+                    chunk.available = endOfChunk ? chunk.size - chunk.consumed - 2 : len;
+
+                    if (endOfChunk) {
+                        dataHi += len;
+                        dataLo = chunk.addr + chunk.available + 2;
                     } else {
-                        // re-arm epoll to read more from the server
-                        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                            throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                        }
-
-                        // move unprocessed data to the front of the buffer
-                        // to maximise
-                        if (dataLo > bufLo) {
-                            final long len = dataHi - dataLo;
-                            Vect.memmove(bufLo, dataLo, len);
-                            dataLo = bufLo;
-                            dataHi = bufLo + len;
-                        }
-
-                        while (true) {
-                            poll(timeout);
-                            int len = nf.recv(fd, dataHi, (int) (bufferSize - (dataHi - bufLo)));
-                            if (len > 0) {
-                                dataHi += len;
-                                // try to read chunk prefix
-                                if (readChunkSize(dataLo, dataHi)) {
-
-                                    // if chunk size is smaller that the unprocessed data size
-                                    // we will reduce unprocessed data size by chunk size; otherwise
-                                    // we clear the unprocessed data
-                                    long chunkHi = chunk.addr + chunk.available;
-                                    if (chunkHi < dataHi) {
-                                        dataLo = chunkHi;
-                                    } else {
-                                        dataLo = bufLo;
-                                        dataHi = bufLo;
-                                    }
-                                    return chunk.size > 0 ? chunk : null;
-                                }
-                            } else if (len == 0) {
-                                // did not get anything, re-arm and wait
-                                if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                                    throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                                }
-                            } else {
-                                throw new HttpClientException("peer disconnect [errno=").put(nf.errno()).put(']');
-                            }
-                        }
-                    }
-                } else {
-                    // no remaining data in the buffer, we have to queue the read from socket and wait
-
-                    chunk.consumed += chunk.available;
-
-                    if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                        throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                    }
-
-                    while (true) {
-                        poll(timeout);
-                        int len = nf.recv(fd, dataHi, (int) (bufferSize - (dataHi - bufLo)));
-                        if (len > 0) {
-                            // we are consuming the remaining chunk bytes;
-                            // chunk size includes `\r\n\`, which must not be included in
-                            // "available" bytes of the last chunk
-
-                            // configure chunk boundaries
-                            boolean endOfChunk = chunk.size - chunk.consumed <= len;
-                            chunk.endOfChunk = endOfChunk;
-                            chunk.addr = dataHi;
-                            chunk.available = endOfChunk ? chunk.size - chunk.consumed - 2 : len;
-
-                            if (endOfChunk) {
-                                dataHi += len;
-                                dataLo = chunk.addr + chunk.available + 2;
-                            } else {
-                                // we just consumed the entire buffer
-                                dataLo = bufLo;
-                                dataHi = bufLo;
-                            }
-
-                            return chunk;
-
-                            // try to read chunk prefix
-                        } else if (len == 0) {
-                            // did not get anything, re-arm and wait
-                            if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                                throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                            }
-                        } else {
-                            throw new HttpClientException("peer disconnect [errno=").put(nf.errno()).put(']');
-                        }
-                    }
-                }
-            } else {
-                // keep consuming remaining chunk bytes
-                chunk.consumed += chunk.available;
-                if (dataHi > dataLo) {
-                    // there is remaining data in the buffer, read next chunk
-                    if (readChunkSize(dataLo, dataHi)) {
-                        // if chunk size is smaller that the unprocessed data size
-                        // we will reduce unprocessed data size by chunk size; otherwise
-                        // we clear the unprocessed data
-                        long chunkHi = chunk.addr + chunk.size;
-                        if (chunkHi < dataHi) {
-                            dataLo = chunkHi;
-                        } else {
-                            dataLo = bufLo;
-                            dataHi = bufLo;
-                        }
-                        return chunk.size > 2 ? chunk : null;
-                    } else {
-                        // re-arm epoll to read more from the server
-                        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                            throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                        }
-
-                        // move unprocessed data to the front of the buffer
-                        // to maximise
-                        if (dataLo > bufLo) {
-                            final long len = dataHi - dataLo;
-                            Vect.memmove(bufLo, dataLo, len);
-                            dataLo = bufLo;
-                            dataHi = bufLo + len;
-                        }
-
-                        while (true) {
-                            poll(timeout);
-                            int len = nf.recv(fd, dataHi, (int) (bufferSize - (dataHi - bufLo)));
-                            if (len > 0) {
-                                dataHi += len;
-                                // try to read chunk prefix
-                                if (readChunkSize(dataLo, dataHi)) {
-
-                                    // if chunk size is smaller that the unprocessed data size
-                                    // we will reduce unprocessed data size by chunk size; otherwise
-                                    // we clear the unprocessed data
-                                    long chunkHi = chunk.addr + chunk.available;
-                                    if (chunkHi < dataHi) {
-                                        dataLo = chunkHi;
-                                    } else {
-                                        dataLo = bufLo;
-                                        dataHi = bufLo;
-                                    }
-                                    return chunk.size > 0 ? chunk : null;
-                                }
-                            } else if (len == 0) {
-                                // did not get anything, re-arm and wait
-                                if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                                    throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                                }
-                            } else {
-                                throw new HttpClientException("peer disconnect [errno=").put(nf.errno()).put(']');
-                            }
-                        }
-                    }
-                } else {
-                    if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                        throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                    }
-
-                    // move unprocessed data to the front of the buffer
-                    // to maximise
-                    if (dataLo > bufLo) {
-                        final long len = dataHi - dataLo;
-                        Vect.memmove(bufLo, dataLo, len);
+                        // we just consumed the entire buffer
                         dataLo = bufLo;
-                        dataHi = bufLo + len;
+                        dataHi = bufLo;
                     }
+                    return chunk;
+                }
+            }
+        }
 
-                    while (true) {
-                        poll(timeout);
-                        int len = nf.recv(fd, dataHi, (int) (bufferSize - (dataHi - bufLo)));
-                        if (len > 0) {
-                            // we are consuming the remaining chunk bytes;
-                            // chunk size includes `\r\n\`, which must not be included in
-                            // "available" bytes of the last chunk
+        @Nullable
+        private HttpClient.Response.Chunk chunkStart(int timeout) {
+            if (parseChunkSize0(dataLo, dataHi)) {
+                return chunk.size > 2 ? chunk : null;
+            }
 
-                            // configure chunk boundaries
-                            boolean endOfChunk = chunk.size - chunk.consumed <= len + 2;
-                            chunk.endOfChunk = endOfChunk;
-                            chunk.addr = dataHi;
-                            chunk.available = endOfChunk ? chunk.size - chunk.consumed - 2 : len;
-
-                            if (endOfChunk) {
-                                dataHi += len;
-                                dataLo = chunk.addr + chunk.available + 2;
-                            } else {
-                                // we just consumed the entire buffer
-                                dataLo = bufLo;
-                                dataHi = bufLo;
-                            }
-
-                            return chunk;
-
-                            // try to read chunk prefix
-                        } else if (len == 0) {
-                            // did not get anything, re-arm and wait
-                            if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
-                                throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
-                            }
-                        } else {
-                            throw new HttpClientException("peer disconnect [errno=").put(nf.errno()).put(']');
-                        }
+            compactBuffer();
+            // re-arm epoll to read more from the server
+            while (true) {
+                epollMod();
+                poll(timeout);
+                int len = recvOrDie();
+                if (len > 0) {
+                    dataHi += len;
+                    // try to read chunk prefix
+                    if (parseChunkSize0(dataLo, dataHi)) {
+                        return chunk.size > 0 ? chunk : null;
                     }
                 }
-
             }
         }
 
@@ -538,10 +419,10 @@ public class HttpClient implements QuietCloseable {
             headerParser.clear();
         }
 
-        private boolean readChunkSize(long lo, long hi) {
+        private boolean parseChunkSize0(long lo, long hi) {
             long p = lo;
             long x = -1;
-            long len = -1;
+            long len;
             while (p < hi) {
                 char b = (char) Unsafe.getUnsafe().getByte(p++);
                 switch (b) {
@@ -563,6 +444,20 @@ public class HttpClient implements QuietCloseable {
                             chunk.available = Math.min(len, hi - p);
                             chunk.endOfChunk = len == chunk.available;
                             chunk.consumed = 0;
+
+                            assert chunk.available > 0;
+
+                            // if chunk size is smaller that the unprocessed data size
+                            // we will reduce unprocessed data size by chunk size; otherwise
+                            // we clear the unprocessed data
+                            long chunkHi = chunk.addr + chunk.available;
+                            if (chunkHi < dataHi) {
+                                dataLo = chunkHi;
+                            } else {
+                                dataLo = bufLo;
+                                dataHi = bufLo;
+                            }
+
                             return true;
                         } catch (NumericException e) {
                             throw new HttpClientException("could not parse chunk size");
@@ -572,6 +467,14 @@ public class HttpClient implements QuietCloseable {
                 }
             }
             return false;
+        }
+
+        private int recvOrDie() {
+            final int len = nf.recv(fd, dataHi, (int) (bufferSize - (dataHi - bufLo)));
+            if (len < 0) {
+                throw new HttpClientException("peer disconnect [errno=").put(nf.errno()).put(']');
+            }
+            return len;
         }
 
         public class Chunk implements Mutable {
