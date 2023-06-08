@@ -7151,7 +7151,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(5)" +
                         ") timestamp(k) partition by DAY",
                 null,
-                true,
+                false,
                 false
         );
     }
