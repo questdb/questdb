@@ -129,8 +129,8 @@ public class HttpClient implements QuietCloseable {
         }
     }
 
-    private void epollAdd(int event) {
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, event) < 0) {
+    private void setupEpoll() {
+        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
             throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
         }
     }
@@ -243,7 +243,10 @@ public class HttpClient implements QuietCloseable {
                 nf.close(fd, LOG);
                 nf.freeAddrInfo(addrInfo);
                 throw new HttpClientException("could not connect to host ")
-                        .put("[host=").put(host).put("]").errno(errno);
+                        .put("[host=").put(host)
+                        .put(", port=").put(port)
+                        .put(", errno=").put(errno)
+                        .put(']');
             }
             nf.freeAddrInfo(addrInfo);
         }
@@ -254,6 +257,9 @@ public class HttpClient implements QuietCloseable {
         }
 
         private void doSend(int timeout) {
+
+            setupEpoll();
+
             int len = (int) (ptr - bufLo);
             if (len > 0) {
                 long p = bufLo;
@@ -269,7 +275,7 @@ public class HttpClient implements QuietCloseable {
                     }
 
                     if (len > 0) {
-                        epollAdd(EpollAccessor.EPOLLOUT);
+                        epollMod(EpollAccessor.EPOLLOUT);
                         poll(timeout);
                     }
                 }
@@ -288,13 +294,9 @@ public class HttpClient implements QuietCloseable {
         }
 
         public void awaitHeaders(int timeout) {
-
-            epollAdd(EpollAccessor.EPOLLIN);
-
             // prepare chunk sink ready for reuse
             //
             chunk.clear();
-
             while (headerParser.isIncomplete()) {
                 // read response header; if we manage to read header
                 // fully in one shot, the outer while loop exists;
