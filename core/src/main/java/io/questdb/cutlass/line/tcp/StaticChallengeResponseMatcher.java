@@ -24,23 +24,32 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.auth.PublicKeyRepo;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.auth.ChallengeResponseMatcher;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
-import java.security.*;
+import java.security.InvalidKeyException;
+import java.security.PublicKey;
+import java.security.SignatureException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class StaticPublicKeyRepo implements PublicKeyRepo {
+public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher {
+    private static final Log LOG = LogFactory.getLog(StaticChallengeResponseMatcher.class);
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
     private final CharSequenceObjHashMap<PublicKey> publicKeyByKeyId = new CharSequenceObjHashMap<>();
 
-    public StaticPublicKeyRepo(String authDbPath) {
+    public StaticChallengeResponseMatcher(CharSequenceObjHashMap<PublicKey> publicKeyByKeyId) {
+        this.publicKeyByKeyId.putAll(publicKeyByKeyId);
+    }
+
+    public StaticChallengeResponseMatcher(String authDbPath) {
         int nLine = 0;
         String[] tokens = new String[4];
         try (BufferedReader r = new BufferedReader(new InputStreamReader(new BufferedInputStream(new FileInputStream(authDbPath))))) {
@@ -92,7 +101,17 @@ public class StaticPublicKeyRepo implements PublicKeyRepo {
     }
 
     @Override
-    public PublicKey getPublicKey(CharSequence keyId) {
+    public boolean match(CharSequence keyId, byte[] challenge, byte[] response) {
+        PublicKey publicKey = getPublicKey(keyId);
+        try {
+            return AuthUtils.isSignatureMatch(publicKey, challenge, response);
+        } catch (InvalidKeyException | SignatureException ex) {
+            LOG.info().$(" authentication exception ").$(ex).$();
+            return false;
+        }
+    }
+
+    private PublicKey getPublicKey(CharSequence keyId) {
         return publicKeyByKeyId.get(keyId);
     }
 }

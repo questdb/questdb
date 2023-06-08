@@ -142,7 +142,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 if (withAuth) {
                     URL u = getClass().getResource("authDb.txt");
                     assert u != null;
-                    return new EllipticCurveAuthenticatorFactory(nf, u.getFile());
+                    return new EllipticCurveAuthenticatorFactory(nf, new StaticChallengeResponseMatcher(u.getFile()));
                 }
                 return super.getAuthenticatorFactory();
             }

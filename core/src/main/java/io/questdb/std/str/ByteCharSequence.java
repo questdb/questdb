@@ -34,10 +34,13 @@ import java.util.Arrays;
  * UTF8-encoded on-heap char sequence.
  */
 public class ByteCharSequence extends AbstractCharSequence implements ByteSequence {
-    private final byte[] bytes;
+    private byte[] bytes;
 
     public ByteCharSequence(byte[] bytes) {
         this.bytes = bytes;
+    }
+
+    public ByteCharSequence() {
     }
 
     public static ByteCharSequence newInstance(DirectByteCharSequence src) {
@@ -69,6 +72,10 @@ public class ByteCharSequence extends AbstractCharSequence implements ByteSequen
 
     public long longAt(int index) {
         return Unsafe.byteArrayGetLong(bytes, index);
+    }
+
+    public void of(byte[] bytes) {
+        this.bytes = bytes;
     }
 
     @NotNull

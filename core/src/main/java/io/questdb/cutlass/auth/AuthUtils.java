@@ -25,6 +25,7 @@
 package io.questdb.cutlass.auth;
 
 import io.questdb.std.Chars;
+import io.questdb.std.ThreadLocal;
 
 import java.math.BigInteger;
 import java.security.*;
@@ -37,6 +38,34 @@ public final class AuthUtils {
     public static final String EC_CURVE = "secp256r1";
     public static final String SIGNATURE_TYPE_DER = "SHA256withECDSA";
     public static final String SIGNATURE_TYPE_P1363 = "SHA256withECDSAinP1363Format";
+
+    private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
+        try {
+            return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new Error(ex);
+        }
+    });
+    private static final ThreadLocal<Signature> tlSigP1363 = new ThreadLocal<>(() -> {
+        try {
+            return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_P1363);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new Error(ex);
+        }
+    });
+
+    public static boolean isSignatureMatch(PublicKey publicKey, byte[] challenge, byte[] response) throws InvalidKeyException, SignatureException {
+        byte[] signatureRaw = Base64.getDecoder().decode(response);
+        Signature sig = signatureRaw.length == 64 ? tlSigP1363.get() : tlSigDER.get();
+        // On some out of date JDKs zeros can be valid signature because of a bug in the JDK code
+        // Check that it's not the case.
+        if (checkAllZeros(signatureRaw)) {
+            return false;
+        }
+        sig.initVerify(publicKey);
+        sig.update(challenge);
+        return sig.verify(signatureRaw);
+    }
 
     public static PrivateKey toPrivateKey(String encodedPrivateKey) {
         byte[] dBytes = Base64.getUrlDecoder().decode(encodedPrivateKey);
@@ -72,5 +101,15 @@ public final class AuthUtils {
         } catch (NoSuchAlgorithmException | InvalidKeySpecException | InvalidParameterSpecException ex) {
             throw new IllegalArgumentException("Failed to decode " + encodedX + "," + encodedY, ex);
         }
+    }
+
+    private static boolean checkAllZeros(byte[] signatureRaw) {
+        int n = signatureRaw.length;
+        for (int i = 0; i < n; i++) {
+            if (signatureRaw[i] != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 }

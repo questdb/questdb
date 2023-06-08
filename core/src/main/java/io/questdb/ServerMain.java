@@ -38,6 +38,7 @@ import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
@@ -225,9 +226,10 @@ public class ServerMain implements Closeable {
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
             // we need "root/" here, not "root/db/"
             final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
+            String authPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
+                    new StaticChallengeResponseMatcher(authPath)
             );
         } else {
             authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;
