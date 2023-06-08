@@ -24,7 +24,6 @@
 
 package io.questdb.client;
 
-import io.questdb.network.Net;
 import io.questdb.std.str.StringSink;
 
 public class HttpClientException extends RuntimeException {
@@ -34,20 +33,6 @@ public class HttpClientException extends RuntimeException {
 
     public HttpClientException(String message) {
         this.message.put(message);
-    }
-
-    public HttpClientException(Throwable t) {
-        super(t);
-    }
-
-    public HttpClientException(String message, Throwable cause) {
-        super(cause);
-        this.message.put(message);
-    }
-
-    public HttpClientException appendIPv4(int ip) {
-        Net.appendIP4(message, ip);
-        return this;
     }
 
     public HttpClientException errno(int errno) {
@@ -79,11 +64,6 @@ public class HttpClientException extends RuntimeException {
 
     public HttpClientException put(CharSequence cs) {
         message.put(cs);
-        return this;
-    }
-
-    public HttpClientException putAsPrintable(CharSequence nonPrintable) {
-        message.putAsPrintable(nonPrintable);
         return this;
     }
 }

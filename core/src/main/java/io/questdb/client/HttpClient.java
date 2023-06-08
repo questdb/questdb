@@ -78,7 +78,7 @@ public class HttpClient implements QuietCloseable {
 //                .query("query", "cpu%20limit%20400000")
                 .query("query", "cpu")
                 .header("Accept", "gzip, deflate, br")
-                .send("localhost", 9000, 5000);
+                .send("localhost", 9000);
 
         rsp.awaitHeaders();
 
@@ -88,9 +88,6 @@ public class HttpClient implements QuietCloseable {
             long t = System.currentTimeMillis();
             while ((chunk = rsp.recv()) != null) {
                 System.out.println("addr: " + chunk.addr + ", size: " + chunk.size + ", consumed: " + chunk.consumed + ", available: " + chunk.available);
-//                for (long p = 0, n = chunk.available; p < n; p++) {
-//                    System.out.print((char)Unsafe.getUnsafe().getByte(chunk.addr + p));
-//                }
             }
             System.out.println(System.currentTimeMillis() - t);
         }
@@ -132,8 +129,14 @@ public class HttpClient implements QuietCloseable {
         }
     }
 
-    private void epollMod() {
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT) < 0) {
+    private void epollAdd(int event) {
+        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, event) < 0) {
+            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
+        }
+    }
+
+    private void epollMod(int event) {
+        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, event) < 0) {
             throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
         }
     }
@@ -197,6 +200,10 @@ public class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public Response send(CharSequence host, int port) {
+            return send(host, port, defaultTimeout);
+        }
+
         public Response send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
             if (fd == -1) {
@@ -209,7 +216,6 @@ public class HttpClient implements QuietCloseable {
             }
 
             crlf();
-//            dump();
             doSend(timeout);
             response.init();
             return response;
@@ -252,6 +258,7 @@ public class HttpClient implements QuietCloseable {
             if (len > 0) {
                 long p = bufLo;
                 while (len > 0) {
+                    // todo: re-arm epoll
                     final int sent = nf.send(fd, p, len);
                     if (sent < 0) {
                         throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
@@ -262,31 +269,9 @@ public class HttpClient implements QuietCloseable {
                     }
 
                     if (len > 0) {
-                        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
-                            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
-                        }
+                        epollAdd(EpollAccessor.EPOLLOUT);
                         poll(timeout);
                     }
-                }
-            }
-//            // wait for response
-//            enqueue(EpollAccessor.EPOLLOUT);
-        }
-
-        private void dump() {
-            int len = (int) (ptr - bufLo);
-            for (int i = 0; i < len; i++) {
-                char c = (char) Unsafe.getUnsafe().getByte(bufLo + i);
-                switch (c) {
-                    case '\r':
-                        System.out.print("\\r");
-                        break;
-                    case '\n':
-                        System.out.println("\\n");
-                        break;
-                    default:
-                        System.out.print(c);
-                        break;
                 }
             }
         }
@@ -304,9 +289,7 @@ public class HttpClient implements QuietCloseable {
 
         public void awaitHeaders(int timeout) {
 
-            if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-                throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
-            }
+            epollAdd(EpollAccessor.EPOLLIN);
 
             // prepare chunk sink ready for reuse
             //
@@ -327,8 +310,7 @@ public class HttpClient implements QuietCloseable {
                 dataHi = bufLo + len;
 
                 if (headerParser.isIncomplete()) {
-                    // re-arm epoll
-                    epollMod();
+                    epollMod(EpollAccessor.EPOLLOUT);
                 }
             }
         }
@@ -365,7 +347,7 @@ public class HttpClient implements QuietCloseable {
             chunk.consumed += chunk.available;
             compactBuffer();
             while (true) {
-                epollMod();
+                epollMod(EpollAccessor.EPOLLIN);
                 poll(timeout);
                 int len = recvOrDie();
                 if (len > 0) {
@@ -401,7 +383,7 @@ public class HttpClient implements QuietCloseable {
             compactBuffer();
             // re-arm epoll to read more from the server
             while (true) {
-                epollMod();
+                epollMod(EpollAccessor.EPOLLIN);
                 poll(timeout);
                 int len = recvOrDie();
                 if (len > 0) {
