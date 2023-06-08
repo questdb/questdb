@@ -28,7 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -207,8 +210,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final CharSequence cs = valueArg.getSymbol(rec);
-            return cs == null || SqlKeywords.isNullKeyword(cs);
+            return valueArg.getSymbol(rec) == null;
         }
 
         @Override
