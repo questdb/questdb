@@ -185,21 +185,20 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
-        private int theFd = 0;
 
         @Override
         public boolean close(int fd) {
-            if (fd > 0 && fd == theFd) {
-                theFd = 0;
+            if (fd > 0 && fd == this.fd) {
+                this.fd = -1;
             }
             return super.close(fd);
         }
 
         @Override
         public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-            if (!fixFailure.get() || theFd == fd) {
+            if (!fixFailure.get() || this.fd == fd) {
                 fixFailure.set(false);
-                theFd = 0;
+                this.fd = -1;
                 return -1;
             }
             return super.mmap(fd, len, offset, flags, memoryTag);
@@ -209,7 +208,7 @@ public class O3FailureTest extends AbstractO3Test {
         public int openRW(LPSZ name, long opts) {
             int fd = super.openRW(name, opts);
             if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
-                theFd = fd;
+                this.fd = fd;
             }
             return fd;
         }
@@ -257,12 +256,10 @@ public class O3FailureTest extends AbstractO3Test {
         // Failing to allocate concrete file is more stable than failing on a counter
         String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
         executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, new TestFilesFacadeImpl() {
-            private int theFd = 0;
-
             @Override
             public boolean allocate(int fd, long size) {
-                if (fd == theFd && size == 1472) {
-                    theFd = -1;
+                if (fd == this.fd && size == 1472) {
+                    this.fd = -1;
                     return false;
                 }
                 return super.allocate(fd, size);
@@ -270,8 +267,10 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public boolean close(int fd) {
-                if (fd > 0 && fd == theFd) {
-                    theFd = 0;
+                if (fd > 0 && fd == this.fd) {
+                    boolean result = super.close(fd);
+                    this.fd = 0;
+                    return result;
                 }
                 return super.close(fd);
             }
@@ -279,7 +278,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long length(int fd) {
                 long len = super.length(fd);
-                if (fd == theFd) {
+                if (fd == this.fd) {
                     if (len == Files.PAGE_SIZE) {
                         return 0;
                     }
@@ -290,11 +289,15 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
-                    theFd = fd;
+                if (this.fd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
+                    this.fd = fd;
                     return fd;
                 }
                 return fd;
+            }
+
+            {
+                this.fd = 0;
             }
         });
     }
@@ -304,13 +307,12 @@ public class O3FailureTest extends AbstractO3Test {
         // Failing to allocate concrete file is more stable than failing on a counter
         String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, new TestFilesFacadeImpl() {
-            private int theFd = 0;
 
             @Override
             public boolean allocate(int fd, long size) {
-                if (fd == theFd) {
+                if (fd == this.fd) {
                     if (size == 1480) {
-                        theFd = -1;
+                        this.fd = -1;
                         return false;
                     }
                 }
@@ -319,8 +321,8 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public boolean close(int fd) {
-                if (fd > 0 && fd == theFd) {
-                    theFd = 0;
+                if (fd > 0 && fd == this.fd) {
+                    this.fd = -1;
                 }
                 return super.close(fd);
             }
@@ -328,7 +330,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long length(int fd) {
                 long len = super.length(fd);
-                if (fd == theFd) {
+                if (fd == this.fd) {
                     if (len == Files.PAGE_SIZE) {
                         return 0;
                     }
@@ -339,8 +341,8 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
-                    theFd = fd;
+                if (fd > 0 && Chars.endsWith(name, fileName)) {
+                    this.fd = fd;
                     return fd;
                 }
                 return fd;
@@ -372,20 +374,11 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithoutPool(O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new TestFilesFacadeImpl() {
 
-            long theFd = 0;
-
-            @Override
-            public boolean close(int fd) {
-                if (fd > 0 && fd == theFd) {
-                    theFd = 0;
-                }
-                return super.close(fd);
-            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (fd == theFd && flags == Files.MAP_RO) {
-                    theFd = 0;
+                if (fd == this.fd && flags == Files.MAP_RO) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -395,7 +388,7 @@ public class O3FailureTest extends AbstractO3Test {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }
@@ -406,20 +399,12 @@ public class O3FailureTest extends AbstractO3Test {
     public void testColumnTopLastDataOOODataFailRetryMapRoContended() throws Exception {
         counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new TestFilesFacadeImpl() {
-            int theFd = 0;
 
-            @Override
-            public boolean close(int fd) {
-                if (fd > 0 && fd == theFd) {
-                    theFd = 0;
-                }
-                return super.close(fd);
-            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (fd == theFd && flags == Files.MAP_RO) {
-                    theFd = 0;
+                if (fd == this.fd && flags == Files.MAP_RO) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -429,7 +414,7 @@ public class O3FailureTest extends AbstractO3Test {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }
@@ -533,16 +518,14 @@ public class O3FailureTest extends AbstractO3Test {
     public void testColumnTopMidMergeBlankFailRetryMergeFixMapRW() throws Exception {
         counter.set(1);
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
-            int theFd = 0;
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (fixFailure.get() && fd != theFd) {
+                if (fixFailure.get() && fd != this.fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
-
                 fixFailure.set(false);
-                theFd = 0;
+                this.fd = -1;
                 return -1;
             }
 
@@ -550,7 +533,7 @@ public class O3FailureTest extends AbstractO3Test {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }
@@ -561,24 +544,15 @@ public class O3FailureTest extends AbstractO3Test {
     public void testColumnTopMidMergeBlankFailRetryMergeFixMapRWContended() throws Exception {
         counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
-            int theFd = 0;
-
-            @Override
-            public boolean close(int fd) {
-                if (fd > 0 && fd == theFd) {
-                    theFd = 0;
-                }
-                return super.close(fd);
-            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (fixFailure.get() && fd != theFd) {
+                if (fixFailure.get() && fd != this.fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
 
                 fixFailure.set(false);
-                theFd = 0;
+                this.fd = -1;
                 return -1;
             }
 
@@ -586,7 +560,7 @@ public class O3FailureTest extends AbstractO3Test {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }
@@ -708,7 +682,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(152 + 12 + 20 + 19 + 8);
+        counter.set(152 + 12 + 20 + 19);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -1034,13 +1008,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(174 + 12 + 19 + 8);
+        counter.set(174 + 12 + 19);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(174 + 12 + 19 + 8);
+        counter.set(174 + 12 + 19);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -1058,25 +1032,25 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(174 + 45 + 12 + 27 + 12);
+        counter.set(174 + 45 + 12 + 27);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(165 + 45 + 12 + 21 + 9);
+        counter.set(165 + 45 + 12 + 21);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(165 + 45 + 12 + 18 + 8);
+        counter.set(165 + 45 + 12 + 18);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(165 + 45 + 12 + 21 + 9);
+        counter.set(165 + 45 + 12 + 21);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -1084,21 +1058,20 @@ public class O3FailureTest extends AbstractO3Test {
     public void testPartitionedDataAppendOOPrependOODataMapVar() throws Exception {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
-            private int theFd = 0;
 
             @Override
             public boolean close(int fd) {
-                if (fd > 0 && fd == theFd) {
-                    theFd = 0;
+                if (fd > 0 && fd == this.fd) {
+                    this.fd = -1;
                 }
                 return super.close(fd);
             }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (!fixFailure.get() || theFd == fd) {
+                if (!fixFailure.get() || this.fd == fd) {
                     fixFailure.set(false);
-                    theFd = 0;
+                    this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -1108,7 +1081,7 @@ public class O3FailureTest extends AbstractO3Test {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }
@@ -1119,21 +1092,12 @@ public class O3FailureTest extends AbstractO3Test {
     public void testPartitionedDataAppendOOPrependOODataMapVarContended() throws Exception {
         counter.set(3);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
-            private int theFd = 0;
-
-            @Override
-            public boolean close(int fd) {
-                if (fd > 0 && fd == theFd) {
-                    theFd = 0;
-                }
-                return super.close(fd);
-            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (!fixFailure.get() || theFd == fd) {
+                if (!fixFailure.get() || this.fd == fd) {
                     fixFailure.set(false);
-                    theFd = 0;
+                    this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -1143,7 +1107,7 @@ public class O3FailureTest extends AbstractO3Test {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }
@@ -1152,13 +1116,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(193 + 45 + 18 + 27 + 12);
+        counter.set(193 + 45 + 18 + 27);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(176 + 45 + 18 + 26 + 12);
+        counter.set(176 + 45 + 18 + 26);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -1233,7 +1197,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testSetAppendPositionFails() throws Exception {
-        counter.set(169 + 12 + 20 + 19 + 8);
+        counter.set(169 + 12 + 20);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 

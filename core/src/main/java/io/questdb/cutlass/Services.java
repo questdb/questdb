@@ -215,7 +215,7 @@ public final class Services {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor(configuration.isPessimisticHealthCheckEnabled());
+                return new HealthCheckProcessor(configuration);
             }
         }, true);
         if (metrics.isEnabled()) {
@@ -227,7 +227,7 @@ public final class Services {
 
                 @Override
                 public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics);
+                    return new PrometheusMetricsProcessor(metrics, configuration);
                 }
             });
         }

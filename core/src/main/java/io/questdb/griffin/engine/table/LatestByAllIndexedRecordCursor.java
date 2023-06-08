@@ -38,10 +38,7 @@ import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
-import io.questdb.std.Rows;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -287,16 +284,16 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
                 // process our own queue
                 // this should fix deadlock with 1 worker configuration
-                while (doneLatch.getCount() > -queuedCount) {
+                while (!doneLatch.done(queuedCount)) {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     long seq = subSeq.next();
                     if (seq > -1) {
                         queue.get(seq).run();
                         subSeq.done(seq);
+                    } else {
+                        Os.pause();
                     }
                 }
-
-                doneLatch.await(queuedCount);
 
                 foundRowCount = 0; // Reset found counter
                 for (int i = 0; i < taskCount; i++) {
@@ -336,7 +333,7 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     private void processTasks(int queuedCount) {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence subSeq = bus.getLatestBySubSeq();
-        while (doneLatch.getCount() > -queuedCount) {
+        while (!doneLatch.done(queuedCount)) {
             long seq = subSeq.next();
             if (seq > -1) {
                 if (circuitBreaker.checkIfTripped()) {
@@ -344,8 +341,9 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
                 }
                 queue.get(seq).run();
                 subSeq.done(seq);
+            } else {
+                Os.pause();
             }
         }
-        doneLatch.await(queuedCount);
     }
 }
