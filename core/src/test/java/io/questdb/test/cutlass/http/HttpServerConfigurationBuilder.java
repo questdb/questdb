@@ -44,6 +44,8 @@ public class HttpServerConfigurationBuilder {
     private String baseDir;
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
+    private FactoryProvider factoryProvider;
+    private Boolean healthCheckAuthRequired;
     private String httpProtocolVersion = "HTTP/1.1 ";
     private long multipartIdleSpinCount = -1;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
@@ -52,6 +54,7 @@ public class HttpServerConfigurationBuilder {
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
     private boolean serverKeepAlive = true;
+    private Boolean staticContentAuthRequired;
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -63,7 +66,6 @@ public class HttpServerConfigurationBuilder {
 
         return new DefaultHttpServerConfiguration() {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-
                 @Override
                 public MillisecondClock getClock() {
                     return () -> 0;
@@ -129,6 +131,11 @@ public class HttpServerConfigurationBuilder {
                 public CharSequence getPublicDirectory() {
                     return baseDir;
                 }
+
+                @Override
+                public boolean isAuthenticationRequired() {
+                    return staticContentAuthRequired != null ? staticContentAuthRequired : true;
+                }
             };
 
             @Override
@@ -152,6 +159,11 @@ public class HttpServerConfigurationBuilder {
                     @Override
                     public boolean getDumpNetworkTraffic() {
                         return dumpTraffic;
+                    }
+
+                    @Override
+                    public FactoryProvider getFactoryProvider() {
+                        return factoryProvider != null ? factoryProvider : super.getFactoryProvider();
                     }
 
                     @Override
@@ -228,6 +240,11 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public boolean isHealthCheckAuthenticationRequired() {
+                return healthCheckAuthRequired != null ? healthCheckAuthRequired : super.isHealthCheckAuthenticationRequired();
+            }
+
+            @Override
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
             }
@@ -251,6 +268,16 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withDumpingTraffic(boolean dumpTraffic) {
         this.dumpTraffic = dumpTraffic;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withFactoryProvider(FactoryProvider factoryProvider) {
+        this.factoryProvider = factoryProvider;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withHealthCheckAuthRequired(boolean healthCheckAuthRequired) {
+        this.healthCheckAuthRequired = healthCheckAuthRequired;
         return this;
     }
 
@@ -291,6 +318,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withServerKeepAlive(boolean serverKeepAlive) {
         this.serverKeepAlive = serverKeepAlive;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withStaticContentAuthRequired(boolean staticContentAuthRequired) {
+        this.staticContentAuthRequired = staticContentAuthRequired;
         return this;
     }
 }
