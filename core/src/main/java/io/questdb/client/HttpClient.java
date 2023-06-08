@@ -263,8 +263,7 @@ public class HttpClient implements QuietCloseable {
             int len = (int) (ptr - bufLo);
             if (len > 0) {
                 long p = bufLo;
-                while (len > 0) {
-                    // todo: re-arm epoll
+                do {
                     final int sent = nf.send(fd, p, len);
                     if (sent < 0) {
                         throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
@@ -274,11 +273,14 @@ public class HttpClient implements QuietCloseable {
                         len -= sent;
                     }
 
+                    // still have data to send ?
                     if (len > 0) {
                         epollMod(EpollAccessor.EPOLLOUT);
                         poll(timeout);
+                    } else {
+                        break;
                     }
-                }
+                } while (true);
             }
         }
     }
@@ -338,10 +340,7 @@ public class HttpClient implements QuietCloseable {
         }
 
         public Chunk recv(int timeout) {
-            if (chunk.endOfChunk) {
-                return chunkStart(timeout);
-            }
-            return chunkContinue(timeout);
+            return chunk.endOfChunk ? chunkStart(timeout) : chunkContinue(timeout);
         }
 
         @NotNull
