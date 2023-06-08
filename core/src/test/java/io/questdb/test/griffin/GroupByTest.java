@@ -28,6 +28,8 @@ import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class GroupByTest extends AbstractGriffinTest {
 
     @Test
@@ -472,7 +474,7 @@ public class GroupByTest extends AbstractGriffinTest {
                     "order by ordr.date_report";
             assertPlan(query,
                     "Sort light\n" +
-                            "  keys: [date_report]\n" +
+                            "  keys: [date_report1]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,date_report,count]\n" +
                             "        GroupBy vectorized: false\n" +
@@ -640,6 +642,33 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByAllIndexedColumns() throws Exception {
+        assertQuery("time\ts1\tfirst\tfirst1\tfirst2\n" +
+                        "2023-05-16T00:00:00.000000Z\ta\tfoo\tNaN\t0.08486964232560668\n" +
+                        "2023-05-16T00:02:00.000000Z\tb\tfoo\t0.8899286912289663\t0.6254021542412018\n" +
+                        "2023-05-16T00:05:00.000000Z\tc\tfoo\t0.1985581797355932\t0.33608255572515877\n",
+                "SELECT first(ts) as time, s1, first(s2), first(d1), first(d2) " +
+                        "FROM x " +
+                        "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
+                        "AND s2 = ('foo') " +
+                        "GROUP BY s1, s2;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_symbol('a','b','c') s1," +
+                        "   rnd_symbol('foo','bar') s2," +
+                        "   rnd_double(1) d1," +
+                        "   rnd_double(1) d2," +
+                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
+                        "   from long_sequence(100)" +
+                        "), index(s1), index(s2) timestamp(ts) partition by DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupByColumnIdx1() throws Exception {
         assertQuery("key\tcount\n" +
                         "0\t50\n" +
@@ -754,6 +783,30 @@ public class GroupByTest extends AbstractGriffinTest {
             assertError("select * from tab group by 5",
                     "[27] GROUP BY position 5 is not in select list");
         });
+    }
+
+    @Test
+    public void testGroupByInvalidOrderByExpression() throws Exception {
+        assertFailure(
+                "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
+                "CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);",
+                69,
+                "Invalid date"
+        );
+    }
+
+    @Test
+    public void testGroupByOrderByExpression() throws Exception {
+        assertQuery(
+                "ref0\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
+                "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('1970-01-01T00:00:00.000002Z');",
+                "CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -999,6 +1052,160 @@ public class GroupByTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
+        assertCompile("create table tst ( ts timestamp ) timestamp(ts);");
+        assertCompile("insert into tst values ('2023-05-29T15:30:00.000000Z')");
+
+        assertCompile("create table data ( dts timestamp, s symbol ) timestamp(dts);");
+        assertCompile("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
+
+        //single table 
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY ts " +
+                        "ORDER BY ts", "", true, true);
+
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT tst.ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY tst.ts " +
+                        "ORDER BY tst.ts", "", true, true);
+
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT tst.ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY ts " +
+                        "ORDER BY tst.ts", "", true, true);
+
+        assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY tst.ts " +
+                        "ORDER BY ts", "", true, true);
+
+        //joins
+        for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
+            assertQuery("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                    "SELECT ts AS ref0, dts " +
+                            "FROM tst " +
+                            join +
+                            "GROUP BY tst.ts, data.dts " +
+                            "ORDER BY ts", "", true, true);
+
+            assertQuery("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                    "SELECT ts AS ref0, dts " +
+                            "FROM tst " +
+                            join +
+                            "GROUP BY ts, data.dts " +
+                            "ORDER BY tst.ts", "", true, true);
+        }
+    }
+
+    @Test
+    public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
+        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
+        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT tab.created AS ref0 " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY tab.created";
+
+        assertPlan(query,
+                "Sort light\n" +
+                        "  keys: [ref0]\n" +
+                        "    Distinct\n" +
+                        "      keys: ref0\n" +
+                        "        VirtualRecord\n" +
+                        "          functions: [created]\n" +
+                        "            GroupBy vectorized: false\n" +
+                        "              keys: [created]\n" +
+                        "                Async JIT Filter\n" +
+                        "                  filter: created!=null\n" +
+                        "                  workers: 1\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: tab\n");
+
+        assertQuery("ref0\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n",
+                query, null, true, false);
+    }
+
+    @Test
+    public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
+        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
+        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY dateadd('h', 1, tab.created)";
+
+        assertPlan(query,
+                "Sort light\n" +
+                        "  keys: [ref0]\n" +
+                        "    Distinct\n" +
+                        "      keys: ref0\n" +
+                        "        VirtualRecord\n" +
+                        "          functions: [dateadd('h',1,created)]\n" +
+                        "            GroupBy vectorized: false\n" +
+                        "              keys: [created]\n" +
+                        "                Async JIT Filter\n" +
+                        "                  filter: created!=null\n" +
+                        "                  workers: 1\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: tab\n");
+
+        assertQuery("ref0\n" +
+                        "1970-01-01T01:00:00.000001Z\n" +
+                        "1970-01-01T01:00:00.000002Z\n" +
+                        "1970-01-01T01:00:00.000003Z\n",
+                query, null, true, false);
+    }
+
+    @Test
+    public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
+        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
+        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT tab.created " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY tab.created";
+
+        assertPlan(query,
+                "Sort light\n" +
+                        "  keys: [created]\n" +
+                        "    Distinct\n" +
+                        "      keys: created\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [created]\n" +
+                        "            Async JIT Filter\n" +
+                        "              filter: created!=null\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n");
+
+        assertQuery("created\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n",
+                query, null, true, false);
     }
 
     @Test

@@ -2889,12 +2889,11 @@ public class WalWriterTest extends AbstractGriffinTest {
         AtomicReference<TestUtils.LeakProneCode> evenFileLengthCallBack = new AtomicReference<>();
 
         FilesFacade ff = new TestFilesFacadeImpl() {
-            int eventFileFd;
 
             @Override
             public long length(int fd) {
                 long len = super.length(fd);
-                if (fd == eventFileFd && evenFileLengthCallBack.get() != null) {
+                if (fd == this.fd && evenFileLengthCallBack.get() != null) {
                     TestUtils.unchecked(() -> {
                         evenFileLengthCallBack.get().run();
                         evenFileLengthCallBack.set(null);
@@ -2905,7 +2904,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (fd == eventFileFd) {
+                if (fd == this.fd) {
                     if (evenFileLengthCallBack.get() != null) {
                         TestUtils.unchecked(() -> {
                             evenFileLengthCallBack.get().run();
@@ -2924,7 +2923,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             public int openRO(LPSZ path) {
                 int fd = super.openRO(path);
                 if (Chars.endsWith(path, EVENT_FILE_NAME)) {
-                    eventFileFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }

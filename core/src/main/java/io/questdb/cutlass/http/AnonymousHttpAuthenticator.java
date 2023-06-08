@@ -22,13 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.cutlass.http;
 
-public class DefaultAuthenticatorFactory implements AuthenticatorFactory {
-    public static final AuthenticatorFactory INSTANCE = new DefaultAuthenticatorFactory();
+public class AnonymousHttpAuthenticator implements HttpAuthenticator {
+
+    public static final AnonymousHttpAuthenticator INSTANCE = new AnonymousHttpAuthenticator();
 
     @Override
-    public Authenticator getLineTCPAuthenticator() {
-        return AnonymousAuthenticator.INSTANCE;
+    public boolean authenticate(HttpRequestHeader headers) {
+        return true;
+    }
+
+    @Override
+    public CharSequence getPrincipal() {
+        return null;
     }
 }

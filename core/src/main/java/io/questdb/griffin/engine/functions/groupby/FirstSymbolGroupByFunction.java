@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -66,6 +67,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public @Nullable StaticSymbolTable getStaticSymbolTable() {
+        return arg.getStaticSymbolTable();
     }
 
     @Override

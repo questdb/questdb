@@ -918,27 +918,18 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCancelFirstRowPartitioned() throws Exception {
         ff = new TestFilesFacadeImpl() {
-            int kIndexFd = -1;
-
-            @Override
-            public boolean close(int fd) {
-                if (fd == kIndexFd) {
-                    kIndexFd = -1;
-                }
-                return super.close(fd);
-            }
 
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "2013-03-04") && Chars.endsWith(name, "category.k")) {
-                    return kIndexFd = super.openRW(name, opts);
+                    return this.fd = super.openRW(name, opts);
                 }
                 return super.openRW(name, opts);
             }
 
             @Override
             public int rmdir(Path name) {
-                if (kIndexFd != -1) {
+                if (this.fd != -1) {
                     // Access denied, file is open
                     return 5;
                 }
@@ -1338,7 +1329,6 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotMapTxFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             int count = 1;
-            int fd = -1;
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -1422,7 +1412,6 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
         testConstructor(new TestFilesFacadeImpl() {
-            int fd;
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -1448,8 +1437,6 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
         testConstructor(new TestFilesFacadeImpl() {
-            int fd;
-
             @Override
             public boolean allocate(int fd, long size) {
                 if (this.fd == fd) {
@@ -1474,7 +1461,6 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
         testConstructor(new TestFilesFacadeImpl() {
-            int fd;
 
             @Override
             public boolean allocate(int fd, long size) {
