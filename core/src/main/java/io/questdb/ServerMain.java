@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -50,12 +51,14 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.File;
+import java.security.PublicKey;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
@@ -227,9 +230,10 @@ public class ServerMain implements Closeable {
             // we need "root/" here, not "root/db/"
             final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
             final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
+            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new StaticChallengeResponseMatcher(absPath)
+                    new StaticChallengeResponseMatcher(authDb)
             );
         } else {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;

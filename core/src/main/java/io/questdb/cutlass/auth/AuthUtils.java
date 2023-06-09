@@ -24,20 +24,35 @@
 
 package io.questdb.cutlass.auth;
 
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ThreadLocal;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.security.*;
 import java.security.interfaces.ECKey;
 import java.security.spec.*;
 import java.util.Base64;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class AuthUtils {
     public static final String EC_ALGORITHM = "EC";
     public static final String EC_CURVE = "secp256r1";
+    // there are 2 types of signatures:
+    // 1. sigP1363 format is 64 bytes
+    // 2. sigDER format is 72 bytes
+    public static final int MAX_SIGNATURE_LENGTH = 72;
+    // (72 bytes / 3) * 4 = 96
+    public static final int MAX_SIGNATURE_LENGTH_BASE64 = 96;
     public static final String SIGNATURE_TYPE_DER = "SHA256withECDSA";
     public static final String SIGNATURE_TYPE_P1363 = "SHA256withECDSAinP1363Format";
+    private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
 
     private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
         try {
@@ -54,17 +69,69 @@ public final class AuthUtils {
         }
     });
 
-    public static boolean isSignatureMatch(PublicKey publicKey, byte[] challenge, byte[] response) throws InvalidKeyException, SignatureException {
-        byte[] signatureRaw = Base64.getDecoder().decode(response);
-        Signature sig = signatureRaw.length == 64 ? tlSigP1363.get() : tlSigDER.get();
+    public static boolean isSignatureMatch(PublicKey publicKey, byte[] challenge, ByteBuffer signature) throws InvalidKeyException, SignatureException {
+        Signature sig = signature.remaining() == 64 ? tlSigP1363.get() : tlSigDER.get();
         // On some out of date JDKs zeros can be valid signature because of a bug in the JDK code
         // Check that it's not the case.
-        if (checkAllZeros(signatureRaw)) {
+        if (checkAllZeros(signature)) {
             return false;
         }
         sig.initVerify(publicKey);
         sig.update(challenge);
-        return sig.verify(signatureRaw);
+        return sig.verify(signature.array(), signature.position(), signature.remaining());
+    }
+
+    public static CharSequenceObjHashMap<PublicKey> loadAuthDb(String authDbPath) {
+        CharSequenceObjHashMap<PublicKey> publicKeyByKeyId = new CharSequenceObjHashMap<>();
+        int nLine = 0;
+        String[] tokens = new String[4];
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(new BufferedInputStream(new FileInputStream(authDbPath))))) {
+            String line;
+            do {
+                int nTokens = 0;
+                line = r.readLine();
+                nLine++;
+                while (null != line) {
+                    Matcher m = TOKEN_PATTERN.matcher(line);
+                    if (!m.matches()) {
+                        break;
+                    }
+                    String token = m.group(1);
+                    if (token.startsWith("#")) {
+                        break;
+                    }
+                    if (nTokens == tokens.length) {
+                        throw new IllegalArgumentException("Too many tokens");
+                    }
+                    tokens[nTokens] = m.group(1);
+                    nTokens++;
+                    line = m.group(2);
+                }
+
+                if (nTokens == 0) {
+                    continue;
+                }
+
+                if (nTokens != 4) {
+                    throw new IllegalArgumentException("Was expecting 4 tokens");
+                }
+
+                if (!"ec-p-256-sha256".equals(tokens[1])) {
+                    throw new IllegalArgumentException("Unrecognized type " + tokens[1]);
+                }
+
+                CharSequence keyId = tokens[0];
+                if (!publicKeyByKeyId.excludes(keyId)) {
+                    throw new IllegalArgumentException("Duplicate keyId " + keyId);
+                }
+
+                PublicKey publicKey = AuthUtils.toPublicKey(tokens[2], tokens[3]);
+                publicKeyByKeyId.put(keyId, publicKey);
+            } while (null != line);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("IO error, failed to read auth db file " + authDbPath + " at line " + nLine, ex);
+        }
+        return publicKeyByKeyId;
     }
 
     public static PrivateKey toPrivateKey(String encodedPrivateKey) {
@@ -103,10 +170,10 @@ public final class AuthUtils {
         }
     }
 
-    private static boolean checkAllZeros(byte[] signatureRaw) {
-        int n = signatureRaw.length;
+    private static boolean checkAllZeros(ByteBuffer signatureRaw) {
+        int n = signatureRaw.remaining();
         for (int i = 0; i < n; i++) {
-            if (signatureRaw[i] != 0) {
+            if (signatureRaw.get(i) != 0) {
                 return false;
             }
         }

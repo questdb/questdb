@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp.auth;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.ChallengeResponseMatcher;
@@ -39,7 +40,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import java.security.SecureRandom;
 
 public class EllipticCurveAuthenticator implements Authenticator {
-    public static final int CHALLENGE_LEN = 512;
+    private static final int CHALLENGE_LEN = 512;
     private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
     private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
 
@@ -47,6 +48,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
     private final ChallengeResponseMatcher challengeResponseMatcher;
     private final NetworkFacade nf;
+    private final DirectByteCharSequence signatureFlyweight = new DirectByteCharSequence();
     private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
     protected long recvBufPseudoStart;
     private AuthState authState;
@@ -200,13 +202,13 @@ public class EllipticCurveAuthenticator implements Authenticator {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
             // Verify signature
-            byte[] signature = new byte[lineEnd];
-            for (int n = 0; n < lineEnd; n++) {
-                signature[n] = Unsafe.getUnsafe().getByte(recvBufStart + n);
+            if (lineEnd > AuthUtils.MAX_SIGNATURE_LENGTH_BASE64) {
+                LOG.info().$('[').$(fd).$("] authentication signature is too long").$();
+                throw AuthenticatorException.INSTANCE;
             }
-
+            signatureFlyweight.of(recvBufStart, recvBufStart + lineEnd);
             authState = AuthState.FAILED;
-            boolean verified = challengeResponseMatcher.verifyLineToken(principal, challengeBytes, signature);
+            boolean verified = challengeResponseMatcher.verifyLineToken(principal, challengeBytes, signatureFlyweight);
             if (!verified) {
                 LOG.info().$('[').$(fd).$("] authentication failed, signature was not verified").$();
                 throw AuthenticatorException.INSTANCE;
