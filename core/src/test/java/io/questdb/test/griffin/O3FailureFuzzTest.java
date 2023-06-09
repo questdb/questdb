@@ -125,7 +125,6 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppend() throws Exception {
-        rnd = new Rnd(965901126417583L, 1686331970700L);
         runFuzzRoutine(O3FailureFuzzTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0);
     }
 
