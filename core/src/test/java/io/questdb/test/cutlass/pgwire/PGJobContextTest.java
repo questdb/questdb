@@ -7032,24 +7032,23 @@ create table tab as (
         assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP, s INT)").execute();
-            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();
-            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-06T16:42:00.333999Z', 2)").execute();
-            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-07T03:52:00.999999Z', 3)").execute();
+            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();//monday
+            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-06T16:42:00.333999Z', 2)").execute();//tuesday
+            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-07T03:52:00.999999Z', 3)").execute();//wednesday
             connection.prepareStatement("INSERT INTO tab VALUES (null, 4)").execute();
             connection.commit();
             mayDrainWalQueue();
 
-            String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?,?)";
+            String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?)";
             try (PreparedStatement stmt = connection.prepareStatement("explain " + query)) {
                 stmt.setString(1, "Tuesday");
                 stmt.setString(2, "Friday");
-                stmt.setString(3, null);
                 try (ResultSet rs = stmt.executeQuery()) {
                     sink.clear();
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter\n" +
-                                    "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::string,$1::string,$2::string])\n" +
+                                    "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::string,$1::string])\n" +
                                     "  workers: 2\n" +
                                     "    DataFrame\n" +
                                     "        Row forward scan\n" +
@@ -7061,19 +7060,48 @@ create table tab as (
             }
 
             try (PreparedStatement stmt = connection.prepareStatement(query)) {
+                stmt.setString(1, "Monday");
+                stmt.setString(2, null);
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                            "2023-06-05 11:12:22.116234,1\n" +
+                            "2023-06-07 03:52:00.999999,3\n" +
+                            "null,4\n", sink, resultSet);
+                }
+
                 stmt.setString(1, "Tuesday");
                 stmt.setString(2, "Friday");
-                stmt.setString(3, null);
                 try (ResultSet resultSet = stmt.executeQuery()) {
                     sink.clear();
                     assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
                             "2023-06-06 16:42:00.333999,2\n" +
-                            "2023-06-07 03:52:00.999999,3\n" +
-                            "null,4\n", sink, resultSet);
+                            "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
+                }
+
+                stmt.setString(1, "Saturday");
+                stmt.setString(2, "Sunday");
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                            "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
                 }
             }
 
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab WHERE to_str(ts,'EE') in (?)")) {
+                stmt.setString(1, "Monday");
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                            "2023-06-05 11:12:22.116234,1\n", sink, resultSet);
+                }
 
+                stmt.setString(1, "Saturday");
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n", sink, resultSet);
+                }
+            }
         });
     }
 
