@@ -363,7 +363,7 @@ public class SqlCompiler implements Closeable {
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
             String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
-                tok = expectToken(lexer, expectedTokenDescription);
+            tok = expectToken(lexer, expectedTokenDescription);
 
             if (SqlKeywords.isAddKeyword(tok)) {
                 executionContext.getSecurityContext().authorizeAlterTableAddColumn(tableToken);
@@ -537,15 +537,15 @@ public class SqlCompiler implements Closeable {
                 }
                 return alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
-                    executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
-                    tok = expectToken(lexer, "'partitions'");
-                    if (SqlKeywords.isPartitionsKeyword(tok)) {
-                        return compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
-                    }
+                executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
+                tok = expectToken(lexer, "'partitions'");
+                if (SqlKeywords.isPartitionsKeyword(tok)) {
+                    return compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();

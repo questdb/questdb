@@ -88,9 +88,8 @@ public interface MetadataServiceStub extends MetadataService {
 
     @Override
     default void squashPartitions() {
-        throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
+        throw CairoException.critical(0).put("partition squash does not update sequencer metadata");
     }
-
 
     @Override
     default void tick() {
