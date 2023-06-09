@@ -402,7 +402,7 @@ public class PropServerConfigurationTest {
 
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
-        Assert.assertEquals(1L << 40, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
+        Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
     }
 
     @Test
