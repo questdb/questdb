@@ -999,11 +999,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // To detach the partition, squash it into single folder if required
         squashPartitionForce(partitionIndex);
 
-        // Get next partition, should exist, it's not the last partition
-        if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) == timestamp) {
-            // Could not squash to single partition before detaching because of active table readers.
-            return AttachDetachStatus.DETACH_ERR_CANNOT_SQUASH;
-        }
+        // To check that partition is squashed get the next partition and
+        // verify that it's not the same timestamp as the one we are trying to detach.
+        // The next partition should exist, since last partition cannot be detached.
+        assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != timestamp;
 
         long minTimestamp = txWriter.getMinTimestamp();
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
