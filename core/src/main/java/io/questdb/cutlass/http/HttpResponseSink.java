@@ -691,6 +691,18 @@ public class HttpResponseSink implements Closeable, Mutable {
         public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatus(code, null);
         }
+
+        public void sendStatusWithHeader(int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            buffer.clearAndPrepareToWriteToBuffer();
+            final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
+            headerImpl.put(header);
+            prepareHeaderSink();
+            flushSingle();
+            buffer.clearAndPrepareToWriteToBuffer();
+            sink.put(std).put(Misc.EOL);
+            buffer.prepareToReadFromBuffer(true, true);
+            resumeSend();
+        }
     }
 
     static {
@@ -698,6 +710,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(206, "Partial content");
         httpStatusMap.put(304, "Not Modified");
         httpStatusMap.put(400, "Bad request");
+        httpStatusMap.put(401, "Unauthorized");
         httpStatusMap.put(404, "Not Found");
         httpStatusMap.put(416, "Request range not satisfiable");
         httpStatusMap.put(431, "Headers too large");

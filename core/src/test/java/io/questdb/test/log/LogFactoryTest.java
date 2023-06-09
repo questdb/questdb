@@ -31,6 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -198,6 +199,63 @@ public class LogFactoryTest {
     @Test
     public void testLogAutoDeleteByFileAge6months() throws Exception {
         testAutoDelete(null, "6m");
+    }
+
+    @Test
+    public void testLogSequenceIsReleasedOnException() {
+        try (LogFactory factory = new LogFactory()) {
+            final StringSink sink = new StringSink();
+            SOCountDownLatch latch = new SOCountDownLatch(1);
+
+            factory.add(new LogWriterConfig(LogLevel.ALL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                    return seq.consumeAll(ring, this::log);
+                }
+
+                private void log(LogRecordSink record) {
+                    sink.clear();
+                    sink.put(record);
+                    latch.countDown();
+                }
+            }));
+
+            factory.bind();
+            factory.startThread();
+            Log logger = factory.create("x");
+
+            try {
+                logger.info().$("message 1").$(new Sinkable() {
+                    @Override
+                    public void toSink(CharSink sink) {
+                        throw new NullPointerException();
+                    }
+                }).$(" message 2").$();
+                Assert.fail();
+            } catch (NullPointerException npe) {
+                latch.await();
+                TestUtils.assertContains(sink, " I x message 1");
+            }
+
+            latch.setCount(1);
+
+            try {
+                logger.critical().$("message A").$(new Object() {
+                    @Override
+                    public String toString() {
+                        throw new NullPointerException();
+                    }
+                }).$(" message B").$();
+                Assert.fail();
+            } catch (NullPointerException npe) {
+                latch.await();
+                TestUtils.assertContains(sink, " C x message A");
+            }
+        }
     }
 
     @Test

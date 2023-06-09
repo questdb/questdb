@@ -88,10 +88,11 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             int columnType,
             int indexBlockCapacity,
             long columnTop,
-            int columnIndex
+            int columnIndex,
+            boolean isEmpty
     ) {
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-        indexWriter.of(partitionPath, columnName, columnTxn, columnTop < 0 ? indexBlockCapacity : 0);
+        indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
     }
 
     @Override
