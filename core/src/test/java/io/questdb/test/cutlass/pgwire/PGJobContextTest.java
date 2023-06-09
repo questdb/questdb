@@ -6989,10 +6989,10 @@ create table tab as (
 
     /* asyncqp.py - bind variable appear both in select and where clause
        Unlike jdbc driver, Asyncpg doesn't pass parameter types in Parse message and relies on types returned in ParameterDescription.
-      
+
     import asyncio
     import asyncpg
-    
+
     async def run():
         conn = await asyncpg.connect(user='xyz', password='oh', database='postgres', host='127.0.0.1')
         s = """
@@ -7000,11 +7000,11 @@ create table tab as (
             """
         values = await conn.fetch(s, 'oh' 0.4)
         await conn.close()
-    
+
     loop = asyncio.get_event_loop()
     loop.run_until_complete(run())
      */
-    @Test//bind variables make sense in extended mode only 
+    @Test//bind variables make sense in extended mode only
     public void testSelectBindVarsInSelectAndWhereAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
@@ -7728,6 +7728,22 @@ create table tab as (
                 TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
             }
         });
+    }
+
+    @Test
+    public void testSquashPartitionsReturnsOk() throws Exception {
+        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+            connection.commit();
+            mayDrainWalQueue();
+            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
+                Assert.assertFalse(dropPartition.execute());
+            }
+        };
     }
 
     @Test

@@ -54,6 +54,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short RENAME_COLUMN = 9;
     public final static short SET_PARAM_COMMIT_LAG = 11;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
+    public final static short SQUASH_PARTITIONS = 13;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -122,6 +123,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
                     break;
+                case SQUASH_PARTITIONS:
+                    squashPartitions(svc);
+                    break;
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
@@ -134,10 +138,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         } catch (CairoException e) {
             final LogRecord log = e.isCritical() ? LOG.critical() : LOG.error();
             log.$("could not alter table [table=").$(svc.getTableToken())
-                .$(", command=").$(command)
-                .$(", errno=").$(e.getErrno())
-                .$(", message=`").$(e.getFlyweightMessage()).$('`')
-                .I$();
+                    .$(", command=").$(command)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", message=`").$(e.getFlyweightMessage()).$('`')
+                    .I$();
             throw e;
         }
         return 0;
@@ -428,6 +432,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
+    }
+
+    private void squashPartitions(MetadataService svc) {
+        svc.squashPartitions();
     }
 
     interface CharSequenceList extends Mutable {
