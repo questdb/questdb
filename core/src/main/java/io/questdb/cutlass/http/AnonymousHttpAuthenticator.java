@@ -22,14 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.http;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
+public class AnonymousHttpAuthenticator implements HttpAuthenticator {
 
-public interface PgWireAuthenticationFactory {
-    Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                         NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
-                                         OptionsListener optionsListener);
+    public static final AnonymousHttpAuthenticator INSTANCE = new AnonymousHttpAuthenticator();
+
+    @Override
+    public boolean authenticate(HttpRequestHeader headers) {
+        return true;
+    }
+
+    @Override
+    public CharSequence getPrincipal() {
+        return null;
+    }
 }

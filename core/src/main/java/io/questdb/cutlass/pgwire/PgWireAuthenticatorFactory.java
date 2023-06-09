@@ -22,13 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.cutlass.pgwire;
 
-public class DefaultAuthenticatorFactory implements AuthenticatorFactory {
-    public static final AuthenticatorFactory INSTANCE = new DefaultAuthenticatorFactory();
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.network.NetworkFacade;
 
-    @Override
-    public Authenticator getLineTCPAuthenticator() {
-        return AnonymousAuthenticator.INSTANCE;
-    }
+public interface PgWireAuthenticatorFactory {
+    Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
+                                         NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
+                                         OptionsListener optionsListener);
 }

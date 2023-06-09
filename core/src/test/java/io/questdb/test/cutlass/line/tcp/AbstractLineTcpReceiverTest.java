@@ -30,9 +30,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
+import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -101,9 +101,9 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
         @Override
-        public AuthenticatorFactory getAuthenticatorFactory() {
+        public LineAuthenticatorFactory getLineAuthenticatorFactory() {
             if (authKeyId == null) {
-                return super.getAuthenticatorFactory();
+                return super.getLineAuthenticatorFactory();
             }
             URL u = getClass().getResource("authDb.txt");
             assert u != null;

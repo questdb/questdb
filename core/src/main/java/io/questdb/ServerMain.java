@@ -34,9 +34,9 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
-import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
+import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
+import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
@@ -220,25 +220,25 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("server is ready to be started").$();
     }
 
-    public static AuthenticatorFactory getAuthenticatorFactory(ServerConfiguration configuration) {
-        AuthenticatorFactory authenticatorFactory;
+    public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
+        LineAuthenticatorFactory authenticatorFactory;
         // create default authenticator for Line TCP protocol
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
             // we need "root/" here, not "root/db/"
             final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
-            String authPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
+            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new StaticChallengeResponseMatcher(authPath)
+                    new StaticChallengeResponseMatcher(absPath)
             );
         } else {
-            authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;
+            authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
         }
         return authenticatorFactory;
     }
 
-    public static PgWireAuthenticationFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration) {
-        return new UserDatabasePgWireAuthenticationFactory(new StaticUserDatabase(configuration.getPGWireConfiguration()));
+    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration) {
+        return new UsernamePasswordPgWireAuthenticatorFactory(new StaticUsernamePasswordMatcher(configuration.getPGWireConfiguration()));
     }
 
     public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {

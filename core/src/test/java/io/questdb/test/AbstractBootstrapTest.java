@@ -102,13 +102,14 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("metrics.enabled=false");
             writer.println("telemetry.enabled=false");
 
-            // configure end points
+            // configure endpoints
             writer.println("http.bind.to=0.0.0.0:" + httpPort);
             writer.println("http.min.net.bind.to=0.0.0.0:" + httpMinPort);
             writer.println("pg.net.bind.to=0.0.0.0:" + pgPort);
             writer.println("line.tcp.net.bind.to=0.0.0.0:" + ilpPort);
             writer.println("line.udp.bind.to=0.0.0.0:" + ilpPort);
             writer.println("line.udp.receive.buffer.size=" + ILP_BUFFER_SIZE);
+            writer.println("http.frozen.clock=true");
 
             // configure worker pools
             writer.println("shared.worker.count=2");

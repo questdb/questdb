@@ -27,7 +27,7 @@ package io.questdb.cutlass.auth;
 import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
 import io.questdb.network.NetworkFacade;
 
-public class EllipticCurveAuthenticatorFactory implements AuthenticatorFactory {
+public class EllipticCurveAuthenticatorFactory implements LineAuthenticatorFactory {
     private final ChallengeResponseMatcher matcher;
     private final NetworkFacade networkFacade;
 
