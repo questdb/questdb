@@ -329,6 +329,36 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCaseErrors() throws Exception {
+        assertFailure("select case from long_sequence(1)", null, 7, "unbalanced 'case'");
+        assertFailure("select case end from long_sequence(1)", null, 12, "'when' expected");
+        assertFailure("select case x end from long_sequence(1)", null, 14, "'when' expected");
+        assertFailure("select case 1 end from long_sequence(1)", null, 14, "'when' expected");
+        assertFailure("select case false end from long_sequence(1)", null, 18, "'when' expected");
+        assertFailure("select case x/2 end from long_sequence(1)", null, 16, "'when' expected");
+        assertFailure("select case x/2 z end from long_sequence(1)", null, 18, "'when' expected");
+        assertFailure("select case 1+5 end from long_sequence(1)", null, 16, "'when' expected");
+        assertFailure("select case rnd_double() end from long_sequence(1)", null, 25, "'when' expected");
+        assertFailure("select case x else 2 end from long_sequence(1)", null, 14, "'when' expected");
+        assertFailure("select case x when else 2 end from long_sequence(1)", null, 19, "missing arguments");
+        assertFailure("select case x when 1 end from long_sequence(1)", null, 21, "'then' expected");
+        assertFailure("select case x when 1 else 2 end from long_sequence(1)", null, 21, "'then' expected");
+        assertFailure("select case x when 1 then else 2 end from long_sequence(1)", null, 26, "missing arguments");
+        assertFailure("select case x when 1 then 1 else else end from long_sequence(1)", null, 33, "missing arguments");
+        assertFailure("select case x when 1 then 1 when else 2 end from long_sequence(1)", null, 33, "missing arguments");
+        assertFailure("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)", null, 35, "'then' expected");
+        assertFailure("select case when end from long_sequence(1)", null, 17, "missing arguments");
+        assertFailure("select case when then else end from long_sequence(1)", null, 17, "missing arguments");
+        assertFailure("select case when else end from long_sequence(1)", null, 17, "missing arguments");
+        assertFailure("select case when x end from long_sequence(1)", null, 19, "'then' expected");
+        assertFailure("select case when x else end from long_sequence(1)", null, 19, "'then' expected");
+        assertFailure("select case when x else 2 end from long_sequence(1)", null, 19, "'then' expected");
+        assertFailure("select case when x then end from long_sequence(1)", null, 24, "missing arguments");
+        assertFailure("select case when x then else end from long_sequence(1)", null, 24, "missing arguments");
+        assertFailure("select case when x then x else end from long_sequence(1)", null, 31, "missing arguments");
+    }
+
+    @Test
     public void testCaseWithNoElseInSelectClause() throws SqlException {
         assertQuery("c\n0\nNaN\nNaN\n",
                 "select case x when 1 then 0 end c from long_sequence(3)", null, true, true);
