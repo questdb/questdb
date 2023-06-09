@@ -101,10 +101,10 @@ public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher 
     }
 
     @Override
-    public boolean match(CharSequence keyId, byte[] challenge, byte[] response) {
-        PublicKey publicKey = getPublicKey(keyId);
+    public boolean verifyLineToken(CharSequence username, byte[] challenge, byte[] signature) {
+        PublicKey publicKey = getPublicKey(username);
         try {
-            return AuthUtils.isSignatureMatch(publicKey, challenge, response);
+            return AuthUtils.isSignatureMatch(publicKey, challenge, signature);
         } catch (InvalidKeyException | SignatureException ex) {
             LOG.info().$(" authentication exception ").$(ex).$();
             return false;

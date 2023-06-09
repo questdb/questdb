@@ -206,7 +206,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
             }
 
             authState = AuthState.FAILED;
-            boolean verified = challengeResponseMatcher.match(principal, challengeBytes, signature);
+            boolean verified = challengeResponseMatcher.verifyLineToken(principal, challengeBytes, signature);
             if (!verified) {
                 LOG.info().$('[').$(fd).$("] authentication failed, signature was not verified").$();
                 throw AuthenticatorException.INSTANCE;
