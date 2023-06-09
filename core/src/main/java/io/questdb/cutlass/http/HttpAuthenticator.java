@@ -22,30 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.http;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
+import io.questdb.std.QuietCloseable;
 
-public class DefaultPgWireAuthenticationFactory implements PgWireAuthenticationFactory {
-    public static final PgWireAuthenticationFactory INSTANCE = new DefaultPgWireAuthenticationFactory();
+public interface HttpAuthenticator extends QuietCloseable {
+
+    /**
+     * Authenticates incoming HTTP request.
+     *
+     * @param headers request headers
+     * @return true if the authentication succeeded, false - otherwise
+     */
+    boolean authenticate(HttpRequestHeader headers);
+
+    default void clear() {
+    }
 
     @Override
-    public Authenticator getPgWireAuthenticator(
-            NetworkFacade nf,
-            PGWireConfiguration configuration,
-            NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            CircuitBreakerRegistry registry,
-            OptionsListener optionsListener
-    ) {
-        return new CleartextPasswordPgWireAuthenticator(
-                nf,
-                configuration,
-                circuitBreaker,
-                registry,
-                optionsListener,
-                new StaticUserDatabase(configuration)
-        );
+    default void close() {
     }
+
+    CharSequence getPrincipal();
 }

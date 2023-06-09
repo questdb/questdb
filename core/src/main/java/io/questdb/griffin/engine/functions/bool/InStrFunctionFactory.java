@@ -48,15 +48,20 @@ public class InStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-
-        CharSequenceHashSet set = new CharSequenceHashSet();
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int n = args.size();
-
         if (n == 1) {
             return BooleanConstant.FALSE;
         }
         ObjList<Function> deferredValues = null;
+
+        final CharSequenceHashSet set = new CharSequenceHashSet();
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -83,7 +88,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
             }
         }
-        Function var = args.getQuick(0);
+        final Function var = args.getQuick(0);
         if (var.isConstant() && deferredValues == null) {
             return BooleanConstant.of(set.contains(var.getStr(null)));
         }

@@ -22,34 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.QuietCloseable;
+public class MetadataChangedException extends Exception {
 
-public interface Authenticator extends QuietCloseable {
+    public final static MetadataChangedException INSTANCE = new MetadataChangedException();
 
-    int NEEDS_DISCONNECT = 3;
-    int NEEDS_READ = 0;
-    int NEEDS_WRITE = 1;
-    int OK = -1;
-    int QUEUE_FULL = 2;
-
-    default void clear() {
+    private MetadataChangedException() {
     }
-
-    @Override
-    default void close() {
-    }
-
-    CharSequence getPrincipal();
-
-    long getRecvBufPos();
-
-    long getRecvBufPseudoStart();
-
-    int handleIO() throws AuthenticatorException;
-
-    void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
-
-    boolean isAuthenticated();
 }
