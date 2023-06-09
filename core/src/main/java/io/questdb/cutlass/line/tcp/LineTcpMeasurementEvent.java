@@ -85,6 +85,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 .put("cast error for line protocol ").put(ilpType)
                 .put(" [columnWriterIndex=").put(columnWriterIndex)
                 .put(", columnType=").put(ColumnType.nameOf(colType))
+                .put(":").put(colType)
                 .put(", name=").put(name)
                 .put(']');
     }

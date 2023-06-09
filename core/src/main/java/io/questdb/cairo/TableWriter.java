@@ -1421,7 +1421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
-                    openFirstPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                    initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                 }
                 // fall thru
 
@@ -1476,8 +1476,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void openLastPartition() {
         try {
-            openPartition(txWriter.getLastPartitionTimestamp());
-            setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
+            openLastPartitionAndSetAppendPosition(txWriter.getLastPartitionTimestamp());
         } catch (Throwable e) {
             freeColumns(false);
             throw e;
@@ -2413,6 +2412,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setAppendPosition(txWriter.transientRowCount, false);
     }
 
+    private boolean assertColumnPositionIncludeWalLag() {
+        return txWriter.getLagRowCount() == 0
+                || columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex())).getAppendOffset() == (txWriter.getTransientRowCount() + txWriter.getLagRowCount()) * Long.BYTES;
+    }
+
     private void attachPartitionCheckFilesMatchFixedColumn(
             int columnType,
             long partitionSize,
@@ -2967,7 +2971,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void configureAppendPosition() {
         final boolean partitioned = PartitionBy.isPartitioned(partitionBy);
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
-            openFirstPartition(this.txWriter.getMaxTimestamp());
+            initLastPartition(this.txWriter.getMaxTimestamp());
             if (partitioned) {
                 partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
                 rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -3283,6 +3287,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
         Misc.free(partitionFrameFactory);
+        assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
         commitListener = Misc.free(commitListener);
         try {
@@ -3708,6 +3713,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
+    }
+
+    private void initLastPartition(long timestamp) {
+        final long ts = repairDataGaps(timestamp);
+        openLastPartitionAndSetAppendPosition(ts);
+        populateDenseIndexerList();
+        if (performRecovery) {
+            performRecovery();
+        }
+        txWriter.initLastPartition(ts);
     }
 
     private boolean isLastPartitionClosed() {
@@ -5222,15 +5237,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void openFirstPartition(long timestamp) {
-        final long ts = repairDataGaps(timestamp);
+    private void openLastPartitionAndSetAppendPosition(long ts) {
         openPartition(ts);
-        populateDenseIndexerList();
-        setAppendPosition(txWriter.getTransientRowCount(), false);
-        if (performRecovery) {
-            performRecovery();
-        }
-        txWriter.openFirstPartition(ts);
+        setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
     private void openNewColumnFiles(CharSequence name, int columnType, boolean indexFlag, int indexValueBlockCapacity) {
