@@ -30,10 +30,7 @@ import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.Epoll;
-import io.questdb.network.EpollAccessor;
-import io.questdb.network.EpollFacadeImpl;
-import io.questdb.network.NetworkFacade;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -115,6 +112,13 @@ public class HttpClient implements QuietCloseable {
         return request;
     }
 
+    private static int die(int result) {
+        if (result < 0) {
+            throw new HttpClientException("peer disconnect [errno=").errno(Os.errno()).put(']');
+        }
+        return result;
+    }
+
     private void compactBuffer() {
         // move unprocessed data to the front of the buffer
         // to maximise
@@ -129,21 +133,36 @@ public class HttpClient implements QuietCloseable {
         }
     }
 
-    private void setupEpoll() {
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
-            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
-        }
+    private int recvOrDie(int timeout) {
+        return recvOrDie(dataHi, (int) (bufferSize - (dataHi - bufLo)), timeout);
     }
 
-    private void epollMod(int event) {
+    private int recvOrDie(long lo, int len, int timeout) {
+        ioWait(timeout, IOOperation.READ);
+        return die(nf.recv(fd, lo, len));
+    }
+
+    private int sendOrDie(long lo, int len, int timeout) {
+        ioWait(timeout, IOOperation.WRITE);
+        return die(nf.send(fd, lo, len));
+    }
+
+    protected void ioWait(int timeout, int op) {
+
+        final int event = op == IOOperation.WRITE ? EpollAccessor.EPOLLOUT : EpollAccessor.EPOLLIN;
+
         if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, event) < 0) {
             throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
         }
-    }
 
-    private void poll(int timeout) {
         if (epoll.poll(timeout) != 1) {
             throw new HttpClientException("timed out").errno(nf.errno());
+        }
+    }
+
+    protected void setupIoWait() {
+        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
+            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
         }
     }
 
@@ -257,30 +276,17 @@ public class HttpClient implements QuietCloseable {
         }
 
         private void doSend(int timeout) {
-
-            setupEpoll();
-
+            setupIoWait();
             int len = (int) (ptr - bufLo);
             if (len > 0) {
                 long p = bufLo;
                 do {
-                    final int sent = nf.send(fd, p, len);
-                    if (sent < 0) {
-                        throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
-                    }
+                    final int sent = sendOrDie(p, len, timeout);
                     if (sent > 0) {
                         p += sent;
                         len -= sent;
                     }
-
-                    // still have data to send ?
-                    if (len > 0) {
-                        epollMod(EpollAccessor.EPOLLOUT);
-                        poll(timeout);
-                    } else {
-                        break;
-                    }
-                } while (true);
+                } while (len > 0);
             }
         }
     }
@@ -300,21 +306,11 @@ public class HttpClient implements QuietCloseable {
             //
             chunk.clear();
             while (headerParser.isIncomplete()) {
-                // read response header; if we manage to read header
-                // fully in one shot, the outer while loop exists;
-                // otherwise loop re
-                poll(timeout);
-
-                final int len = nf.recv(fd, bufLo, bufferSize);
-                if (len < 0) {
-                    throw new HttpClientException("peer disconnect").errno(nf.errno());
-                }
-                // dataLo & dataHi are boundaries of unprocessed data left in the buffer
-                dataLo = headerParser.parse(bufLo, bufLo + len, false, true);
-                dataHi = bufLo + len;
-
-                if (headerParser.isIncomplete()) {
-                    epollMod(EpollAccessor.EPOLLOUT);
+                final int len = recvOrDie(bufLo, bufferSize, timeout);
+                if (len > 0) {
+                    // dataLo & dataHi are boundaries of unprocessed data left in the buffer
+                    dataLo = headerParser.parse(bufLo, bufLo + len, false, true);
+                    dataHi = bufLo + len;
                 }
             }
         }
@@ -348,9 +344,7 @@ public class HttpClient implements QuietCloseable {
             chunk.consumed += chunk.available;
             compactBuffer();
             while (true) {
-                epollMod(EpollAccessor.EPOLLIN);
-                poll(timeout);
-                int len = recvOrDie();
+                int len = recvOrDie(timeout);
                 if (len > 0) {
                     // we are consuming the remaining chunk bytes;
                     // chunk size includes `\r\n\`, which must not be included in
@@ -384,9 +378,7 @@ public class HttpClient implements QuietCloseable {
             compactBuffer();
             // re-arm epoll to read more from the server
             while (true) {
-                epollMod(EpollAccessor.EPOLLIN);
-                poll(timeout);
-                int len = recvOrDie();
+                int len = recvOrDie(timeout);
                 if (len > 0) {
                     dataHi += len;
                     // try to read chunk prefix
@@ -450,14 +442,6 @@ public class HttpClient implements QuietCloseable {
                 }
             }
             return false;
-        }
-
-        private int recvOrDie() {
-            final int len = nf.recv(fd, dataHi, (int) (bufferSize - (dataHi - bufLo)));
-            if (len < 0) {
-                throw new HttpClientException("peer disconnect [errno=").put(nf.errno()).put(']');
-            }
-            return len;
         }
 
         public class Chunk implements Mutable {
