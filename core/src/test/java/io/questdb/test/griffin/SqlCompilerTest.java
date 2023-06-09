@@ -43,6 +43,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -99,6 +100,50 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "), cast(a as SYMBOL)";
 
         assertCast(expectedData, expectedMeta, sql);
+    }
+
+    @Test
+    public void tesFailOnNonBooleanJoinCondition() throws Exception {
+        assertCompile("create table a ( ts timestamp, i int) timestamp(ts) ");
+        assertCompile("create table b ( ts timestamp, i int) timestamp(ts) ");
+
+        String booleanError = "boolean expression expected";
+
+        assertFailure(30, booleanError,
+                "select * from a " +
+                        "join b on a.i - b.i");
+
+        assertFailure(35, booleanError,
+                "select * from a " +
+                        "left join b on a.i - b.i");
+
+        assertFailure(46, booleanError,
+                "select * from a " +
+                        "join b on a.ts = b.ts and a.i - b.i");
+
+        assertFailure(51, booleanError,
+                "select * from a " +
+                        "left join b on a.ts = b.ts and a.i - b.i");
+
+        for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
+            assertFailure(37, "unsupported " + join.trim() + " join expression",
+                    "select * " +
+                            "from a " +
+                            "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join));
+        }
+
+        String unexpectedError = "unexpected argument for function: and. expected args: (BOOLEAN,BOOLEAN). actual args: (INT,INT)";
+        assertFailure(44, unexpectedError,
+                "select * from a " +
+                        "join b on a.i + b.i and a.i - b.i");
+
+        assertFailure(49, unexpectedError,
+                "select * from a " +
+                        "left join b on a.i + b.i and a.i - b.i");
+
+        assertFailure(60, unexpectedError,
+                "select * from a " +
+                        "join b on a.ts = b.ts and a.i - b.i and b.i - a.i");
     }
 
     @Test

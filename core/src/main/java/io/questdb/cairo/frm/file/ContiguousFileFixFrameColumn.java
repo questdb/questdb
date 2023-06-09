@@ -154,11 +154,11 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         return COLUMN_CONTIGUOUS_FILE;
     }
 
-    public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
+    public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
         assert fd == -1;
         of(columnType, columnTop, columnIndex);
 
-        if (columnTop >= 0) {
+        if (!isEmpty) {
             int plen = partitionPath.length();
             try {
                 dFile(partitionPath, columnName, columnTxn);
@@ -166,9 +166,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } finally {
                 partitionPath.trimTo(plen);
             }
-        } else {
-            // Column does not exist in the partition, don't try to open the file
-            this.columnTop = -columnTop;
         }
     }
 
@@ -176,7 +173,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         assert fd == -1;
         // Negative col top means column does not exist in the partition.
         // Create it.
-        columnTop = Math.abs(columnTop);
         of(columnType, columnTop, columnIndex);
 
         int plen = partitionPath.length();
