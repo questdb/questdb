@@ -28,6 +28,7 @@ import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.test.tools.TestUtils;
@@ -295,6 +296,48 @@ public class HttpHeaderParserTest {
     }
 
     @Test
+    public void testProtocolLine() {
+        String v = "HTTP/3 200 OK\r\n";
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), false, true);
+            TestUtils.assertEquals("200", hp.getStatusCode());
+            TestUtils.assertEquals("OK", hp.getStatusText());
+            TestUtils.assertEquals("HTTP/3 200 OK", hp.getProtocolLine());
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testProtocolLineFuzz() {
+        String v = "HTTP/3 200 OK\r\n";
+        long p = TestUtils.toMemory(v);
+        long s1 = System.currentTimeMillis();
+        long s2 = System.nanoTime();
+        System.out.println("s1: " + s1 + "L; s2: " + s2 + "L;");
+        Rnd rnd = new Rnd(s1, s2);
+        int steps = rnd.nextInt(v.length()) + 1;
+        int stepMax = rnd.nextInt(v.length() / steps + 1) + 1;
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            int total = 0;
+            for (int i = 0; i < steps; i++) {
+                int n = rnd.nextInt(stepMax);
+                hp.parse(p + total, p + total + n, false, true);
+                total += n;
+            }
+            if (total < v.length()) {
+                hp.parse(p + total, p + v.length(), false, true);
+            }
+            TestUtils.assertEquals("200", hp.getStatusCode());
+            TestUtils.assertEquals("OK", hp.getStatusText());
+            TestUtils.assertEquals("HTTP/3 200 OK", hp.getProtocolLine());
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testQueryDanglingEncoding() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String v = "GET /status?x=1&a=% HTTP/1.1\r\n" +
@@ -452,8 +495,6 @@ public class HttpHeaderParserTest {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
-
-    //"GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n"
 
     @Test
     public void testUrlParamsTrailingNull() {

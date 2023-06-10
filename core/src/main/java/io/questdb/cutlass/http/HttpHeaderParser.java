@@ -60,9 +60,9 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private boolean needMethod;
     private boolean needProtocol = true;
     private DirectByteCharSequence protocol;
+    private DirectByteCharSequence protocolLine;
     private long statementTimeout = -1L;
     private DirectByteCharSequence statusCode;
-    private DirectByteCharSequence protocolLine;
     private DirectByteCharSequence statusText;
     private DirectByteCharSequence url;
 
@@ -163,9 +163,21 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         return methodLine;
     }
 
+    public DirectByteCharSequence getProtocolLine() {
+        return protocolLine;
+    }
+
     @Override
     public long getStatementTimeout() {
         return statementTimeout;
+    }
+
+    public DirectByteCharSequence getStatusCode() {
+        return statusCode;
+    }
+
+    public DirectByteCharSequence getStatusText() {
+        return statusText;
     }
 
     @Override
@@ -457,13 +469,13 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
                         statusCode = pool.next().of(_lo, _wptr);
                         isStatusCode = false;
                         _lo = _wptr + 1;
-                    } else if (isStatusText) {
-                        statusText = pool.next().of(_lo, _wptr);
-                        isStatusText = false;
-                        _lo = _wptr + 1;
                     }
                     break;
                 case '\n':
+                    if (isStatusText) {
+                        statusText = pool.next().of(_lo, _wptr);
+                        isStatusText = false;
+                    }
                     if (protocol == null) {
                         throw HttpException.instance("bad protocol");
                     }
