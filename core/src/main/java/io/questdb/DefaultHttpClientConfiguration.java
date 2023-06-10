@@ -33,7 +33,7 @@ public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
 
     @Override
     public int getBufferSize() {
-        return 4*1024; //64 * 1024;
+        return 64 * 1024;
     }
 
     @Override
@@ -44,5 +44,10 @@ public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
     @Override
     public int getTimeout() {
         return 5000;
+    }
+
+    @Override
+    public int getWaitQueueCapacity() {
+        return 32;
     }
 }

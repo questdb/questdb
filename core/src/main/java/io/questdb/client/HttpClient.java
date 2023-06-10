@@ -24,13 +24,13 @@
 
 package io.questdb.client;
 
-import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.IOOperation;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -38,56 +38,24 @@ import io.questdb.std.str.DirectByteCharSequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class HttpClient implements QuietCloseable {
+public abstract class HttpClient implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
+    protected final NetworkFacade nf;
     private final int bufferSize;
     private final int defaultTimeout;
-    private final NetworkFacade nf;
     private final Request request = new Request();
+    protected int fd = -1;
     private long bufLo;
     private long dataHi;
     private long dataLo;
-    private Epoll epoll = new Epoll(EpollFacadeImpl.INSTANCE, 128);
-    private int fd = -1;
     private long ptr = bufLo;
     private Response response = new Response();
-
-    public HttpClient() {
-        this(DefaultHttpClientConfiguration.INSTANCE);
-    }
 
     public HttpClient(HttpClientConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
         this.defaultTimeout = configuration.getTimeout();
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    public static void main(String[] args) {
-
-        HttpClient client = new HttpClient();
-
-        Request req = client.newRequest();
-
-        Response rsp = req
-                .GET()
-                .url("/exec")
-//                .query("query", "cpu%20limit%20400000")
-                .query("query", "cpu")
-                .header("Accept", "gzip, deflate, br")
-                .send("localhost", 9000);
-
-        rsp.awaitHeaders();
-
-        if (rsp.isChunked()) {
-            Response.Chunk chunk;
-
-            long t = System.currentTimeMillis();
-            while ((chunk = rsp.recv()) != null) {
-                System.out.println("addr: " + chunk.addr + ", size: " + chunk.size + ", consumed: " + chunk.consumed + ", available: " + chunk.available);
-            }
-            System.out.println(System.currentTimeMillis() - t);
-        }
     }
 
     @Override
@@ -102,7 +70,6 @@ public class HttpClient implements QuietCloseable {
             fd = -1;
         }
 
-        epoll = Misc.free(epoll);
         response = Misc.free(response);
     }
 
@@ -110,13 +77,6 @@ public class HttpClient implements QuietCloseable {
         ptr = bufLo;
         request.state = Request.STATE_REQUEST;
         return request;
-    }
-
-    private static int die(int result) {
-        if (result < 0) {
-            throw new HttpClientException("peer disconnect [errno=").errno(Os.errno()).put(']');
-        }
-        return result;
     }
 
     private void compactBuffer() {
@@ -133,6 +93,13 @@ public class HttpClient implements QuietCloseable {
         }
     }
 
+    private int die(int byteCount) {
+        if (byteCount < 1) {
+            throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
+        }
+        return byteCount;
+    }
+
     private int recvOrDie(int timeout) {
         return recvOrDie(dataHi, (int) (bufferSize - (dataHi - bufLo)), timeout);
     }
@@ -147,24 +114,21 @@ public class HttpClient implements QuietCloseable {
         return die(nf.send(fd, lo, len));
     }
 
-    protected void ioWait(int timeout, int op) {
-
-        final int event = op == IOOperation.WRITE ? EpollAccessor.EPOLLOUT : EpollAccessor.EPOLLIN;
-
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, event) < 0) {
-            throw new HttpClientException("internal error: epoll_ctl failure [cmd=mod, errno=").put(nf.errno()).put(']');
+    protected void dieWaiting(int n) {
+        if (n == 1) {
+            return;
         }
 
-        if (epoll.poll(timeout) != 1) {
-            throw new HttpClientException("timed out").errno(nf.errno());
+        if (n == 0) {
+            throw new HttpClientException("timed out [errno=").errno(nf.errno()).put(']');
         }
+
+        throw new HttpClientException("kqueue error [errno=").errno(nf.errno()).put(']');
     }
 
-    protected void setupIoWait() {
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
-            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
-        }
-    }
+    protected abstract void ioWait(int timeout, int op);
+
+    protected abstract void setupIoWait();
 
     public class Request extends AbstractCharSink {
         private static final int STATE_HEADER = 4;
@@ -254,18 +218,13 @@ public class HttpClient implements QuietCloseable {
             long addrInfo = nf.getAddrInfo(host, port);
             if (addrInfo == -1) {
                 nf.close(fd, LOG);
-                throw new HttpClientException("could not resolve host ")
-                        .put("[host=").put(host).put("]");
+                throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
             }
             if (nf.connectAddrInfo(fd, addrInfo) != 0) {
                 int errno = nf.errno();
                 nf.close(fd, LOG);
                 nf.freeAddrInfo(addrInfo);
-                throw new HttpClientException("could not connect to host ")
-                        .put("[host=").put(host)
-                        .put(", port=").put(port)
-                        .put(", errno=").put(errno)
-                        .put(']');
+                throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
             }
             nf.freeAddrInfo(addrInfo);
         }
@@ -343,30 +302,26 @@ public class HttpClient implements QuietCloseable {
         private HttpClient.Response.Chunk chunkContinue(int timeout) {
             chunk.consumed += chunk.available;
             compactBuffer();
-            while (true) {
-                int len = recvOrDie(timeout);
-                if (len > 0) {
-                    // we are consuming the remaining chunk bytes;
-                    // chunk size includes `\r\n\`, which must not be included in
-                    // "available" bytes of the last chunk
+            final int len = recvOrDie(timeout);
+            // we are consuming the remaining chunk bytes;
+            // chunk size includes `\r\n\`, which must not be included in
+            // "available" bytes of the last chunk
 
-                    // configure chunk boundaries
-                    boolean endOfChunk = chunk.size - chunk.consumed <= len;
-                    chunk.endOfChunk = endOfChunk;
-                    chunk.addr = dataHi;
-                    chunk.available = endOfChunk ? chunk.size - chunk.consumed - 2 : len;
+            // configure chunk boundaries
+            boolean endOfChunk = chunk.size - chunk.consumed <= len;
+            chunk.endOfChunk = endOfChunk;
+            chunk.addr = dataHi;
+            chunk.available = endOfChunk ? chunk.size - chunk.consumed - 2 : len;
 
-                    if (endOfChunk) {
-                        dataHi += len;
-                        dataLo = chunk.addr + chunk.available + 2;
-                    } else {
-                        // we just consumed the entire buffer
-                        dataLo = bufLo;
-                        dataHi = bufLo;
-                    }
-                    return chunk;
-                }
+            if (endOfChunk) {
+                dataHi += len;
+                dataLo = chunk.addr + chunk.available + 2;
+            } else {
+                // we just consumed the entire buffer
+                dataLo = bufLo;
+                dataHi = bufLo;
             }
+            return chunk;
         }
 
         @Nullable
@@ -375,16 +330,13 @@ public class HttpClient implements QuietCloseable {
                 return chunk.size > 2 ? chunk : null;
             }
 
-            compactBuffer();
-            // re-arm epoll to read more from the server
             while (true) {
-                int len = recvOrDie(timeout);
-                if (len > 0) {
-                    dataHi += len;
-                    // try to read chunk prefix
-                    if (parseChunkSize0(dataLo, dataHi)) {
-                        return chunk.size > 0 ? chunk : null;
-                    }
+                compactBuffer();
+                final int len = recvOrDie(timeout);
+                dataHi += len;
+                // try to read chunk prefix
+                if (parseChunkSize0(dataLo, dataHi)) {
+                    return chunk.size > 0 ? chunk : null;
                 }
             }
         }

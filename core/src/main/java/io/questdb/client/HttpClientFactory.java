@@ -22,18 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.client;
 
-public interface KqueueFacade {
-    NetworkFacade getNetworkFacade();
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.HttpClientConfiguration;
+import io.questdb.std.Os;
 
-    int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+public class HttpClientFactory {
+    public static HttpClient newInstance() {
+        return newInstance(DefaultHttpClientConfiguration.INSTANCE);
+    }
 
-    int kqueue();
-
-    long pipe();
-
-    int readPipe(int fd);
-
-    int writePipe(int fd);
+    public static HttpClient newInstance(HttpClientConfiguration configuration) {
+        switch (Os.type) {
+            case Os.LINUX_AMD64:
+            case Os.LINUX_ARM64:
+                return new HttpClientLinux(configuration);
+            case Os.OSX_AMD64:
+            case Os.OSX_ARM64:
+            case Os.FREEBSD:
+                return new HttpClientOsx(configuration);
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
 }

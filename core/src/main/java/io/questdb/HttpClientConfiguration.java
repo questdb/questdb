@@ -32,4 +32,6 @@ public interface HttpClientConfiguration {
     int getTimeout();
 
     int getBufferSize();
+
+    int getWaitQueueCapacity();
 }
