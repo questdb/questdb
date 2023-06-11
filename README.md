@@ -43,7 +43,7 @@ Java and C++, with no dependencies and zero garbage collection.
 ## Try QuestDB
 
 We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
-QuestDB release and sample datasets:
+QuestDB release and sample datasets :-
 
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
 - Trades: live crypto market data with 30M+ rows per month
@@ -85,7 +85,7 @@ methods.
 
 ### Connect to QuestDB
 
-You can interact with QuestDB using the following interfaces:
+You can interact with QuestDB using the following interfaces :-
 
 - [Web Console](https://questdb.io/docs/develop/web-console/) for interactive
   SQL editor on port `9000`
@@ -98,7 +98,7 @@ You can interact with QuestDB using the following interfaces:
 ### Insert data
 
 Below are our official questdb clients for popular programming
-languages:
+languages :-
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
