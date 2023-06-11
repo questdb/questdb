@@ -29,7 +29,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -831,11 +834,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
-        public @NotNull SecurityContext getSecurityContext() {
-            return sqlExecutionContext.getSecurityContext();
-        }
-
-        @Override
         public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
             return sqlExecutionContext.getCircuitBreaker();
         }
@@ -873,6 +871,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         @Override
         public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
+        }
+
+        @Override
+        public @NotNull SecurityContext getSecurityContext() {
+            return sqlExecutionContext.getSecurityContext();
         }
 
         @Override

@@ -24,31 +24,28 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.std.Chars;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.network.NetworkFacade;
 
-public class StaticUserDatabase implements PgWireUserDatabase {
-    private final String defaultPassword;
-    private final String defaultUsername;
-
-    private final String roPassword;
-    private final String roUsername;
-
-
-    public StaticUserDatabase(PGWireConfiguration configuration) {
-        this.defaultUsername = configuration.getDefaultUsername();
-        this.defaultPassword = configuration.getDefaultPassword();
-        if (configuration.isReadOnlyUserEnabled()) {
-            this.roUsername = configuration.getReadOnlyUsername();
-            this.roPassword = configuration.getReadOnlyPassword();
-        } else {
-            this.roUsername = null;
-            this.roPassword = null;
-        }
-    }
+public class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
+    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory();
 
     @Override
-    public boolean match(CharSequence username, CharSequence password) {
-        boolean matchRo = roUsername != null && roPassword != null && Chars.equals(roUsername, username) && Chars.equals(roPassword, password);
-        return matchRo || Chars.equals(defaultUsername, username) && Chars.equals(defaultPassword, password);
+    public Authenticator getPgWireAuthenticator(
+            NetworkFacade nf,
+            PGWireConfiguration configuration,
+            NetworkSqlExecutionCircuitBreaker circuitBreaker,
+            CircuitBreakerRegistry registry,
+            OptionsListener optionsListener
+    ) {
+        return new CleartextPasswordPgWireAuthenticator(
+                nf,
+                configuration,
+                circuitBreaker,
+                registry,
+                optionsListener,
+                new StaticUsernamePasswordMatcher(configuration)
+        );
     }
 }

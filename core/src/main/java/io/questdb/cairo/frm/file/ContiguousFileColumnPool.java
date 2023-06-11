@@ -70,13 +70,13 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private class ColumnTypePool implements FrameColumnTypePool {
 
         @Override
-        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex) {
+        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex, boolean isEmpty) {
             boolean isIndexed = indexBlockCapacity > 0;
             switch (columnType) {
                 case ColumnType.SYMBOL:
                     if (canWrite && isIndexed) {
                         ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
-                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex);
+                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, isEmpty);
                         return indexedColumn;
                     }
 
@@ -85,7 +85,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
                     }
                     return column;
                 }
@@ -96,7 +96,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
                     }
                     return column;
                 }

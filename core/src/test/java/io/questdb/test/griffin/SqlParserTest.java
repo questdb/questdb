@@ -594,16 +594,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCaseAndLimit() throws SqlException {
-        assertQuery("select-virtual 'table' kind from (tab) limit 10",
-                "    select case a \n" +
-                        "    else 'table'\n" +
-                        "    end kind from tab limit 10\n",
-                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
@@ -630,28 +620,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual case(a = 1,'A',2 = b,'B') + 1 column, b from (select [a, b] from tab)",
                 "select case when a = 1 then 'A' when 2 = b then 'B' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testCaseNoWhen() throws SqlException {
-        assertQuery(
-                "select-virtual 'table' kind from (tab)",
-                "    select case a \n" +
-                        "    else 'table'\n" +
-                        "    end kind from tab\n",
-                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testCaseNoWhenBinary() throws SqlException {
-        assertQuery(
-                "select-virtual 2 + 5 kind from (tab)",
-                "    select case a \n" +
-                        "    else 2 + 5\n" +
-                        "    end kind from tab\n",
-                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
         );
     }
 

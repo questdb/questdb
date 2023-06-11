@@ -35,7 +35,6 @@ public interface Authenticator extends QuietCloseable {
     int QUEUE_FULL = 2;
 
     default void clear() {
-
     }
 
     @Override
