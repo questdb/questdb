@@ -27,12 +27,11 @@ API for bulk imports and exports.
 QuestDB is well suited for financial market data, application metrics, sensor
 data, real-time analytics, dashboards, and infrastructure monitoring.
 
-QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
-extensions make it simple to correlate data from multiple sources using
-relational and time-series joins. We achieve high performance by adopting a
-column-oriented storage model, parallelized vector execution, SIMD instructions,
-and low-latency techniques. The entire codebase is built from the ground up in
-Java and C++, with no dependencies and zero garbage collection.
+QuestDB uses a type of language called SQL, which is widely used for working with databases. It not only supports regular SQL but also includes additional features specifically designed for working with time-series data. These additional features make it easy to connect data from different places by using relational and time-based connections. 
+
+One of the reasons QuestDB is fast is because it uses a specific way of organizing data called a "column-oriented storage model." It also takes advantage of techniques like parallelized vector execution, SIMD instructions, and low-latency techniques to perform tasks quickly. 
+
+QuestDB is built using two programming languages, Java and C++, and it was developed from scratch without relying on other software or tools. This means it doesn't have any extra baggage that could slow it down.
 
 <div align="center">
   <a href="https://demo.questdb.io">
