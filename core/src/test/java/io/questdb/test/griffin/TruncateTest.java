@@ -115,7 +115,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(34, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bla]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected [token='bla']");
             } finally {
                 engine.clear();
             }

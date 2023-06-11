@@ -2551,8 +2551,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDropTablesMissingComma() throws Exception {
         assertSyntaxError(
                 "drop tables tab1 tab2",
-                17,
-                "unexpected token [tab2]",
+                5,
+                "expected TABLE table-name or ALL TABLES, found [token='tables']",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -2562,8 +2562,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDropTablesMissingName() throws Exception {
         assertSyntaxError(
                 "drop tables tab1, ",
-                18,
-                "table name expected",
+                5,
+                "expected TABLE table-name or ALL TABLES, found [token='tables']",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );

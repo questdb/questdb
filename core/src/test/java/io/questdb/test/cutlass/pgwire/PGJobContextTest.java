@@ -2373,8 +2373,8 @@ if __name__ == "__main__":
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
                 {"drop table", "ERROR: expected [if exists] table-name"},
-                {"drop doesnt", "ERROR: 'table' expected"},
-                {"drop", "ERROR: 'table' expected"},
+                {"drop doesnt", "ERROR: expected TABLE table-name or ALL TABLES, found [token='doesnt']"},
+                {"drop", "ERROR: expected TABLE"},
                 {"drop table if doesnt", "ERROR: expected exists"},
                 {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
                 {"drop table if exists", "ERROR: table name expected"},

@@ -2474,7 +2474,7 @@ public class SqlCompiler implements Closeable {
             }
 
             if (tok != null && !Chars.equals(tok, ';')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected [token='").put(tok).put("']");
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2661,7 +2661,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor truncateTables = this::truncateTables;
         final KeywordBasedExecutor alterTable = this::alterTable;
         final KeywordBasedExecutor reindexTable = this::reindexTable;
-        final KeywordBasedExecutor dropStatement = dropStmtCompiler::dropExecutorSelector;
+        final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
@@ -3198,40 +3198,47 @@ public class SqlCompiler implements Closeable {
             dropTablesFailedList.clear();
         }
 
-        private CompiledQuery dropDatabase(SqlExecutionContext executionContext) {
+        private CompiledQuery dropAllTables(SqlExecutionContext executionContext) {
             // collect table names
+            dropTablesFailedList.clear();
             dropTablesList.clear();
             engine.getTableTokens(dropTablesList, false);
-            if (dropTablesList.size() == 0) {
-                LOG.info().$("nothing to delete").$();
-                return compiledQuery.ofDrop();
+            SecurityContext securityContext = executionContext.getSecurityContext();
+            TableToken tableToken;
+            for (int i = 0, n = dropTablesList.size(); i < n; i++) {
+                tableToken = dropTablesList.get(i);
+                // do not delete system tables, simply report that this is not possible
+                if (isSystemTable(tableToken)) {
+                    LOG.error().$("table '").$(tableToken).$("' belongs to the system").$();
+                    continue;
+                }
+                securityContext.authorizeTableDrop(tableToken);
+                try {
+                    engine.drop(path, tableToken);
+                } catch (CairoException report) {
+                    // it will fail when there are readers/writers
+                    dropTablesFailedList.put(tableToken.getTableName(), report.getMessage());
+                    LOG.error().$("could not drop table '").$(tableToken)
+                            .$("' because: ").$(report.getFlyweightMessage())
+                            .$();
+                }
             }
-            greedyDropTablesList(executionContext.getSecurityContext());
-            return compiledQuery.ofDrop();
-        }
-
-        private CompiledQuery dropExecutorSelector(SqlExecutionContext executionContext) throws SqlException {
-            // expected syntax, one of:
-            //   - DROP TABLE [ IF EXISTS ] name [;]  in this case we call 'dropTable'
-            //   - DROP TABLES name(, name)* [;]      in this case we call 'dropMultipleTables'
-            //   - DROP DATABASE [;]                  in this case we call 'dropDatabase'
-            // the selected method depends on the second token, we have already seen DROP.
-            CharSequence tok = SqlUtil.fetchNext(lexer);
-            if (tok != null) {
-                if (SqlKeywords.isTableKeyword(tok)) {
-                    return dropTable(executionContext);
-                }
-                if (SqlKeywords.isTablesKeyword(tok)) {
-                    return dropTablesList(executionContext);
-                }
-                if (SqlKeywords.isDatabaseKeyword(tok)) {
-                    tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null || Chars.equals(tok, ';')) {
-                        return dropDatabase(executionContext);
+            if (dropTablesFailedList.size() > 0) {
+                CairoException ex = CairoException.nonCritical().put("failed to drop tables [");
+                CharSequence tableName;
+                String reason;
+                ObjList<CharSequence> keys = dropTablesFailedList.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    tableName = keys.get(i);
+                    reason = dropTablesFailedList.get(tableName);
+                    ex.put('\'').put(tableName).put("'=").put(reason);
+                    if (i + 1 < n) {
+                        ex.put(',');
                     }
                 }
+                throw ex.put(']');
             }
-            throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+            return compiledQuery.ofDrop();
         }
 
         private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
@@ -3270,93 +3277,31 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofDrop();
         }
 
-        private CompiledQuery dropTablesList(SqlExecutionContext executionContext) throws SqlException {
-            /* **
-             * Expected syntax "DROP TABLES name(,name)* [;]", where we have already
-             * processed DROP TABLES. We expect a comma separated list of table names.
-             * Each table name is treated with the same semantics as:
-             *
-             *     for each name in tables list:
-             *         DROP TABLE IF EXISTS name
-             *
-             * so that non existing table names do not break the statement execution.
-             * In case of failure, an exception is thrown to communicate back to the
-             * client, however the method is greedy in that it will try to delete all
-             * the tables in the list.
-             */
-
-            // collect table names checking for their existence and validating syntax
-            boolean foundSemiColon = false;
-            dropTablesList.clear();
-            while (true) {
-                CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
-                TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-                if (tableToken != null) {
-                    int tableStatus = executionContext.getTableStatus(path, tableToken);
-                    if (tableStatus == TableUtils.TABLE_EXISTS) {
-                        dropTablesList.add(tableToken);
-                    } else {
-                        LOG.error().$("table '").utf8(tableName)
-                                .$(tableStatus == TableUtils.TABLE_RESERVED ? "' is reserved" : "' does not exist")
-                                .$();
-                    }
-                } else {
-                    LOG.error().$("table '").utf8(tableName).$("' does not exist").$();
+        private CompiledQuery executorSelector(SqlExecutionContext executionContext) throws SqlException {
+            // expected syntax, one of:
+            //   - DROP TABLE [ IF EXISTS ] name [;]
+            //   - DROP ALL TABLES [;]
+            // the selected method depends on the second token,
+            // we have already seen DROP
+            CharSequence tok = SqlUtil.fetchNext(lexer);
+            if (tok != null) {
+                if (SqlKeywords.isTableKeyword(tok)) {
+                    return dropTable(executionContext);
                 }
-                CharSequence tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (foundSemiColon = Chars.equals(tok, ';'))) {
-                    break;
-                }
-                if (!Chars.equals(tok, ',')) {
-                    return unexpectedToken(tok);
-                }
-            }
-            if (!foundSemiColon) {
-                CharSequence tok = SqlUtil.fetchNext(lexer);
-                if (tok != null && !Chars.equals(tok, ';')) {
-                    return unexpectedToken(tok);
-                }
-            }
-            greedyDropTablesList(executionContext.getSecurityContext());
-            return compiledQuery.ofDrop();
-        }
-
-        private void greedyDropTablesList(SecurityContext securityContext) {
-            dropTablesFailedList.clear();
-            TableToken tableToken;
-            for (int i = 0, n = dropTablesList.size(); i < n; i++) {
-                tableToken = dropTablesList.get(i);
-                // do not delete system tables, simply report that this is not possible
-                if (isSystemTable(tableToken)) {
-                    LOG.error().$("table '").$(tableToken).$("' belongs to the system").$();
-                    continue;
-                }
-                securityContext.authorizeTableDrop(tableToken);
-                try {
-                    engine.drop(path, tableToken);
-                } catch (CairoException report) {
-                    // it will fail when there are readers/writers
-                    dropTablesFailedList.put(tableToken.getTableName(), report.getMessage());
-                    LOG.error().$("could not drop table '").$(tableToken)
-                            .$("' because: ").$(report.getFlyweightMessage())
-                            .$();
-                }
-            }
-            if (dropTablesFailedList.size() > 0) {
-                CairoException ex = CairoException.nonCritical().put("failed to drop tables [");
-                CharSequence tableName;
-                String reason;
-                ObjList<CharSequence> keys = dropTablesFailedList.keys();
-                for (int i = 0, n = keys.size(); i < n; i++) {
-                    tableName = keys.get(i);
-                    reason = dropTablesFailedList.get(tableName);
-                    ex.put('"').put(tableName).put("\"=").put(reason);
-                    if (i + 1 < n) {
-                        ex.put(',');
+                if (SqlKeywords.isAllKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && SqlKeywords.isTablesKeyword(tok)) {
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ';')) {
+                            return dropAllTables(executionContext);
+                        }
+                        throw SqlException.position(lexer.lastTokenPosition()).put("unexpected [token='").put(tok).put("']");
                     }
                 }
-                throw ex.put(']');
+                throw SqlException.position(lexer.lastTokenPosition())
+                        .put("expected TABLE table-name or ALL TABLES, found [token='").put(tok).put("']");
             }
+            throw SqlException.position(lexer.lastTokenPosition()).put("expected TABLE");
         }
 
         private boolean isSystemTable(TableToken tableToken) {

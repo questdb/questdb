@@ -57,7 +57,7 @@ public class DropStatementTest extends AbstractGriffinTest {
             compile("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
             compile("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
 
-            compile("DROP DATABASE", sqlExecutionContext);
+            compile("DROP ALL TABLES", sqlExecutionContext);
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
             Assert.assertEquals(0, tableBucket.size());
@@ -121,7 +121,7 @@ public class DropStatementTest extends AbstractGriffinTest {
                 compiler.compile("drop i_am_missing", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "expected TABLE table-name or ALL TABLES");
             }
         });
     }
@@ -190,12 +190,12 @@ public class DropStatementTest extends AbstractGriffinTest {
 
             try (RecordCursorFactory factory = compiler.compile("\"" + tab0 + '"', sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    compile("DROP TABLES \"large table\", \"" + tab0 + "\", \"" + tab1 + "\", \"" + tab1 + "\", \"" + tab2 + "\", table", sqlExecutionContext);
+                    compile("DROP ALL TABLES", sqlExecutionContext);
                 }
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables [\"" + tab0 + "\"=[-1] could not lock \"public table\" [reason='busyReader']]"
+                        "failed to drop tables ['" + tab0 + "'=[-1] could not lock 'public table' [reason='busyReader']]"
                 );
             }
             tableBucket.clear();
@@ -216,11 +216,11 @@ public class DropStatementTest extends AbstractGriffinTest {
             compile("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
 
             try (TableWriter ignored = getWriter(tab0)) {
-                compile("DROP TABLES \"large table\", \"" + tab0 + "\", \"" + tab1 + "\", \"" + tab1 + "\", \"" + tab2 + "\", table;", sqlExecutionContext);
+                compile("DROP ALL TABLES;", sqlExecutionContext);
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables [\"" + tab0 + "\"=[-1] could not lock \"public table\" [reason='test']]"
+                        "failed to drop tables ['" + tab0 + "'=[-1] could not lock 'public table' [reason='test']]"
                 );
             }
             tableBucket.clear();
