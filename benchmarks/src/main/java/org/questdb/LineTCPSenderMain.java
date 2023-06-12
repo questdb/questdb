@@ -33,16 +33,34 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSenderMain {
     public static void main(String[] args) {
+        Rnd rnd = new Rnd();
+        String[] ccy = rnd.createValues(30, 6);
+        int[] ccyDist = Rnd.computeDiminishingFrequencyDistribution(ccy.length, 0.8, 10.0);
+        String[] venue = rnd.createValues(10, 8);
+        int[] venueDist = Rnd.computeDiminishingFrequencyDistribution(venue.length, 0.7, 20.0);
+        String[] pool = rnd.createValues(6, 3);
+        int[] poolDist = Rnd.computeDiminishingFrequencyDistribution(pool.length, 0.9, 30.0);
+
+
         int n = 1;
         final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
         for (int i = 0; i < n; i++) {
             int k = i;
-            new Thread(() -> doSend(k, haltLatch)).start();
+            new Thread(() -> doSend(k, haltLatch, ccy, ccyDist, venue, venueDist, pool, poolDist)).start();
         }
         haltLatch.await();
     }
 
-    private static void doSend(int k, SOCountDownLatch haltLatch) {
+    private static void doSend(
+            int k,
+            SOCountDownLatch haltLatch,
+            String[] ccy,
+            int[] ccyDist,
+            String[] venue,
+            int[] venueDist,
+            String[] pool,
+            int[] poolDist
+    ) {
         final long count = 30_000_000;
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
@@ -51,17 +69,22 @@ public class LineTCPSenderMain {
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
         MicrosecondClock clock = new MicrosecondClockImpl();
-        String tab = "weather" + k;
+        String tab = "quotes";
         try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
-            for (int i = 0; ; i++) {
+            for (int i = 0; i < count; i++) {
                 sender.metric(tab);
                 sender
-                        .tag("location", "london")
-                        .tag("by", "blah")
-                        .field("temp", rnd.nextPositiveLong())
-                        .field("ok", rnd.nextPositiveInt());
+                        .tag("ccy", ccy[ccyDist[rnd.nextInt(ccyDist.length)]])
+                        .tag("venue", venue[venueDist[rnd.nextInt(venueDist.length)]])
+                        .tag("pool", pool[poolDist[rnd.nextInt(poolDist.length)]])
+                        .field("qty", rnd.nextDouble())
+                        .field("bid", rnd.nextDouble())
+                        .field("ask", rnd.nextDouble());
                 sender.$(clock.getTicks() * 1000);
             }
+        } finally {
+            System.out.println("time: "+ (System.nanoTime() - start));
+            haltLatch.countDown();
         }
     }
 }
