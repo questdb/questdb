@@ -2552,7 +2552,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1 tab2",
                 5,
-                "expected TABLE table-name or ALL TABLES, found [token='tables']",
+                "expected TABLE table-name or ALL TABLES, found unexpected [token='tables']",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -2563,7 +2563,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1, ",
                 5,
-                "expected TABLE table-name or ALL TABLES, found [token='tables']",
+                "expected TABLE table-name or ALL TABLES, found unexpected [token='tables']",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -2574,7 +2574,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop table tab1, tab2",
                 15,
-                "unexpected token [,]",
+                "expected [;], found unexpected [token=',']",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );

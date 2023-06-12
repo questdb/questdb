@@ -3207,20 +3207,14 @@ public class SqlCompiler implements Closeable {
             TableToken tableToken;
             for (int i = 0, n = dropTablesList.size(); i < n; i++) {
                 tableToken = dropTablesList.get(i);
-                // do not delete system tables, simply report that this is not possible
-                if (isSystemTable(tableToken)) {
-                    LOG.error().$("table '").$(tableToken).$("' belongs to the system").$();
-                    continue;
-                }
-                securityContext.authorizeTableDrop(tableToken);
-                try {
-                    engine.drop(path, tableToken);
-                } catch (CairoException report) {
-                    // it will fail when there are readers/writers
-                    dropTablesFailedList.put(tableToken.getTableName(), report.getMessage());
-                    LOG.error().$("could not drop table '").$(tableToken)
-                            .$("' because: ").$(report.getFlyweightMessage())
-                            .$();
+                if (!isSystemTable(tableToken)) {
+                    securityContext.authorizeTableDrop(tableToken);
+                    try {
+                        engine.drop(path, tableToken);
+                    } catch (CairoException report) {
+                        // it will fail when there are readers/writers and lock cannot be acquired
+                        dropTablesFailedList.put(tableToken.getTableName(), report.getMessage());
+                    }
                 }
             }
             if (dropTablesFailedList.size() > 0) {
@@ -3231,9 +3225,9 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     tableName = keys.get(i);
                     reason = dropTablesFailedList.get(tableName);
-                    ex.put('\'').put(tableName).put("'=").put(reason);
+                    ex.put('\'').put(tableName).put("': ").put(reason);
                     if (i + 1 < n) {
-                        ex.put(',');
+                        ex.put(", ");
                     }
                 }
                 throw ex.put(']');
@@ -3241,31 +3235,13 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofDrop();
         }
 
-        private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
-            // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
-            // we have already processed DROP TABLE.
-            CharSequence tok = SqlUtil.fetchNext(lexer);
-            if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected [if exists] table-name");
-            }
-            boolean hasIfExists = false;
-            if (SqlKeywords.isIfKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || !SqlKeywords.isExistsKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "expected exists");
-                }
-                hasIfExists = true;
-            } else {
-                lexer.unparseLast(); // tok has table name
-            }
-            final int tableNamePosition = lexer.getPosition();
-            final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
-
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && !Chars.equals(tok, ';')) {
-                return unexpectedToken(tok);
-            }
-            final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+        private CompiledQuery dropTable(
+                SqlExecutionContext executionContext,
+                CharSequence tableName,
+                int tableNamePosition,
+                boolean hasIfExists
+        ) throws SqlException {
+            TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
             if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
                 if (hasIfExists) {
                     return compiledQuery.ofDrop();
@@ -3278,16 +3254,36 @@ public class SqlCompiler implements Closeable {
         }
 
         private CompiledQuery executorSelector(SqlExecutionContext executionContext) throws SqlException {
-            // expected syntax, one of:
-            //   - DROP TABLE [ IF EXISTS ] name [;]
-            //   - DROP ALL TABLES [;]
-            // the selected method depends on the second token,
-            // we have already seen DROP
+            // the selected method depends on the second token, we have already seen DROP
             CharSequence tok = SqlUtil.fetchNext(lexer);
             if (tok != null) {
+
+                // DROP TABLE [ IF EXISTS ] name [;]
                 if (SqlKeywords.isTableKeyword(tok)) {
-                    return dropTable(executionContext);
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null) {
+                        throw parseErrorExpected("IF EXISTS table-name");
+                    }
+                    boolean hasIfExists = false;
+                    if (SqlKeywords.isIfKeyword(tok)) {
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || !SqlKeywords.isExistsKeyword(tok)) {
+                            throw parseErrorExpected("EXISTS table-name");
+                        }
+                        hasIfExists = true;
+                    } else {
+                        lexer.unparseLast(); // tok has table name
+                    }
+                    final int tableNamePosition = lexer.getPosition();
+                    final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table-name"));
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || Chars.equals(tok, ';')) {
+                        return dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
+                    }
+                    throw parseErrorUnexpected("[;]", tok);
                 }
+
+                // DROP ALL TABLES [;]
                 if (SqlKeywords.isAllKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && SqlKeywords.isTablesKeyword(tok)) {
@@ -3295,13 +3291,11 @@ public class SqlCompiler implements Closeable {
                         if (tok == null || Chars.equals(tok, ';')) {
                             return dropAllTables(executionContext);
                         }
-                        throw SqlException.position(lexer.lastTokenPosition()).put("unexpected [token='").put(tok).put("']");
+                        throw parseErrorUnexpected("[;]", tok);
                     }
                 }
-                throw SqlException.position(lexer.lastTokenPosition())
-                        .put("expected TABLE table-name or ALL TABLES, found [token='").put(tok).put("']");
             }
-            throw SqlException.position(lexer.lastTokenPosition()).put("expected TABLE");
+            throw parseErrorUnexpected("TABLE table-name or ALL TABLES", tok);
         }
 
         private boolean isSystemTable(TableToken tableToken) {
@@ -3309,8 +3303,16 @@ public class SqlCompiler implements Closeable {
                     Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
         }
 
-        private CompiledQuery unexpectedToken(CharSequence tok) throws SqlException {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        private SqlException parseErrorExpected(CharSequence expected) {
+            return SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
+        }
+
+        private SqlException parseErrorUnexpected(CharSequence expected, CharSequence tok) {
+            SqlException exception = SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
+            if (tok != null) {
+                exception.put(", found unexpected [token='").put(tok).put("']");
+            }
+            return exception;
         }
     }
 

@@ -170,7 +170,7 @@ public class DropStatementTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token");
+                TestUtils.assertContains(e.getFlyweightMessage(), "expected [;], found unexpected [token='.']");
             }
 
             cc = compiler.compile("DROP TABLE \"x.csv\"", sqlExecutionContext);
@@ -195,7 +195,7 @@ public class DropStatementTest extends AbstractGriffinTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables ['" + tab0 + "'=[-1] could not lock 'public table' [reason='busyReader']]"
+                        "failed to drop tables ['public table': [-1] could not lock 'public table' [reason='busyReader']]"
                 );
             }
             tableBucket.clear();
@@ -220,7 +220,7 @@ public class DropStatementTest extends AbstractGriffinTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables ['" + tab0 + "'=[-1] could not lock 'public table' [reason='test']]"
+                        "failed to drop tables ['public table': [-1] could not lock 'public table' [reason='test']]"
                 );
             }
             tableBucket.clear();
