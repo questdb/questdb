@@ -303,6 +303,7 @@ public abstract class HttpClient implements QuietCloseable {
             chunk.consumed += chunk.available;
             compactBuffer();
             final int len = recvOrDie(timeout);
+
             // we are consuming the remaining chunk bytes;
             // chunk size includes `\r\n\`, which must not be included in
             // "available" bytes of the last chunk

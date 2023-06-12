@@ -27,7 +27,6 @@ package io.questdb.client;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Kqueue;
-import io.questdb.network.KqueueFacadeImpl;
 import io.questdb.std.Misc;
 
 public class HttpClientOsx extends HttpClient {
@@ -36,7 +35,7 @@ public class HttpClientOsx extends HttpClient {
     public HttpClientOsx(HttpClientConfiguration configuration) {
         super(configuration);
         this.kqueue = new Kqueue(
-                KqueueFacadeImpl.INSTANCE,
+                configuration.getKQueueFacade(),
                 configuration.getWaitQueueCapacity()
         );
     }

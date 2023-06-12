@@ -28,7 +28,7 @@ public class SelectFacadeImpl implements SelectFacade {
     public static final SelectFacade INSTANCE = new SelectFacadeImpl();
 
     @Override
-    public int select(long readfds, long writefds, long exceptfds) {
-        return SelectAccessor.select(readfds, writefds, exceptfds);
+    public int select(long readfds, long writefds, long exceptfds, int timeout) {
+        return SelectAccessor.select(readfds, writefds, exceptfds, timeout);
     }
 }

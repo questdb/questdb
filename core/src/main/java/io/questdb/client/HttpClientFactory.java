@@ -42,6 +42,8 @@ public class HttpClientFactory {
             case Os.OSX_ARM64:
             case Os.FREEBSD:
                 return new HttpClientOsx(configuration);
+            case Os.WINDOWS:
+                return new HttpClientWindows(configuration);
             default:
                 throw new UnsupportedOperationException();
         }

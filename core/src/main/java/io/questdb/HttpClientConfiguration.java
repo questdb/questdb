@@ -24,7 +24,10 @@
 
 package io.questdb;
 
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.SelectFacade;
 
 public interface HttpClientConfiguration {
     NetworkFacade getNetworkFacade();
@@ -34,4 +37,10 @@ public interface HttpClientConfiguration {
     int getBufferSize();
 
     int getWaitQueueCapacity();
+
+    EpollFacade getEpollFacade();
+
+    KqueueFacade getKQueueFacade();
+
+    SelectFacade getSelectFacade();
 }

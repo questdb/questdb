@@ -25,41 +25,46 @@
 package io.questdb.client;
 
 import io.questdb.HttpClientConfiguration;
-import io.questdb.network.Epoll;
-import io.questdb.network.EpollAccessor;
+import io.questdb.network.FDSet;
 import io.questdb.network.IOOperation;
+import io.questdb.network.SelectFacade;
 import io.questdb.std.Misc;
 
-public class HttpClientLinux extends HttpClient {
-    private Epoll epoll;
+public class HttpClientWindows extends HttpClient {
+    private final SelectFacade sf;
+    private FDSet fdSet;
 
-    public HttpClientLinux(HttpClientConfiguration configuration) {
+    public HttpClientWindows(HttpClientConfiguration configuration) {
         super(configuration);
-        epoll = new Epoll(
-                configuration.getEpollFacade(),
-                configuration.getWaitQueueCapacity()
-        );
+        this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
+        this.sf = configuration.getSelectFacade();
     }
 
     @Override
     public void close() {
         super.close();
-        epoll = Misc.free(epoll);
+        this.fdSet = Misc.free(fdSet);
     }
 
+    @Override
     protected void ioWait(int timeout, int op) {
-        final int event = op == IOOperation.WRITE ? EpollAccessor.EPOLLOUT : EpollAccessor.EPOLLIN;
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, event) < 0) {
-            throw new HttpClientException("internal error: epoll_ctl failure [op=").put(op)
-                    .put(", errno=").put(nf.errno())
-                    .put(']');
+        final long readAddr;
+        final long writeAddr;
+        fdSet.clear();
+        fdSet.add(fd);
+        fdSet.setCount(1);
+        if (op == IOOperation.READ) {
+            readAddr = fdSet.address();
+            writeAddr = 0;
+        } else {
+            readAddr = 0;
+            writeAddr = fdSet.address();
         }
-        dieWaiting(epoll.poll(timeout));
+        dieWaiting(sf.select(readAddr, writeAddr, 0, timeout));
     }
 
+    @Override
     protected void setupIoWait() {
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
-            throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
-        }
+        // noop on OSX
     }
 }

@@ -25,5 +25,5 @@
 package io.questdb.network;
 
 public interface SelectFacade {
-    int select(long readfds, long writefds, long exceptfds);
+    int select(long readfds, long writefds, long exceptfds, int timeout);
 }

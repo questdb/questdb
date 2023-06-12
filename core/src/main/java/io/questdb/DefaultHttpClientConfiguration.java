@@ -24,8 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.*;
 
 public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
 
@@ -37,8 +36,23 @@ public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
     }
 
     @Override
+    public EpollFacade getEpollFacade() {
+        return EpollFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public KqueueFacade getKQueueFacade() {
+        return KqueueFacadeImpl.INSTANCE;
+    }
+
+    @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public SelectFacade getSelectFacade() {
+        return SelectFacadeImpl.INSTANCE;
     }
 
     @Override
@@ -48,6 +62,6 @@ public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
 
     @Override
     public int getWaitQueueCapacity() {
-        return 32;
+        return 4;
     }
 }
