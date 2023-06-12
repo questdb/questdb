@@ -2408,7 +2408,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // set append position on columns so that the files are truncated to the correct size
         // if the partition is closed after the commit.
-        setAppendPosition(txWriter.transientRowCount, false);
+        setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagTxnCount(), false);
     }
 
     private boolean assertColumnPositionIncludeWalLag() {
