@@ -245,14 +245,14 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("create table " + tableName + " (" +
                     "x long," +
                     "ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=" + rnd.nextInt(20));
+                    ") timestamp(ts) partition by HOUR WAL WITH maxUncommittedRows=" + rnd.nextInt(20));
 
-            int count = rnd.nextInt(57);
+            int count = rnd.nextInt(22);
             long rowCount = 0;
             for (int i = 0; i < 2; i++) {
                 int rows = rnd.nextInt(200);
                 compile("insert into " + tableName +
-                        " select x, timestamp_sequence('2022-02-24T00:0" + i + "', 1000000) from long_sequence(" + rows + ")", sqlExecutionContext);
+                        " select x, timestamp_sequence('2022-02-24T0" + i + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
                 rowCount += rows;
 
             }
@@ -266,7 +266,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     engine.releaseInactive();
                     int rows = rnd.nextInt(200);
                     compile("insert into " + tableName +
-                            " select x, timestamp_sequence('2022-02-24T00:" + String.format("%02d", i + 2) + "', 1000000) from long_sequence(" + rows + ")", sqlExecutionContext);
+                            " select x, timestamp_sequence('2022-02-24T" + String.format("%02d", i + 2) + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
                     rowCount += rows;
                 }
             }
