@@ -2068,7 +2068,7 @@ public class SqlOptimiser {
     }
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
-        if (column.type != LITERAL) {
+        if (column == null || column.type != LITERAL) {
             return false;
         }
 
