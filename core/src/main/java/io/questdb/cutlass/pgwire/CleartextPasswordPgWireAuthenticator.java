@@ -446,8 +446,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     private int writeToSocketAndAdvance(State nextState) {
         int toWrite = (int) (sendBufWritePos - sendBufReadPos);
-        int bytesWritten = nf.send(fd, sendBufReadPos, toWrite);
-        sendBufReadPos += bytesWritten;
+        int n = nf.send(fd, sendBufReadPos, toWrite);
+        if (n < 0) {
+            return Authenticator.NEEDS_DISCONNECT;
+        }
+        sendBufReadPos += n;
         compactSendBuf();
         if (sendBufReadPos == sendBufWritePos) {
             state = nextState;
