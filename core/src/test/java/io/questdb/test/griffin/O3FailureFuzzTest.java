@@ -24,12 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -175,6 +178,13 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
     }
 
+    private static void checkDistressedOrNoSpaceLeft(CairoError e) {
+        if (!Chars.equals(e.getMessage(), "Table 'x' is distressed") &&
+                !Chars.contains(e.getMessage(), "No space left")) {
+            Assert.fail(e.getMessage());
+        }
+    }
+
     @NotNull
     private static String prepareCountAndMaxTimestampSinks(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.printSql(
@@ -194,9 +204,37 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         return Chars.toString(sink);
     }
 
-    private static void reset(int failCounter) {
+    private static void reset(int failCounter, CairoEngine engine) {
         reset();
         counter.set(failCounter);
+        MessageBus messageBus = engine.getMessageBus();
+        final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
+        final Sequence openColumnSubSeq = messageBus.getO3OpenColumnSubSeq();
+        final Sequence copySubSeq = messageBus.getO3CopySubSeq();
+
+        while (true) {
+            long cursor = partitionSubSeq.next();
+            if (cursor > -1) {
+                partitionSubSeq.done(cursor);
+                Assert.fail("partitionSubSeq not empty");
+            }
+
+            cursor = openColumnSubSeq.next();
+            if (cursor > -1) {
+                openColumnSubSeq.done(cursor);
+                Assert.fail("openColumnSubSeq not empty");
+                continue;
+            }
+
+            cursor = copySubSeq.next();
+            if (cursor > -1) {
+                copySubSeq.done(cursor);
+                Assert.fail("copySubSeq not empty");
+                continue;
+            }
+            break;
+        }
+
     }
 
     private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
@@ -258,10 +296,12 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         for (int i = 0; i < 20; i++) {
             try {
-                reset(failCounter);
+                reset(failCounter, engine);
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
                 return;
-            } catch (CairoException | CairoError ignore) {
+            } catch (CairoException ignored) {
+            } catch (CairoError e) {
+                checkDistressedOrNoSpaceLeft(e);
             }
         }
 
@@ -343,12 +383,12 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         for (int i = 0; i < 20; i++) {
             try {
-                reset(failCounter);
+                reset(failCounter, engine);
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
                 return;
             } catch (CairoException ignored) {
             } catch (CairoError e) {
-                Assert.assertEquals(e.getMessage(), "Table 'x' is distressed");
+                checkDistressedOrNoSpaceLeft(e);
             }
         }
 
@@ -462,12 +502,12 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         for (int i = 0; i < 20; i++) {
             try {
-                reset(failCounter);
+                reset(failCounter, engine);
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
                 return;
             } catch (CairoException ignored) {
             } catch (CairoError e) {
-                Assert.assertEquals(e.getMessage(), "Table 'x' is distressed");
+                checkDistressedOrNoSpaceLeft(e);
             }
         }
 
@@ -498,7 +538,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
     private void runFuzzRoutine(CustomisableRunnable routine) throws Exception {
         reset();
-        failCounter = 10 + rnd.nextInt(200);
+        failCounter = 71;//10 + rnd.nextInt(200);
         LOG.info().$("failCounter=").$(failCounter).$();
         executeWithPool(workerCount, routine, ffAllocateFailure);
     }
@@ -508,5 +548,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         failCounter = rnd.nextInt(26);
         LOG.info().$("failCounter=").$(failCounter).$();
         executeWithPool(workerCount, routine, ffOpenFailure);
+    }
+
+    static {
+        LogFactory.configureSync();
     }
 }

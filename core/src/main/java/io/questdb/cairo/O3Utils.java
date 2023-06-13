@@ -93,7 +93,9 @@ public class O3Utils {
             long srcHi,
             long dstAddr
     ) {
+//        System.out.printf("copyFromTimestampIndex src=%d, lo=%d, hi=%d, dstAddr=%d", src, srcLo, srcHi, dstAddr);
         Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
+//        System.out.printf("copyFromTimestampIndex_done src=%d, lo=%d, hi=%d, dstAddr=%d", src, srcLo, srcHi, dstAddr);
     }
 
     static long findVarOffset(long srcFixAddr, long srcLo) {
@@ -113,7 +115,9 @@ public class O3Utils {
             long srcHi,
             long dstAddr
     ) {
+//        System.out.printf("shiftCopyFixedSizeColumnData shift=%d, src=%d, srcLo=%d, srcHi=%d, dstAddr=%d\n", shift, src, srcLo, srcHi, dstAddr);
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
+//        System.out.printf("shiftCopyFixedSizeColumnData_done shift=%d, src=%d, srcLo=%d, srcHi=%d, dstAddr=%d\n", shift, src, srcLo, srcHi, dstAddr);
     }
 
     static void unmap(FilesFacade ff, long addr, long size) {

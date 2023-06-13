@@ -2127,29 +2127,23 @@ public class SqlCompiler implements Closeable {
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                try {
-                    if (writerTimestampIndex == -1) {
-                        insertCount = copyUnordered(cursor, writer, copier, circuitBreaker);
+                if (writerTimestampIndex == -1) {
+                    insertCount = copyUnordered(cursor, writer, copier, circuitBreaker);
+                } else {
+                    if (model.getBatchSize() != -1) {
+                        insertCount = copyOrderedBatched(
+                                writer,
+                                factory.getMetadata(),
+                                cursor,
+                                copier,
+                                writerTimestampIndex,
+                                model.getBatchSize(),
+                                model.getO3MaxLag(),
+                                circuitBreaker
+                        );
                     } else {
-                        if (model.getBatchSize() != -1) {
-                            insertCount = copyOrderedBatched(
-                                    writer,
-                                    factory.getMetadata(),
-                                    cursor,
-                                    copier,
-                                    writerTimestampIndex,
-                                    model.getBatchSize(),
-                                    model.getO3MaxLag(),
-                                    circuitBreaker
-                            );
-                        } else {
-                            insertCount = copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound, circuitBreaker);
-                        }
+                        insertCount = copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound, circuitBreaker);
                     }
-                } catch (Throwable e) {
-                    // rollback data when system error occurs
-                    writer.rollback();
-                    throw e;
                 }
             }
         }
