@@ -238,6 +238,46 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testApplyFromLag() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "ts timestamp" +
+                    ") timestamp(ts) partition by HOUR WAL WITH maxUncommittedRows=" + rnd.nextInt(20));
+
+            int count = rnd.nextInt(22);
+            long rowCount = 0;
+            for (int i = 0; i < 2; i++) {
+                int rows = rnd.nextInt(200);
+                compile("insert into " + tableName +
+                        " select x, timestamp_sequence('2022-02-24T0" + i + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
+                rowCount += rows;
+
+            }
+
+            // Eject after every transaction
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(1);
+
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                for (int i = 0; i < count; i++) {
+                    walApplyJob.run(0);
+                    engine.releaseInactive();
+                    int rows = rnd.nextInt(200);
+                    compile("insert into " + tableName +
+                            " select x, timestamp_sequence('2022-02-24T" + String.format("%02d", i + 2) + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
+                    rowCount += rows;
+                }
+            }
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(Timestamps.MINUTE_MICROS);
+            drainWalQueue();
+
+            assertSql("select count(*) from " + tableName, "count\n" + rowCount + "\n");
+        });
+    }
+
+    @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
