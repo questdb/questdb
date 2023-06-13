@@ -46,7 +46,7 @@ public class LineTCPSenderMainVarLenStrings {
         final long count = 2_000_000_000L;
         String hostIPv4 = "127.0.0.1";
         int port = 9009;
-        int bufferCapacity = 64;
+        int bufferCapacity = 4096;
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
@@ -76,7 +76,6 @@ public class LineTCPSenderMainVarLenStrings {
                             .field("first_dir", rnd.nextBoolean())
                             .$(i * 10_000_000L);
                 }
-                sender.flush();
             } finally {
                 if (logFd > 0) {
                     ff.close(logFd);

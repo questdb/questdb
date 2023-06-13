@@ -79,9 +79,4 @@ public class LineTcpSender extends AbstractLineSender {
         validateNotClosed();
         sendAll();
     }
-
-    @Override
-    protected void send00() {
-        sendAll();
-    }
 }
