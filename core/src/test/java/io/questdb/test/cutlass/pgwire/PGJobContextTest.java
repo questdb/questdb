@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -49,6 +48,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -7535,6 +7535,53 @@ create table tab as (
     }
 
     @Test
+    public void testDisconnectDuringAuth() throws Exception {
+        skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
+        for (int i = 0; i < 3; i++) {
+            testDisconnectDuringAuth0(i, 10);
+        }
+    }
+
+    private void testDisconnectDuringAuth0(int allowedSendCount, int clientCount) throws Exception {
+        DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
+        assertMemoryLeak(() -> {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+                @Override
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
+                }
+
+
+                @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public NetworkFacade getNetworkFacade() {
+                            return nf;
+                        }
+                    };
+                }
+            };
+            try (
+                    final PGWireServer server = createPGServer(configuration);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                for (int i = 0; i < clientCount; i++) {
+                    try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
+                        fail("Connection should not be established when server disconnects during authentication");
+                    } catch (PSQLException ignored) {
+
+                    }
+                    Assert.assertEquals(0, nf.getAfterDisconnectInteractions());
+                    TestUtils.assertEventually(() -> Assert.assertTrue(nf.isSocketClosed()));
+                    nf.reset();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSlowClient2() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -10512,6 +10559,60 @@ create table tab as (
     @FunctionalInterface
     interface ResultProducer {
         void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
+    }
+
+    private static class DisconnectOnSendNetworkFacade extends NetworkFacadeImpl {
+        private final int initialAllowedSendCalls;
+        // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
+        // we also *read* it from a test thread -> volatile is needed
+        private volatile int remainingAllowedSendCalls;
+        private volatile boolean socketClosed = false;
+
+        private DisconnectOnSendNetworkFacade(int allowedSendCount) {
+            this.remainingAllowedSendCalls = allowedSendCount;
+            this.initialAllowedSendCalls = allowedSendCount;
+        }
+
+
+        @Override
+        public int send(int fd, long buffer, int bufferLen) {
+            remainingAllowedSendCalls--;
+            if (remainingAllowedSendCalls < 0) {
+                return -1;
+            }
+            return super.send(fd, buffer, bufferLen);
+        }
+
+        @Override
+        public int recv(int fd, long buffer, int bufferLen) {
+            if (remainingAllowedSendCalls < 0) {
+                remainingAllowedSendCalls--;
+                return -1;
+            }
+            return super.recv(fd, buffer, bufferLen);
+        }
+
+        @Override
+        public int close(int fd) {
+            socketClosed = true;
+            return super.close(fd);
+        }
+
+        boolean isSocketClosed() {
+            return socketClosed;
+        }
+
+        int getAfterDisconnectInteractions() {
+            if (remainingAllowedSendCalls >= 0) {
+                return 0;
+            }
+            return -(remainingAllowedSendCalls + 1);
+        }
+
+        void reset() {
+            remainingAllowedSendCalls = initialAllowedSendCalls;
+            socketClosed = false;
+        }
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
