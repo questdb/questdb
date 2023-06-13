@@ -139,8 +139,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case EXPECT_PASSWORD_MESSAGE: {
-                        readFromSocket();
-                        int r = processPasswordMessage();
+                        int r = readFromSocket();
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        r = processPasswordMessage();
                         if (r != Authenticator.OK) {
                             return r;
                         }
@@ -168,7 +171,10 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case WRITE_AND_AUTH_FAILURE: {
-                        writeToSocketAndAdvance(State.AUTH_FAILED);
+                        int r = writeToSocketAndAdvance(State.AUTH_FAILED);
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
                         break;
                     }
                     case AUTH_SUCCESS:
