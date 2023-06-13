@@ -14,13 +14,13 @@ WORKDIR /build
 
 RUN echo tag_name ${tag_name:-master}
 
-RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
+RUN curl -L "https://dlcdn.apache.org/maven/maven-3/3.9.2/binaries/apache-maven-3.9.2-bin.zip" --output maven.zip \
   && unzip maven.zip \
   && git clone --depth=1 --progress --branch "${tag_name:-master}" --verbose https://github.com/questdb/questdb.git
 
 WORKDIR /build/questdb
 
-RUN ../apache-maven-3.6.3/bin/mvn clean package -Djdk.lang.Process.launchMechanism=vfork -DskipTests -P build-web-console,build-binaries
+RUN ../apache-maven-3.9.2/bin/mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P build-web-console,build-binaries
 
 WORKDIR /build/questdb/core/target
 

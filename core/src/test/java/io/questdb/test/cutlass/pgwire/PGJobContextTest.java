@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -49,6 +48,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -102,6 +102,12 @@ public class PGJobContextTest extends BasePGTest {
     public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
     public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
     public static final int CONN_AWARE_EXTENDED_TEXT = 8;
+    public static final int CONN_AWARE_EXTENDED_ALL = CONN_AWARE_EXTENDED_BINARY
+            | CONN_AWARE_EXTENDED_TEXT
+            | CONN_AWARE_EXTENDED_PREPARED_BINARY
+            | CONN_AWARE_EXTENDED_PREPARED_TEXT
+            | CONN_AWARE_EXTENDED_CACHED_BINARY
+            | CONN_AWARE_EXTENDED_CACHED_TEXT;
     public static final int CONN_AWARE_SIMPLE_BINARY = 1;
     public static final int CONN_AWARE_SIMPLE_TEXT = 2;
     public static final int CONN_AWARE_ALL =
@@ -5802,7 +5808,7 @@ nodejs code:
         final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
 
         for (String tsOption : tsOptions) {
-            assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
                 compiler.compile("drop table if exists tab", sqlExecutionContext);
                 compiler.compile("create table tab (s symbol index, ts timestamp) " + tsOption, sqlExecutionContext);
                 compiler.compile("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ", sqlExecutionContext);
@@ -6983,10 +6989,10 @@ create table tab as (
 
     /* asyncqp.py - bind variable appear both in select and where clause
        Unlike jdbc driver, Asyncpg doesn't pass parameter types in Parse message and relies on types returned in ParameterDescription.
-      
+
     import asyncio
     import asyncpg
-    
+
     async def run():
         conn = await asyncpg.connect(user='xyz', password='oh', database='postgres', host='127.0.0.1')
         s = """
@@ -6994,11 +7000,11 @@ create table tab as (
             """
         values = await conn.fetch(s, 'oh' 0.4)
         await conn.close()
-    
+
     loop = asyncio.get_event_loop()
     loop.run_until_complete(run())
      */
-    @Test//bind variables make sense in extended mode only 
+    @Test//bind variables make sense in extended mode only
     public void testSelectBindVarsInSelectAndWhereAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
@@ -7019,6 +7025,84 @@ create table tab as (
                 "<320000000444000000180002000000026f68000000083fe6666666666666430000000d53454c4543542031005a0000000549\n" +
                 ">5800000004\n";
         assertHexScript(script);
+    }
+
+    @Test
+    public void testSelectStringInWithBindVariables() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP, s INT)").execute();
+            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();//monday
+            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-06T16:42:00.333999Z', 2)").execute();//tuesday
+            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-07T03:52:00.999999Z', 3)").execute();//wednesday
+            connection.prepareStatement("INSERT INTO tab VALUES (null, 4)").execute();
+            connection.commit();
+            mayDrainWalQueue();
+
+            String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?)";
+            try (PreparedStatement stmt = connection.prepareStatement("explain " + query)) {
+                stmt.setString(1, "Tuesday");
+                stmt.setString(2, "Friday");
+                try (ResultSet rs = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "QUERY PLAN[VARCHAR]\n" +
+                                    "Async Filter\n" +
+                                    "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::string,$1::string])\n" +
+                                    "  workers: 2\n" +
+                                    "    DataFrame\n" +
+                                    "        Row forward scan\n" +
+                                    "        Frame forward scan on: tab\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement(query)) {
+                stmt.setString(1, "Monday");
+                stmt.setString(2, null);
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                            "2023-06-05 11:12:22.116234,1\n" +
+                            "2023-06-07 03:52:00.999999,3\n" +
+                            "null,4\n", sink, resultSet);
+                }
+
+                stmt.setString(1, "Tuesday");
+                stmt.setString(2, "Friday");
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                            "2023-06-06 16:42:00.333999,2\n" +
+                            "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
+                }
+
+                stmt.setString(1, "Saturday");
+                stmt.setString(2, "Sunday");
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                            "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab WHERE to_str(ts,'EE') in (?)")) {
+                stmt.setString(1, "Monday");
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                            "2023-06-05 11:12:22.116234,1\n", sink, resultSet);
+                }
+
+                stmt.setString(1, "Saturday");
+                try (ResultSet resultSet = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n", sink, resultSet);
+                }
+            }
+        });
     }
 
     @Test
@@ -7451,6 +7535,53 @@ create table tab as (
     }
 
     @Test
+    public void testDisconnectDuringAuth() throws Exception {
+        skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
+        for (int i = 0; i < 3; i++) {
+            testDisconnectDuringAuth0(i, 10);
+        }
+    }
+
+    private void testDisconnectDuringAuth0(int allowedSendCount, int clientCount) throws Exception {
+        DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
+        assertMemoryLeak(() -> {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+                @Override
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
+                }
+
+
+                @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public NetworkFacade getNetworkFacade() {
+                            return nf;
+                        }
+                    };
+                }
+            };
+            try (
+                    final PGWireServer server = createPGServer(configuration);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                for (int i = 0; i < clientCount; i++) {
+                    try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
+                        fail("Connection should not be established when server disconnects during authentication");
+                    } catch (PSQLException ignored) {
+
+                    }
+                    Assert.assertEquals(0, nf.getAfterDisconnectInteractions());
+                    TestUtils.assertEventually(() -> Assert.assertTrue(nf.isSocketClosed()));
+                    nf.reset();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSlowClient2() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -7644,6 +7775,22 @@ create table tab as (
                 TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
             }
         });
+    }
+
+    @Test
+    public void testSquashPartitionsReturnsOk() throws Exception {
+        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+            connection.commit();
+            mayDrainWalQueue();
+            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
+                Assert.assertFalse(dropPartition.execute());
+            }
+        };
     }
 
     @Test
@@ -10412,6 +10559,60 @@ create table tab as (
     @FunctionalInterface
     interface ResultProducer {
         void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
+    }
+
+    private static class DisconnectOnSendNetworkFacade extends NetworkFacadeImpl {
+        private final int initialAllowedSendCalls;
+        // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
+        // we also *read* it from a test thread -> volatile is needed
+        private volatile int remainingAllowedSendCalls;
+        private volatile boolean socketClosed = false;
+
+        private DisconnectOnSendNetworkFacade(int allowedSendCount) {
+            this.remainingAllowedSendCalls = allowedSendCount;
+            this.initialAllowedSendCalls = allowedSendCount;
+        }
+
+
+        @Override
+        public int send(int fd, long buffer, int bufferLen) {
+            remainingAllowedSendCalls--;
+            if (remainingAllowedSendCalls < 0) {
+                return -1;
+            }
+            return super.send(fd, buffer, bufferLen);
+        }
+
+        @Override
+        public int recv(int fd, long buffer, int bufferLen) {
+            if (remainingAllowedSendCalls < 0) {
+                remainingAllowedSendCalls--;
+                return -1;
+            }
+            return super.recv(fd, buffer, bufferLen);
+        }
+
+        @Override
+        public int close(int fd) {
+            socketClosed = true;
+            return super.close(fd);
+        }
+
+        boolean isSocketClosed() {
+            return socketClosed;
+        }
+
+        int getAfterDisconnectInteractions() {
+            if (remainingAllowedSendCalls >= 0) {
+                return 0;
+            }
+            return -(remainingAllowedSendCalls + 1);
+        }
+
+        void reset() {
+            remainingAllowedSendCalls = initialAllowedSendCalls;
+            socketClosed = false;
+        }
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {

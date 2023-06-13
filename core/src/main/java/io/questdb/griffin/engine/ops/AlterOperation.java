@@ -52,9 +52,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short DROP_PARTITION = 2;
     public final static short REMOVE_SYMBOL_CACHE = 7;
     public final static short RENAME_COLUMN = 9;
-    public final static short RENAME_TABLE = 13;
     public final static short SET_PARAM_COMMIT_LAG = 11;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
+    public final static short SQUASH_PARTITIONS = 13;
+    public final static short RENAME_TABLE = 14;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -125,6 +126,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case RENAME_TABLE:
                     applyRenameTable(svc);
+                    break;
+                case SQUASH_PARTITIONS:
+                    squashPartitions(svc);
                     break;
                 default:
                     LOG.error()
@@ -444,6 +448,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
+    }
+
+    private void squashPartitions(MetadataService svc) {
+        svc.squashPartitions();
     }
 
     interface CharSequenceList extends Mutable {

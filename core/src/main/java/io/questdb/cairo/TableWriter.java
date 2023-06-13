@@ -997,14 +997,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // To detach the partition, squash it into single folder if required
-        squashSplitPartitions(timestamp, txWriter.ceilPartitionTimestamp(timestamp), 1);
+        squashPartitionForce(partitionIndex);
 
-        partitionIndex = txWriter.getPartitionIndex(timestamp);
-        // Get next partition, should exist, it's not the last partition
-        if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) == timestamp) {
-            // Could not squash to single partition before detaching because of active table readers.
-            return AttachDetachStatus.DETACH_ERR_CANNOT_SQUASH;
-        }
+        // To check that partition is squashed get the next partition and
+        // verify that it's not the same timestamp as the one we are trying to detach.
+        // The next partition should exist, since last partition cannot be detached.
+        assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != timestamp;
 
         long minTimestamp = txWriter.getMinTimestamp();
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
@@ -1422,7 +1420,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
-                    openFirstPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                    initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                 }
                 // fall thru
 
@@ -1477,8 +1475,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void openLastPartition() {
         try {
-            openPartition(txWriter.getLastPartitionTimestamp());
-            setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
+            openLastPartitionAndSetAppendPosition(txWriter.getLastPartitionTimestamp());
         } catch (Throwable e) {
             freeColumns(false);
             throw e;
@@ -1580,12 +1577,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
 
                     // Try to fast apply records from LAG to last partition which are before commitToTimestamp
-                    return applyFromWalLagToLastPartition(commitToTimestamp);
+                    return applyFromWalLagToLastPartition(commitToTimestamp, true);
                 }
 
                 // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
                 // This application will not include the current transaction data, only what's already in WAL lag.
-                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp)) != Long.MIN_VALUE) {
+                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), false) != Long.MIN_VALUE) {
                     walLagRowCount = txWriter.getLagRowCount();
                     totalUncommitted = walLagRowCount + commitRowCount;
                 }
@@ -2062,8 +2059,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @TestOnly
-    public void squashAllPartitions() {
-        squashSplitPartitions(0, txWriter.getPartitionCount(), 1);
+    public void squashAllPartitionsIntoOne() {
+        squashSplitPartitions(0, txWriter.getPartitionCount(), 1, false);
+    }
+
+    @Override
+    public void squashPartitions() {
+        // Do not cache txWriter.getPartitionCount() as it changes during the squashing
+        for (int i = 0; i < txWriter.getPartitionCount(); i++) {
+            squashPartitionForce(i);
+        }
     }
 
     @Override
@@ -2330,7 +2335,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return index;
     }
 
-    private long applyFromWalLagToLastPartition(long commitToTimestamp) {
+    private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean commitTerminates) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
         if (txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
@@ -2344,7 +2349,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lagMaxTimestamp <= commitToTimestamp) {
                 // Easy case, all lag data can be marked as committed in the last partition
                 LOG.debug().$("fast apply full lag to last partition [table=").$(tableToken).I$();
-                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE);
+                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE, commitTerminates);
                 return lagMaxTimestamp;
             } else if (lagMinTimestamp <= commitToTimestamp) {
                 // Find the max row which can be marked as committed in the last timestamp
@@ -2372,7 +2377,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (applyCount - 1) * Long.BYTES);
                     assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
 
-                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp);
+                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp, commitTerminates);
 
                     LOG.debug().$("partial apply lag to last partition [table=").$(tableToken)
                             .$(" ,lagSize=").$(lagRows)
@@ -2390,7 +2395,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Long.MIN_VALUE;
     }
 
-    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp, boolean commitTerminates) {
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
@@ -2415,7 +2420,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // set append position on columns so that the files are truncated to the correct size
         // if the partition is closed after the commit.
-        setAppendPosition(txWriter.transientRowCount, false);
+        // If wal commit terminates here, column positions should include lag to not truncate the WAL lag data.
+        // Otherwise, lag will be copied out and ok to truncate to the transient row count.
+        long partitionTruncateRowCount = txWriter.getTransientRowCount() + (commitTerminates ? txWriter.getLagRowCount() : 0);
+        setAppendPosition(partitionTruncateRowCount, false);
+    }
+
+    private boolean assertColumnPositionIncludeWalLag() {
+        return txWriter.getLagRowCount() == 0
+                || columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex())).getAppendOffset() == (txWriter.getTransientRowCount() + txWriter.getLagRowCount()) * Long.BYTES;
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(
@@ -2979,7 +2992,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void configureAppendPosition() {
         final boolean partitioned = PartitionBy.isPartitioned(partitionBy);
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
-            openFirstPartition(this.txWriter.getMaxTimestamp());
+            initLastPartition(this.txWriter.getMaxTimestamp());
             if (partitioned) {
                 partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
                 rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -3295,6 +3308,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
         Misc.free(partitionFrameFactory);
+        assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
         commitListener = Misc.free(commitListener);
         try {
@@ -3720,6 +3734,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
+    }
+
+    private void initLastPartition(long timestamp) {
+        final long ts = repairDataGaps(timestamp);
+        openLastPartitionAndSetAppendPosition(ts);
+        populateDenseIndexerList();
+        if (performRecovery) {
+            performRecovery();
+        }
+        txWriter.initLastPartition(ts);
     }
 
     private boolean isLastPartitionClosed() {
@@ -5234,15 +5258,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void openFirstPartition(long timestamp) {
-        final long ts = repairDataGaps(timestamp);
+    private void openLastPartitionAndSetAppendPosition(long ts) {
         openPartition(ts);
-        populateDenseIndexerList();
-        setAppendPosition(txWriter.getTransientRowCount(), false);
-        if (performRecovery) {
-            performRecovery();
-        }
-        txWriter.openFirstPartition(ts);
+        setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
     private void openNewColumnFiles(CharSequence name, int columnType, boolean indexFlag, int indexValueBlockCapacity) {
@@ -6780,12 +6798,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void squashPartitionForce(int partitionIndex) {
+        int lastLogicalPartitionIndex = partitionIndex;
+        long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        assert lastLogicalPartitionTimestamp == txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+
+        // Do not cache txWriter.getPartitionCount() as it changes during the squashing
+        while (partitionIndex < txWriter.getPartitionCount()) {
+            long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+            if (logicalPartitionTimestamp != lastLogicalPartitionTimestamp) {
+                if (partitionIndex > lastLogicalPartitionIndex + 1) {
+                    squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
+                }
+                return;
+            }
+            partitionIndex++;
+        }
+        if (partitionIndex > lastLogicalPartitionIndex + 1) {
+            squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
+        }
+    }
+
     private void squashPartitionRange(int maxLastSubPartitionCount, int partitionIndexLo, int partitionIndexHi) {
         if (partitionIndexHi > partitionIndexLo) {
             int subpartitions = partitionIndexHi - partitionIndexLo;
             int optimalPartitionCount = partitionIndexHi == txWriter.getPartitionCount() ? maxLastSubPartitionCount : MAX_MID_SUB_PARTITION_COUNT;
             if (subpartitions > Math.max(1, optimalPartitionCount)) {
-                squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount);
+                squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount, false);
             } else if (subpartitions == 1) {
                 if (partitionIndexLo >= 0 &&
                         partitionIndexLo < txWriter.getPartitionCount() && minSplitPartitionTimestamp == txWriter.getPartitionTimestampByIndex(partitionIndexLo)) {
@@ -6847,17 +6887,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount) {
+    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
         int targetPartitionIndex = partitionIndexLo;
 
         if (partitionIndexHi > partitionIndexLo + 1) {
             long targetPartition = Long.MIN_VALUE;
+            boolean copyTargetFrame = false;
 
             // Move partitionIndexLo to the first unlocked partition in the range
             for (; targetPartitionIndex + 1 < partitionIndexHi; targetPartitionIndex++) {
-                if (canSquashOverwritePartitionTail(targetPartitionIndex)) {
+                boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+                if (canOverwrite || force) {
                     targetPartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo);
+                    copyTargetFrame = !canOverwrite;
                     break;
                 }
             }
@@ -6872,7 +6915,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
                 TableUtils.setPathForPartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
                 final long originalSize = txWriter.getPartitionSizeByPartitionTimestamp(targetPartition);
-                try (Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, originalSize)) {
+
+                boolean rw = !copyTargetFrame;
+                Frame targetFrame = null;
+                Frame firstPartitionFrame = partitionFrameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
+                try {
+                    if (copyTargetFrame) {
+                        try {
+                            TableUtils.setPathForPartition(other, partitionBy, targetPartition, txWriter.txn);
+                            TableUtils.createDirsOrFail(ff, other.slash$(), configuration.getMkDirMode());
+                            LOG.info().$("copying partition to force squash [from=").$(path).$(", to=").$(other).I$();
+
+                            targetFrame = partitionFrameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
+                            FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
+                            physicallyWrittenRowsSinceLastCommit.addAndGet(firstPartitionFrame.getSize());
+                            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexLo * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+                            partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
+                        } finally {
+                            Misc.free(firstPartitionFrame);
+                        }
+                    } else {
+                        targetFrame = firstPartitionFrame;
+                    }
                     for (int i = 0; i < squashCount; i++) {
                         long sourcePartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo + 1);
 
@@ -6917,6 +6981,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.transientRowCount = newTransientRowCount;
                     }
                 } finally {
+                    Misc.free(targetFrame);
                     path.trimTo(rootLen);
                     other.trimTo(rootLen);
                 }

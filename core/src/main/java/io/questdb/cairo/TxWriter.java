@@ -246,7 +246,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return this;
     }
 
-    public void openFirstPartition(long timestamp) {
+    public void initLastPartition(long timestamp) {
         txPartitionCount = 1;
         updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }

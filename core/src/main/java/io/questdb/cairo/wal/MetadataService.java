@@ -103,5 +103,7 @@ public interface MetadataService {
 
     void setMetaO3MaxLag(long o3MaxLagUs);
 
+    void squashPartitions();
+
     void tick();
 }

@@ -22,10 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.frm;
+package io.questdb.test.griffin.engine.functions.lt;
 
-import io.questdb.std.str.Path;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface FrameColumnTypePool {
-    FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex, boolean init);
+public class LtStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testAll() throws SqlException {
+        call("a", "z").andAssert(true);
+        call("B", "B").andAssert(false);
+        call("aaaa zzzz", "aaaa aaaa").andAssert(false);
+        call("foobar", "foobarbaz").andAssert(true);
+        final CharSequence nullStr = StrConstant.NULL.getStr(null);
+        call(nullStr, "7").andAssert(false);
+        call("0", nullStr).andAssert(false);
+        call(nullStr, nullStr).andAssert(false);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new LtStrFunctionFactory();
+    }
 }

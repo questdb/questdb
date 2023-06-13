@@ -841,6 +841,8 @@ public final class TableUtils {
     }
 
     public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
+        assert !Vm.PARANOIA_MODE || ff.length(fd) >= offset + size : "mmap ro buffer is beyond EOF";
+
         // Linux requires the mmap offset to be page aligned
         long alignedOffset = Files.floorPageSize(offset);
         long alignedExtraLen = offset - alignedOffset;
