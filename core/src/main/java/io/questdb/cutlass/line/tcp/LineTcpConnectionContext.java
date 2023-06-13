@@ -382,16 +382,20 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
-    protected void read() {
+    protected boolean read() {
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
+        final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = nf.recv(fd, recvBufPos, bufferRemaining);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
+                bufferRemaining -= bytesRead;
             } else {
                 peerDisconnected = bytesRead < 0;
             }
+            return bufferRemaining < orig;
         }
+        return !peerDisconnected;
     }
 
     TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {

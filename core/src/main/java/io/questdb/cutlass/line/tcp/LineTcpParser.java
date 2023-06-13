@@ -27,7 +27,10 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class LineTcpParser {

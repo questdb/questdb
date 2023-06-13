@@ -392,7 +392,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             ptr = lineStart = lo;
         } else if (len < capacity) {
             long target = lo == bufA ? bufB : bufA;
-            Vect.memmove(target, lineStart, len);
+            Vect.memcpy(target, lineStart, len);
             sendLine();
             lineStart = lo = target;
             ptr = target + len;
@@ -403,7 +403,12 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     protected void sendAll() {
-        send00();
+        validateNotClosed();
+        if (lo < ptr) {
+            int len = (int) (ptr - lo);
+            lineChannel.send(lo, len);
+            lineStart = ptr = lo;
+        }
     }
 
     protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
