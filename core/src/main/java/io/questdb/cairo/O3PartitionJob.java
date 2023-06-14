@@ -89,7 +89,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         if (srcDataMax < 1) {
 
-            // This has to be a brand-new partition for any of three cases:
+            // This has to be a brand new partition for any of three cases:
             // - This partition is above min partition of the table.
             // - This partition is below max partition of the table.
             // - This is last partition that is empty.
