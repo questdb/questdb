@@ -162,7 +162,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void renameTable(CharSequence toTableName) {
-        if (!Chars.equals(toTableName, tableToken.getTableName())) {
+        if (!Chars.equalsIgnoreCaseNc(toTableName, tableToken.getTableName())) {
             tableToken = new TableToken(
                     Chars.toString(toTableName),
                     tableToken.getDirName(),
@@ -171,11 +171,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             );
         }
         structureVersion.incrementAndGet();
-    }
-
-    private void switchTo(Path path, int pathLen) {
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        syncToMetaFile();
     }
 
     public void syncToDisk() {
@@ -275,6 +270,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         tableToken = null;
         tableId = -1;
         suspended = false;
+    }
+
+    private void switchTo(Path path, int pathLen) {
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+        syncToMetaFile();
     }
 
     boolean isSuspended() {
