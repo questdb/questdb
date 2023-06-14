@@ -134,6 +134,7 @@ public class WalWriter implements TableWriterAPI {
             metadata = new WalWriterMetadata(ff);
 
             tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -154,7 +155,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void addColumn(CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType) {
         addColumn(
                 columnName,
                 columnType,
@@ -418,6 +419,17 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    public long renameTable(@NotNull CharSequence oldName, String newTableName) {
+        if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
+            throw CairoException.tableDoesNotExist(oldName);
+        }
+        alterOp.clear();
+        alterOp.ofRenameTable(tableToken, newTableName);
+        long txn = apply(alterOp, true);
+        assert Chars.equals(newTableName, tableToken.getTableName());
+        return txn;
+    }
+
     public void rollSegment() {
         try {
             openNewSegment();
@@ -547,8 +559,8 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    public void updateTableToken(TableToken tableToken) {
-        this.tableToken = tableToken;
+    public void updateTableToken(TableToken ignoredTableToken) {
+        // goActive will update table token
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA mem1, MemoryMA mem2) {
@@ -1466,7 +1478,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
                 throw CairoException.nonCritical().put("cannot remove column, column does not exists [table=").put(tableToken.getTableName())
@@ -1481,7 +1493,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(CharSequence columnName, CharSequence newName) {
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
                 throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableToken.getTableName())
@@ -1499,6 +1511,15 @@ public class WalWriter implements TableWriterAPI {
             }
             if (!TableUtils.isValidColumnName(newName, newName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(newName);
+            }
+            structureVersion++;
+        }
+
+        @Override
+        public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+            // this check deal with concurrency
+            if (fromNameTable == null || !Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
+                throw CairoException.tableDoesNotExist(fromNameTable);
             }
             structureVersion++;
         }
@@ -1581,7 +1602,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
                 int type = metadata.getColumnType(columnIndex);
@@ -1623,7 +1644,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(CharSequence columnName, CharSequence newColumnName) {
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newColumnName) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
                 int columnType = metadata.getColumnType(columnIndex);
@@ -1663,6 +1684,12 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
             }
+        }
+
+        @Override
+        public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+            tableToken = new TableToken(Chars.toString(toTableName), metadata.getTableToken().getDirName(), metadata.getTableToken().getTableId(), metadata.getTableToken().isWal());
+            metadata.renameTable(tableToken);
         }
     }
 

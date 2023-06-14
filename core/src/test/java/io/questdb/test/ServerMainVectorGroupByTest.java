@@ -67,6 +67,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                 HTTP_MIN_PORT + pgPortDelta,
                 pgPort,
                 ILP_PORT + pgPortDelta,
+                root,
                 PropertyKey.PG_WORKER_COUNT.getPropertyPath() + "=" + PG_WIRE_POOL_SIZE,
                 PropertyKey.SHARED_WORKER_COUNT.getPropertyPath() + "=" + SHARED_POOL_SIZE,
                 // Set vector aggregate queue to a small size to have better chances of work stealing.

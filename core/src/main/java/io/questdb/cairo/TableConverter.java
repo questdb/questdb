@@ -85,9 +85,8 @@ public class TableConverter {
                                 final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled);
 
                                 if (walEnabled) {
-                                    try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
-                                        metadata.load();
-                                        tableSequencerAPI.registerTable(tableId, new TableDescriptorImpl(metadata), token);
+                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token, metaMem)) {
+                                        tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
                                 } else {
                                     tableSequencerAPI.deregisterTable(token);
@@ -174,40 +173,6 @@ public class TableConverter {
             } finally {
                 ff.findClose(pFind);
             }
-        }
-    }
-
-    private static class TableDescriptorImpl implements TableDescriptor {
-        private final ObjList<CharSequence> columnNames = new ObjList<>();
-        private final IntList columnTypes = new IntList();
-        private final int timestampIndex;
-
-        private TableDescriptorImpl(TableRecordMetadata metadata) {
-            timestampIndex = metadata.getTimestampIndex();
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                columnNames.add(metadata.getColumnName(i));
-                columnTypes.add(metadata.getColumnType(i));
-            }
-        }
-
-        @Override
-        public int getColumnCount() {
-            return columnNames.size();
-        }
-
-        @Override
-        public CharSequence getColumnName(int columnIndex) {
-            return columnNames.get(columnIndex);
-        }
-
-        @Override
-        public int getColumnType(int columnIndex) {
-            return columnTypes.get(columnIndex);
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return timestampIndex;
         }
     }
 }
