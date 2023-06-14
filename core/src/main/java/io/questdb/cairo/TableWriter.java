@@ -282,7 +282,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
-            this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
+            this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
@@ -385,7 +385,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addColumn(CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType) {
         addColumn(
                 columnName,
                 columnType,
@@ -537,9 +537,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity);
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -547,7 +547,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addIndex(CharSequence columnName, int indexValueBlockSize) {
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -1140,7 +1140,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void dropIndex(CharSequence columnName) {
+    public void dropIndex(@NotNull CharSequence columnName) {
         checkDistressed();
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
@@ -1794,7 +1794,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void removeColumn(CharSequence name) {
+    public void removeColumn(@NotNull CharSequence name) {
         assert txWriter.getLagRowCount() == 0;
 
         checkDistressed();
@@ -1856,7 +1856,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
         metadata.removeColumn(index);
         if (timestamp) {
@@ -1895,7 +1895,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void renameColumn(CharSequence currentName, CharSequence newName) {
+    public void renameColumn(@NotNull CharSequence currentName, @NotNull CharSequence newName) {
         checkDistressed();
         checkColumnName(newName);
 
@@ -1934,7 +1934,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
         // Call finish purge to remove old column files before renaming them in metadata
         finishColumnPurge();
@@ -1945,6 +1945,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+    }
+
+    @Override
+    public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+        // table writer is not involved in concurrent table rename, the `fromTableName` must
+        // always match tableWriter's table name
+        LOG.debug().$("renaming table [path=").utf8(path).$(", seqTxn=").$(txWriter.getSeqTxn()).I$();
+        try {
+            TableUtils.overwriteTableNameFile(path, ddlMem, ff, toTableName);
+        } finally {
+            path.trimTo(rootLen);
+        }
+        // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
+        bumpColumnStructureVersion();
     }
 
     @Override
@@ -2777,6 +2791,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             cancelRowAndBump();
         }
+    }
+
+    private void bumpMetadataAndColumnStructureVersion() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.bumpMetadataAndColumnStructureVersion(this.denseSymbolMapWriters);
+        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private void bumpMetadataVersion() {

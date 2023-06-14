@@ -83,8 +83,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        private Path rootPath;
         private CairoEngine engine;
+        private Path rootPath;
 
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
             super(METADATA);
@@ -118,8 +118,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final TxReader txReader = new TxReader(ff);
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+            private final TxReader txReader = new TxReader(ff);
             private int tableIndex = -1;
 
             @Override
@@ -216,32 +216,42 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 }
 
                 private boolean switchTo(final TableToken tableToken) {
-                    tableName = tableToken.getTableName();
-                    int rootLen = rootPath.length();
-                    rootPath.concat(tableToken).concat(SEQ_DIR);
-                    int metaFd = -1;
-                    int txnFd = -1;
                     try {
-                        metaFd = TableUtils.openRO(ff, rootPath, META_FILE_NAME, LOG);
-                        txnFd = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);
-                        suspendedFlag = ff.readNonNegativeByte(metaFd, SEQ_META_SUSPENDED) > 0;
-                        sequencerTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
-                    } finally {
+                        tableName = tableToken.getTableName();
+                        int rootLen = rootPath.length();
+                        rootPath.concat(tableToken).concat(SEQ_DIR);
+                        int metaFd = -1;
+                        int txnFd = -1;
+                        try {
+                            metaFd = TableUtils.openRO(ff, rootPath, META_FILE_NAME, LOG);
+                            txnFd = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);
+                            suspendedFlag = ff.readNonNegativeByte(metaFd, SEQ_META_SUSPENDED) > 0;
+                            sequencerTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
+                        } finally {
+                            rootPath.trimTo(rootLen);
+                            ff.close(metaFd);
+                            ff.close(txnFd);
+                        }
+
+                        rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                        if (!ff.exists(rootPath)) {
+                            return false;
+                        }
+                        txReader.ofRO(rootPath, PartitionBy.NONE);
                         rootPath.trimTo(rootLen);
-                        ff.close(metaFd);
-                        ff.close(txnFd);
+
+                        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+                        MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
+                        long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
+                        TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                        writerTxn = txReader.getSeqTxn();
+                        return true;
+                    } catch (CairoException ex) {
+                        if (ex.errnoReadPathDoesNotExist()) {
+                            return false;
+                        }
+                        throw ex;
                     }
-
-                    rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                    txReader.ofRO(rootPath, PartitionBy.NONE);
-                    rootPath.trimTo(rootLen);
-
-                    final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-                    MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
-                    long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                    writerTxn = txReader.getSeqTxn();
-                    return true;
                 }
             }
         }
