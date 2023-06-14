@@ -719,67 +719,85 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableToken rename(
             SecurityContext securityContext,
-            Path path,
+            Path fromPath,
             MemoryMARW memory,
-            CharSequence tableName,
-            Path otherPath,
-            CharSequence newName
+            CharSequence fromTableName,
+            Path toPath,
+            CharSequence toTableName
     ) {
 
-        validNameOrThrow(tableName);
-        validNameOrThrow(newName);
+        validNameOrThrow(fromTableName);
+        validNameOrThrow(toTableName);
 
-        final TableToken tableToken = verifyTableName(tableName);
-        securityContext.authorizeTableRename(tableToken);
-        final TableToken newTableToken;
-        if (tableToken != null) {
-            if (tableToken.isWal()) {
-                String newNameStr = Chars.toString(newName);
-                newTableToken = tableNameRegistry.addTableAlias(newNameStr, tableToken);
-                if (newTableToken != null) {
+        final TableToken fromTableToken = verifyTableName(fromTableName);
+        securityContext.authorizeTableRename(fromTableToken);
+        final TableToken toTableToken;
+        if (fromTableToken != null) {
+            if (fromTableToken.isWal()) {
+                String toTableNameStr = Chars.toString(toTableName);
+                toTableToken = tableNameRegistry.addTableAlias(toTableNameStr, fromTableToken);
+                if (toTableToken != null) {
                     boolean renamed = false;
                     try {
-                        if (newNameStr != null) {
-                            try (WalWriter walWriter = getWalWriter(tableToken)) {
-                                long seqTxn = walWriter.renameTable(tableName, newNameStr);
-                                LOG.info().$("renamed table [from='").$(tableName).$("', to='").$(newName)
-                                        .$("', wal=").$(walWriter.getWalId())
-                                        .$("', seqTxn=").$(seqTxn)
-                                        .I$();
-                                renamed = true;
-                            }
-                            TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken.getTableName());
+                        try (WalWriter walWriter = getWalWriter(fromTableToken)) {
+                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
+                            LOG.info().$("renamed table [from='").utf8(fromTableName)
+                                    .$("', to='").utf8(toTableName)
+                                    .$("', wal=").$(walWriter.getWalId())
+                                    .$("', seqTxn=").$(seqTxn)
+                                    .I$();
+                            renamed = true;
                         }
+                        TableUtils.overwriteTableNameFile(
+                                fromPath.of(configuration.getRoot()).concat(toTableToken),
+                                memory, configuration.getFilesFacade(),
+                                toTableToken.getTableName()
+                        );
                     } finally {
                         if (renamed) {
-                            tableNameRegistry.replaceAlias(tableToken, newTableToken);
+                            tableNameRegistry.replaceAlias(fromTableToken, toTableToken);
                         } else {
-                            LOG.info().$("failed to rename table [from='").$(tableName).$("', to='").$(newName).$("']").$();
-                            tableNameRegistry.removeAlias(newTableToken);
+                            LOG.info()
+                                    .$("failed to rename table [from=").utf8(fromTableName)
+                                    .$(", to=").utf8(toTableName)
+                                    .I$();
+                            tableNameRegistry.removeAlias(toTableToken);
                         }
                     }
                 } else {
-                    throw CairoException.nonCritical().put("cannot rename table, new name is already in use [table=").put(tableName).put(", newName=").put(newName).put("]");
+                    throw CairoException.nonCritical()
+                            .put("cannot rename table, new name is already in use [table=").put(fromTableName)
+                            .put(", toTableName=").put(toTableName)
+                            .put(']');
                 }
             } else {
-                String lockedReason = lock(tableToken, "renameTable");
+                String lockedReason = lock(fromTableToken, "renameTable");
                 if (null == lockedReason) {
                     try {
-                        newTableToken = rename0(path, tableToken, tableName, otherPath, newName);
-                        TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken.getTableName());
+                        toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
+                        TableUtils.overwriteTableNameFile(
+                                fromPath.of(configuration.getRoot()).concat(toTableToken),
+                                memory,
+                                configuration.getFilesFacade(),
+                                toTableToken.getTableName()
+                        );
                     } finally {
-                        unlock(securityContext, tableToken, null, false);
+                        unlock(securityContext, fromTableToken, null, false);
                     }
-                    tableNameRegistry.dropTable(tableToken);
+                    tableNameRegistry.dropTable(fromTableToken);
                 } else {
-                    LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
+                    LOG.error()
+                            .$("could not lock and rename [from=").utf8(fromTableName)
+                            .$("', to=").utf8(toTableName)
+                            .$("', reason=").$(lockedReason)
+                            .I$();
                     throw EntryUnavailableException.instance(lockedReason);
                 }
             }
-            return newTableToken;
+            return toTableToken;
         } else {
-            LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
-            throw CairoException.nonCritical().put("Rename failed. Table '").put(tableName).put("' does not exist");
+            LOG.error().$("cannot rename, table does not exist [table=").utf8(fromTableName).I$();
+            throw CairoException.nonCritical().put("cannot rename, table does not exist [table=").put(fromTableName).put(']');
         }
     }
 
@@ -888,34 +906,45 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to) {
+    private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
+
+        // !!! we do not care what is inside the path1 & path2, we will reset them anyway
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
-        path.of(root).concat(srcTableToken).$();
-        TableToken dstTableToken = lockTableName(to, srcTableToken.getTableId(), false);
+        fromPath.of(root).concat(fromTableToken).$();
 
-        if (dstTableToken == null || ff.exists(otherPath.of(root).concat(dstTableToken).$())) {
-            if (dstTableToken != null) {
-                tableNameRegistry.unlockTableName(dstTableToken);
-            }
-            LOG.error().$("rename target exists [from='").utf8(tableName).$("', to='").utf8(otherPath.$()).I$();
+        TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false);
+
+        if (toTableToken == null) {
+            LOG.error()
+                    .$("rename target exists [from='").utf8(fromTableToken.getTableName())
+                    .$("', to='").utf8(toTableName)
+                    .I$();
             throw CairoException.nonCritical().put("Rename target exists");
         }
 
+        if (ff.exists(toPath.of(root).concat(toTableToken).$())) {
+            tableNameRegistry.unlockTableName(toTableToken);
+        }
+
         try {
-            if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
-                int error = ff.errno();
-                LOG.error().$("could not rename [from='").utf8(path).$("', to='").utf8(otherPath).$("', error=").$(error).I$();
+            if (ff.rename(fromPath, toPath) != Files.FILES_RENAME_OK) {
+                final int error = ff.errno();
+                LOG.error()
+                        .$("could not rename [from='").utf8(fromPath)
+                        .$("', to='").utf8(toPath)
+                        .$("', error=").$(error)
+                        .I$();
                 throw CairoException.critical(error)
-                        .put("could not rename [from='").put(path)
-                        .put("', to='").put(otherPath)
-                        .put("', error=").put(error);
+                        .put("could not rename [from='").put(fromPath)
+                        .put("', to='").put(toPath)
+                        .put(']');
             }
-            tableNameRegistry.registerName(dstTableToken);
-            return dstTableToken;
+            tableNameRegistry.registerName(toTableToken);
+            return toTableToken;
         } finally {
-            tableNameRegistry.unlockTableName(dstTableToken);
+            tableNameRegistry.unlockTableName(toTableToken);
         }
     }
 

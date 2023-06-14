@@ -51,9 +51,9 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void renameTable(CharSequence oldName, CharSequence newName) {
-        assert Chars.equals(oldName, metadata.getTableToken().getTableName());
-        metadata.renameTable(newName);
+    public void renameTable(CharSequence fromNameTable, CharSequence toTableName) {
+        assert Chars.equals(fromNameTable, metadata.getTableToken().getTableName());
+        metadata.renameTable(toTableName);
         this.tableToken = metadata.getTableToken();
     }
 

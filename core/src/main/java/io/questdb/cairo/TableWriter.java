@@ -1948,10 +1948,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void renameTable(CharSequence oldName, CharSequence newName) {
+    public void renameTable(CharSequence fromNameTable, CharSequence toTableName) {
+        // table writer is not involved in concurrent table rename, the `fromTableName` must
+        // always match tableWriter's table name
         LOG.debug().$("renaming table [path=").utf8(path).$(", seqTxn=").$(txWriter.getSeqTxn()).I$();
         try {
-            TableUtils.overwriteTableNameFile(path, ddlMem, ff, newName);
+            TableUtils.overwriteTableNameFile(path, ddlMem, ff, toTableName);
         } finally {
             path.trimTo(rootLen);
         }

@@ -1469,48 +1469,48 @@ public final class TableUtils {
         }
     }
 
-    public static void writeMetadata(TableStructure structure, int tableVersion, int tableId, MemoryA mem) {
-        int count = structure.getColumnCount();
+    public static void writeMetadata(TableStructure tableStruct, int tableVersion, int tableId, MemoryA mem) {
+        int count = tableStruct.getColumnCount();
         mem.putInt(count);
-        mem.putInt(structure.getPartitionBy());
-        int timestampIndex = structure.getTimestampIndex();
+        mem.putInt(tableStruct.getPartitionBy());
+        int timestampIndex = tableStruct.getTimestampIndex();
         assert timestampIndex == -1 ||
-                (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
+                (timestampIndex >= 0 && timestampIndex < count && tableStruct.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
         mem.putInt(timestampIndex);
         mem.putInt(tableVersion);
         mem.putInt(tableId);
-        mem.putInt(structure.getMaxUncommittedRows());
-        mem.putLong(structure.getO3MaxLag());
+        mem.putInt(tableStruct.getMaxUncommittedRows());
+        mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Structure version.
-        mem.putInt(structure.isWalEnabled() ? 1 : 0);
+        mem.putInt(tableStruct.isWalEnabled() ? 1 : 0);
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;
 
         for (int i = 0; i < count; i++) {
-            mem.putInt(structure.getColumnType(i));
+            mem.putInt(tableStruct.getColumnType(i));
             long flags = 0;
-            if (structure.isIndexed(i)) {
+            if (tableStruct.isIndexed(i)) {
                 flags |= META_FLAG_BIT_INDEXED;
             }
 
-            if (structure.isSequential(i)) {
+            if (tableStruct.isSequential(i)) {
                 flags |= META_FLAG_BIT_SEQUENTIAL;
             }
 
-            if (structure.getSymbolCacheFlag(i)) {
+            if (tableStruct.getSymbolCacheFlag(i)) {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
             }
 
             mem.putLong(flags);
-            mem.putInt(structure.getIndexBlockCapacity(i));
-            mem.putInt(structure.getSymbolCapacity(i));
+            mem.putInt(tableStruct.getIndexBlockCapacity(i));
+            mem.putInt(tableStruct.getSymbolCapacity(i));
             // reserved
             mem.skip(12);
         }
 
         for (int i = 0; i < count; i++) {
-            mem.putStr(structure.getColumnName(i));
+            mem.putStr(tableStruct.getColumnName(i));
         }
     }
 

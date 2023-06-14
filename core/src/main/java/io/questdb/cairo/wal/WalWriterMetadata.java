@@ -159,9 +159,9 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void renameTable(TableToken newTableToken) {
-        assert newTableToken != null;
-        tableToken = newTableToken;
+    public void renameTable(TableToken toTableToken) {
+        assert toTableToken != null;
+        tableToken = toTableToken;
         structureVersion++;
     }
 

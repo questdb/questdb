@@ -1469,9 +1469,10 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameTable(CharSequence oldName, CharSequence newName) {
-            if (!Chars.equals(oldName, metadata.getTableToken().getTableName())) {
-                throw CairoException.tableDoesNotExist(oldName);
+        public void renameTable(CharSequence fromNameTable, CharSequence toTableName) {
+            // this check deal with concurrency
+            if (!Chars.equals(fromNameTable, metadata.getTableToken().getTableName())) {
+                throw CairoException.tableDoesNotExist(fromNameTable);
             }
             structureVersion++;
         }
@@ -1592,8 +1593,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameTable(CharSequence oldName, CharSequence newName) {
-            tableToken = new TableToken(Chars.toString(newName), metadata.getTableToken().getDirName(), metadata.getTableToken().getTableId(), metadata.getTableToken().isWal());
+        public void renameTable(CharSequence fromNameTable, CharSequence toTableName) {
+            tableToken = new TableToken(Chars.toString(toTableName), metadata.getTableToken().getDirName(), metadata.getTableToken().getTableId(), metadata.getTableToken().isWal());
             metadata.renameTable(tableToken);
         }
 

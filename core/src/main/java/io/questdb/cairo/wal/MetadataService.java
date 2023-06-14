@@ -71,7 +71,7 @@ public interface MetadataService {
             boolean isSequential
     );
 
-    void renameTable(CharSequence oldName, CharSequence newName);
+    void renameTable(CharSequence fromNameTable, CharSequence toTableName);
 
     void addIndex(CharSequence columnName, int indexValueBlockSize);
 

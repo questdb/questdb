@@ -379,11 +379,11 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, microClock.getTicks());
     }
 
-    void create(int tableId, TableStructure model) {
+    void create(int tableId, TableStructure tableStruct) {
         schemaLock.writeLock().lock();
         try {
             createSequencerDir(ff, mkDirMode);
-            metadata.create(model, tableToken, path, rootLen, tableId);
+            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
         } finally {
             schemaLock.writeLock().unlock();
         }
