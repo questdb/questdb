@@ -725,11 +725,14 @@ public class CairoEngine implements Closeable, WriterSource {
             Path toPath,
             CharSequence toTableName
     ) {
-
         validNameOrThrow(fromTableName);
         validNameOrThrow(toTableName);
 
         final TableToken fromTableToken = verifyTableName(fromTableName);
+        if (Chars.equalsIgnoreCaseNc(fromTableName, toTableName)) {
+            return fromTableToken;
+        }
+
         securityContext.authorizeTableRename(fromTableToken);
         final TableToken toTableToken;
         if (fromTableToken != null) {

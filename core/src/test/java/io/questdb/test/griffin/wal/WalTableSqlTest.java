@@ -1295,6 +1295,47 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRenameTableToCaseInsensitive() throws Exception {
+        String tableName = testName.getMethodName();
+        String upperCaseName = testName.getMethodName().toUpperCase();
+        String newTableName = testName.getMethodName() + "_new";
+
+        assertMemoryLeak(ff, () -> {
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            TableToken table2directoryName = engine.verifyTableName(tableName);
+            compile("rename table " + tableName + " to " + upperCaseName);
+            compile("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
+            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+
+            TableToken newTableDirectoryName = engine.verifyTableName(upperCaseName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
+
+            drainWalQueue();
+
+            assertSql("select * from " + upperCaseName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+
+            compile("rename table " + upperCaseName + " to " + newTableName);
+
+            assertSql("select * from " + newTableName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
     public void testRogueTableWriterBlocksApplyJob() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
