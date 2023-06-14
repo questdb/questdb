@@ -47,6 +47,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -775,7 +776,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void addColumn(CharSequence columnName, int columnType) {
+        public void addColumn(@NotNull CharSequence columnName, int columnType) {
         }
 
         @Override

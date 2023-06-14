@@ -27,6 +27,7 @@ package io.questdb.cliutil;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -116,7 +117,7 @@ public class TxSerializer {
             rwTxMem.putLong(TX_BASE_OFFSET_VERSION_64, version);
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
-            rwTxMem.putLong(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
+            rwTxMem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
 
             rwTxMem.putLong(baseOffset + TX_OFFSET_TXN_64, tx.TX_OFFSET_TXN);
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
@@ -141,7 +142,8 @@ public class TxSerializer {
                 }
             }
 
-            rwTxMem.jumpTo(baseOffset + getPartitionTableIndexOffset(tx.TX_OFFSET_MAP_WRITER_COUNT, 0) - Integer.BYTES);
+            final long partitionTableOffset = TableUtils.getPartitionTableSizeOffset(tx.TX_OFFSET_MAP_WRITER_COUNT);
+            rwTxMem.jumpTo(baseOffset + getPartitionTableIndexOffset(partitionTableOffset, 0) - Integer.BYTES);
             rwTxMem.putInt(partitionSegmentSize);
             if (tx.ATTACHED_PARTITIONS_COUNT != 0) {
                 for (TxFileStruct.AttachedPartition part : tx.ATTACHED_PARTITIONS) {
@@ -202,7 +204,8 @@ public class TxSerializer {
                 final int txAttachedPartitionsCount = partitionSegmentSize / LONGS_PER_TX_ATTACHED_PARTITION / Long.BYTES;
                 tx.ATTACHED_PARTITIONS_COUNT = txAttachedPartitionsCount;
                 tx.ATTACHED_PARTITIONS = new ArrayList<>(txAttachedPartitionsCount);
-                offset = baseOffset + getPartitionTableIndexOffset(tx.TX_OFFSET_MAP_WRITER_COUNT, 0);
+                final long partitionTableOffset = TableUtils.getPartitionTableSizeOffset(tx.TX_OFFSET_MAP_WRITER_COUNT);
+                offset = baseOffset + getPartitionTableIndexOffset(partitionTableOffset, 0);
                 final long maxOffsetPartitions = offset + partitionSegmentSize;
                 while (offset + 7 < Math.min(roTxMem.size(), maxOffsetPartitions)) {
                     TxFileStruct.AttachedPartition partition = new TxFileStruct.AttachedPartition();
