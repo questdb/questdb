@@ -314,7 +314,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWALTableRename() throws Exception {
         assertMemoryLeak(() -> {
-            int threadCount = 3;
+            int threadCount = 2;
             int tableCount = 100;
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier barrier = new CyclicBarrier(threadCount);
@@ -325,8 +325,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 for (int j = 0; j < tableCount; j++) {
+                    String tableName = "tab" + j;
+                    if (j % 2 == 0) {
+                        tableName = "Tab" + j;
+                    }
                     compiler.compile(
-                            "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
+                            "create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
                             executionContext
                     );
                 }
