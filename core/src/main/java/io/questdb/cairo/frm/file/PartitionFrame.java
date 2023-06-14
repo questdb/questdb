@@ -74,12 +74,9 @@ public class PartitionFrame implements Frame {
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
 
         FrameColumnTypePool columnTypePool = canWrite ? columnPool.getPoolRW(columnType) : columnPool.getPoolRO(columnType);
-        if (columnTop >= size) {
-            // This column does not exist at the partition.
-            columnTop = -size;
-        }
-
-        return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex);
+        boolean createNew = columnTop >= size;
+        columnTop = Math.min(columnTop, size);
+        return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, createNew);
     }
 
     @Override

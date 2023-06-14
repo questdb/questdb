@@ -1888,23 +1888,6 @@ public class SqlParser {
             boolean convertToSwitch = true;
             final int paramCount = node.paramCount;
 
-            if (node.paramCount == 2) {
-                // special case, typically something like
-                // case value else expression end
-                // this can be simplified to "expression" only
-
-                ExpressionNode that = node.rhs;
-                node.of(that.type, that.token, that.precedence, that.position);
-                node.paramCount = that.paramCount;
-                if (that.paramCount == 2) {
-                    node.lhs = that.lhs;
-                    node.rhs = that.rhs;
-                } else {
-                    node.args.clear();
-                    node.args.addAll(that.args);
-                }
-                return;
-            }
             final int lim;
             if ((paramCount & 1) == 0) {
                 elseExpr = node.args.getQuick(0);
@@ -1914,7 +1897,7 @@ public class SqlParser {
                 lim = -1;
             }
 
-            // agrs are in inverted order, hence last list item is the first arg
+            // args are in inverted order, hence last list item is the first arg
             ExpressionNode first = node.args.getQuick(paramCount - 1);
             if (first.token != null) {
                 // simple case of 'case' :) e.g.
@@ -1924,10 +1907,10 @@ public class SqlParser {
                 node.token = "switch";
                 return;
             }
-
+            int thenRemainder = elseExpr == null ? 0 : 1;
             for (int i = paramCount - 2; i > lim; i--) {
-                if ((i & 1) == 1) {
-                    // this is "then" clause, copy it as as
+                if ((i & 1) == thenRemainder) {
+                    // this is "then" clause, copy it as is
                     tempExprNodes.add(node.args.getQuick(i));
                     continue;
                 }
@@ -1975,8 +1958,16 @@ public class SqlParser {
                 node.args.add(literal);
                 node.paramCount = n + 2;
             } else {
+                // remove the 'null' marker arg
                 node.args.remove(paramCount - 1);
                 node.paramCount = paramCount - 1;
+
+                // 2 args 'case', e.g. case when x>0 then 1   
+                if (node.paramCount < 3) {
+                    node.rhs = node.args.get(0);
+                    node.lhs = node.args.get(1);
+                    node.args.clear();
+                }
             }
         }
     }

@@ -26,10 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -1128,9 +1125,19 @@ public class SqlOptimiser {
         QueryColumn outerColumn = nextColumn(alias, groupByColumn.getAlias());
         outerColumn = ensureAliasUniqueness(outerModel, outerColumn);
         outerModel.addBottomUpColumn(outerColumn);
-        distinctModel.addBottomUpColumn(outerColumn);
 
-        return Chars.equalsIgnoreCase(groupByColumn.getAlias(), outerColumn.getAlias());
+        boolean sameAlias = Chars.equalsIgnoreCase(groupByColumn.getAlias(), outerColumn.getAlias());
+        if (distinctModel != null) {
+            if (sameAlias) {
+                distinctModel.addBottomUpColumn(outerColumn);
+            } else {//we've to use alias from outer model
+                QueryColumn distinctColumn = nextColumn(outerColumn.getAlias());
+                distinctColumn = ensureAliasUniqueness(distinctModel, distinctColumn);
+                distinctModel.addBottomUpColumn(distinctColumn);
+            }
+        }
+
+        return sameAlias;
     }
 
     private void createSelectColumn(
@@ -1168,7 +1175,9 @@ public class SqlOptimiser {
             final QueryColumn analyticColumn = nextColumn(analyticAlias, innerAlias);
             analyticModel.addBottomUpColumn(analyticColumn);
             outerModel.addBottomUpColumn(translatedColumn);
-            distinctModel.addBottomUpColumn(translatedColumn);
+            if (distinctModel != null) {
+                distinctModel.addBottomUpColumn(translatedColumn);
+            }
         } else {
             final CharSequence alias;
             if (groupByModel.getAliasToColumnMap().contains(columnName)) {
@@ -1196,7 +1205,9 @@ public class SqlOptimiser {
             analyticModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
-            distinctModel.addBottomUpColumn(translatedColumn);
+            if (distinctModel != null) {
+                distinctModel.addBottomUpColumn(translatedColumn);
+            }
         }
     }
 
@@ -1821,6 +1832,17 @@ public class SqlOptimiser {
         }
     }
 
+    private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
+        for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
+            QueryColumn qc = bottomUpColumns.getQuick(i);
+            if (ExpressionNode.compareNodesExact(qc.getAst(), node)) {
+                return qc.getAlias();
+            }
+        }
+        return null;
+
+    }
+
     private CharSequence findTimestamp(QueryModel model) {
         if (model != null) {
             CharSequence timestamp;
@@ -1846,7 +1868,7 @@ public class SqlOptimiser {
         return func;
     }
 
-    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
+    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) throws SqlException {
         orderByAdvice.clear();
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
         final int len = orderBy.size();
@@ -1856,7 +1878,13 @@ public class SqlOptimiser {
 
         LowerCaseCharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
-            QueryColumn queryColumn = map.get(orderBy.getQuick(i).token);
+            ExpressionNode orderByNode = orderBy.getQuick(i);
+            QueryColumn queryColumn = map.get(orderByNode.token);
+            if (queryColumn == null) {
+                throw SqlException.position(orderByNode.position)
+                        .put("Unexpected order by column: ").put(orderByNode.token);
+            }
+
             if (queryColumn.getAst().type == LITERAL) {
                 orderByAdvice.add(queryColumn.getAst());
             } else {
@@ -2241,15 +2269,18 @@ public class SqlOptimiser {
             for (int i = 0; i < n; i++) {
                 ExpressionNode node = orderBy.getQuick(i);
                 if (node.type == FUNCTION || node.type == OPERATION) {
-                    // add this function to bottom-up columns and replace this expression with index
-                    CharSequence alias = SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getAliasToColumnMap(), true);
-                    QueryColumn qc = queryColumnPool.next().of(
-                            alias,
-                            node,
-                            false
-                    );
-                    model.getAliasToColumnMap().put(alias, qc);
-                    model.getBottomUpColumns().add(qc);
+                    CharSequence alias = findQueryColumnByAst(model.getBottomUpColumns(), node);
+                    if (alias == null) {
+                        // add this function to bottom-up columns and replace this expression with index
+                        alias = SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getAliasToColumnMap(), true);
+                        QueryColumn qc = queryColumnPool.next().of(
+                                alias,
+                                node,
+                                false
+                        );
+                        model.getAliasToColumnMap().put(alias, qc);
+                        model.getBottomUpColumns().add(qc);
+                    }
                     orderBy.setQuick(i, nextLiteral(alias));
                     moved = true;
                 }
@@ -2687,7 +2718,7 @@ public class SqlOptimiser {
     }
 
     // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
-    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) {
+    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) throws SqlException {
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
         int orderByMnemonic;
         int n = columns.size();
@@ -3558,6 +3589,14 @@ public class SqlOptimiser {
                             index = map.keyIndex(column, dot + 1, column.length());
                         }
 
+                        if (index > -1) {
+                            QueryColumn qc = this.getQueryColumn(baseParent, column, dot);
+                            if (qc != null) {
+                                index = map.keyIndex(qc.getAst().token);
+                            }
+                        }
+
+
                         if (index < 0) {
                             // we have found alias, rewrite order by column
                             orderBy.token = map.valueAtQuick(index);
@@ -3567,32 +3606,37 @@ public class SqlOptimiser {
 
                             // if necessary, propagate column to limit model that'll receive order by
                             if (limitModel != baseParent &&
-                                    !hasAnalyticColumn(limitModel) && // analytic model doesn't support aliases
-                                    getTranslatedColumnAlias(limitModel, baseParent, orderBy.token) == null) {
-                                //add column ref to the most-nested model that doesn't have it
-                                alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOf(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap());
-                                tempQueryModel.addBottomUpColumn(nextColumn(alias, tempColumnAlias));
+                                    !hasAnalyticColumn(limitModel)) { // analytic model doesn't support aliases
+                                CharSequence translatedColumnAlias = getTranslatedColumnAlias(limitModel, baseParent, orderBy.token);
 
-                                //and then push to upper models
-                                QueryModel m = limitModel;
-                                while (m != tempQueryModel) {
-                                    m.addBottomUpColumn(nextColumn(alias));
-                                    m = m.getNestedModel();
-                                }
+                                if (translatedColumnAlias == null) {
+                                    //add column ref to the most-nested model that doesn't have it
+                                    alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOf(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap());
+                                    tempQueryModel.addBottomUpColumn(nextColumn(alias, tempColumnAlias));
 
-                                tempQueryModel = null;
-                                tempColumnAlias = null;
-                                orderBy.token = alias;
-
-                                //if necessary, add external model to maintain output
-                                if (limitModel == model && wrapper == null) {
-                                    wrapper = queryModelPool.next();
-                                    wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-                                    for (int j = 0; j < modelColumnCount; j++) {
-                                        wrapper.addBottomUpColumn(nextColumn(model.getBottomUpColumns().getQuick(j).getAlias()));
+                                    //and then push to upper models
+                                    QueryModel m = limitModel;
+                                    while (m != tempQueryModel) {
+                                        m.addBottomUpColumn(nextColumn(alias));
+                                        m = m.getNestedModel();
                                     }
-                                    result = wrapper;
-                                    wrapper.setNestedModel(model);
+
+                                    tempQueryModel = null;
+                                    tempColumnAlias = null;
+                                    orderBy.token = alias;
+
+                                    //if necessary, add external model to maintain output
+                                    if (limitModel == model && wrapper == null) {
+                                        wrapper = queryModelPool.next();
+                                        wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                        for (int j = 0; j < modelColumnCount; j++) {
+                                            wrapper.addBottomUpColumn(nextColumn(model.getBottomUpColumns().getQuick(j).getAlias()));
+                                        }
+                                        result = wrapper;
+                                        wrapper.setNestedModel(model);
+                                    }
+                                } else {
+                                    orderBy.token = translatedColumnAlias;
                                 }
                             }
                         } else {
@@ -4095,7 +4139,7 @@ public class SqlOptimiser {
                                 groupByAliases.get(matchingColIdx),
                                 groupByModel,
                                 outerVirtualModel,
-                                distinctModel
+                                useDistinctModel ? distinctModel : null
                         );
                         if (sameAlias && i == matchingColIdx) {
                             groupByUsed.set(matchingColIdx, true);
@@ -4113,7 +4157,7 @@ public class SqlOptimiser {
                                 analyticModel,
                                 groupByModel,
                                 outerVirtualModel,
-                                distinctModel
+                                useDistinctModel ? distinctModel : null
                         );
                     }
                 }

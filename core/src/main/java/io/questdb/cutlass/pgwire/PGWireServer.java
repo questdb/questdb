@@ -177,7 +177,7 @@ public class PGWireServer implements Closeable {
                 );
                 FactoryProvider factoryProvider = configuration.getFactoryProvider();
                 NetworkFacade nf = configuration.getNetworkFacade();
-                Authenticator authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, pgConnectionContext);
+                Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, pgConnectionContext);
                 pgConnectionContext.setAuthenticator(authenticator);
                 return pgConnectionContext;
             }, configuration.getConnectionPoolInitialCapacity());

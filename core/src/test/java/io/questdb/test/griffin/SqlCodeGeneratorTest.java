@@ -1815,22 +1815,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFilterSubQueryUnsupportedColType() throws Exception {
-        assertFailure("select * from x where b in (select 12, rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                24,
-                "supported column types are STRING and SYMBOL, found: INT");
-    }
-
-    @Test
     public void testFilterTimestamps() throws Exception {
         // ts
         // 2022-03-22 10:00:00.0
@@ -7151,6 +7135,84 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"column\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"$2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}", sink);
             }
         });
+    }
+
+    @Test
+    public void testStrAndNullComparisonInFilter() throws Exception {
+        assertQuery(
+                "res\n",
+                "SELECT 1 as res FROM x WHERE x.b > NULL LIMIT 1;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(5)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testStrAndNullComparisonInSelect() throws Exception {
+        assertQuery(
+                "column\n" +
+                        "false\n",
+                "SELECT x.b > NULL FROM x LIMIT 1;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(5)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testStrComparisonInSelect() throws Exception {
+        assertQuery(
+                "a\tb\tcolumn\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\n" +
+                        "TJ\tCP\tfalse\ttrue\tfalse\ttrue\ttrue\tfalse\n" +
+                        "WH\tRX\tfalse\ttrue\tfalse\ttrue\tfalse\ttrue\n" +
+                        "EH\tRX\ttrue\tfalse\ttrue\tfalse\tfalse\ttrue\n" +
+                        "ZS\tUX\tfalse\ttrue\tfalse\ttrue\tfalse\ttrue\n" +
+                        "BB\tGP\ttrue\tfalse\ttrue\tfalse\ttrue\tfalse\n" +
+                        "WF\tYU\ttrue\tfalse\tfalse\ttrue\tfalse\ttrue\n" +
+                        "EY\tQE\ttrue\tfalse\ttrue\tfalse\ttrue\tfalse\n" +
+                        "BH\tOW\ttrue\tfalse\ttrue\tfalse\ttrue\tfalse\n" +
+                        "PD\tYS\ttrue\tfalse\ttrue\tfalse\tfalse\ttrue\n" +
+                        "EO\tOJ\ttrue\tfalse\ttrue\tfalse\ttrue\tfalse\n" +
+                        "HR\tED\tfalse\ttrue\ttrue\tfalse\ttrue\tfalse\n" +
+                        "QQ\tLO\tfalse\ttrue\tfalse\ttrue\ttrue\tfalse\n" +
+                        "JG\tTJ\ttrue\tfalse\ttrue\tfalse\tfalse\ttrue\n" +
+                        "\t\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\n" +
+                        "SR\tRF\tfalse\ttrue\tfalse\ttrue\tfalse\ttrue\n" +
+                        "VT\tHG\tfalse\ttrue\tfalse\ttrue\ttrue\tfalse\n" +
+                        "\tZZ\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\n" +
+                        "DZ\tMY\ttrue\tfalse\ttrue\tfalse\ttrue\tfalse\n" +
+                        "CC\tZO\ttrue\tfalse\ttrue\tfalse\tfalse\ttrue\n" +
+                        "IC\tEK\tfalse\ttrue\ttrue\tfalse\ttrue\tfalse\n",
+                "SELECT a, b, a < b, a > b, a < 'QQ', a >= 'QQ', b < 'QQ', b >= 'QQ' FROM x;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_str(2,2,5) a," +
+                        " rnd_str(2,2,5) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
