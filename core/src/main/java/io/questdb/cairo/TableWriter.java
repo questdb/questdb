@@ -4150,11 +4150,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long cursor = partitionSubSeq.next();
             if (cursor > -1) {
                 final O3PartitionTask partitionTask = partitionQueue.get(cursor);
-                if (partitionTask.getTableWriter().o3ErrorCount.get() > 0) {
+                if (partitionTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
                     // do we need to free anything on the task?
                     partitionSubSeq.done(cursor);
-                    partitionTask.getTableWriter().o3ClockDownPartitionUpdateCount();
-                    partitionTask.getTableWriter().o3CountDownDoneLatch();
+                    o3ClockDownPartitionUpdateCount();
+                    o3CountDownDoneLatch();
                 } else {
                     o3ProcessPartitionSafe(partitionSubSeq, cursor, partitionTask);
                 }
@@ -4164,7 +4164,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             cursor = openColumnSubSeq.next();
             if (cursor > -1) {
                 O3OpenColumnTask openColumnTask = openColumnQueue.get(cursor);
-                if (openColumnTask.getTableWriter().o3ErrorCount.get() > 0) {
+                if (openColumnTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
                     O3CopyJob.closeColumnIdle(
                             openColumnTask.getColumnCounter(),
                             openColumnTask.getTimestampMergeIndexAddr(),
@@ -4172,8 +4172,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             openColumnTask.getSrcTimestampFd(),
                             openColumnTask.getSrcTimestampAddr(),
                             openColumnTask.getSrcTimestampSize(),
-                            openColumnTask.getTableWriter(),
-                            "TableWriter errors detected"
+                            this
                     );
                     openColumnSubSeq.done(cursor);
                 } else {
@@ -4185,7 +4184,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             cursor = copySubSeq.next();
             if (cursor > -1) {
                 O3CopyTask copyTask = copyQueue.get(cursor);
-                if (copyTask.getTableWriter().o3ErrorCount.get() > 0) {
+                if (copyTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
                     O3CopyJob.copyIdle(
                             copyTask.getColumnCounter(),
                             copyTask.getPartCounter(),
@@ -4208,7 +4207,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             copyTask.getSrcTimestampSize(),
                             copyTask.getDstKFd(),
                             copyTask.getDstVFd(),
-                            copyTask.getTableWriter()
+                            this
                     );
                     copySubSeq.done(cursor);
                 } else {
@@ -4801,7 +4800,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long srcLo = o3SrcDataMem.addressOf(sourceOffset);
 
                 long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
-                O3Utils.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
+                Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
                 mapAppendColumnBufferRelease(destAddr, destOffset, size);
             }
         } catch (Throwable th) {
@@ -5749,9 +5748,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             o3InError = !success || o3ErrorCount.get() > 0;
             if (success && o3ErrorCount.get() > 0) {
-                // Do not reuse TabelWriter intance if exception happens in O3 commit,
-                // set it to distressed state instead to be not pooled
-                distressed = true;
                 //noinspection ThrowFromFinallyBlock
                 throw CairoException.critical(0).put("bulk update failed and will be rolled back");
             }

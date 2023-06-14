@@ -2113,8 +2113,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarSize,
                     0,
                     0,
-                    tableWriter,
-                    "mergeVarColumn exception"
+                    tableWriter
             );
             throw e;
         }

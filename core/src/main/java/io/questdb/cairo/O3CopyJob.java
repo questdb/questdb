@@ -197,8 +197,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
-                    tableWriter,
-                    "O3CopyJob.copy() exception"
+                    tableWriter
             );
             throw th;
         }
@@ -759,8 +758,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarSize,
                     0,
                     0,
-                    tableWriter,
-                    "syncColumns exception"
+                    tableWriter
             );
             throw e;
         }
@@ -835,8 +833,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarSize,
                     0,
                     0,
-                    tableWriter,
-                    "update index exception"
+                    tableWriter
             );
             throw e;
         }
@@ -901,8 +898,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter,
-            String reason
+            TableWriter tableWriter
     ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug()
@@ -910,7 +906,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .$(", columnsRemaining=").$(columnsRemaining)
                 .I$();
         if (columnsRemaining == 0) {
-            LOG.info().$("close column reason=").$(reason).$();
             closeColumnIdleQuick(
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
@@ -990,8 +985,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarSize,
                     dstKFd,
                     dstVFd,
-                    tableWriter,
-                    "copyIdleQuick, TableWriter error detected parCounter=" + (partCounter == null ? "null" : "0")
+                    tableWriter
             );
         }
     }
@@ -1017,8 +1011,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarSize,
             int dstKFd,
             int dstVFd,
-            TableWriter tableWriter,
-            String reason
+            TableWriter tableWriter
     ) {
         try {
             final FilesFacade ff = tableWriter.getFilesFacade();
@@ -1036,8 +1029,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
-                    tableWriter,
-                    reason
+                    tableWriter
             );
         }
     }
