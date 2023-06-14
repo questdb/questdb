@@ -56,13 +56,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 @RunWith(Parameterized.class)
 public class O3FailureFuzzTest extends AbstractO3Test {
     private final static AtomicInteger counter = new AtomicInteger(0);
-    private final static AtomicBoolean failNextAlloc = new AtomicBoolean(false);
+    private final static AtomicBoolean failNextAllocOrOpen = new AtomicBoolean(false);
     private static final TestFilesFacadeImpl ffAllocateFailure = new TestFilesFacadeImpl() {
 
         @Override
         public boolean allocate(int fd, long size) {
-            if (failNextAlloc.get()) {
-                failNextAlloc.set(false);
+            if (counter.decrementAndGet() == 0) {
+                failNextAllocOrOpen.set(false);
                 return false;
             }
             return super.allocate(fd, size);
@@ -70,18 +70,19 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         @Override
         public long length(int fd) {
-            if (counter.decrementAndGet() == 0) {
-                failNextAlloc.set(true);
+            if (!failNextAllocOrOpen.get() && counter.decrementAndGet() == 0) {
+                failNextAllocOrOpen.set(true);
                 return 0;
             }
             return super.length(fd);
         }
     };
+
     private static final FilesFacade ffOpenFailure = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if ((Chars.endsWith(name, Files.SEPARATOR + "ts.d") && Chars.contains(name, "1970-01-06") && counter.decrementAndGet() == 0) && failNextAlloc.get()) {
-                failNextAlloc.set(false);
+            if ((Chars.endsWith(name, Files.SEPARATOR + "ts.d") && Chars.contains(name, "1970-01-06") && counter.decrementAndGet() == 0) && failNextAllocOrOpen.get()) {
+                failNextAllocOrOpen.set(false);
                 return -1;
             }
             return super.openRW(name, opts);
@@ -105,7 +106,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     }
 
     public static void reset() {
-        failNextAlloc.set(false);
+        failNextAllocOrOpen.set(false);
         counter.set(Integer.MAX_VALUE);
     }
 
@@ -144,8 +145,8 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (failNextAlloc.get() && this.fd == fd) {
-                    failNextAlloc.set(false);
+                if (failNextAllocOrOpen.get() && this.fd == fd) {
+                    failNextAllocOrOpen.set(false);
                     this.fd = -1;
                     return -1;
                 }
@@ -157,7 +158,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                 int fd = super.openRW(name, opts);
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
-                    failNextAlloc.set(true);
+                    failNextAllocOrOpen.set(true);
                 }
                 return fd;
             }
@@ -538,7 +539,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
     private void runFuzzRoutine(CustomisableRunnable routine) throws Exception {
         reset();
-        failCounter = 71;//10 + rnd.nextInt(200);
+        failCounter = 14 + rnd.nextInt(200);
         LOG.info().$("failCounter=").$(failCounter).$();
         executeWithPool(workerCount, routine, ffAllocateFailure);
     }
@@ -548,9 +549,5 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         failCounter = rnd.nextInt(26);
         LOG.info().$("failCounter=").$(failCounter).$();
         executeWithPool(workerCount, routine, ffOpenFailure);
-    }
-
-    static {
-        LogFactory.configureSync();
     }
 }
