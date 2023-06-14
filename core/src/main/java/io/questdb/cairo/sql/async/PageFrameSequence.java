@@ -457,10 +457,13 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 } else if (cursor == -1) {
                     idle = false;
                     // start stealing work to unload the queue
-                    if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
-                        continue;
+                    try {
+                        if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
+                            continue;
+                        }
+                    } finally {
+                        dispatchStartFrameIndex = i;
                     }
-                    dispatchStartFrameIndex = i;
                     break OUT;
                 } else {
                     Os.pause();
