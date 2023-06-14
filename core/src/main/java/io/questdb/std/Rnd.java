@@ -240,10 +240,6 @@ public class Rnd {
     public final void reset(long s0, long s1) {
         this.s0 = s0;
         this.s1 = s1;
-
-        if (s0 < 0) {
-            System.out.println("ok");
-        }
     }
 
     public final void reset() {
