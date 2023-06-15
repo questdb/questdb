@@ -22,15 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.test.griffin.engine.functions.lt;
 
-import io.questdb.std.FilesFacade;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-//mapped appendable readable writable
-public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR, MemoryMAR {
+public class LtStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testAll() throws SqlException {
+        call("a", "z").andAssert(true);
+        call("B", "B").andAssert(false);
+        call("aaaa zzzz", "aaaa aaaa").andAssert(false);
+        call("foobar", "foobarbaz").andAssert(true);
+        final CharSequence nullStr = StrConstant.NULL.getStr(null);
+        call(nullStr, "7").andAssert(false);
+        call("0", nullStr).andAssert(false);
+        call(nullStr, nullStr).andAssert(false);
+    }
 
-    void of(FilesFacade ff, int fd, @Nullable CharSequence name, long size, int memoryTag);
-
-    void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag);
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new LtStrFunctionFactory();
+    }
 }

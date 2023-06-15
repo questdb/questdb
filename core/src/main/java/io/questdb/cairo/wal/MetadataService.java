@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import org.jetbrains.annotations.NotNull;
 
 public interface MetadataService {
     /**
@@ -71,7 +72,7 @@ public interface MetadataService {
             boolean isSequential
     );
 
-    void addIndex(CharSequence columnName, int indexValueBlockSize);
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
@@ -79,7 +80,7 @@ public interface MetadataService {
 
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
-    void dropIndex(CharSequence columnName);
+    void dropIndex(@NotNull CharSequence columnName);
 
     long getMetaMaxUncommittedRows();
 
@@ -91,15 +92,19 @@ public interface MetadataService {
 
     UpdateOperator getUpdateOperator();
 
-    void removeColumn(CharSequence columnName);
+    void removeColumn(@NotNull CharSequence columnName);
 
     boolean removePartition(long partitionTimestamp);
 
-    void renameColumn(CharSequence columnName, CharSequence newName);
+    void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName);
+
+    void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
+
+    void squashPartitions();
 
     void tick();
 }

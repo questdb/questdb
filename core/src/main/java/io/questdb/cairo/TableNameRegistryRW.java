@@ -44,6 +44,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
+    public TableToken addTableAlias(String newName, TableToken tableToken) {
+        TableToken newNameRecord = new TableToken(newName, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
+        TableToken oldToken = nameTableTokenMap.putIfAbsent(newName, newNameRecord);
+        return oldToken == null ? newNameRecord: null;
+    }
+
+    @Override
     public boolean dropTable(TableToken token) {
         final ReverseTableMapItem reverseMapItem = reverseTableNameTokenMap.get(token.getDirName());
         if (reverseMapItem != null && nameTableTokenMap.remove(token.getTableName(), token)) {
@@ -90,6 +97,20 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.lock();
         }
         nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap, convertedTables);
+    }
+
+    @Override
+    public void removeAlias(TableToken tableToken) {
+        nameTableTokenMap.remove(tableToken.getTableName());
+    }
+
+    @Override
+    public void replaceAlias(TableToken alias, TableToken replaceWith) {
+        if (nameTableTokenMap.remove(alias.getTableName(), alias)) {
+            nameStore.logDropTable(alias);
+            nameStore.appendEntry(replaceWith);
+            reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
+        }
     }
 
     @Override

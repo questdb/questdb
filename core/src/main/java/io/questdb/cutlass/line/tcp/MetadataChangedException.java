@@ -22,15 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.FilesFacade;
-import org.jetbrains.annotations.Nullable;
+public class MetadataChangedException extends Exception {
 
-//mapped appendable readable writable
-public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR, MemoryMAR {
+    public final static MetadataChangedException INSTANCE = new MetadataChangedException();
 
-    void of(FilesFacade ff, int fd, @Nullable CharSequence name, long size, int memoryTag);
-
-    void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag);
+    private MetadataChangedException() {
+    }
 }

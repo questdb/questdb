@@ -1191,18 +1191,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             FilesFacade ff = configuration.getFilesFacade();
                             Assert.assertTrue(ff.exists(path.$()));
 
-                            try {
-                                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                            } catch (CairoException e) {
-                                TestUtils.assertEquals("could not detach partition [table=testDetachAttachSplitPartition, " +
-                                        "detachStatus=DETACH_ERR_CANNOT_SQUASH, partitionTimestamp=2022-06-01T00:00:00.000Z, partitionBy=DAY]", e.getFlyweightMessage());
-                            }
+                            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                         }
-
-                        // Detach partition "2022-06-01", should squash partition into 1 piece and detach it
-                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                        assertSql("select min(ts) from " + tableName, "min\n" +
-                                "2022-06-02T00:01:55.116000Z\n");
 
                         renameDetachedToAttachable(tableName, "2022-06-01");
                         compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
@@ -2175,7 +2165,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             AbstractSqlParserTest.assertSyntaxError(
                     "ALTER TABLE tab foobar",
                     16,
-                    "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected",
+                    "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected",
                     tableModel
             );
         }

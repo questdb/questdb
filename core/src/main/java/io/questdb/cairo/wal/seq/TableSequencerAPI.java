@@ -269,19 +269,19 @@ public class TableSequencerAPI implements QuietCloseable {
     public void openSequencer(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
-                sequencer.open();
+                sequencer.open(tableToken);
             } finally {
                 sequencer.unlockWrite();
             }
         }
     }
 
-    public void registerTable(int tableId, final TableDescriptor tableDescriptor, final TableToken tableToken) {
+    public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
         try (
                 TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt) -> {
                     final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt);
                     sequencer.create(tableId, tableDescriptor);
-                    sequencer.open();
+                    sequencer.open(tableToken);
                     return sequencer;
                 })
         ) {
@@ -295,6 +295,16 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public boolean releaseInactive() {
         return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
+    }
+
+    public TableToken reload(TableToken tableToken) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                return tableSequencer.reload();
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+        }
     }
 
     public void reloadMetadataConditionally(
@@ -311,20 +321,6 @@ public class TableSequencerAPI implements QuietCloseable {
                 tableSequencer.unlockRead();
             }
         }
-    }
-
-    public void renameWalTable(TableToken tableToken, TableToken newTableToken) {
-        assert tableToken.getDirName().equals(newTableToken.getDirName());
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.rename(newTableToken);
-            } finally {
-                sequencer.unlockWrite();
-            }
-        }
-        LOG.advisory().$("renamed wal table [table=")
-                .utf8(tableToken.getTableName()).$(", newName=").utf8(newTableToken.getTableName())
-                .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
 
     public void resumeTable(TableToken tableToken, long resumeFromTxn) {
@@ -412,7 +408,7 @@ public class TableSequencerAPI implements QuietCloseable {
 
     private TableSequencerEntry openSequencerInstance(CharSequence tableDir, Object tableToken) {
         TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tableToken);
-        sequencer.open();
+        sequencer.open((TableToken) tableToken);
         return sequencer;
     }
 
