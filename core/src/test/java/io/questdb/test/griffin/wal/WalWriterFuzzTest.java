@@ -75,7 +75,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef = WalWriterFuzzTest::checkNoSuspendedTables;
-    private boolean allowMixedIO;
+    protected boolean allowMixedIO;
 
     public WalWriterFuzzTest(IOMode ioMode) {
         this.allowMixedIO = (ioMode == IOMode.ALLOW_MIXED_IO);
