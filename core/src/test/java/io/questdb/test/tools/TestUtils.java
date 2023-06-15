@@ -960,7 +960,7 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, 486623793781L, 1685974125839L);//System.nanoTime(), System.currentTimeMillis());
+        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
     }
 
     @NotNull
