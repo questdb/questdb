@@ -105,6 +105,7 @@ public class CopyWalSegmentUtils {
         long offset = rowOffset << shl;
         long length = rowCount << shl;
 
+        // TODO
         boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
         if (success) {
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
@@ -158,6 +159,7 @@ public class CopyWalSegmentUtils {
             long varStart = Unsafe.getUnsafe().getLong(srcIndexAddr + rowOffset * Long.BYTES);
             long varEnd = Unsafe.getUnsafe().getLong(srcIndexAddr + (rowOffset + rowCount) * Long.BYTES);
             long varCopyLen = varEnd - varStart;
+            // TODO
             boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, varStart, varCopyLen) == varCopyLen;
             if (!success) {
                 return false;

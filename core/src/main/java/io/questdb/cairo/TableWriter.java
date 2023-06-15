@@ -4807,15 +4807,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         sourceOffset = 0;
                     }
                     MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
-                    long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
-                    if (bytesWritten != size) {
-                        throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                                .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                    if (mixedIOFlag) {
+                        long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
+                        if (bytesWritten != size) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
+                    } else {
+                        Vect.memcpy(o3DstDataMem.addressOf(destOffset), o3MemBuff.addressOf(sourceOffset), size);
                     }
-
                 } else {
                     MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
-                    ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                    if (mixedIOFlag) {
+                        ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                    } else {
+                        Vect.memcpy(o3DstDataMem.addressOf(destOffset), o3SrcDataMemFile.addressOf(sourceOffset), size);
+                    }
                 }
             } else {
                 // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.

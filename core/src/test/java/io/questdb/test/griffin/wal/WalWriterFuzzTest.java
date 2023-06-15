@@ -198,7 +198,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testWalWriteRollbackHeavy() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        setFuzzCounts(rnd.nextBoolean(), 100_000, 300, 100, 1000, 1000, 100, 3);
         runFuzz(rnd);
     }
 
