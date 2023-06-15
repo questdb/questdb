@@ -185,11 +185,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
             m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
             CreateTableTestUtils.create(m);
+            engine.releaseInactive();
         }
 
         final SOCountDownLatch dataSent = new SOCountDownLatch(1);
         final SOCountDownLatch dataConsumed = new SOCountDownLatch(1);
         final AtomicInteger sendFailureCounter = new AtomicInteger();
+
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
@@ -253,7 +255,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
                 m.timestamp("ts").wal();
-                CreateTableTestUtils.create(engine, m);
+                TestUtils.create(m, engine);
             }
 
             // Send non-partitioned table rows before the partitioned table ones.
@@ -1162,7 +1164,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            CreateTableTestUtils.create(engine, m);
+            TestUtils.create(m, engine);
         }
 
         engine.releaseInactive();
@@ -1216,7 +1218,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CreateTableTestUtils.create(engine, m);
+                TestUtils.create(m, engine);
             }
 
             sendLinger(lineData, "table_a");
@@ -1344,7 +1346,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CreateTableTestUtils.create(engine, m);
+                TestUtils.create(m, engine);
             }
 
             send(lineData, "messages");
