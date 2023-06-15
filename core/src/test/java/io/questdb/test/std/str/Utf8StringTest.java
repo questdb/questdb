@@ -112,6 +112,16 @@ public class Utf8StringTest {
         Assert.assertEquals(0xd83e, s5.charAt(2));
         Assert.assertEquals(0xdd9e, s5.charAt(3));
 
+        final int[] chars = s5.chars().toArray();
+        Assert.assertEquals(0xd83e, chars[0]);
+        Assert.assertEquals(0xddca, chars[1]);
+        Assert.assertEquals(0xd83e, chars[2]);
+        Assert.assertEquals(0xdd9e, chars[3]);
+
+        final int[] codePoints = s5.codePoints().toArray();
+        Assert.assertEquals(0x1f9ca, codePoints[0]);
+        Assert.assertEquals(0x1f99e, codePoints[1]);
+
         // >>> "🧊🦞".encode('utf-8')
         // b'\xf0\x9f\xa7\x8a\xf0\x9f\xa6\x9e'
         Assert.assertEquals((byte)0xf0, s5.byteAt(0));
