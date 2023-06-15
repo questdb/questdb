@@ -57,6 +57,14 @@ public class PartitionFrameFactory implements RecycleBin<PartitionFrame>, Closea
         return closed;
     }
 
+    public Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionWriter cvr, long size) {
+        if (rw) {
+            return openRW(path, targetPartition, metadata, cvr, size);
+        } else {
+            return openRO(path, targetPartition, metadata, cvr, size);
+        }
+    }
+
     public Frame openRO(
             Path partitionPath,
             long partitionTimestamp,

@@ -72,9 +72,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+    public void bumpMetadataAndColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion = Numbers.decodeHighInt(structureVersion) != 0 ? Numbers.encodeLowHighInts(getMetadataVersion() + 1, getColumnStructureVersion() + 1) : structureVersion + 1;
+        commit(denseSymbolMapWriters);
+    }
+
+    public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+        recordStructureVersion++;
+        structureVersion = Numbers.encodeLowHighInts(getMetadataVersion(), getColumnStructureVersion() + 1);
         commit(denseSymbolMapWriters);
     }
 
@@ -240,7 +246,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return this;
     }
 
-    public void openFirstPartition(long timestamp) {
+    public void initLastPartition(long timestamp) {
         txPartitionCount = 1;
         updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }

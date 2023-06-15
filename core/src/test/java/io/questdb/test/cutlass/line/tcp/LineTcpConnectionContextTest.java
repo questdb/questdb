@@ -41,7 +41,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -50,6 +49,8 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.Assume.assumeFalse;
 
 @RunWith(Parameterized.class)
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
@@ -441,7 +442,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testCairoExceptionOnAddColumn() throws Exception {
-        Assume.assumeFalse(walEnabled);
+        assumeFalse(walEnabled);
 
         String table = "columnEx";
         runInContext(
@@ -478,7 +479,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testCairoExceptionOnCommit() throws Exception {
-        Assume.assumeFalse(walEnabled);
+        assumeFalse(walEnabled);
 
         String table = "commitException";
         configOverrideMaxUncommittedRows(1);
@@ -553,7 +554,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testColumnConversion1() throws Exception {
         runInContext(() -> {
             try (
-                    TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE)
+                    TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.DAY)
                             .col("event", ColumnType.SHORT)
                             .col("id", ColumnType.LONG256)
                             .col("ts", ColumnType.TIMESTAMP)
@@ -563,6 +564,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             .col("byte1", ColumnType.BYTE)
                             .timestamp()
             ) {
+                if (walEnabled) {
+                    model.wal();
+                }
                 CreateTableTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
@@ -580,6 +584,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testColumnConversion2() throws Exception {
+        assumeFalse(walEnabled); // Wal needs partitioning
         runInContext(() -> {
             try (
                     TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE).col("l", ColumnType.LONG)
@@ -1955,13 +1960,17 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     private void addTable(String table) {
         try (
-                TableModel model = new TableModel(configuration, table, PartitionBy.NONE)
+                TableModel model = new TableModel(configuration, table, walEnabled ? PartitionBy.DAY : PartitionBy.NONE)
                         .col("location", ColumnType.SYMBOL)
                         .col("temperature", ColumnType.DOUBLE)
                         .timestamp()
         ) {
+            if (walEnabled) {
+                model.wal();
+            }
             CreateTableTestUtils.create(model);
         }
+        engine.releaseInactive();
     }
 
     private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
@@ -2002,12 +2011,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     private void testDefaultColumnType(short expectedType, String ilpValue, String tableValue, String emptyValue) throws Exception {
         String table = "addDefColType";
         addTable(table);
+
         runInContext(() -> {
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
             handleIO();
             closeContext();
+            if (walEnabled) {
+                drainWalQueue();
+            }
             String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";

@@ -31,8 +31,6 @@ import io.questdb.mp.WorkerPoolConfiguration;
 public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMinServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
 
-    HttpContextConfiguration getHttpContextConfiguration();
-
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
     int getQueryCacheBlockCount();
@@ -40,8 +38,6 @@ public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMi
     int getQueryCacheRowCount();
 
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
 
     boolean isQueryCacheEnabled();
 }

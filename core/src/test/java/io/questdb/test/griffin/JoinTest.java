@@ -4084,6 +4084,35 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMultipleJoinsWithTopLevelSelect() throws Exception {
+        assertCompile("CREATE TABLE train ( " +
+                "  id INT, " +
+                "  date timestamp, " +
+                "  store_nbr INT, " +
+                "  family SYMBOL, " +
+                "  sales DOUBLE " +
+                ") timestamp (date) PARTITION BY YEAR");
+        assertCompile("insert into train values (1, '2015-05-31T00:00:00', 1, 'A', 1.0 )");
+
+        String query = "WITH train_lim as (select id, date, store_nbr, family, sales from train where date < '2017-07-16' AND date > '2012-12-29') " +
+                "SELECT s.id  " +
+                "FROM train_lim s " +
+                "#JOIN_TYPE# JOIN " +
+                "( " +
+                "    SELECT * FROM train_lim   " +
+                "    #JOIN_TYPE# JOIN  " +
+                "    ( " +
+                "        SELECT * FROM train_lim  " +
+                "    ) ON (store_nbr, family) " +
+                ") ON (store_nbr, family)";
+
+        assertRepeatedJoinQuery(query, "LT", true);
+        assertRepeatedJoinQuery(query, "ASOF", true);
+        assertRepeatedJoinQuery(query, "INNER", false);
+        assertRepeatedJoinQuery(query, "LEFT", false);
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table contact_events as (" +
@@ -4878,6 +4907,10 @@ public class JoinTest extends AbstractGriffinTest {
         } finally {
             compiler.setFullFatJoins(false);
         }
+    }
+
+    private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws SqlException {
+        assertQuery("id\n1\n", query.replace("#JOIN_TYPE#", left), null, false, expectSize);
     }
 
     private void testFullFat(TestMethod method) throws Exception {
