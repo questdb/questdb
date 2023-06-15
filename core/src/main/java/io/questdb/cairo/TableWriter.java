@@ -4814,14 +4814,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
                         }
                     } else {
-                        Vect.memcpy(o3DstDataMem.addressOf(destOffset), o3MemBuff.addressOf(sourceOffset), size);
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+                        try {
+                            Vect.memcpy(destAddr, o3MemBuff.addressOf(sourceOffset), size);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                        }
                     }
                 } else {
                     MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
                     if (mixedIOFlag) {
-                        ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                        long bytesWritten = ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                        if (bytesWritten != size) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
                     } else {
-                        Vect.memcpy(o3DstDataMem.addressOf(destOffset), o3SrcDataMemFile.addressOf(sourceOffset), size);
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+                        try {
+                            Vect.memcpy(destAddr, o3SrcDataMemFile.addressOf(sourceOffset), size);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                        }
                     }
                 }
             } else {
@@ -4831,8 +4845,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long srcLo = o3SrcDataMem.addressOf(sourceOffset);
 
                 long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
-                Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
-                mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                try {
+                    Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                }
             }
         } catch (Throwable th) {
             handleWorkStealingException(
