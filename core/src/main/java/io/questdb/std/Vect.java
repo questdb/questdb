@@ -142,6 +142,8 @@ public final class Vect {
 
     public static native void memset(long dst, long len, int value);
 
+    public static native long mergeDedupTimestampWithLongIndexAsc(long pSrc, long srcCount, long pIndex, long indexCount, long pDestIndex);
+
     public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {
         if (count < 2) {
             throw new IllegalArgumentException("Count of indexes to merge should at least be 2.");
