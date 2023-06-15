@@ -38,15 +38,13 @@ import java.util.stream.IntStream;
  */
 public class Utf8String implements Utf8NativeCharSequence {
     private static final long BUFFER_ADDRESS_OFFSET;
+    @SuppressWarnings("FieldCanBeLocal")  // We need to keep this or the buffer will be GC'd.
     private final ByteBuffer buffer;  // We use a ByteBuffer here so we don't need to make this type closable.
     private final String original;
     private final long ptr;
     private final int size;
 
-    public Utf8String(String original) {
-        if (original == null) {
-            throw new IllegalArgumentException("original string cannot be null");
-        }
+    public Utf8String(@NotNull String original) {
         this.original = original;
         final byte[] bytes = original.getBytes(StandardCharsets.UTF_8);
         this.buffer = ByteBuffer.allocateDirect(bytes.length);
@@ -84,20 +82,28 @@ public class Utf8String implements Utf8NativeCharSequence {
             return true;
         } else if (obj instanceof String) {
             return original.equals(obj);
-        } else if (obj instanceof Utf8Native) {
-            Utf8Native other = (Utf8Native) obj;
-            if (other.size() != size) {
-                return false;
-            }
-            for (int index = 0; index < size; ++index) {
-                if (byteAt(index) != other.byteAt(index)) {
-                    return false;
-                }
-            }
-            return true;
-        } else {
-            return false;
         }
+
+        if (obj instanceof Utf8Native) {
+            final Utf8Native other = (Utf8Native) obj;
+            if (ptr == other.ptr() && size == other.size()) {
+                return true;
+            }
+        }
+
+        if (obj instanceof Utf8Sequence) {
+            final Utf8Sequence other = (Utf8Sequence) obj;
+            if (size == other.size()) {
+                for (int index = 0; index < size; ++index) {
+                    if (byteAt(index) != other.byteAt(index)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        return false;
     }
 
     @Override
