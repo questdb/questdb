@@ -433,7 +433,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         long cursor;
         int i = dispatchStartFrameIndex;
-        dispatchStartFrameIndex = frameCount;
         OUT:
         for (; i < frameCount; i++) {
             // We cannot process work on this thread. If we do the consumer will
@@ -452,12 +451,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                             .$(", cursor=").$(cursor)
                             .I$();
                     reducePubSeq.done(cursor);
+                    dispatchStartFrameIndex = i + 1;
                     dispatched = true;
                     break;
                 } else if (cursor == -1) {
                     idle = false;
-                    // make sure to set the index before the stealWork() call as it may throw
-                    dispatchStartFrameIndex = i;
                     // start stealing work to unload the queue
                     if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
                         continue;
