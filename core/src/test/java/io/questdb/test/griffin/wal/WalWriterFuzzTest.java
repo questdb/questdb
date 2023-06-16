@@ -42,10 +42,7 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -96,6 +93,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Before
     public void setUp() {
+        // We disable mixed I/O on some OSes and FSes (wink-wink Windows).
+        boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
+        Assume.assumeFalse(allowMixedIO && !mixedIOSupported);
+
         configOverrideWriterMixedIOEnabled(allowMixedIO);
         configOverrideO3ColumnMemorySize(512 * 1024);
         setFuzzProperties(100, 1000, 2);
