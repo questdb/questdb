@@ -92,8 +92,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                         ff.fsync(fd);
                     }
                 } else {
-                    long srcAddress = -1;
-                    long dstAddress = -1;
+                    long srcAddress = 0;
+                    long dstAddress = 0;
                     try {
                         srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, length, false, MEMORY_TAG);
                         dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, length, true, MEMORY_TAG);
@@ -104,10 +104,10 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                             ff.msync(dstAddress, length, commitMode == CommitMode.ASYNC);
                         }
                     } finally {
-                        if (srcAddress != -1) {
+                        if (srcAddress != 0) {
                             TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, length, MEMORY_TAG);
                         }
-                        if (dstAddress != -1) {
+                        if (dstAddress != 0) {
                             TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, offset << shl, length, MEMORY_TAG);
                         }
                     }

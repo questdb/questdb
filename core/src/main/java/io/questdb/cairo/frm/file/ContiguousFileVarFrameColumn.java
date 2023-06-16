@@ -112,8 +112,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                         ff.fsync(varFd);
                     }
                 } else {
-                    long srcVarAddress = -1;
-                    long dstVarAddress = -1;
+                    long srcVarAddress = 0;
+                    long dstVarAddress = 0;
                     try {
                         srcVarAddress = TableUtils.mapAppendColumnBuffer(ff, sourceColumn.getPrimaryFd(), varSrcOffset, copySize, false, MEMORY_TAG);
                         dstVarAddress = TableUtils.mapAppendColumnBuffer(ff, varFd, varOffset, copySize, true, MEMORY_TAG);
@@ -124,10 +124,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                             ff.msync(dstVarAddress, copySize, commitMode == CommitMode.ASYNC);
                         }
                     } finally {
-                        if (srcVarAddress != -1) {
+                        if (srcVarAddress != 0) {
                             TableUtils.mapAppendColumnBufferRelease(ff, srcVarAddress, varSrcOffset, copySize, MEMORY_TAG);
                         }
-                        if (dstVarAddress != -1) {
+                        if (dstVarAddress != 0) {
                             TableUtils.mapAppendColumnBufferRelease(ff, dstVarAddress, varOffset, copySize, MEMORY_TAG);
                         }
                     }
