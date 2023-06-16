@@ -163,12 +163,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void renameTable(CharSequence toTableName) {
         if (!Chars.equalsIgnoreCaseNc(toTableName, tableToken.getTableName())) {
-            tableToken = new TableToken(
-                    Chars.toString(toTableName),
-                    tableToken.getDirName(),
-                    tableToken.getTableId(),
-                    tableToken.isWal()
-            );
+            tableToken = tableToken.renamed(Chars.toString(toTableName));
         }
         structureVersion.incrementAndGet();
     }

@@ -1689,7 +1689,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
-            tableToken = new TableToken(Chars.toString(toTableName), metadata.getTableToken().getDirName(), metadata.getTableToken().getTableId(), metadata.getTableToken().isWal());
+            tableToken = metadata.getTableToken().renamed(Chars.toString(toTableName));
             metadata.renameTable(tableToken);
         }
     }

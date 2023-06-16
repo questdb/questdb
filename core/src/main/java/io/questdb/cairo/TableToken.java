@@ -48,6 +48,14 @@ public class TableToken implements Sinkable {
         this.isWal = isWal;
     }
 
+    public TableToken renamed(String newName) {
+        return renamed(new Utf8String(newName));
+    }
+
+    public TableToken renamed(Utf8String newName) {
+        return new TableToken(newName, dirName, tableId, isWal);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

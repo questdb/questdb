@@ -161,11 +161,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    @SuppressWarnings("unused")
-    public void applyTableRename(TableToken token, TableToken updatedTableToken) {
-        tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
-    }
-
     @TestOnly
     public boolean clear() {
         boolean b1 = readerPool.releaseAll();
