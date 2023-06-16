@@ -27,6 +27,9 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.TableToken;
 
 public interface WalListener {
+    WalListener DEFAULT = new WalListener() {
+    };
+
     default void dataTxnCommitted(TableToken tableToken, long txn, int walId, int segmentId, int segmentTxn) {
     }
 
@@ -39,8 +42,6 @@ public interface WalListener {
     default void tableDropped(TableToken tableToken) {
     }
 
-    default void tableRenamed(TableToken oldToken, TableToken newTableToken) {
+    default void tableRenamed(TableToken tableToken, long txn, TableToken oldTableToken) {
     }
-
-    // TODO: create.
 }

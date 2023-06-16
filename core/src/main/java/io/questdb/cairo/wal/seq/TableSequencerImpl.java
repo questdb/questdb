@@ -210,7 +210,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
+    public long nextStructureTxn(long expectedStructureVersion, AlterOperation change) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         checkDropped();
@@ -248,7 +248,13 @@ public class TableSequencerImpl implements TableSequencer {
 
         if (!metadata.isSuspended()) {
             engine.notifyWalTxnCommitted(tableToken, txn);
-            engine.getWalListener().nonDataTxnCommitted(tableToken, txn);
+            final TableToken toTableToken = change.getToTableToken();
+            if (toTableToken == null) {
+                engine.getWalListener().nonDataTxnCommitted(tableToken, txn);
+            } else {
+                final TableToken fromTableToken = change.getTableToken();
+                engine.getWalListener().tableRenamed(toTableToken, txn, fromTableToken);
+            }
         }
         return txn;
     }

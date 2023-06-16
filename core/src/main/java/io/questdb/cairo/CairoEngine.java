@@ -110,8 +110,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
-        this.walListener = new WalListener() {
-        };
+        this.walListener = WalListener.DEFAULT;
         try {
             this.tableIdGenerator.open();
         } catch (Throwable e) {
@@ -746,7 +745,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     boolean renamed = false;
                     try {
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
-                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
+                            long seqTxn = walWriter.renameTable(fromTableToken, toTableToken);
                             LOG.info().$("renamed table [from='").utf8(fromTableName)
                                     .$("', to='").utf8(toTableName)
                                     .$("', wal=").$(walWriter.getWalId())
