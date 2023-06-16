@@ -41,7 +41,7 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
     ./gosu --version && \
     ./gosu nobody true
 
-FROM debian:bullseye-slim
+FROM debian:12-slim
 
 WORKDIR /app
 
