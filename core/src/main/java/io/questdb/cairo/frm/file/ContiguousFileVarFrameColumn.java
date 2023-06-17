@@ -97,6 +97,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 TableUtils.allocateDiskSpaceToPage(ff, varFd, varOffset + copySize);
                 if (mixedIOFlag) {
                     ff.fadvise(sourceColumn.getPrimaryFd(), varSrcOffset, copySize, Files.POSIX_FADV_SEQUENTIAL);
+                    ff.fadvise(varFd, varOffset, copySize, Files.POSIX_FADV_RANDOM);
                     if (ff.copyData(sourceColumn.getPrimaryFd(), varFd, varSrcOffset, varOffset, copySize) != copySize) {
                         throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(varFd)
                                 .put(", destOffset=").put(varOffset)
