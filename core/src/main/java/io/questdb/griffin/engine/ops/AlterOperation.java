@@ -55,6 +55,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_PARAM_COMMIT_LAG = 11;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
     public final static short SQUASH_PARTITIONS = 13;
+    public final static short RENAME_TABLE = 14;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -122,6 +123,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
+                    break;
+                case RENAME_TABLE:
+                    applyRenameTable(svc);
                     break;
                 case SQUASH_PARTITIONS:
                     squashPartitions(svc);
@@ -215,6 +219,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case ADD_COLUMN:
             case RENAME_COLUMN:
             case DROP_COLUMN:
+            case RENAME_TABLE:
                 return true;
             default:
                 return false;
@@ -254,6 +259,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(indexed ? 1 : -1);
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
+    }
+
+    public void ofRenameTable(TableToken fromTableToken, CharSequence toTableName) {
+        of(AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
+        assert toTableName != null && toTableName.length() > 0;
+        extraStrInfo.strings.add(fromTableToken.getTableName());
+        extraStrInfo.strings.add(toTableName);
     }
 
     @Override
@@ -424,6 +436,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             CharSequence newName = activeExtraStrInfo.getStrB(i++);
             svc.renameColumn(columnName, newName);
         }
+    }
+
+    private void applyRenameTable(MetadataService svc) {
+        svc.renameTable(activeExtraStrInfo.getStrA(0), activeExtraStrInfo.getStrB(1));
     }
 
     private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {

@@ -28,8 +28,10 @@ public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WALID = -2;
+    public static final int CREATE_TABLE_WALID = -3;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
+    public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
     public static final int SEG_MIN_ID = 0;
     public static final int SEG_NONE_ID = Integer.MAX_VALUE >> 2;
