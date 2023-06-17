@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
@@ -96,8 +99,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
                 TableUtils.allocateDiskSpaceToPage(ff, varFd, varOffset + copySize);
                 if (mixedIOFlag) {
-                    ff.fadvise(sourceColumn.getPrimaryFd(), varSrcOffset, copySize, Files.POSIX_FADV_SEQUENTIAL);
-                    ff.fadvise(varFd, varOffset, copySize, Files.POSIX_FADV_RANDOM);
                     if (ff.copyData(sourceColumn.getPrimaryFd(), varFd, varSrcOffset, varOffset, copySize) != copySize) {
                         throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(varFd)
                                 .put(", destOffset=").put(varOffset)
