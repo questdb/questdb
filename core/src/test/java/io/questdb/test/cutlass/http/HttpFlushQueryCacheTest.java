@@ -56,14 +56,7 @@ public class HttpFlushQueryCacheTest extends AbstractTest {
         Metrics metrics = Metrics.enabled();
         testJsonQuery(metrics, engine -> {
             // create tables
-            sendAndReceiveDdl("CREATE TABLE test\n" +
-                    "AS(\n" +
-                    "    SELECT\n" +
-                    "        x id,\n" +
-                    "        timestamp_sequence(0L, 100000L) ts\n" +
-                    "    FROM long_sequence(1000) x)\n" +
-                    "TIMESTAMP(ts)\n" +
-                    "PARTITION BY DAY");
+            sendAndReceiveDdl();
 
             Assert.assertEquals(0, metrics.jsonQuery().cachedQueriesGauge().getValue());
 
@@ -132,9 +125,20 @@ public class HttpFlushQueryCacheTest extends AbstractTest {
         );
     }
 
-    private static void sendAndReceiveDdl(String rawDdl) {
+    private static void sendAndReceiveDdl() {
         sendAndReceive(
-                "GET /query?query=" + HttpUtils.urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
+                "GET /query?query="
+                        + HttpUtils.urlEncodeQuery(
+                        "CREATE TABLE test\n" +
+                                "AS(\n" +
+                                "    SELECT\n" +
+                                "        x id,\n" +
+                                "        timestamp_sequence(0L, 100000L) ts\n" +
+                                "    FROM long_sequence(1000) x)\n" +
+                                "TIMESTAMP(ts)\n" +
+                                "PARTITION BY DAY"
+                )
+                        + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +

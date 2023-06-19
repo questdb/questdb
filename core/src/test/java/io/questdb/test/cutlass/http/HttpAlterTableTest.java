@@ -51,6 +51,33 @@ public class HttpAlterTableTest extends AbstractTest {
             .build();
 
     @Test
+    public void testAlterTableResume() throws Exception {
+        Metrics metrics = Metrics.enabled();
+        testJsonQuery(metrics, engine -> {
+            // create table
+            sendAndReceiveDdl("CREATE TABLE test\n" +
+                    "AS(\n" +
+                    "    SELECT\n" +
+                    "        x id,\n" +
+                    "        timestamp_sequence(0L, 100000L) ts\n" +
+                    "    FROM long_sequence(1000) x)\n" +
+                    "TIMESTAMP(ts)\n" +
+                    "PARTITION BY DAY WAL");
+            drainWalQueue(engine);
+
+            // execute a SELECT query
+            String sql = "SELECT *\n" +
+                    "FROM test t1 JOIN test t2 \n" +
+                    "ON t1.id = t2.id\n" +
+                    "LIMIT 1";
+            sendAndReceiveBasicSelect(sql);
+
+            // RESUME
+            sendAndReceiveDdl("ALTER TABLE test RESUME WAL");
+        });
+    }
+
+    @Test
     public void testAlterTableSetType() throws Exception {
         Metrics metrics = Metrics.enabled();
         testJsonQuery(metrics, engine -> {
@@ -69,11 +96,7 @@ public class HttpAlterTableTest extends AbstractTest {
                     "FROM test t1 JOIN test t2 \n" +
                     "ON t1.id = t2.id\n" +
                     "LIMIT 1";
-            sendAndReceiveBasicSelect(sql, "\r\n" +
-                    "0139\r\n" +
-                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
-                    "00\r\n" +
-                    "\r\n");
+            sendAndReceiveBasicSelect(sql);
 
             // convert table to WAL
             sendAndReceiveDdl("ALTER TABLE test SET TYPE WAL");
@@ -98,37 +121,6 @@ public class HttpAlterTableTest extends AbstractTest {
         });
     }
 
-    @Test
-    public void testAlterTableResume() throws Exception {
-        Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
-            // create table
-            sendAndReceiveDdl("CREATE TABLE test\n" +
-                    "AS(\n" +
-                    "    SELECT\n" +
-                    "        x id,\n" +
-                    "        timestamp_sequence(0L, 100000L) ts\n" +
-                    "    FROM long_sequence(1000) x)\n" +
-                    "TIMESTAMP(ts)\n" +
-                    "PARTITION BY DAY WAL");
-            drainWalQueue(engine);
-
-            // execute a SELECT query
-            String sql = "SELECT *\n" +
-                    "FROM test t1 JOIN test t2 \n" +
-                    "ON t1.id = t2.id\n" +
-                    "LIMIT 1";
-            sendAndReceiveBasicSelect(sql, "\r\n" +
-                    "0139\r\n" +
-                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
-                    "00\r\n" +
-                    "\r\n");
-
-            // RESUME
-            sendAndReceiveDdl("ALTER TABLE test RESUME WAL");
-        });
-    }
-
     private static void drainWalQueue(CairoEngine engine) {
         try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
             walApplyJob.drain(0);
@@ -144,7 +136,7 @@ public class HttpAlterTableTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) {
+    private static void sendAndReceiveBasicSelect(String rawSelect) {
         sendAndReceive(
                 "GET /query?query=" + HttpUtils.urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
@@ -164,7 +156,11 @@ public class HttpAlterTableTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
-                        expectedBody
+                        "\r\n" +
+                        "0139\r\n" +
+                        "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
         );
     }
 
