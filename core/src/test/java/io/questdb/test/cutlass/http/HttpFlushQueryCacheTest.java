@@ -54,7 +54,7 @@ public class HttpFlushQueryCacheTest extends AbstractTest {
     @Test
     public void testJsonQueryFlushQueryCache() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(2, metrics, engine -> {
+        testJsonQuery(metrics, engine -> {
             // create tables
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -157,7 +157,7 @@ public class HttpFlushQueryCacheTest extends AbstractTest {
         );
     }
 
-    private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+    private void testJsonQuery(Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
@@ -166,7 +166,7 @@ public class HttpFlushQueryCacheTest extends AbstractTest {
             }
         };
         new HttpQueryTestBuilder()
-                .withWorkerCount(workerCount)
+                .withWorkerCount(2)
                 .withTempFolder(root)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)

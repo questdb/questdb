@@ -290,7 +290,7 @@ public class HttpSecurityTest extends AbstractTest {
 
     @Test
     public void testHealthCheckAllowWithDisabledConfigProp() throws Exception {
-        testAdditionalUnprotectedHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
+        testAdditionalUnprotectedHttpEndpoint(engine -> sendAndReceive(
                 "GET /status HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
@@ -526,7 +526,7 @@ public class HttpSecurityTest extends AbstractTest {
 
     @Test
     public void testStaticContentAllowWithDisabledConfigProp() throws Exception {
-        testAdditionalUnprotectedHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
+        testAdditionalUnprotectedHttpEndpoint(engine -> sendAndReceive(
                 "GET /index.html HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
@@ -608,8 +608,8 @@ public class HttpSecurityTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private void testAdditionalUnprotectedHttpEndpoint(HttpAuthenticatorFactory factory, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        testHttpEndpoint(factory, false, false, code);
+    private void testAdditionalUnprotectedHttpEndpoint(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_AUTH_FACTORY, false, false, code);
     }
 
     private void testHttpEndpoint(

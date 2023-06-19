@@ -53,7 +53,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableSetType() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(2, metrics, engine -> {
+        testJsonQuery(metrics, engine -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -83,7 +83,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableSquashPartition() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(2, metrics, engine -> {
+        testJsonQuery(metrics, engine -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -101,7 +101,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableResume() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(2, metrics, engine -> {
+        testJsonQuery(metrics, engine -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -193,7 +193,7 @@ public class HttpAlterTableTest extends AbstractTest {
         );
     }
 
-    private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+    private void testJsonQuery(Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
@@ -202,7 +202,7 @@ public class HttpAlterTableTest extends AbstractTest {
             }
         };
         new HttpQueryTestBuilder()
-                .withWorkerCount(workerCount)
+                .withWorkerCount(2)
                 .withTempFolder(root)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)
