@@ -24,10 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8String;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
@@ -70,8 +68,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             return new TableToken(tableName, dirName, tableId, isWal);
-        }
-        else {
+        } else {
             return null;
         }
     }

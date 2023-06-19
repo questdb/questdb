@@ -49,8 +49,6 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -65,7 +63,7 @@ public class ServerMain implements Closeable {
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
-    private FreeOnExitList freeOnExitList = new FreeOnExitList();
+    private final FreeOnExitList freeOnExitList = new FreeOnExitList();
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));

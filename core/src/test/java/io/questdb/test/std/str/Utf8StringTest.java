@@ -30,8 +30,6 @@ import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.stream.Collectors;
-
 public class Utf8StringTest {
 
     @Test
@@ -70,16 +68,16 @@ public class Utf8StringTest {
         Assert.assertEquals('ì', s3.charAt(2));
         Assert.assertEquals('ò', s3.charAt(3));
         Assert.assertEquals('ù', s3.charAt(4));
-        Assert.assertEquals((byte)0xc3, s3.byteAt(0));
-        Assert.assertEquals((byte)0xa0, s3.byteAt(1));
-        Assert.assertEquals((byte)0xc3, s3.byteAt(2));
-        Assert.assertEquals((byte)0xa8, s3.byteAt(3));
-        Assert.assertEquals((byte)0xc3, s3.byteAt(4));
-        Assert.assertEquals((byte)0xac, s3.byteAt(5));
-        Assert.assertEquals((byte)0xc3, s3.byteAt(6));
-        Assert.assertEquals((byte)0xb2, s3.byteAt(7));
-        Assert.assertEquals((byte)0xc3, s3.byteAt(8));
-        Assert.assertEquals((byte)0xb9, s3.byteAt(9));
+        Assert.assertEquals((byte) 0xc3, s3.byteAt(0));
+        Assert.assertEquals((byte) 0xa0, s3.byteAt(1));
+        Assert.assertEquals((byte) 0xc3, s3.byteAt(2));
+        Assert.assertEquals((byte) 0xa8, s3.byteAt(3));
+        Assert.assertEquals((byte) 0xc3, s3.byteAt(4));
+        Assert.assertEquals((byte) 0xac, s3.byteAt(5));
+        Assert.assertEquals((byte) 0xc3, s3.byteAt(6));
+        Assert.assertEquals((byte) 0xb2, s3.byteAt(7));
+        Assert.assertEquals((byte) 0xc3, s3.byteAt(8));
+        Assert.assertEquals((byte) 0xb9, s3.byteAt(9));
 
         // Code points that are in the UTF-16 range without surrogate pairs.
         final Utf8String s4 = new Utf8String("ðãµ¶");
@@ -92,14 +90,14 @@ public class Utf8StringTest {
 
         // >>> "ðãµ¶".encode('utf-8')
         // b'\xc3\xb0\xc3\xa3\xc2\xb5\xc2\xb6'
-        Assert.assertEquals((byte)0xc3, s4.byteAt(0));
-        Assert.assertEquals((byte)0xb0, s4.byteAt(1));
-        Assert.assertEquals((byte)0xc3, s4.byteAt(2));
-        Assert.assertEquals((byte)0xa3, s4.byteAt(3));
-        Assert.assertEquals((byte)0xc2, s4.byteAt(4));
-        Assert.assertEquals((byte)0xb5, s4.byteAt(5));
-        Assert.assertEquals((byte)0xc2, s4.byteAt(6));
-        Assert.assertEquals((byte)0xb6, s4.byteAt(7));
+        Assert.assertEquals((byte) 0xc3, s4.byteAt(0));
+        Assert.assertEquals((byte) 0xb0, s4.byteAt(1));
+        Assert.assertEquals((byte) 0xc3, s4.byteAt(2));
+        Assert.assertEquals((byte) 0xa3, s4.byteAt(3));
+        Assert.assertEquals((byte) 0xc2, s4.byteAt(4));
+        Assert.assertEquals((byte) 0xb5, s4.byteAt(5));
+        Assert.assertEquals((byte) 0xc2, s4.byteAt(6));
+        Assert.assertEquals((byte) 0xb6, s4.byteAt(7));
 
         // Code points that require surrogate pairs in UTF-16.
         final Utf8String s5 = new Utf8String("🧊🦞");
@@ -124,14 +122,14 @@ public class Utf8StringTest {
 
         // >>> "🧊🦞".encode('utf-8')
         // b'\xf0\x9f\xa7\x8a\xf0\x9f\xa6\x9e'
-        Assert.assertEquals((byte)0xf0, s5.byteAt(0));
-        Assert.assertEquals((byte)0x9f, s5.byteAt(1));
-        Assert.assertEquals((byte)0xa7, s5.byteAt(2));
-        Assert.assertEquals((byte)0x8a, s5.byteAt(3));
-        Assert.assertEquals((byte)0xf0, s5.byteAt(4));
-        Assert.assertEquals((byte)0x9f, s5.byteAt(5));
-        Assert.assertEquals((byte)0xa6, s5.byteAt(6));
-        Assert.assertEquals((byte)0x9e, s5.byteAt(7));
+        Assert.assertEquals((byte) 0xf0, s5.byteAt(0));
+        Assert.assertEquals((byte) 0x9f, s5.byteAt(1));
+        Assert.assertEquals((byte) 0xa7, s5.byteAt(2));
+        Assert.assertEquals((byte) 0x8a, s5.byteAt(3));
+        Assert.assertEquals((byte) 0xf0, s5.byteAt(4));
+        Assert.assertEquals((byte) 0x9f, s5.byteAt(5));
+        Assert.assertEquals((byte) 0xa6, s5.byteAt(6));
+        Assert.assertEquals((byte) 0x9e, s5.byteAt(7));
     }
 
     @Test
@@ -162,8 +160,8 @@ public class Utf8StringTest {
         Assert.assertNotEquals(0, s2.lo());
         Assert.assertNotEquals(0, s2.hi());
         Assert.assertEquals(s2.lo() + 2, s2.hi());
-        Assert.assertEquals((byte)'h', s2.byteAt(0));
-        Assert.assertEquals((byte)'i', s2.byteAt(1));
+        Assert.assertEquals((byte) 'h', s2.byteAt(0));
+        Assert.assertEquals((byte) 'i', s2.byteAt(1));
     }
 
     @Test

@@ -66,7 +66,7 @@ import java.util.zip.GZIPInputStream;
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
     private final boolean walEnabled;
-    private FreeOnExitList freeOnExitList = new FreeOnExitList();
+    private final FreeOnExitList freeOnExitList = new FreeOnExitList();
     private LineTcpReceiverConfiguration lineConfiguration;
     private long resourceAddress;
     private int resourceSize;
