@@ -71,7 +71,7 @@ public class HttpAlterTableTest extends AbstractTest {
                     "LIMIT 1";
             sendAndReceiveBasicSelect(sql, "\r\n" +
                     "0139\r\n" +
-                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
+                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
                     "00\r\n" +
                     "\r\n");
 
@@ -120,7 +120,7 @@ public class HttpAlterTableTest extends AbstractTest {
                     "LIMIT 1";
             sendAndReceiveBasicSelect(sql, "\r\n" +
                     "0139\r\n" +
-                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
+                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
                     "00\r\n" +
                     "\r\n");
 
@@ -144,7 +144,7 @@ public class HttpAlterTableTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) throws InterruptedException {
+    private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) {
         sendAndReceive(
                 "GET /query?query=" + HttpUtils.urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
@@ -168,7 +168,7 @@ public class HttpAlterTableTest extends AbstractTest {
         );
     }
 
-    private static void sendAndReceiveDdl(String rawDdl) throws InterruptedException {
+    private static void sendAndReceiveDdl(String rawDdl) {
         sendAndReceive(
                 "GET /query?query=" + HttpUtils.urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +

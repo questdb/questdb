@@ -24,10 +24,22 @@
 
 package io.questdb.client;
 
-public class HttpClientMain {
-    public static void main(String[] args) {
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.client.ser.JsonDataParser;
+import io.questdb.cutlass.json.JsonException;
 
-        try (HttpClient client = HttpClientFactory.newInstance()) {
+public class HttpClientMain {
+    public static void main(String[] args) throws JsonException {
+
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration("C:\\qdb2\\db");
+
+        try (
+                CairoEngine engine = new CairoEngine(configuration);
+                JsonDataParser jsonDataParser = new JsonDataParser(engine);
+                HttpClient client = HttpClientFactory.newInstance()
+        ) {
+
 
             for (int i = 0; i < 10; i++) {
                 HttpClient.Request req = client.newRequest();
@@ -42,13 +54,17 @@ public class HttpClientMain {
 
                 rsp.awaitHeaders();
 
+
                 if (rsp.isChunked()) {
+
+                    jsonDataParser.clear();
+
                     HttpClient.Response.Chunk chunk;
 
                     long t = System.currentTimeMillis();
                     int chunkCount = 0;
                     while ((chunk = rsp.recv()) != null) {
-//                        System.out.println("addr: " + chunk.addr + ", size: " + chunk.size + ", consumed: " + chunk.consumed + ", available: " + chunk.available);
+                        jsonDataParser.parse(chunk.addr, chunk.addr + chunk.available);
                         chunkCount++;
                     }
                     System.out.println(System.currentTimeMillis() - t);

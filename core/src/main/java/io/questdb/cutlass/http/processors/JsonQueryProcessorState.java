@@ -499,7 +499,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private void doQueryMetadataSuffix(HttpChunkedResponseSocket socket) {
         queryState = QUERY_METADATA_SUFFIX;
         socket.bookmark();
-        socket.put("],\"dataset\":[");
+        socket.put("],\"timestamp\":").put(queryTimestampIndex);
+        socket.put(",\"dataset\":[");
     }
 
     private boolean doQueryNextRecord() {
@@ -637,7 +638,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             logTimings();
             socket.bookmark();
             socket.put(']');
-            socket.put(',').putQuoted("timestamp").put(':').put(queryTimestampIndex);
             socket.put(',').putQuoted("count").put(':').put(count);
             if (timings) {
                 socket.put(',').putQuoted("timings").put(':')

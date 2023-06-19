@@ -171,7 +171,7 @@ public class HttpSecurityTest extends AbstractTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "63\r\n" +
-                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"timestamp\":-1,\"count\":1}\r\n" +
+                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         ));
@@ -479,7 +479,7 @@ public class HttpSecurityTest extends AbstractTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "63\r\n" +
-                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"timestamp\":-1,\"count\":1}\r\n" +
+                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         ));
