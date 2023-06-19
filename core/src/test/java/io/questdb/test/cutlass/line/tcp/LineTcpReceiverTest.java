@@ -744,6 +744,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                 Chars.contains(name, weather) &&
                                 --count == 0
                 ) {
+                    mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
                 return super.openRW(name, opts);
