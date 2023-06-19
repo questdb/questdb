@@ -197,12 +197,11 @@ public class WalListenerTest extends AbstractGriffinTest {
     }
 
     static TableToken createTable(String tableName) {
-        final TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("a", ColumnType.BYTE)
                 .col("b", ColumnType.STRING)
                 .timestamp("ts")
-                .wal();
-        try (model) {
+                .wal()) {
             return createTable(model);
         }
     }

@@ -38,8 +38,8 @@ import java.util.stream.IntStream;
  */
 public class Utf8String implements Utf8NativeCharSequence {
     private static final long BUFFER_ADDRESS_OFFSET;
-    @SuppressWarnings("FieldCanBeLocal")  // We need to keep this or the buffer will be GC'd.
-    private final ByteBuffer buffer;  // We use a ByteBuffer here so we don't need to make this type closable.
+    @SuppressWarnings("FieldCanBeLocal")  // We need to hold a reference to `buffer` or it will be GC'd.
+    private final ByteBuffer buffer;  // We use a ByteBuffer here, instead of a ptr, to avoid Closeable requirement.
     private final String original;
     private final long ptr;
     private final int size;

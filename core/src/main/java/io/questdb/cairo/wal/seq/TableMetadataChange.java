@@ -25,9 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.MetadataService;
-import org.jetbrains.annotations.Nullable;
 
 public interface TableMetadataChange {
     long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;

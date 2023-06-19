@@ -248,12 +248,11 @@ public class TableSequencerImpl implements TableSequencer {
 
         if (!metadata.isSuspended()) {
             engine.notifyWalTxnCommitted(tableToken, txn);
-            final TableToken toTableToken = change.getToTableToken();
-            if (toTableToken == null) {
-                engine.getWalListener().nonDataTxnCommitted(tableToken, txn);
-            } else {
+            if (change.getCmdType() == AlterOperation.RENAME_TABLE) {
                 final TableToken fromTableToken = change.getTableToken();
-                engine.getWalListener().tableRenamed(toTableToken, txn, fromTableToken);
+                engine.getWalListener().tableRenamed(tableToken, txn, fromTableToken);
+            } else {
+                engine.getWalListener().nonDataTxnCommitted(tableToken, txn);
             }
         }
         return txn;

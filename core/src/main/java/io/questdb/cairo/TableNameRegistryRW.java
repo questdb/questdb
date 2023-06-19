@@ -47,7 +47,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken addTableAlias(String newName, TableToken tableToken) {
         final TableToken newNameRecord = tableToken.renamed(newName);
         final TableToken oldToken = nameTableTokenMap.putIfAbsent(newName, newNameRecord);
-        return oldToken == null ? newNameRecord: null;
+        return oldToken == null ? newNameRecord : null;
     }
 
     @Override

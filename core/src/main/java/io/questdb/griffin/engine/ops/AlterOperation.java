@@ -38,7 +38,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
-import org.jetbrains.annotations.Nullable;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short ADD_COLUMN = 1;
@@ -153,11 +152,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return 0;
     }
 
-    /** Return the new table token for a table rename operation. */
-    public @Nullable TableToken getToTableToken() {
-        return toTableToken;
-    }
-
     @Override
     public void clear() {
         command = DO_NOTHING;
@@ -165,7 +159,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
         extraInfo.clear();
-        toTableToken = null;
         clearCommandCorrelationId();
     }
 
@@ -269,13 +262,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(columnNamePosition);
     }
 
-    public void ofRenameTable(TableToken fromTableToken, TableToken toTableToken) {
+    public void ofRenameTable(TableToken fromTableToken, CharSequence toTableName) {
         of(AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
-        assert toTableToken != null;
-        assert toTableToken.getTableName().length() > 0;
+        assert toTableName != null && toTableName.length() > 0;
         extraStrInfo.strings.add(fromTableToken.getTableName());
-        extraStrInfo.strings.add(toTableToken.getTableName());
-        this.toTableToken = toTableToken;
+        extraStrInfo.strings.add(toTableName);
     }
 
     @Override

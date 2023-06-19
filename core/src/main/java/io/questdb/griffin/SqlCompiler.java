@@ -116,6 +116,7 @@ public class SqlCompiler implements Closeable {
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
         this(engine, null, null);
