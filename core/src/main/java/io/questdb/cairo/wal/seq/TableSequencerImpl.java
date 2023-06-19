@@ -248,7 +248,7 @@ public class TableSequencerImpl implements TableSequencer {
 
         if (!metadata.isSuspended()) {
             engine.notifyWalTxnCommitted(tableToken, txn);
-            if (change.getCmdType() == AlterOperation.RENAME_TABLE) {
+            if (change.isTableRename()) {
                 final TableToken fromTableToken = change.getTableToken();
                 engine.getWalListener().tableRenamed(tableToken, txn, fromTableToken);
             } else {

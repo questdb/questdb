@@ -202,6 +202,10 @@ public class Utf8StringTest {
         final Utf8String s3 = new Utf8String(src);
         Assert.assertEquals(s3, src);
 
+        // Test Utf8String vs Utf8String equality
+        final Utf8String s4 = new Utf8String(src);
+        Assert.assertEquals(s3, s4);
+
         // Test pointer identity
         final Utf8Native nat1 = new Utf8Native() {
             @Override

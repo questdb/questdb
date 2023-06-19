@@ -28,8 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
 import org.junit.AfterClass;
@@ -39,6 +42,7 @@ import org.junit.Test;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class WalListenerTest extends AbstractGriffinTest {
@@ -116,12 +120,12 @@ public class WalListenerTest extends AbstractGriffinTest {
             if (obj instanceof WalListenerEvent) {
                 WalListenerEvent that = (WalListenerEvent) obj;
                 return this.type == that.type &&
-                        this.tableToken == that.tableToken &&
+                        Objects.equals(this.tableToken, that.tableToken) &&
                         this.txn == that.txn &&
                         this.walId == that.walId &&
                         this.segmentId == that.segmentId &&
                         this.segmentTxn == that.segmentTxn &&
-                        this.oldTableToken == that.oldTableToken;
+                        Objects.equals(this.oldTableToken, that.oldTableToken);
             }
             return false;
         }
@@ -210,22 +214,21 @@ public class WalListenerTest extends AbstractGriffinTest {
 
     @Test
     public void testWalListener() throws Exception {
-        final AtomicReference<TableToken> tableToken = new AtomicReference<>();
+        final AtomicReference<TableToken> tableToken1 = new AtomicReference<>();
+        final AtomicReference<TableToken> tableToken2 = new AtomicReference<>();
         assertMemoryLeak(() -> {
-            tableToken.set(createTable(testName.getMethodName()));
-            assertTableExistence(true, tableToken.get());
+            tableToken1.set(createTable(testName.getMethodName()));
+            assertTableExistence(true, tableToken1.get());
 
-            final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(tableToken.get())) {
-                walName = walWriter.getWalName();
-                TableWriter.Row row = walWriter.newRow(0);
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken1.get())) {
+                final TableWriter.Row row = walWriter1.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
-                walWriter.commit();
+                walWriter1.commit();
                 Assert.assertEquals(
                         new WalListenerEvent(
                                 WalListenerEventType.DATA_TXN_COMMITTED,
-                                tableToken.get(),
+                                tableToken1.get(),
                                 1,
                                 1,
                                 0,
@@ -234,20 +237,108 @@ public class WalListenerTest extends AbstractGriffinTest {
                         ),
                         listener.events.remove());
                 Assert.assertEquals(0, listener.events.size());
-            }
-        });
 
-        Assert.assertEquals(
-                new WalListenerEvent(
-                        WalListenerEventType.SEGMENT_CLOSED,
-                        tableToken.get(),
-                        -1,
-                        1,
-                        0,
-                        -1,
-                        null
-                ),
-                listener.events.remove());
-        Assert.assertEquals(0, listener.events.size());
+                final String newTableName = tableToken1.get().getTableName() + "_new";
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                    tableToken2.set(engine.rename(
+                            securityContext,
+                            Path.getThreadLocal(""),
+                            mem,
+                            tableToken1.get().getTableName(),
+                            Path.getThreadLocal2(""),
+                            newTableName
+                    ));
+
+                    Assert.assertEquals(newTableName, tableToken2.get().getTableName());
+                    Assert.assertEquals(tableToken1.get().getTableId(), tableToken2.get().getTableId());
+                    Assert.assertEquals(tableToken1.get().getDirName(), tableToken2.get().getDirName());
+
+                    Assert.assertEquals(
+                            new WalListenerEvent(
+                                    WalListenerEventType.TABLE_RENAMED,
+                                    tableToken2.get(),
+                                    2,
+                                    -1,
+                                    -1,
+                                    -1,
+                                    tableToken1.get()
+                            ),
+                            listener.events.remove());
+
+                    drainWalQueue();
+                    releaseInactive(engine);
+
+                    Assert.assertEquals(
+                            new WalListenerEvent(
+                                    WalListenerEventType.SEGMENT_CLOSED,
+                                    tableToken2.get(),
+                                    -1,
+                                    2,
+                                    0,
+                                    -1,
+                                    null
+                            ),
+                            listener.events.remove());
+                }
+            }
+
+            releaseInactive(engine);
+
+            Assert.assertEquals(
+                    new WalListenerEvent(
+                            WalListenerEventType.SEGMENT_CLOSED,
+                            tableToken1.get(),
+                            -1,
+                            1,
+                            0,
+                            -1,
+                            null
+                    ),
+                    listener.events.remove());
+
+            try (WalWriter walWriter2 = engine.getWalWriter(tableToken2.get())) {
+                walWriter2.addColumn("c", ColumnType.INT);
+
+                Assert.assertEquals(
+                        new WalListenerEvent(
+                                WalListenerEventType.NON_DATA_TXN_COMMITTED,
+                                tableToken2.get(),
+                                3,
+                                -1,
+                                -1,
+                                -1,
+                                null
+                        ),
+                        listener.events.remove());
+            }
+
+            releaseInactive(engine);
+
+            Assert.assertEquals(
+                    new WalListenerEvent(
+                            WalListenerEventType.SEGMENT_CLOSED,
+                            tableToken2.get(),
+                            -1,
+                            3,
+                            0,
+                            -1,
+                            null
+                    ),
+                    listener.events.remove());
+
+            engine.drop(Path.getThreadLocal(""), tableToken2.get());
+
+            Assert.assertEquals(
+                    new WalListenerEvent(
+                            WalListenerEventType.TABLE_DROPPED,
+                            tableToken2.get(),
+                            -1,
+                            -1,
+                            -1,
+                            -1,
+                            null
+                    ),
+                    listener.events.remove());
+        });
     }
 }

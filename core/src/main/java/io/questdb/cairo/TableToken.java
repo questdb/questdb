@@ -69,6 +69,16 @@ public class TableToken implements Sinkable {
         return dirName.equals(that.dirName);
     }
 
+    @Override
+    public String toString() {
+        return "TableToken{" +
+                "tableName=" + tableName +
+                ", dirName=" + dirName +
+                ", tableId=" + tableId +
+                ", isWal=" + isWal +
+                '}';
+    }
+
     /**
      * @return directory where the table is located.
      */
@@ -115,6 +125,6 @@ public class TableToken implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.encodeUtf8(getTableName());
+        sink.putUtf8(tableName.lo(), tableName.hi());
     }
 }

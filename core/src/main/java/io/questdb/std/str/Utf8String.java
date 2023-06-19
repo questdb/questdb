@@ -80,6 +80,8 @@ public class Utf8String implements Utf8NativeCharSequence {
             return false;
         } else if (obj == this) {
             return true;
+        } else if (obj instanceof Utf8String) {
+            return original.equals(((Utf8String) obj).original);
         } else if (obj instanceof String) {
             return original.equals(obj);
         }

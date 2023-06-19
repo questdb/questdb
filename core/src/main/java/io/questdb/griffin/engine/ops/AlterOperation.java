@@ -151,6 +151,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return 0;
     }
 
+    public boolean isTableRename() {
+        return command == RENAME_TABLE;
+    }
+
     @Override
     public void clear() {
         command = DO_NOTHING;
