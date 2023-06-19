@@ -65,7 +65,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private CharSequenceList activeExtraStrInfo;
     private short command;
     private MemoryFCRImpl deserializeMem;
-    private TableToken toTableToken = null;
 
     public AlterOperation() {
         this(new LongList(), new ObjList<>());
