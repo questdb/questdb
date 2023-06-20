@@ -727,8 +727,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }, false, 250);
     }
 
-    // @Test disabled as Flaky, see: https://github.com/questdb/questdb/issues/3495
-    public void _testRenameTableSameMeta() throws Exception {
+    @Test
+    public void testRenameTableSameMeta() throws Exception {
         Assume.assumeTrue(walEnabled);
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
