@@ -970,14 +970,6 @@ public final class TableUtils {
             int mapMode,
             int memoryTag
     ) {
-        if (newSize < 1) {
-            throw CairoException.critical(0).put("could not remap file, invalid newSize [previousSize=").put(prevSize)
-                    .put(", newSize=").put(newSize)
-                    .put(", offset=").put(offset)
-                    .put(", fd=").put(fd)
-                    .put(']');
-        }
-
         final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
