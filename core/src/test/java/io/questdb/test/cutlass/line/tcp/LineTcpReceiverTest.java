@@ -746,7 +746,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                 --count == 0
                 ) {
                     renameTable(weather, meteorology);
-                    Os.sleep(100);
                 }
                 return super.openRW(name, opts);
             }
