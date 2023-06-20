@@ -107,10 +107,10 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void dropTable() {
         checkDropped();
-        tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
+        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
         metadata.dropTable();
         engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
-        engine.getWalListener().tableDropped(tableToken);
+        engine.getWalListener().tableDropped(tableToken, txn);
     }
 
     @Override

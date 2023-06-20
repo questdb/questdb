@@ -39,7 +39,7 @@ public interface WalListener {
     default void segmentClosed(final TableToken tabletoken, int walId, int segmentId) {
     }
 
-    default void tableDropped(TableToken tableToken) {
+    default void tableDropped(TableToken tableToken, long txn) {
     }
 
     default void tableRenamed(TableToken tableToken, long txn, TableToken oldTableToken) {

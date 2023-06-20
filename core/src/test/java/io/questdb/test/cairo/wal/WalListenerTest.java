@@ -174,11 +174,11 @@ public class WalListenerTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void tableDropped(TableToken tableToken) {
+        public void tableDropped(TableToken tableToken, long txn) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.TABLE_DROPPED,
                     tableToken,
-                    -1,
+                    txn,
                     -1,
                     -1,
                     -1,
@@ -332,7 +332,7 @@ public class WalListenerTest extends AbstractGriffinTest {
                     new WalListenerEvent(
                             WalListenerEventType.TABLE_DROPPED,
                             tableToken2.get(),
-                            -1,
+                            4,
                             -1,
                             -1,
                             -1,
