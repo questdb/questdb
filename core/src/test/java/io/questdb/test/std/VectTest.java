@@ -197,9 +197,11 @@ public class VectTest {
 
                     long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             src.getAddress(),
-                            srcLen,
+                            0,
+                            srcLen - 1,
                             index.getAddress(),
-                            indexLen,
+                            0,
+                            indexLen - 1,
                             dest.getAddress()
                     );
                     dest.setPos(mergedCount * 2);
@@ -227,9 +229,11 @@ public class VectTest {
 
                     long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             src.getAddress(),
-                            srcLen,
+                            0,
+                            srcLen - 1,
                             index.getAddress(),
-                            indexLen,
+                            0,
+                            indexLen - 1,
                             dest.getAddress()
                     );
                     dest.setPos(mergedCount * 2);
@@ -256,9 +260,11 @@ public class VectTest {
 
                     long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             src.getAddress(),
-                            srcLen,
+                            0,
+                            srcLen - 1,
                             index.getAddress(),
-                            indexLen,
+                            0,
+                            indexLen - 1,
                             dest.getAddress()
                     );
                     dest.setPos(mergedCount * 2);
@@ -289,9 +295,11 @@ public class VectTest {
 
                     long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             src.getAddress(),
-                            srcLen,
+                            0,
+                            srcLen - 1,
                             index.getAddress(),
-                            indexLen,
+                            0,
+                            indexLen - 1,
                             dest.getAddress()
                     );
                     dest.setPos(mergedCount * 2);

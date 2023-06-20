@@ -1387,6 +1387,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
     }
 
+    public boolean isDeduplicationEnabled() {
+        return true;
+    }
+
     public boolean isOpen() {
         return tempMem16b != 0;
     }
@@ -4917,6 +4921,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.fixedRowCount += oldPartitionSize;
                 }
             }
+        } else if (isLastWrittenPartition) {
+            // Update transient row count for last partition, it may have changed due to dedups.
+            txWriter.transientRowCount = newPartitionSize;
         }
 
         if (partitionMutates && newPartitionTimestamp == partitionTimestamp) {

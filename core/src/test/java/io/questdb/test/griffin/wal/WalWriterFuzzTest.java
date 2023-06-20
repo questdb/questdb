@@ -303,14 +303,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    private static void forceReleaseTableWriter(Rnd applyRnd) {
-        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
-        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
-        if (applyRnd.nextDouble() < 0.8) {
-            engine.releaseAllWriters();
-        }
-    }
-
     private static String getWalParallelApplyTableName(String tableNameBase, int i) {
         return tableNameBase + "_" + i + "_wal_parallel";
     }
@@ -372,33 +364,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
-        ObjList<WalWriter> writers = new ObjList<>();
-        for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
-        }
-
-        Rnd tempRnd = new Rnd();
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
-            writer.goActive();
-            FuzzTransaction transaction = transactions.getQuick(i);
-            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                operation.apply(tempRnd, writer, -1);
-            }
-
-            if (transaction.rollback) {
-                writer.rollback();
-            } else {
-                writer.commit();
-            }
-        }
-
-        Misc.freeObjList(writers);
-        drainWalQueue(applyRnd, tableName);
-    }
-
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
@@ -432,20 +397,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         engine.releaseInactive();
 
         return transactions;
-    }
-
-    private void drainWalQueue(Rnd applyRnd, String tableName) {
-        try (ApplyWal2TableJob walApplyJob = createWalApplyJob();
-             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
-             TableReader rdr1 = getReader(tableName);
-             TableReader rdr2 = getReader(tableName)
-        ) {
-            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
-                forceReleaseTableWriter(applyRnd);
-                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
-            }
-        }
     }
 
     private void fullRandomFuzz(Rnd rnd) throws Exception {

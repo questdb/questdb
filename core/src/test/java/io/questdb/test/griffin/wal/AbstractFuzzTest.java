@@ -26,10 +26,14 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractGriffinTest;
@@ -64,6 +68,33 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     private int symbolStrLenMax;
     private int transactionCount;
     private double truncateProb;
+
+    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+        ObjList<WalWriter> writers = new ObjList<>();
+        for (int i = 0; i < walWriterCount; i++) {
+            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+        }
+
+        Rnd tempRnd = new Rnd();
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+            writer.goActive();
+            FuzzTransaction transaction = transactions.getQuick(i);
+            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                operation.apply(tempRnd, writer, -1);
+            }
+
+            if (transaction.rollback) {
+                writer.rollback();
+            } else {
+                writer.commit();
+            }
+        }
+
+        Misc.freeObjList(writers);
+        drainWalQueue(applyRnd, tableName);
+    }
 
     @Before
     public void clearSeeds() {
@@ -152,6 +183,20 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         }
     }
 
+    private void drainWalQueue(Rnd applyRnd, String tableName) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob();
+             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
+             TableReader rdr1 = getReader(tableName);
+             TableReader rdr2 = getReader(tableName)
+        ) {
+            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+                forceReleaseTableWriter(applyRnd);
+                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+            }
+        }
+    }
+
     private String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
         String[] symbols = new String[totalSymbols];
         int symbolIndex = 0;
@@ -200,6 +245,14 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 }
                 purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
             }
+        }
+    }
+
+    protected static void forceReleaseTableWriter(Rnd applyRnd) {
+        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
+        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
+        if (applyRnd.nextDouble() < 0.8) {
+            engine.releaseAllWriters();
         }
     }
 

@@ -223,13 +223,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 int branch;
 
-                if (o3TimestampLo > dataTimestampLo) {
+                if (o3TimestampLo >= dataTimestampLo) {
                     //   +------+
                     //   | data |  +-----+
                     //   |      |  | OOO |
                     //   |      |  |     |
 
-                    if (o3TimestampLo >= dataTimestampHi) {
+                    if (o3TimestampLo > dataTimestampHi) {
 
                         // +------+
                         // | data |
@@ -257,7 +257,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         prefixLo = 0;
                         prefixHi = Vect.boundedBinarySearch64Bit(
                                 srcTimestampAddr,
-                                o3TimestampLo,
+                                o3TimestampLo - 1,
                                 0,
                                 srcDataMax - 1,
                                 BinarySearch.SCAN_DOWN
@@ -277,7 +277,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeO3Hi = srcOooHi;
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
                                     srcTimestampAddr,
-                                    o3TimestampMax - 1,
+                                    o3TimestampMax,
                                     mergeDataLo,
                                     srcDataMax - 1,
                                     BinarySearch.SCAN_DOWN
@@ -351,7 +351,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     prefixType = O3_BLOCK_O3;
                     prefixLo = srcOooLo;
-                    if (dataTimestampLo < o3TimestampMax) {
+                    if (dataTimestampLo <= o3TimestampMax) {
 
                         //
                         //  +------+  | OOO |
@@ -361,7 +361,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         mergeDataLo = 0;
                         prefixHi = Vect.boundedBinarySearchIndexT(
                                 sortedTimestampsAddr,
-                                dataTimestampLo,
+                                dataTimestampLo - 1,
                                 srcOooLo,
                                 srcOooHi,
                                 BinarySearch.SCAN_DOWN
@@ -381,10 +381,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeO3Hi = srcOooHi;
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
                                     srcTimestampAddr,
-                                    o3TimestampMax,
+                                    o3TimestampMax + 1,
                                     0,
                                     srcDataMax - 1,
-                                    BinarySearch.SCAN_DOWN
+                                    BinarySearch.SCAN_UP
                             );
 
                             suffixLo = mergeDataHi + 1;
@@ -403,7 +403,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeDataHi = srcDataMax - 1;
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
-                                    dataTimestampHi - 1,
+                                    dataTimestampHi,
                                     mergeO3Lo,
                                     srcOooHi,
                                     BinarySearch.SCAN_DOWN
@@ -989,18 +989,41 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long timestampMergeIndexAddr;
         final long timestampMergeIndexSize;
         if (mergeType == O3_BLOCK_MERGE) {
-            timestampMergeIndexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
-            assert timestampMergeIndexSize > 0; // avoid SIGSEGV
 
-            timestampMergeIndexAddr = createMergeIndex(
-                    srcTimestampAddr,
-                    sortedTimestampsAddr,
-                    mergeDataLo,
-                    mergeDataHi,
-                    mergeOOOLo,
-                    mergeOOOHi,
-                    timestampMergeIndexSize
-            );
+            if (!tableWriter.isDeduplicationEnabled()) {
+                timestampMergeIndexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+                assert timestampMergeIndexSize > 0; // avoid SIGSEGV
+
+                timestampMergeIndexAddr = createMergeIndex(
+                        srcTimestampAddr,
+                        sortedTimestampsAddr,
+                        mergeDataLo,
+                        mergeDataHi,
+                        mergeOOOLo,
+                        mergeOOOHi,
+                        timestampMergeIndexSize
+                );
+            } else {
+                long tempIndexSize = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+                assert tempIndexSize > 0; // avoid SIGSEGV
+                long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
+                long dedupRows = Vect.mergeDedupTimestampWithLongIndexAsc(
+                        srcTimestampAddr,
+                        mergeDataLo,
+                        mergeDataHi,
+                        sortedTimestampsAddr,
+                        mergeOOOLo,
+                        mergeOOOHi,
+                        tempIndexAddr
+                );
+                timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                final long duplicateCount = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) - dedupRows;
+                newPartitionSize -= duplicateCount;
+                if (oldPartitionTimestamp == partitionTimestamp) {
+                    oldPartitionSize -= duplicateCount;
+                }
+            }
         } else {
             timestampMergeIndexAddr = 0;
             timestampMergeIndexSize = 0;

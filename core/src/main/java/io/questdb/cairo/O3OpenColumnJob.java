@@ -323,7 +323,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int columnIndex,
             long columnNameTxn
     ) {
-        final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+        final long mergeLen = timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES;
         final Path pathToOldPartition = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(pathToOldPartition, tableWriter.getPartitionBy(), oldPartitionTimestamp, srcDataTxn);
         int plen = pathToOldPartition.length();

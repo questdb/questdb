@@ -426,20 +426,22 @@ typedef struct {
 
 uint64_t merge_dedup_long_index(
         const int64_t *src,
-        const int64_t src_count,
+        const int64_t src_lo,
+        const int64_t src_hi_incl,
         const index_t *index,
-        const int64_t index_size,
+        const int64_t index_lo,
+        const int64_t index_hi_incl,
         index_t *dest_start
 ) {
-    int64_t src_pos = 0;
-    int64_t index_pos = 0;
+    int64_t src_pos = src_lo;
+    int64_t index_pos = index_lo;
     index_t *dest = dest_start - 1;
 
     int64_t last_result = std::numeric_limits<int64_t>::min();
     int64_t index_last = std::numeric_limits<int64_t>::min();
     int64_t src_next, index_next;
 
-    while (src_pos < src_count && index_pos < index_size) {
+    while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
         src_next = src[src_pos];
         index_next = (int64_t) index[index_pos].ts;
 
@@ -447,12 +449,12 @@ uint64_t merge_dedup_long_index(
             if (src_next > index_last) {
                 dest++;
                 dest[0].ts = src_next;
-                dest[0].i = src_pos;
+                dest[0].i = src_pos | (1ull << 63);
                 last_result = src_next;
             } else if (src_next == index_last) {
                 dest++;
                 dest[0].ts = index_last;
-                dest[0].i = (index_pos - 1) | (1ull << 63);
+                dest[0].i = (index_pos - 1);
                 last_result = src_next;
             }
             src_pos++;
@@ -463,33 +465,33 @@ uint64_t merge_dedup_long_index(
                 dest++;
             }
             dest[0].ts = index_next;
-            dest[0].i = index_pos | (1ull << 63);
+            dest[0].i = index_pos;
             index_last = index_next;
             index_pos++;
         }
     }
 
-    while (index_pos < index_size) {
+    while (index_pos <= index_hi_incl) {
         index_next = (int64_t) index[index_pos].ts;
         if (index_next > last_result) {
             last_result = index_next;
             dest++;
         }
         dest[0].ts = index_next;
-        dest[0].i = index_pos | (1ull << 63);
+        dest[0].i = index_pos;
         index_pos++;
     }
 
-    while (src_pos < src_count) {
+    while (src_pos <= src_hi_incl) {
         src_next = src[src_pos];
         if (src_next > index_last) {
             dest++;
             dest[0].ts = src_next;
-            dest[0].i = src_pos;
+            dest[0].i = src_pos | (1ull << 63);
         } else if (src_next == index_last) {
             dest++;
             dest[0].ts = index_last;
-            dest[0].i = (index_pos - 1) | (1ull << 63);
+            dest[0].i = (index_pos - 1);
         }
         src_pos++;
     }
@@ -789,13 +791,22 @@ Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
-        JAVA_STATIC, jlong pTimestamp, jlong timestampCount, jlong pInsertIndex, jlong insertIndexCount, jlong pDest) {
+        JAVA_STATIC,
+        jlong pSrc,
+        jlong srcLo,
+        jlong srcHiInclusive,
+        jlong pIndex,
+        jlong indexLo,
+        jlong indexHiInclusive,
+        jlong pDestIndex) {
     int64_t merge_count = merge_dedup_long_index(
-            reinterpret_cast<int64_t *> (pTimestamp),
-            __JLONG_REINTERPRET_CAST__(int64_t, timestampCount),
-            reinterpret_cast<index_t *> (pInsertIndex),
-            __JLONG_REINTERPRET_CAST__(int64_t, insertIndexCount),
-            reinterpret_cast<index_t *> (pDest)
+            reinterpret_cast<int64_t *> (pSrc),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive),
+            reinterpret_cast<index_t *> (pIndex),
+            __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
+            __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive),
+            reinterpret_cast<index_t *> (pDestIndex)
     );
     return merge_count;
 }
