@@ -1609,19 +1609,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
                     final long tsLagOffset = txWriter.getTransientRowCount() << 3;
                     final long tsLagSize = walLagRowCount << 3;
-                    final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                     final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
-
                     timestampAddr = o3TimestampMem.getAddress();
-                    Vect.radixSortABLongIndexAsc(
-                            Math.abs(tsLagBufferAddr),
-                            walLagRowCount,
-                            mappedTimestampIndexAddr,
-                            commitRowCount,
-                            timestampAddr,
-                            o3TimestampMemCpy.addressOf(0)
-                    );
-                    mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+
+                    final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
+                    try {
+                        Vect.radixSortABLongIndexAsc(
+                                Math.abs(tsLagBufferAddr),
+                                walLagRowCount,
+                                mappedTimestampIndexAddr,
+                                commitRowCount,
+                                timestampAddr,
+                                o3TimestampMemCpy.addressOf(0)
+                        );
+                    } finally {
+                        mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+                    }
+
                     o3MergeIntoLag(timestampAddr, walLagRowCount, rowLo, rowHi, timestampIndex);
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
@@ -3781,7 +3785,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         column.jumpTo(offset + size);
         long address = column.map(offset, size);
 
-
         // column could not provide necessary length of buffer
         // because perhaps its internal buffer is not big enough
         if (address != 0) {
@@ -4541,7 +4544,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                 }
 
-
                 o3DstDataMem.jumpTo(destOffset + size);
                 assert o3SrcDataMem.size() >= size;
                 Vect.memmove(o3DstDataMem.addressOf(destOffset), o3SrcDataMem.addressOf(sourceOffset), size);
@@ -4786,16 +4788,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // the data is copied back to start of the buffer, no need to set size first
                 long destAddr = mapAppendColumnBuffer(o3DstIndexMem, destIndexOffset, destIndexSize, true);
                 assert destAddr != 0;
-
-                O3Utils.shiftCopyFixedSizeColumnData(
-                        sourceOffset - destOffset,
-                        o3SrcIndexMem.addressOf(committedIndexOffset),
-                        0,
-                        copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                        Math.abs(destAddr)
-                );
-
-                mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
+                try {
+                    O3Utils.shiftCopyFixedSizeColumnData(
+                            sourceOffset - destOffset,
+                            o3SrcIndexMem.addressOf(committedIndexOffset),
+                            0,
+                            copyToLagRowCount, // No need to do +1 here, hi is inclusive
+                            Math.abs(destAddr)
+                    );
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
+                }
             }
 
             o3DstDataMem.jumpTo(destOffset + size);
@@ -4807,15 +4810,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         sourceOffset = 0;
                     }
                     MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
-                    long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
-                    if (bytesWritten != size) {
-                        throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                                .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                    if (mixedIOFlag) {
+                        long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
+                        if (bytesWritten != size) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
+                    } else {
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+                        try {
+                            Vect.memcpy(Math.abs(destAddr), o3MemBuff.addressOf(sourceOffset), size);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                        }
                     }
-
                 } else {
-                    MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
-                    ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                    if (mixedIOFlag) {
+                        MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
+                        long bytesWritten = ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                        if (bytesWritten != size) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
+                    } else {
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+                        try {
+                            Vect.memcpy(Math.abs(destAddr), o3SrcDataMem.addressOf(sourceOffset), size);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                        }
+                    }
                 }
             } else {
                 // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
@@ -4824,8 +4848,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long srcLo = o3SrcDataMem.addressOf(sourceOffset);
 
                 long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
-                Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
-                mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                try {
+                    Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                }
             }
         } catch (Throwable th) {
             handleWorkStealingException(

@@ -24,14 +24,14 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
@@ -42,6 +42,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WRITER;
     private final FilesFacade ff;
     private final long fileOpts;
+    private final boolean mixedIOFlag;
     private int columnIndex;
     private long columnTop;
     private int columnType;
@@ -51,9 +52,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private int varFd = -1;
     private long varLength = -1;
 
-    public ContiguousFileVarFrameColumn(FilesFacade ff, long fileOpts) {
-        this.ff = ff;
-        this.fileOpts = fileOpts;
+    public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
+        this.ff = configuration.getFilesFacade();
+        this.fileOpts = configuration.getWriterFileOpenOpts();
+        this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
     }
 
     @Override
@@ -76,7 +78,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         assert offset >= 0;
 
         if (sourceHi > 0) {
-
             long varOffset = getVarOffset(offset);
 
             // Map source offset file, it will be used to copy data from anyway.
@@ -97,16 +98,41 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 assert copySize > 0 && copySize < 1L << 40;
 
                 TableUtils.allocateDiskSpaceToPage(ff, varFd, varOffset + copySize);
-                ff.fadvise(sourceColumn.getPrimaryFd(), varSrcOffset, copySize, Files.POSIX_FADV_SEQUENTIAL);
-                if (ff.copyData(sourceColumn.getPrimaryFd(), varFd, varSrcOffset, varOffset, copySize) != copySize) {
-                    throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(varFd)
-                            .put(", destOffset=").put(varOffset)
-                            .put(", size=").put(copySize)
-                            .put(", fileSize=").put(ff.length(varFd))
-                            .put(", srcFd=").put(sourceColumn.getPrimaryFd())
-                            .put(", srcOffset=").put(varSrcOffset)
-                            .put(", srcFileSize=").put(ff.length(sourceColumn.getPrimaryFd()))
-                            .put(']');
+                if (mixedIOFlag) {
+                    if (ff.copyData(sourceColumn.getPrimaryFd(), varFd, varSrcOffset, varOffset, copySize) != copySize) {
+                        throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(varFd)
+                                .put(", destOffset=").put(varOffset)
+                                .put(", size=").put(copySize)
+                                .put(", fileSize=").put(ff.length(varFd))
+                                .put(", srcFd=").put(sourceColumn.getPrimaryFd())
+                                .put(", srcOffset=").put(varSrcOffset)
+                                .put(", srcFileSize=").put(ff.length(sourceColumn.getPrimaryFd()))
+                                .put(']');
+                    }
+
+                    if (commitMode != CommitMode.NOSYNC) {
+                        ff.fsync(varFd);
+                    }
+                } else {
+                    long srcVarAddress = 0;
+                    long dstVarAddress = 0;
+                    try {
+                        srcVarAddress = TableUtils.mapAppendColumnBuffer(ff, sourceColumn.getPrimaryFd(), varSrcOffset, copySize, false, MEMORY_TAG);
+                        dstVarAddress = TableUtils.mapAppendColumnBuffer(ff, varFd, varOffset, copySize, true, MEMORY_TAG);
+
+                        Vect.memcpy(dstVarAddress, srcVarAddress, copySize);
+
+                        if (commitMode != CommitMode.NOSYNC) {
+                            ff.msync(dstVarAddress, copySize, commitMode == CommitMode.ASYNC);
+                        }
+                    } finally {
+                        if (srcVarAddress != 0) {
+                            TableUtils.mapAppendColumnBufferRelease(ff, srcVarAddress, varSrcOffset, copySize, MEMORY_TAG);
+                        }
+                        if (dstVarAddress != 0) {
+                            TableUtils.mapAppendColumnBufferRelease(ff, dstVarAddress, varOffset, copySize, MEMORY_TAG);
+                        }
+                    }
                 }
 
                 long fixedOffset = offset * Long.BYTES;
@@ -120,6 +146,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                             sourceHi,
                             fixAddr
                     );
+
+                    if (commitMode != CommitMode.NOSYNC) {
+                        ff.msync(fixAddr, srcFixMapSize, commitMode == CommitMode.ASYNC);
+                    }
                 } finally {
                     TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, srcFixMapSize, MEMORY_TAG);
                 }
@@ -128,11 +158,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 varLength = varOffset + copySize;
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, srcFixAddr, sourceLo * Long.BYTES, srcFixMapSize, MEMORY_TAG);
-            }
-
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.fsync(fixedFd);
-                ff.fsync(varFd);
             }
         }
     }
@@ -143,7 +168,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         assert offset >= 0;
 
         if (count > 0) {
-
             long varOffset = getVarOffset(offset);
             long appendVarSize = count * (ColumnType.isString(columnType) ? Integer.BYTES : Long.BYTES);
             TableUtils.allocateDiskSpaceToPage(ff, varFd, varOffset + appendVarSize);
@@ -152,6 +176,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             long varAddr = TableUtils.mapAppendColumnBuffer(ff, varFd, varOffset, appendVarSize, true, MEMORY_TAG);
             try {
                 Vect.memset(varAddr, appendVarSize, -1);
+
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(varAddr, appendVarSize, commitMode == CommitMode.ASYNC);
+                }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, varAddr, varOffset, appendVarSize, MEMORY_TAG);
             }
@@ -167,13 +195,12 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 } else {
                     Vect.setVarColumnRefs64Bit(fixAddr, varOffset + Long.BYTES, count);
                 }
+
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(fixAddr, fixedSize, commitMode == CommitMode.ASYNC);
+                }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, fixedSize, MEMORY_TAG);
-            }
-
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.fsync(fixedFd);
-                ff.fsync(varFd);
             }
         }
     }
