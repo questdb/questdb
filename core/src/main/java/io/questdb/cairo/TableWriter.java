@@ -1410,6 +1410,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public Row newRowDeferTimestamp() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public Row newRow(long timestamp) {
         switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:

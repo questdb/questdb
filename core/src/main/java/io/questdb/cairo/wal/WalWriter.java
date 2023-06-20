@@ -83,6 +83,7 @@ public class WalWriter implements TableWriterAPI {
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final int timestampIndex;
     private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
     private final int walId;
@@ -137,6 +138,7 @@ public class WalWriter implements TableWriterAPI {
             this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
+            timestampIndex = metadata.getTimestampIndex();
             columns = new ObjList<>(columnCount * 2);
             nullSetters = new ObjList<>(columnCount);
             initialSymbolCounts = new AtomicIntList(columnCount);
@@ -404,13 +406,23 @@ public class WalWriter implements TableWriterAPI {
                 rollSegmentOnNextRow = false;
             }
 
-            final int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex != -1) {
-                //avoid lookups by having a designated field with primaryColumn
-                final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLong128(timestamp, segmentRowCount);
-                setRowValueNotNull(timestampIndex);
-                row.timestamp = timestamp;
+                row.setTimestamp(timestamp);
+            }
+            return row;
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
+    @Override
+    public TableWriter.Row newRowDeferTimestamp() {
+        checkDistressed();
+        try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+                rollSegmentOnNextRow = false;
             }
             return row;
         } catch (Throwable e) {
@@ -1518,7 +1530,7 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
             // this check deal with concurrency
-            if (fromNameTable == null || !Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
+            if (!Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
                 throw CairoException.tableDoesNotExist(fromNameTable);
             }
             structureVersion++;
@@ -1583,7 +1595,7 @@ public class WalWriter implements TableWriterAPI {
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
-                    // TODO: this should be some kind of warning probably that different wals adding the same column concurrently
+                    // TODO: this should be some kind of warning probably that different WALs adding the same column concurrently
                     LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
@@ -1881,6 +1893,15 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putTimestamp(int columnIndex, long value) {
+            if (columnIndex == timestampIndex) {
+                setTimestamp(value);
+            } else {
+                TableWriter.Row.super.putTimestamp(columnIndex, value);
+            }
+        }
+
+        @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
@@ -1933,6 +1954,13 @@ public class WalWriter implements TableWriterAPI {
                     utf8ToUtf16(utf8Value, tempSink, hasNonAsciiChars),
                     symbolMapReader
             );
+        }
+
+        private void setTimestamp(long value) {
+            //avoid lookups by having a designated field with primaryColumn
+            getPrimaryColumn(timestampIndex).putLong128(value, segmentRowCount);
+            setRowValueNotNull(timestampIndex);
+            this.timestamp = value;
         }
     }
 }

@@ -115,6 +115,17 @@ public final class Net {
         }
     }
 
+    @SuppressWarnings("unused")
+    public static void dumpAscii(long buffer, int len) {
+        if (len > 0) {
+            for (int i = 0; i < len; i++) {
+                StdoutSink.INSTANCE.put((char) (Unsafe.getUnsafe().getByte(buffer + i) & 0xff));
+            }
+            StdoutSink.INSTANCE.put('\n');
+            StdoutSink.INSTANCE.flush();
+        }
+    }
+
     public static void freeAddrInfo(long pAddrInfo) {
         if (pAddrInfo != 0) {
             ADDR_INFO_COUNTER.decrementAndGet();

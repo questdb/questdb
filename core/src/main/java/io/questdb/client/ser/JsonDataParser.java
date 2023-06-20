@@ -26,6 +26,8 @@ package io.questdb.client.ser;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -35,27 +37,36 @@ import io.questdb.cutlass.json.JsonParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CreateTableModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
+
+import static io.questdb.cairo.ColumnType.*;
 
 public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
     private final CreateTableModel createTableModel = CreateTableModel.FACTORY.newInstance();
     private final CairoEngine engine;
     private final JsonLexer lexer = new JsonLexer(1024, 1024);
     private final MemoryMARW mem = Vm.getMARWInstance();
-    private final ExpressionNode tableName = ExpressionNode.FACTORY.newInstance();
+    private final ExpressionNode partitionBy = ExpressionNode.FACTORY.newInstance();
     private final Path path = new Path();
+    private final ExpressionNode tableName = ExpressionNode.FACTORY.newInstance();
+    private final ExpressionNode timestampName = ExpressionNode.FACTORY.newInstance();
     private int columnIndex;
     private String columnName;
+    private int ignoreDepth = 0;
+    private int ignoreReturnState;
+    private TableWriter.Row row;
     private int state = 0;
+    private TableWriterAPI writer;
 
     public JsonDataParser(CairoEngine engine) {
         this.engine = engine;
         // wire up the model
         createTableModel.setName(tableName);
+        createTableModel.setTimestamp(timestampName);
+        createTableModel.setPartitionBy(partitionBy);
     }
 
     @Override
@@ -63,12 +74,18 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
         this.state = 0;
         columnIndex = 0;
         columnName = null;
+        lexer.clear();
+        createTableModel.clear();
+        createTableModel.setName(tableName);
+        createTableModel.setTimestamp(timestampName);
+        createTableModel.setPartitionBy(partitionBy);
     }
 
     @Override
     public void close() {
         Misc.free(path);
         Misc.free(mem);
+        writer = Misc.free(writer);
     }
 
     @Override
@@ -91,14 +108,23 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                         // "name"
                         // "type"
                         break;
+                    case 12: // ignore
+                        ignoreDepth++;
+                        break;
                     default:
                         assert false;
                 }
                 break;
             case JsonLexer.EVT_OBJ_END:
                 switch (state) {
+                    case 1: // the end
+                        System.out.println("done");
+                        break;
                     case 7: // column definition end
                         state = 5;
+                        break;
+                    case 12: // ignore
+                        ignoreDepth--;
                         break;
                     default:
                         assert false;
@@ -113,8 +139,13 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                             state = 3; // expect metadata array
                         } else if (Chars.equals(tag, "dataset")) {
                             state = 4; // expect data array
+                        } else if (Chars.equals(tag, "timestamp")) {
+                            state = 11; // expect timestamp index
                         } else {
-                            assert false;
+                            // ignore nested
+                            state = 12;
+                            ignoreReturnState = 1;
+                            ignoreDepth = 1;
                         }
                         break;
                     case 7: // metadata attribute
@@ -128,6 +159,9 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                             assert false;
                         }
                         break;
+                    case 12: // ignore
+                        ignoreDepth++;
+                        break;
                     default:
                         assert false;
                 }
@@ -135,7 +169,6 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
             case JsonLexer.EVT_VALUE:
                 switch (state) {
                     case 2: // query text
-                        System.out.println("Query text: " + tag);
                         // expect main attribute name
                         state = 1;
                         break;
@@ -155,6 +188,28 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                         } catch (SqlException e) {
                             throw new JsonException().put(e.getFlyweightMessage());
                         }
+                        break;
+                    case 11: // timestamp value
+                        try {
+                            int timestampIndex = Numbers.parseInt(tag);
+                            if (timestampIndex != -1) {
+                                timestampName.token = createTableModel.getColumnName(timestampIndex);
+                                createTableModel.setTimestamp(timestampName);
+                            } else {
+                                createTableModel.setTimestamp(null);
+                            }
+                        } catch (NumericException e) {
+                            throw JsonException.$(position, "invalid timestamp index: ").put(tag);
+                        }
+                        createTable();
+                        // back to main attributes
+                        state = 1;
+                        break;
+                    case 12: // ignoring
+                        if (--ignoreDepth == 0) {
+                            state = ignoreReturnState;
+                        }
+                        break;
                     default:
                         break;
                 }
@@ -171,6 +226,14 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                         state = 10;
                         // start processing from column 0
                         columnIndex = 0;
+                        // timestamp value is not yet determined because
+                        // we are parsing JSON in streaming mode
+
+                        // value parser will later overwrite timestamp value by index
+                        row = writer.newRowDeferTimestamp();
+                        break;
+                    case 12: // ignore
+                        ignoreDepth++;
                         break;
                     default:
                         assert false;
@@ -179,33 +242,104 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
             case JsonLexer.EVT_ARRAY_VALUE:
                 switch (state) {
                     case 10: // column value
-                        switch (createTableModel.getColumnType(columnIndex++)) {
-                            case ColumnType.INT:
-
+                        try {
+                            switch (createTableModel.getColumnType(columnIndex)) {
+                                case BOOLEAN:
+                                    row.putBool(columnIndex, (tag.charAt(0) | 32) == 't');
+                                    break;
+                                case BYTE:
+                                    row.putByte(columnIndex, (byte) Numbers.parseInt(tag));
+                                    break;
+                                case SHORT:
+                                    row.putShort(columnIndex, (short) Numbers.parseInt(tag));
+                                    break;
+                                case CHAR:
+                                    row.putChar(columnIndex, tag.length() > 0 ? tag.charAt(0) : 0);
+                                    break;
+                                case INT:
+                                    row.putInt(columnIndex, Numbers.parseInt(tag));
+                                    break;
+                                case LONG:
+                                    row.putLong(columnIndex, Numbers.parseLong(tag));
+                                    break;
+                                case DATE:
+                                    row.putDate(columnIndex, DateFormatUtils.parseUTCDate(tag));
+                                    break;
+                                case TIMESTAMP:
+                                    row.putTimestamp(columnIndex, TimestampFormatUtils.parseUTCTimestamp(tag));
+                                    break;
+                                case FLOAT:
+                                    row.putFloat(columnIndex, Numbers.parseFloat(tag));
+                                    break;
+                                case DOUBLE:
+                                    row.putDouble(columnIndex, Numbers.parseDouble(tag));
+                                    break;
+                                case STRING:
+                                    row.putStr(columnIndex, tag);
+                                    break;
+                                case SYMBOL:
+                                    row.putSym(columnIndex, tag);
+                                    break;
+                                case LONG256:
+                                    row.putLong256(columnIndex, tag);
+                                    break;
+                                case GEOBYTE:
+                                case GEOSHORT:
+                                case GEOINT:
+                                case GEOLONG:
+                                    row.putGeoStr(columnIndex, tag);
+                                    break;
+                                case BINARY:
+                                    break;
+                                case UUID:
+                                    row.putUuid(columnIndex, tag);
+                                    break;
+                                default:
+                                    assert false;
+                            }
+                            columnIndex++;
+                        } catch (NumericException e) {
+                            row.cancel();
+                            throw JsonException.$(position, "could not parse value [value=").put(tag).put(", type=").put(ColumnType.nameOf(createTableModel.getColumnType(columnIndex))).put(']');
                         }
                         break;
                     default:
                         assert false;
-
+                        break;
                 }
+                break;
             case JsonLexer.EVT_ARRAY_END:
                 switch (state) {
                     case 5: // metadata array end
-                        tableName.token = "hello123";
-                        createTableModel.setWalEnabled(true);
-                        engine.createTable(AllowAllSecurityContext.INSTANCE, mem, path, false, createTableModel, false);
                         // back to main attributes:
                         state = 1;
+                        break;
+                    case 6: // data array end
+                        state = 1;
+                        writer.commit();
+                        break;
+                    case 10: // data row array end
+                        row.append();
+                        state = 6; // expect data row array
+                        break;
+                    case 12: // ignore
+                        ignoreDepth--;
                         break;
                     default:
                         assert false;
                 }
                 break;
         }
-        System.out.println(code);
     }
 
     public void parse(long lo, long hi) throws JsonException {
         lexer.parse(lo, hi, this);
+    }
+
+    private void createTable() {
+        tableName.token = "hello123";
+        createTableModel.setWalEnabled(true);
+        partitionBy.token = "HOUR";
+        writer = engine.getWalWriter(engine.createTable(AllowAllSecurityContext.INSTANCE, mem, path, false, createTableModel, false));
     }
 }

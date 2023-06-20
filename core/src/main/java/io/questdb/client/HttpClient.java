@@ -381,6 +381,11 @@ public abstract class HttpClient implements QuietCloseable {
                             long chunkHi = chunk.addr + chunk.available;
                             if (chunkHi < dataHi) {
                                 dataLo = chunkHi;
+                                // this data can also be CRLF only
+                                if (chunk.available == len) {
+                                    // skip CRLF
+                                    dataLo += 2;
+                                }
                             } else {
                                 dataLo = bufLo;
                                 dataHi = bufLo;

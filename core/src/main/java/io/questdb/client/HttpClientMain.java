@@ -41,19 +41,19 @@ public class HttpClientMain {
         ) {
 
 
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < 1; i++) {
                 HttpClient.Request req = client.newRequest();
 
                 HttpClient.Response rsp = req
                         .GET()
                         .url("/exec")
-                        .query("query", "cpu%20limit%20400000")
+//                        .query("query", "cpu%20limit%20400000")
+                        .query("query", "cpu")
 //                .query("query", "cpu")
                         .header("Accept", "gzip, deflate, br")
                         .send("localhost", 9000);
 
                 rsp.awaitHeaders();
-
 
                 if (rsp.isChunked()) {
 
