@@ -646,6 +646,11 @@ public class LineTcpMeasurementScheduler implements Closeable {
             tud.commitIfMaxUncommittedRowsCountReached();
         } catch (CommitFailedException commitFailedException) {
             throw commitFailedException;
+        } catch (CairoException th) {
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
+            if (r != null) {
+                r.cancel();
+            }
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
             if (r != null) {

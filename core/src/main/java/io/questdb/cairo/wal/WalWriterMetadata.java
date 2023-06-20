@@ -159,6 +159,12 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
+    public void renameTable(TableToken toTableToken) {
+        assert toTableToken != null;
+        tableToken = toTableToken;
+        structureVersion++;
+    }
+
     public void switchTo(Path path, int pathLen) {
         if (metaMem.getFd() > -1) {
             metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
