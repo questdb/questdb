@@ -358,27 +358,6 @@ public final class TestUtils {
         }
     }
 
-    public static boolean equals(CharSequence expected, CharSequence actual) {
-        if (expected == null && actual == null) {
-            return true;
-        }
-
-        if (expected == null || actual == null) {
-            return false;
-        }
-
-        if (expected.length() != actual.length()) {
-            return false;
-        }
-
-        for (int i = 0; i < expected.length(); i++) {
-            if (expected.charAt(i) != actual.charAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
         if (bs == null) {
             Assert.assertNull(actBs);
@@ -919,6 +898,27 @@ public final class TestUtils {
         }
     }
 
+    public static boolean equals(CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return true;
+        }
+
+        if (expected == null || actual == null) {
+            return false;
+        }
+
+        if (expected.length() != actual.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < expected.length(); i++) {
+            if (expected.charAt(i) != actual.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
@@ -1342,6 +1342,12 @@ public final class TestUtils {
         return ptr;
     }
 
+    public static void txnPartitionConditionally(Path path, int txn) {
+        if (txn > -1) {
+            path.put('.').put(txn);
+        }
+    }
+
     public static void unchecked(CheckedRunnable runnable) {
         try {
             runnable.run();
@@ -1372,12 +1378,6 @@ public final class TestUtils {
             return runnable.get();
         } catch (Throwable e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    public static void txnPartitionConditionally(Path path, int txn) {
-        if (txn > -1) {
-            path.put('.').put(txn);
         }
     }
 
@@ -1485,17 +1485,6 @@ public final class TestUtils {
         }
     }
 
-    private static String recordToString(Record record, RecordMetadata metadata) {
-        sink.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            printColumn(record, metadata, i, sink, false);
-            if (i < n - 1) {
-                sink.put('\t');
-            }
-        }
-        return sink.toString();
-    }
-
     private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
@@ -1522,6 +1511,17 @@ public final class TestUtils {
         }
     }
 
+    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
+        long increment = 0;
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+        return increment;
+    }
+
 /*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -1538,17 +1538,6 @@ public final class TestUtils {
     }
 */
 
-    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
-        long increment = 0;
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
-            assert partitionAddMethod != null;
-            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
-            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
-        }
-        return increment;
-    }
-
     private static void putGeoHash(long hash, int bits, CharSink sink) {
         if (hash == GeoHashes.NULL) {
             return;
@@ -1558,6 +1547,17 @@ public final class TestUtils {
         } else {
             GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
         }
+    }
+
+    private static String recordToString(Record record, RecordMetadata metadata) {
+        sink.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            printColumn(record, metadata, i, sink, false);
+            if (i < n - 1) {
+                sink.put('\t');
+            }
+        }
+        return sink.toString();
     }
 
     private static String toHexString(Long256 expected) {

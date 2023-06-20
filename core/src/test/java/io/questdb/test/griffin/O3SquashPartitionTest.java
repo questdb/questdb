@@ -30,11 +30,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -450,6 +452,9 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testSplitMidPartitionFailedToSquash() throws Exception {
+        // Windows uses mmap-based writes instead of copyData to squash split partitions.
+        Assume.assumeFalse(Os.isWindows());
+
         AtomicLong failToCopyLen = new AtomicLong();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
