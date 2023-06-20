@@ -79,6 +79,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import static io.questdb.cutlass.auth.AuthUtils.EC_ALGORITHM;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 @RunWith(Parameterized.class)
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
@@ -205,7 +206,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             new Thread(() -> {
                 try (Socket socket = getSocket()) {
                     for (int i = 0; i < numOfRows; i++) {
-                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : "" + i;
+                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : String.valueOf(i);
                         sendToSocket(socket, tableName + ",abcdef=x col=" + value + "\n");
                     }
                 } catch (Exception e) {
@@ -745,6 +746,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                 --count == 0
                 ) {
                     renameTable(weather, meteorology);
+                    Os.sleep(100);
                 }
                 return super.openRW(name, opts);
             }
@@ -762,22 +764,35 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             sendWaitWalReleaseCount(lineData, 3);
 
-            mayDrainWalQueue();
             // two of the three commits go to the renamed table
-            String expected = "location\ttemperature\ttimestamp\n" +
+            final String expected = "location\ttemperature\ttimestamp\n" +
                     "west1\t10.0\t2016-06-13T17:43:50.100400Z\n" +
                     "west2\t20.0\t2016-06-13T17:43:50.100500Z\n" +
                     "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
                     "west4\t40.0\t2016-06-13T17:43:50.100700Z\n" +
                     "south8\t80.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, meteorology);
+
+            assertEventually(
+                    () -> {
+                        drainWalQueue();
+                        assertTable(expected, meteorology);
+                    },
+                    15
+            );
 
             // last commit goes to the recreated table
-            expected = "location\ttemperature\ttimestamp\n" +
+            final String expected2 = "location\ttemperature\ttimestamp\n" +
                     "west5\t50.0\t2016-06-13T17:43:50.100800Z\n" +
                     "east6\t60.0\t2016-06-13T17:43:50.100900Z\n" +
                     "south7\t70.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, weather);
+
+            assertEventually(
+                    () -> {
+                        drainWalQueue();
+                        assertTable(expected2, weather);
+                    },
+                    15
+            );
 
         }, false, 250);
     }
@@ -1441,7 +1456,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             sendLinger(lineData.toString(), tableName);
             doneLatch.await();
 
-            TestUtils.assertEventually(() -> {
+            assertEventually(() -> {
                 mayDrainWalQueue();
 
                 CharSequenceIntHashMap symbolCounts = new CharSequenceIntHashMap();
