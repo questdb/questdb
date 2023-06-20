@@ -378,8 +378,7 @@ public final class Logger implements LogRecord, Log {
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {
-        final long threadId = Thread.currentThread().getId();
-        return rec.$("[").$(threadId).$("] ").ts().$(level).$(name);
+        return rec.ts().$(level).$(name);
     }
 
     private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {

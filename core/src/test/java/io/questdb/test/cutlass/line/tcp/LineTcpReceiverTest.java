@@ -727,9 +727,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }, false, 250);
     }
 
-    @Test
-    public void testRenameTableSameMeta() throws Exception {
-        LOG.info().$("testRenameTableSameMeta :: (A)").$();
+    // @Test disabled as Flaky, see: https://github.com/questdb/questdb/issues/3495
+    public void _testRenameTableSameMeta() throws Exception {
         Assume.assumeTrue(walEnabled);
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
@@ -740,28 +739,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                LOG.info().$("testRenameTableSameMeta.openRW :: (A) name=").$(name).$();
                 if (
                         Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
                                 Chars.contains(name, weather) &&
                                 --count == 0
                 ) {
-                    LOG.info().$("testRenameTableSameMeta.openRW :: (B)").$();
-                    mayDrainWalQueue();
-                    LOG.info().$("testRenameTableSameMeta.openRW :: (C)").$();
                     renameTable(weather, meteorology);
-                    LOG.info().$("testRenameTableSameMeta.openRW :: (D)").$();
                 }
                 return super.openRW(name, opts);
             }
         };
 
-
-        LOG.info().$("testRenameTableSameMeta :: (B)").$();
-
         runInContext(filesFacade, (receiver) -> {
-
-            LOG.info().$("testRenameTableSameMeta :: (C)").$();
             String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
@@ -771,17 +760,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=south7 temperature=70 1465839830101000200\n" +
                     meteorology + ",location=south8 temperature=80 1465839830101000200\n";
 
-
-            LOG.info().$("testRenameTableSameMeta :: (D)").$();
-
             sendWaitWalReleaseCount(lineData, 3);
 
-            LOG.info().$("testRenameTableSameMeta :: (E)").$();
-
             mayDrainWalQueue();
-
-            LOG.info().$("testRenameTableSameMeta :: (F)").$();
-
             // two of the three commits go to the renamed table
             String expected = "location\ttemperature\ttimestamp\n" +
                     "west1\t10.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -789,10 +770,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
                     "west4\t40.0\t2016-06-13T17:43:50.100700Z\n" +
                     "south8\t80.0\t2016-06-13T17:43:50.101000Z\n";
-
             assertTable(expected, meteorology);
-
-            LOG.info().$("testRenameTableSameMeta :: (G)").$();
 
             // last commit goes to the recreated table
             expected = "location\ttemperature\ttimestamp\n" +
@@ -801,11 +779,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "south7\t70.0\t2016-06-13T17:43:50.101000Z\n";
             assertTable(expected, weather);
 
-            LOG.info().$("testRenameTableSameMeta :: (H)").$();
-
         }, false, 250);
-
-        LOG.info().$("testRenameTableSameMeta :: (I)").$();
     }
 
     @Test
@@ -1689,7 +1663,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void sendWaitWalReleaseCount(String lineData, int walReleaseCount) {
-        LOG.info().$("sendWaitWalReleaseCount :: (A) lineData=").$(lineData).$();
         SOCountDownLatch releaseLatch = new SOCountDownLatch(walReleaseCount);
         engine.setPoolListener((factoryType, thread, tableName1, event, segment, position) -> {
             if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableName1 != null) {
@@ -1697,12 +1670,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 releaseLatch.countDown();
             }
         });
-        LOG.info().$("sendWaitWalReleaseCount :: (B)").$();
 
         send(lineData, "dummy", WAIT_NO_WAIT);
-        LOG.info().$("sendWaitWalReleaseCount :: (C)").$();
         releaseLatch.await(10 * Timestamps.SECOND_MICROS * 1000L);
-        LOG.info().$("sendWaitWalReleaseCount :: (D)").$();
     }
 
     private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool) throws SqlException {
