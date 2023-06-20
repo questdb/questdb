@@ -401,7 +401,6 @@ public class CopyTask {
             int fd = TableUtils.openRO(ff, path, LOG);
             ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);
             try {
-
                 do {
                     long leftToRead = Math.min(chunkEnd - offset, fileBufSize);
                     read = (int) ff.read(fd, fileBufPtr, leftToRead, offset);
