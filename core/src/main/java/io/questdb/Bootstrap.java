@@ -272,13 +272,13 @@ public class Bootstrap {
             final byte[] buffer = new byte[1024 * 1024];
 
             boolean extracted = false;
-            final String oldVersionStr = getPublicVersion(publicDir);
-            final CharSequence dbVersion = buildInformation.getSwVersion();
-            if (oldVersionStr == null) {
+            final String oldSwVersion = getPublicVersion(publicDir);
+            final CharSequence newSwVersion = buildInformation.getSwVersion();
+            if (oldSwVersion == null) {
                 if (thisVersion != 0) {
                     extractSite0(publicDir, buffer, Long.toString(thisVersion));
                 } else {
-                    extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
                 }
                 extracted = true;
             } else {
@@ -286,8 +286,8 @@ public class Bootstrap {
                 // in this package "thisVersion" is always 0, and we need to fall back
                 // to the database version.
                 if (thisVersion == 0) {
-                    if (!Chars.equals(oldVersionStr, dbVersion)) {
-                        extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    if (!Chars.equals(oldSwVersion, newSwVersion)) {
+                        extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
                         extracted = true;
                     }
                 } else {
@@ -295,7 +295,7 @@ public class Bootstrap {
                     // which means user might have switched from RT distribution to no-JVM on the same data dir
                     // in this case we might fail to parse the version string
                     try {
-                        final long oldVersion = Numbers.parseLong(oldVersionStr);
+                        final long oldVersion = Numbers.parseLong(oldSwVersion);
                         if (thisVersion > oldVersion) {
                             extractSite0(publicDir, buffer, Long.toString(thisVersion));
                             extracted = true;
