@@ -104,7 +104,7 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$("QuestDB server ").$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
+        log.advisoryW().$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
         String archName;
         boolean isOsSupported = true;
         switch (Os.type) {
