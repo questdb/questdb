@@ -28,7 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.GcUtf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -58,10 +58,7 @@ public class TableTokenTest {
         Assert.assertTrue(t2.isWal());
 
         Assert.assertNotEquals(t1, t2);
-
-        final Utf8String name = new Utf8String("table1");
-        final Utf8String dir = new Utf8String("dir1");
-        final TableToken t1b = new TableToken(name, dir, 1, true);
+        final TableToken t1b = new TableToken("table1", "dir1", 1, true);
 
         Assert.assertEquals(t1, t1b);
     }

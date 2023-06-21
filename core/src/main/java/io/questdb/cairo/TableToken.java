@@ -26,22 +26,23 @@ package io.questdb.cairo;
 
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.Utf8Native;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
     @NotNull
-    private final Utf8String dirName;
+    private final GcUtf8String dirName;
     private final boolean isWal;
     private final int tableId;
     @NotNull
-    private final Utf8String tableName;
+    private final GcUtf8String tableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
-        this(new Utf8String(tableName), new Utf8String(dirName), tableId, isWal);
+        this(new GcUtf8String(tableName), new GcUtf8String(dirName), tableId, isWal);
     }
 
-    public TableToken(@NotNull Utf8String tableName, @NotNull Utf8String dirName, int tableId, boolean isWal) {
+    private TableToken(@NotNull GcUtf8String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
@@ -49,11 +50,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return renamed(new Utf8String(newName));
-    }
-
-    public TableToken renamed(Utf8String newName) {
-        return new TableToken(newName, dirName, tableId, isWal);
+        return new TableToken(new GcUtf8String(newName), dirName, tableId, isWal);
     }
 
     @Override
@@ -89,7 +86,7 @@ public class TableToken implements Sinkable {
     /**
      * @return UTF-8 buffer naming the directory where the table is located.
      */
-    public @NotNull Utf8String getDirNameUtf8() {
+    public @NotNull Utf8Native getDirNameUtf8() {
         return dirName;
     }
 
@@ -110,7 +107,7 @@ public class TableToken implements Sinkable {
     /**
      * @return UTF-8 buffer naming the table.
      */
-    public @NotNull Utf8String getTableNameUtf8() {
+    public @NotNull Utf8Native getTableNameUtf8() {
         return tableName;
     }
 

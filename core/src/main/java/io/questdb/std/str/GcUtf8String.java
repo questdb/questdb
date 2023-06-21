@@ -34,9 +34,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.stream.IntStream;
 
 /**
- * An immutable UTF-8 string over owned native memory, originating from a Java String.
+ * A garbage-collected immutable UTF-8 string over owned native memory, originating from a Java String.
  */
-public class Utf8String implements Utf8NativeCharSequence {
+public class GcUtf8String implements Utf8Native {
     private static final long BUFFER_ADDRESS_OFFSET;
     @SuppressWarnings("FieldCanBeLocal")  // We need to hold a reference to `buffer` or it will be GC'd.
     private final ByteBuffer buffer;  // We use a ByteBuffer here, instead of a ptr, to avoid Closeable requirement.
@@ -45,7 +45,11 @@ public class Utf8String implements Utf8NativeCharSequence {
     private final long ptr;
     private final int size;
 
-    public Utf8String(@NotNull String original) {
+    public GcUtf8String(@NotNull String original) {
+        // ***** NOTE *****
+        // This class causes garbage collection.
+        // It should be used with care.
+        // It is currently intended to be used exclusively for the `dirName` and `tableName` fields of `TableToken`.
         this.original = original;
         final byte[] bytes = original.getBytes(StandardCharsets.UTF_8);
         this.buffer = ByteBuffer.allocateDirect(bytes.length);
@@ -55,71 +59,23 @@ public class Utf8String implements Utf8NativeCharSequence {
         this.size = bytes.length;
     }
 
-    /**
-     * Get 16-bit code unit.
-     */
     @Override
-    public char charAt(int index) {
-        return original.charAt(index);
-    }
-
-    @NotNull
-    @Override
-    public IntStream chars() {
-        return original.chars();
-    }
-
-    @NotNull
-    @Override
-    public IntStream codePoints() {
-        return original.codePoints();
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (obj == null) {
-            return false;
-        } else if (obj == this) {
+    public boolean equals(Object o) {
+        if (this == o) {
             return true;
-        } else if (obj instanceof Utf8String) {
-            return original.equals(((Utf8String) obj).original);
-        } else if (obj instanceof String) {
-            return original.equals(obj);
         }
 
-        if (obj instanceof Utf8Native) {
-            final Utf8Native other = (Utf8Native) obj;
-            if (ptr == other.ptr() && size == other.size()) {
-                return true;
-            }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
         }
 
-        if (obj instanceof Utf8Sequence) {
-            final Utf8Sequence other = (Utf8Sequence) obj;
-            if (size == other.size()) {
-                for (int index = 0; index < size; ++index) {
-                    if (byteAt(index) != other.byteAt(index)) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-        }
-
-        return false;
+        final GcUtf8String that = (GcUtf8String) o;
+        return original.equals(that.original);
     }
 
     @Override
     public int hashCode() {
         return original.hashCode();
-    }
-
-    /**
-     * Number of 16-bit code units in the string.
-     */
-    @Override
-    public int length() {
-        return original.length();
     }
 
     @Override
@@ -130,12 +86,6 @@ public class Utf8String implements Utf8NativeCharSequence {
     @Override
     public int size() {
         return size;
-    }
-
-    @NotNull
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return original.subSequence(start, end);
     }
 
     /**
