@@ -55,7 +55,7 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
+    private final BuildInformation buildInformation;
     private final String banner;
     private final ServerConfiguration config;
     private final Log log;
@@ -71,6 +71,7 @@ public class Bootstrap {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
         this.banner = bootstrapConfiguration.getBanner();
+        this.buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
 
         // non /server.conf properties
         final CharSequenceObjHashMap<String> argsMap = processArgs(args);
@@ -103,7 +104,7 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
+        log.advisoryW().$("QuestDB server ").$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
         String archName;
         boolean isOsSupported = true;
         switch (Os.type) {
@@ -272,7 +273,7 @@ public class Bootstrap {
 
             boolean extracted = false;
             final String oldVersionStr = getPublicVersion(publicDir);
-            final CharSequence dbVersion = buildInformation.getQuestDbVersion();
+            final CharSequence dbVersion = buildInformation.getSwVersion();
             if (oldVersionStr == null) {
                 if (thisVersion != 0) {
                     extractSite0(publicDir, buffer, Long.toString(thisVersion));

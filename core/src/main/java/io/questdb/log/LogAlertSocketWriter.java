@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.BuildInformationHolder;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -363,9 +362,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
         if (!ALERT_PROPS.contains(INSTANCE_ENV)) {
             ALERT_PROPS.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!ALERT_PROPS.contains(QDB_VERSION_ENV)) {
-            ALERT_PROPS.put(QDB_VERSION_ENV, BuildInformationHolder.INSTANCE.toString());
         }
         ALERT_PROPS.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
     }

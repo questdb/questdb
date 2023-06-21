@@ -48,22 +48,25 @@ public class BuildFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final int position, final ObjList<Function> args,
-                                IntList argPositions, final CairoConfiguration configuration,
-                                final SqlExecutionContext sqlExecutionContext) {
-
+    public Function newInstance(
+            final int position,
+            final ObjList<Function> args,
+            IntList argPositions,
+            final CairoConfiguration configuration,
+            final SqlExecutionContext sqlExecutionContext
+    ) {
         if (instance == null) {
             instance = createInstance(configuration);
         }
-
         return instance;
     }
 
     private StrFunction createInstance(final CairoConfiguration configuration) {
         final BuildInformation buildInformation = configuration.getBuildInformation();
 
-        final CharSequence information = "Build Information: QuestDB " +
-                buildInformation.getQuestDbVersion() +
+        final CharSequence information = "Build Information: " +
+                buildInformation.getSwName() + " " +
+                buildInformation.getSwVersion() +
                 ", JDK " +
                 buildInformation.getJdkVersion() +
                 ", Commit Hash " +
