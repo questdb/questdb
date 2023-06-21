@@ -30,7 +30,7 @@ import io.questdb.std.QuietCloseable;
 
 import java.io.Closeable;
 
-public class FreeOnExitList implements QuietCloseable {
+public class FreeOnExit implements QuietCloseable {
 
     private final ObjList<Closeable> list = new ObjList<>();
 

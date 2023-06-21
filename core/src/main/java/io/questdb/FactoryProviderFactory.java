@@ -32,5 +32,5 @@ public interface FactoryProviderFactory {
             ServerConfiguration configuration,
             CairoEngine engine,
             FunctionFactoryCache functionFactoryCache,
-            FreeOnExitList freeOnExitList);
+            FreeOnExit freeOnExit);
 }

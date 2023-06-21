@@ -60,6 +60,6 @@ public interface ServerConfiguration {
     default void init(
             CairoEngine engine,
             FunctionFactoryCache functionFactoryCache,
-            FreeOnExitList freeOnExitList) {
+            FreeOnExit freeOnExit) {
     }
 }

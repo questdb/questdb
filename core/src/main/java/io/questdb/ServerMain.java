@@ -63,7 +63,7 @@ public class ServerMain implements Closeable {
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
-    private final FreeOnExitList freeOnExitList = new FreeOnExitList();
+    private final FreeOnExit freeOnExit = new FreeOnExit();
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -80,19 +80,19 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExitList.register(new CairoEngine(cairoConfig, metrics));
+        engine = freeOnExit.register(new CairoEngine(cairoConfig, metrics));
 
         // obtain function factory cache
         FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
         // TODO: now the engine has access to the FFC, so all methods below
         //       that pass it in their signature should be simplified. Not
         //       done for compatibility with enterprise
-        config.init(engine, ffCache, freeOnExitList);
+        config.init(engine, ffCache, freeOnExit);
 
-        freeOnExitList.register(config.getFactoryProvider());
+        freeOnExit.register(config.getFactoryProvider());
 
         // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = freeOnExitList.register(new DatabaseSnapshotAgent(engine));
+        final DatabaseSnapshotAgent snapshotAgent = freeOnExit.register(new DatabaseSnapshotAgent(engine));
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
@@ -148,7 +148,7 @@ public class ServerMain implements Closeable {
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                        freeOnExitList.register(telemetryJob);
+                        freeOnExit.register(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
                         }
@@ -169,7 +169,7 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExitList.register(Services.createHttpServer(
+        freeOnExit.register(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -179,7 +179,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        freeOnExitList.register(Services.createMinHttpServer(
+        freeOnExit.register(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -187,7 +187,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExitList.register(Services.createPGWireServer(
+        freeOnExit.register(Services.createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
@@ -198,7 +198,7 @@ public class ServerMain implements Closeable {
 
         if (!isReadOnly) {
             // ilp/tcp
-            freeOnExitList.register(Services.createLineTcpReceiver(
+            freeOnExit.register(Services.createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
                     workerPoolManager,
@@ -206,7 +206,7 @@ public class ServerMain implements Closeable {
             ));
 
             // ilp/udp
-            freeOnExitList.register(Services.createLineUdpReceiver(
+            freeOnExit.register(Services.createLineUdpReceiver(
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
@@ -266,7 +266,7 @@ public class ServerMain implements Closeable {
     public void close() {
         if (closed.compareAndSet(false, true)) {
             workerPoolManager.halt();
-            freeOnExitList.close();
+            freeOnExit.close();
         }
     }
 

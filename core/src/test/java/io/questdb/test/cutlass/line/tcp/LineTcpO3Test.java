@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.FreeOnExitList;
+import io.questdb.FreeOnExit;
 import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -66,7 +66,7 @@ import java.util.zip.GZIPInputStream;
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
     private final boolean walEnabled;
-    private final FreeOnExitList freeOnExitList = new FreeOnExitList();
+    private final FreeOnExit freeOnExit = new FreeOnExit();
     private LineTcpReceiverConfiguration lineConfiguration;
     private long resourceAddress;
     private int resourceSize;
@@ -134,7 +134,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                         configuration,
                         ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
                 ),
-                freeOnExitList
+                freeOnExit
         );
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
@@ -143,10 +143,10 @@ public class LineTcpO3Test extends AbstractCairoTest {
     @Override
     @After
     public void tearDown() {
-        freeOnExitList.close();
+        freeOnExit.close();
         engine = Misc.free(engine);
         TestUtils.removeTestPath(root);
-        freeOnExitList.close();
+        freeOnExit.close();
     }
 
     @Test
