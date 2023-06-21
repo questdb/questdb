@@ -210,7 +210,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long nextStructureTxn(long expectedStructureVersion, AlterOperation change) {
+    public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         checkDropped();
@@ -219,6 +219,8 @@ public class TableSequencerImpl implements TableSequencer {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, microClock.getTicks());
+
+                final TableToken oldTableToken = tableToken;
 
                 // Re-read serialised change to ensure it can be read.
                 AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(expectedStructureVersion, alterCommandWalFormatter);
@@ -235,6 +237,15 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+
+                if (!metadata.isSuspended()) {
+                    engine.notifyWalTxnCommitted(tableToken, txn);
+                    if (!tableToken.equals(oldTableToken)) {
+                        engine.getWalListener().tableRenamed(tableToken, txn, oldTableToken);
+                    } else {
+                        engine.getWalListener().nonDataTxnCommitted(tableToken, txn);
+                    }
+                }
             } else {
                 return NO_TXN;
             }
@@ -244,16 +255,6 @@ public class TableSequencerImpl implements TableSequencer {
                     .$(", error=").$(th.getMessage())
                     .I$();
             throw th;
-        }
-
-        if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(tableToken, txn);
-            if (change.isTableRename()) {
-                final TableToken fromTableToken = change.getTableToken();
-                engine.getWalListener().tableRenamed(tableToken, txn, fromTableToken);
-            } else {
-                engine.getWalListener().nonDataTxnCommitted(tableToken, txn);
-            }
         }
         return txn;
     }

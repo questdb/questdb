@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.QuietCloseable;
 
 public interface TableSequencer extends QuietCloseable {
@@ -56,7 +55,7 @@ public interface TableSequencer extends QuietCloseable {
 
     long lastTxn();
 
-    long nextStructureTxn(long structureVersion, AlterOperation change);
+    long nextStructureTxn(long structureVersion, TableMetadataChange change);
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn);
