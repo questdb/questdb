@@ -1352,9 +1352,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
-            if (mixedIOFlag) {
-                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
-            } else {
+            if (!mixedIOFlag) {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
@@ -2008,9 +2006,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize -= (prefixHi - srcDataTop + 1) * Long.BYTES;
             }
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
-            if (mixedIOFlag) {
-                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
-            } else {
+            if (!mixedIOFlag) {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
@@ -2026,9 +2022,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
-            if (mixedIOFlag) {
-                ff.fadvise(dstVarFd, 0, dstVarSize, Files.POSIX_FADV_RANDOM);
-            } else {
+            if (!mixedIOFlag) {
                 ff.madvise(dstVarAddr, dstVarSize, Files.POSIX_MADV_RANDOM);
             }
 

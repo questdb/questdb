@@ -744,12 +744,12 @@ public final class TestUtils {
 
     public static TableToken create(TableModel model, CairoEngine engine) {
         int tableId = (int) engine.getTableIdGenerator().getNextId();
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, model.isWalEnabled());
         if (tableToken == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }
         TableUtils.createTable(
-                model.getConfiguration(),
+                engine.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
@@ -758,6 +758,9 @@ public final class TestUtils {
                 tableToken.getDirName()
         );
         engine.registerTableToken(tableToken);
+        if (model.isWalEnabled()) {
+            engine.getTableSequencerAPI().registerTable(tableId, model, tableToken);
+        }
         return tableToken;
     }
 

@@ -42,11 +42,12 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -66,12 +67,23 @@ import java.util.concurrent.atomic.AtomicLong;
 // There are already measures to prevent invalid data generation, but it still can happen.
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
+@RunWith(Parameterized.class)
 public class WalWriterFuzzTest extends AbstractFuzzTest {
-
 
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef = WalWriterFuzzTest::checkNoSuspendedTables;
+    protected boolean allowMixedIO;
 
+    public WalWriterFuzzTest(IOMode ioMode) {
+        this.allowMixedIO = (ioMode == IOMode.ALLOW_MIXED_IO);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {IOMode.ALLOW_MIXED_IO}, {IOMode.NO_MIXED_IO}
+        });
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -81,6 +93,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Before
     public void setUp() {
+        // We disable mixed I/O on some OSes and FSes (wink-wink Windows).
+        boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
+        Assume.assumeFalse(allowMixedIO && !mixedIOSupported);
+
+        configOverrideWriterMixedIOEnabled(allowMixedIO);
         configOverrideO3ColumnMemorySize(512 * 1024);
         setFuzzProperties(100, 1000, 2);
         super.setUp();
@@ -144,7 +161,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1
         );
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
-        runFuzz(rnd, testName.getMethodName(), 1, false, false);
+        runFuzz(rnd, getTestName(), 1, false, false);
     }
 
     @Test
@@ -179,7 +196,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1
         );
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
-        runFuzz(rnd, testName.getMethodName(), 1, false, false);
+        runFuzz(rnd, getTestName(), 1, false, false);
     }
 
     @Test
@@ -190,7 +207,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         int tableCount = 3;
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01);
         setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
-        String tableNameBase = testName.getMethodName();
+        String tableNameBase = getTestName();
         runFuzz(rnd, tableNameBase, tableCount, false, false);
     }
 
@@ -217,7 +234,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01);
         setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
-        runFuzz(rnd, testName.getMethodName(), 1, false, false);
+        runFuzz(rnd, getTestName(), 1, false, false);
         Assert.assertEquals(o3MemorySize, node1.getConfigurationOverrides().getO3ColumnMemorySize());
     }
 
@@ -427,11 +444,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     private void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
-        runFuzz(rnd, testName.getMethodName(), tableCount, true, true);
+        runFuzz(rnd, getTestName(), tableCount, true, true);
     }
 
     private int getRndParallelWalCount(Rnd rnd) {
         return 1 + rnd.nextInt(4);
+    }
+
+    private String getTestName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
     }
 
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
@@ -468,7 +489,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
         assertMemoryLeak(() -> {
-            String tableNameBase = testName.getMethodName();
+            String tableNameBase = getTestName();
             String tableNameWal = tableNameBase + "_wal";
             String tableNameWal2 = tableNameBase + "_wal_parallel";
             String tableNameNoWal = tableNameBase + "_nonwal";
@@ -616,5 +637,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         } finally {
             Path.clearThreadLocals();
         }
+    }
+
+    public enum IOMode {
+        ALLOW_MIXED_IO, NO_MIXED_IO
     }
 }
