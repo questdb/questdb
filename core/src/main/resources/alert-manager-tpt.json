@@ -6,7 +6,6 @@
       "service": "QuestDB",
       "category": "application-logs",
       "severity": "critical",
-      "version": "${QDB_VERSION}",
       "cluster": "${CLUSTER_NAME}",
       "orgid": "${ORGID}",
       "namespace": "${NAMESPACE}",
