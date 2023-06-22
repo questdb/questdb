@@ -174,8 +174,7 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    //caller must call freeMergedIndexes !!!
-    public static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
+    public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count);
 
     public static native double minDouble(long pDouble, long count);
 

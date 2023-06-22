@@ -1388,7 +1388,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean isDeduplicationEnabled() {
-        return true;
+        return metadata.isWalEnabled();
     }
 
     public boolean isOpen() {
@@ -4921,7 +4921,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.fixedRowCount += oldPartitionSize;
                 }
             }
-        } else if (isLastWrittenPartition) {
+        } else if (partitionTimestamp >= lastPartitionTimestamp && isLastWrittenPartition) {
             // Update transient row count for last partition, it may have changed due to dedups.
             txWriter.transientRowCount = newPartitionSize;
         }

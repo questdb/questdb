@@ -282,6 +282,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     srcDataMax - 1,
                                     BinarySearch.SCAN_DOWN
                             );
+                            assert mergeDataHi > -1;
 
                             if (mergeDataLo > mergeDataHi) {
                                 // the OO data implodes right between rows of existing data
@@ -675,20 +676,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
         // have to go back and find data rows we need to move accordingly
-        final long index = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
-        try {
-            Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
-            long ptr = Vect.mergeTwoLongIndexesAsc(
-                    index,
-                    mergeDataHi - mergeDataLo + 1,
-                    sortedTimestampsAddr + mergeOOOLo * 16,
-                    mergeOOOHi - mergeOOOLo + 1
-            );
-            Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
-            return ptr;
-        } finally {
-            Unsafe.free(index, indexSize, MemoryTag.NATIVE_O3);
-        }
+        long ptr = Vect.mergeTwoLongIndexesAsc(
+                srcDataTimestampAddr,
+                mergeDataLo,
+                mergeDataHi - mergeDataLo + 1,
+                sortedTimestampsAddr + mergeOOOLo * 16,
+                mergeOOOHi - mergeOOOLo + 1
+        );
+        Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
+        return ptr;
     }
 
     private static void publishOpenColumnTaskContended(
@@ -991,7 +987,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (mergeType == O3_BLOCK_MERGE) {
 
             if (!tableWriter.isDeduplicationEnabled()) {
-                timestampMergeIndexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+                timestampMergeIndexSize = (mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
                 assert timestampMergeIndexSize > 0; // avoid SIGSEGV
 
                 timestampMergeIndexAddr = createMergeIndex(

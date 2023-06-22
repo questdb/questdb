@@ -576,6 +576,42 @@ void k_way_merge_long_index(
     }
 }
 
+DECLARE_DISPATCHER(make_timestamp_index);
+
+void binary_merge_ts_long_index(
+        const int64_t *timestamps,
+        const int64_t timestampLo,
+        const int64_t timestamps_count,
+        const index_t *index,
+        const int64_t index_count,
+        index_t *dest
+) {
+
+    // calculate size of the tree
+    int64_t its = timestampLo, iidx = 0, r = 0;
+    int64_t timestamps_hi = timestampLo + timestamps_count;
+
+    while (its < timestamps_hi && iidx < index_count) {
+        if (timestamps[its] <= (int64_t)index[iidx].ts) {
+            dest[r].ts = timestamps[its];
+            dest[r++].i = (1ull << 63) | its;
+            its++;
+        } else {
+            dest[r++] = index[iidx++];
+        }
+    }
+
+    make_timestamp_index(
+            timestamps,
+            its,
+            timestamps_hi - 1,
+            &dest[r]
+    );
+
+    memcpy(&dest[r], &index[iidx], (index_count - iidx) * sizeof(index_t));
+}
+
+
 #ifdef OOO_CPP_PROFILE_TIMING
 const int perf_counter_length = 32;
 std::atomic_ulong perf_counters[perf_counter_length];
@@ -775,17 +811,18 @@ Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStruc
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
-        JAVA_STATIC, jlong pIndex1, jlong index1Count, jlong pIndex2, jlong index2Count) {
+        JAVA_STATIC, jlong pTs, jlong tsIndexLo, jlong tsCount, jlong pIndex, long jIndexCount) {
     index_entry_t entries[2];
-    uint64_t merged_index_size = index1Count + index2Count;
-    entries[0].index = reinterpret_cast<index_t *> (pIndex1);
-    entries[0].pos = 0;
-    entries[0].size = index1Count;
-    entries[1].index = reinterpret_cast<index_t *>(pIndex2);
-    entries[1].pos = 0;
-    entries[1].size = index2Count;
+    uint64_t merged_index_size = tsCount + jIndexCount;
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
-    k_way_merge_long_index(entries, 2, 0, merged_index);
+    binary_merge_ts_long_index(
+            reinterpret_cast<int64_t *>(pTs),
+            (int64_t)tsIndexLo,
+            (int64_t)tsCount,
+            reinterpret_cast<index_t *>(pIndex),
+            (int64_t)jIndexCount,
+            merged_index
+    );
     return reinterpret_cast<jlong>(merged_index);
 }
 
