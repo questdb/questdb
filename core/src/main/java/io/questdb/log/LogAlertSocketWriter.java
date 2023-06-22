@@ -47,7 +47,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     public static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
     public static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
-    public static final String QDB_VERSION_ENV = "QDB_VERSION";
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
@@ -326,6 +325,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 alertTemplate.parse(template, now, properties);
                 needsReading = false;
             }
+        } catch (LogError e) {
+            throw e;
         } catch (Throwable e) {
             // it was not a resource ("/resource_name")
         }

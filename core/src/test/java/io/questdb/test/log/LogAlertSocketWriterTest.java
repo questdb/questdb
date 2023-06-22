@@ -24,8 +24,6 @@
 
 package io.questdb.test.log;
 
-import io.questdb.BuildInformation;
-import io.questdb.BuildInformationHolder;
 import io.questdb.log.*;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkError;
@@ -47,7 +45,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.function.Consumer;
 
 import static io.questdb.log.LogAlertSocketWriter.ALERT_PROPS;
-import static io.questdb.log.LogAlertSocketWriter.QDB_VERSION_ENV;
 
 public class LogAlertSocketWriterTest {
     private static final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -259,10 +256,8 @@ public class LogAlertSocketWriterTest {
 
     @Test
     public void testOnLogRecord() throws Exception {
-        BuildInformation buildInfo = new BuildInformationHolder("0.1", "0x010101", "17", "QuestDB Test");
         CharSequenceObjHashMap<CharSequence> properties = new CharSequenceObjHashMap<>();
         properties.putAll(ALERT_PROPS);
-        properties.put(QDB_VERSION_ENV, buildInfo.toString());
 
         // replace build info
 
@@ -306,7 +301,7 @@ public class LogAlertSocketWriterTest {
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      534\r\n" +
+                                        "Content-Length:      498\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
@@ -316,7 +311,6 @@ public class LogAlertSocketWriterTest {
                                         "      \"service\": \"QuestDB\",\n" +
                                         "      \"category\": \"application-logs\",\n" +
                                         "      \"severity\": \"critical\",\n" +
-                                        "      \"version\": \"" + buildInfo.getSwVersion() + ":" + buildInfo.getCommitHash() + ":" + buildInfo.getJdkVersion() + "\",\n" +
                                         "      \"cluster\": \"GLOBAL\",\n" +
                                         "      \"orgid\": \"GLOBAL\",\n" +
                                         "      \"namespace\": \"GLOBAL\",\n" +
@@ -342,7 +336,7 @@ public class LogAlertSocketWriterTest {
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      530\r\n" +
+                                        "Content-Length:      494\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
@@ -352,7 +346,6 @@ public class LogAlertSocketWriterTest {
                                         "      \"service\": \"QuestDB\",\n" +
                                         "      \"category\": \"application-logs\",\n" +
                                         "      \"severity\": \"critical\",\n" +
-                                        "      \"version\": \"" + buildInfo.getSwVersion() + ":" + buildInfo.getCommitHash() + ":" + buildInfo.getJdkVersion() + "\",\n" +
                                         "      \"cluster\": \"GLOBAL\",\n" +
                                         "      \"orgid\": \"GLOBAL\",\n" +
                                         "      \"namespace\": \"GLOBAL\",\n" +

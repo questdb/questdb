@@ -328,8 +328,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
 
         Assert.assertEquals("[DEVELOPMENT]", configuration.getCairoConfiguration().getBuildInformation().getSwVersion());
-        Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
-        Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
+        Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
+        Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
 

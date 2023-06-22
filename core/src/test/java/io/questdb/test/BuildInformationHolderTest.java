@@ -33,7 +33,7 @@ public class BuildInformationHolderTest {
 
     @Test
     public void testAsCharSequence() {
-        TestUtils.assertEquals("[DEVELOPMENT]:Unknown Version:Unknown Version", new BuildInformationHolder());
+        TestUtils.assertEquals("[DEVELOPMENT]:unknown:unknown", new BuildInformationHolder());
         BuildInformationHolder holder = new BuildInformationHolder("a", "b", "c", "d");
         TestUtils.assertEquals("a:b:c", holder);
         Assert.assertEquals("a", holder.getSwVersion());
@@ -50,6 +50,6 @@ public class BuildInformationHolderTest {
 
     @Test
     public void testAsCharSequenceDefault() {
-        TestUtils.assertEquals("[DEVELOPMENT]:Unknown Version:Unknown Version", new BuildInformationHolder());
+        TestUtils.assertEquals("[DEVELOPMENT]:unknown:unknown", new BuildInformationHolder());
     }
 }
