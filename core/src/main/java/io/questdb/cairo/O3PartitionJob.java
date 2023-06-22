@@ -985,11 +985,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long timestampMergeIndexAddr;
         final long timestampMergeIndexSize;
         if (mergeType == O3_BLOCK_MERGE) {
+            long tempIndexSize = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+            assert tempIndexSize > 0; // avoid SIGSEGV
 
             if (!tableWriter.isDeduplicationEnabled()) {
-                timestampMergeIndexSize = (mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+                timestampMergeIndexSize = tempIndexSize;
                 assert timestampMergeIndexSize > 0; // avoid SIGSEGV
-
                 timestampMergeIndexAddr = createMergeIndex(
                         srcTimestampAddr,
                         sortedTimestampsAddr,
@@ -1000,8 +1001,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         timestampMergeIndexSize
                 );
             } else {
-                long tempIndexSize = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
-                assert tempIndexSize > 0; // avoid SIGSEGV
                 long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
                 long dedupRows = Vect.mergeDedupTimestampWithLongIndexAsc(
                         srcTimestampAddr,

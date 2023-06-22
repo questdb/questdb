@@ -44,7 +44,7 @@ public class DedupInsertTest extends AbstractFuzzTest {
         createEmptyTable(tableName);
 
         ObjList<FuzzTransaction> transactions = new ObjList<>();
-        Rnd rnd = generateRandom(LOG, 34097923623125L, 1687285677830L);
+        Rnd rnd = generateRandom(LOG);
         long initialDelta = Timestamps.MINUTE_MICROS * 15;
         transactions.add(
                 generateInsertsTransactions(
@@ -62,12 +62,14 @@ public class DedupInsertTest extends AbstractFuzzTest {
         String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
         long delta = Timestamps.MINUTE_MICROS;
         int count = rnd.nextInt(48) * 60;
+        int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
         transactions.add(
                 generateInsertsTransactions(
                         2,
                         from,
                         delta,
-                        count, rnd.nextInt(3)
+                        count,
+                        rowsWithSameTimestamp
                 )
         );
 
@@ -101,7 +103,7 @@ public class DedupInsertTest extends AbstractFuzzTest {
         }
     }
 
-    private void validateNoTimestampDuplicates(String tableName, String from, long delta, long initialDelta, long commit2Count) throws SqlException {
+    private void validateNoTimestampDuplicates(String tableName, String from, long delta, long initialDelta, long commit2Count) {
 
         LOG.info().$("Validating no timestamp duplicates [from=").$(from)
                 .$(", delta=").$(delta)

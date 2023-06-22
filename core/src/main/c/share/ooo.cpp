@@ -424,7 +424,7 @@ typedef struct {
     int64_t size;
 } java_index_entry_t;
 
-uint64_t merge_dedup_long_index(
+int64_t merge_dedup_long_index(
         const int64_t *src,
         const int64_t src_lo,
         const int64_t src_hi_incl,
@@ -497,6 +497,28 @@ uint64_t merge_dedup_long_index(
     }
 
     return dest - dest_start + 1;
+}
+
+
+int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
+    if (count > 0) {
+        int64_t copyTo = 0;
+        uint64_t lastTimestamp = pIndexIn[0].ts;
+        for (int64_t i = 1; i < count; i++) {
+            if (pIndexIn[i].ts > lastTimestamp) {
+                pIndexOut[copyTo].ts = pIndexIn[i - 1].ts;
+                pIndexOut[copyTo].i = i - 1;
+                copyTo++;
+                lastTimestamp = pIndexIn[i].ts;
+            } else if (pIndexIn[i].ts < lastTimestamp) {
+                return -i - 1;
+            }
+        }
+        pIndexOut[copyTo].ts = pIndexIn[count - 1].ts;
+        pIndexOut[copyTo].i = count - 1;
+        return copyTo + 1;
+    }
+    return 0;
 }
 
 void k_way_merge_long_index(
@@ -592,7 +614,7 @@ void binary_merge_ts_long_index(
     int64_t timestamps_hi = timestampLo + timestamps_count;
 
     while (its < timestamps_hi && iidx < index_count) {
-        if (timestamps[its] <= (int64_t)index[iidx].ts) {
+        if (timestamps[its] <= (int64_t) index[iidx].ts) {
             dest[r].ts = timestamps[its];
             dest[r++].i = (1ull << 63) | its;
             its++;
@@ -817,10 +839,10 @@ Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
     binary_merge_ts_long_index(
             reinterpret_cast<int64_t *>(pTs),
-            (int64_t)tsIndexLo,
-            (int64_t)tsCount,
+            (int64_t) tsIndexLo,
+            (int64_t) tsCount,
             reinterpret_cast<index_t *>(pIndex),
-            (int64_t)jIndexCount,
+            (int64_t) jIndexCount,
             merged_index
     );
     return reinterpret_cast<jlong>(merged_index);
@@ -844,6 +866,21 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
             __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
             __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive),
             reinterpret_cast<index_t *> (pDestIndex)
+    );
+    return merge_count;
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
+        JAVA_STATIC,
+        jlong pIndexIn,
+        jlong count,
+        jlong pIndexOut
+) {
+    int64_t merge_count = dedup_sorted_timestamp_index(
+            reinterpret_cast<const index_t *> (pIndexIn),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            reinterpret_cast<index_t *> (pIndexOut)
     );
     return merge_count;
 }
@@ -1261,4 +1298,5 @@ Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimes
     return __JLONG_REINTERPRET_CAST__(jlong, offset);
 }
 
-} // extern "C"
+}
+// extern "C"

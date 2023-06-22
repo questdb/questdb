@@ -114,13 +114,13 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
                     if (cursor > -1) {
                         try {
                             final O3CallbackTask task = queue.get(cursor);
-                            task.of(o3DoneLatch, rnd.nextInt(1000), 1, 1, 1, 1, 1, this.o3MoveUncommittedRef);
+                            task.of(o3DoneLatch, rnd.nextInt(1000), 1, 1, 1, 1, 1, 1, this.o3MoveUncommittedRef);
                         } finally {
                             queuedCount++;
                             pubSeq.done(cursor);
                         }
                     } else {
-                        o3MoveUncommitted0(rnd.nextInt(1000), 1, 1, 1, 1, 1);
+                        o3MoveUncommitted0(rnd.nextInt(1000), 1, 1, 1, 1, 1, 1);
                     }
                 }
 
@@ -143,7 +143,7 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
             }
         }
 
-        private void o3MoveUncommitted0(int rndInt, int i1, long l, long l1, long l2, long l3) {
+        private void o3MoveUncommitted0(int rndInt, int i1, long l, long l0, long l1, long l2, long l3) {
             //noinspection unused
             double result = 0;
             for (int i = 0; i < rndInt * complexity; i++) {

@@ -116,6 +116,35 @@ public class VectTest {
     }
 
     @Test
+    public void testDedupSorted() {
+        int indexLen = 10;
+        try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+            index.setPos(indexLen * 2);
+            for (int i = 0; i < indexLen * 2; i += 2) {
+                index.set(i, (i / 4 + 1) * 10L);
+            }
+            index.add(55);
+            index.add(0);
+
+            Assert.assertEquals(
+                    "{10, 0, 10, 0, 20, 0, 20, 0, 30, 0, 30, 0, 40, 0, 40, 0, 50, 0, 50, 0, 55, 0}",
+                    index.toString()
+            );
+
+            long dedupCount = Vect.dedupSortedTimestampIndexChecked(
+                    index.getAddress(),
+                    indexLen + 1,
+                    index.getAddress()
+            );
+            index.setPos(dedupCount * 2);
+            Assert.assertEquals(
+                    "10 1:i, 20 3:i, 30 5:i, 40 7:i, 50 9:i, 55 10:i",
+                    printMergeIndex(index)
+            );
+        }
+    }
+
+    @Test
     public void testMemeq() {
         int maxSize = 1024 * 1024;
         int[] sizes = {16, 1024, maxSize};
@@ -699,7 +728,7 @@ public class VectTest {
         StringSink sink = new StringSink();
         for (int i = 0; i < dest.size(); i += 2) {
             long bit_index = dest.get(i + 1);
-            char bit = bit_index < 0 ? 'i' : 's';
+            char bit = bit_index < 0 ? 's' : 'i';
             long index = bit_index & ~(1L << 63);
             if (i > 0) {
                 sink.put(", ");

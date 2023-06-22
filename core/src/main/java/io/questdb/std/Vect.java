@@ -70,6 +70,14 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
+    public static native long dedupSortedTimestampIndex(long inIndexAddr, long count, long outIndexAddr);
+
+    public static long dedupSortedTimestampIndexChecked(long inIndexAddr, long count, long outIndexAddr) {
+        long dedupCount = dedupSortedTimestampIndex(inIndexAddr, count, outIndexAddr);
+        assert dedupCount >= 0 : "unsorted data passed to deduplication";
+        return dedupCount;
+    }
+
     public static native void flattenIndex(long pIndex, long count);
 
     public static void freeMergedIndex(long pIndex, long indexSize) {
