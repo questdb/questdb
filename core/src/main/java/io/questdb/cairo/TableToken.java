@@ -36,13 +36,13 @@ public class TableToken implements Sinkable {
     private final boolean isWal;
     private final int tableId;
     @NotNull
-    private final GcUtf8String tableName;
+    private final String tableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
-        this(new GcUtf8String(tableName), new GcUtf8String(dirName), tableId, isWal);
+        this(tableName, new GcUtf8String(dirName), tableId, isWal);
     }
 
-    private TableToken(@NotNull GcUtf8String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
@@ -50,7 +50,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(new GcUtf8String(newName), dirName, tableId, isWal);
+        return new TableToken(newName, dirName, tableId, isWal);
     }
 
     @Override
@@ -101,13 +101,6 @@ public class TableToken implements Sinkable {
      * @return table name
      */
     public @NotNull String getTableName() {
-        return tableName.toString();
-    }
-
-    /**
-     * @return UTF-8 buffer naming the table.
-     */
-    public @NotNull Utf8Native getTableNameUtf8() {
         return tableName;
     }
 
@@ -122,6 +115,6 @@ public class TableToken implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.putUtf8(tableName.lo(), tableName.hi());
+        sink.encodeUtf8(tableName);
     }
 }

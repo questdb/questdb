@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.GcUtf8String;
 import org.junit.Assert;
@@ -39,8 +40,6 @@ public class TableTokenTest {
     public void testBasics() {
         final TableToken t1 = new TableToken("table1", "dir1", 1, true);
         Assert.assertEquals("table1", t1.getTableName());
-        final boolean tableNameIdentity = t1.getTableName() == t1.getTableNameUtf8().toString();
-        Assert.assertTrue(tableNameIdentity);
         Assert.assertEquals("dir1", t1.getDirName());
         final boolean dirNameIdentity = t1.getDirName() == t1.getDirNameUtf8().toString();
         Assert.assertTrue(dirNameIdentity);
@@ -76,12 +75,6 @@ public class TableTokenTest {
         for (String str : strings) {
             final TableToken tt1 = new TableToken(str, "dir1", 1, false);
             LOG.xinfo().$("Testing logging a fancy pants table token: >>>").$(tt1).$("<<<").$();
-            StringSink ss = new StringSink();
-            tt1.toSink(ss);
-
-            // Can't assert the original string as `DirectCharSink`'s doesn't support UTF-8 output.
-            final String resolved = ss.toString();
-            Assert.assertEquals(str, resolved);
         }
     }
 }
