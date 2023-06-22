@@ -37,6 +37,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.Iterator;
 import java.util.function.BiFunction;
 
 import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
@@ -423,13 +424,15 @@ public class TableSequencerAPI implements QuietCloseable {
             return true;
         }
         boolean removed = false;
-        for (CharSequence tableDir : seqRegistry.keySet()) {
+        final Iterator<CharSequence> iterator = seqRegistry.keySet().iterator();
+        while (iterator.hasNext()) {
+            final CharSequence tableDir = iterator.next();
             final TableSequencerEntry sequencer = seqRegistry.get(tableDir);
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
                     LOG.info().$("releasing idle table sequencer [tableDir=").utf8(tableDir).I$();
-                    seqRegistry.remove(tableDir, sequencer);
+                    iterator.remove();
                     removed = true;
                 }
             }
