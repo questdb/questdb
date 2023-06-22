@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -338,6 +339,14 @@ public final class Files {
     }
 
     public static long mremap(int fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        if (newSize < 1) {
+            throw CairoException.critical(0).put("could not remap file, invalid newSize [previousSize=").put(previousSize)
+                    .put(", newSize=").put(newSize)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(']');
+        }
+
         address = mremap0(fd, address, previousSize, newSize, offset, flags);
         if (address != -1) {
             Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
