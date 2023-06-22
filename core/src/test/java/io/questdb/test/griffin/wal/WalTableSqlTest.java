@@ -704,6 +704,48 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConvertToWalAfterAlter() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            );
+            compile("alter table " + tableName + " add col1 int");
+            TableToken sysTableName = engine.verifyTableName(tableName);
+            compile("alter table " + tableName + " set type wal", sqlExecutionContext);
+            engine.releaseInactive();
+            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            engine.reloadTableNames(convertedTables);
+
+            compile("alter table " + tableName + " add col2 int");
+            compile("insert into " + tableName + "(ts, col1, col2) values('2022-02-24T01', 1, 2)");
+            drainWalQueue();
+
+            assertSql("select ts, col1, col2 from " + tableName, "ts\tcol1\tcol2\n" +
+                    "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
+                    "2022-02-24T01:00:00.000000Z\t1\t2\n");
+
+            compile("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
+            engine.releaseInactive();
+            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            engine.reloadTableNames(convertedTables);
+
+            compile("alter table " + tableName + " drop column col2");
+            compile("alter table " + tableName + " add col3 int");
+            compile("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
+
+            assertSql("select ts, col1, col3 from " + tableName, "ts\tcol1\tcol3\n" +
+                    "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
+                    "2022-02-24T01:00:00.000000Z\t1\tNaN\n" +
+                    "2022-02-24T01:00:00.000000Z\t3\t4\n");
+        });
+    }
+
+    @Test
     public void testDropTableAndConvertAnother() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
