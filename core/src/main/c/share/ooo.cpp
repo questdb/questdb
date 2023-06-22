@@ -499,15 +499,33 @@ int64_t merge_dedup_long_index(
     return dest - dest_start + 1;
 }
 
+inline int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
+    if (count > 0) {
+        int64_t copyTo = 0;
+        uint64_t lastTimestamp = pIndexIn[0].ts;
+        for (int64_t i = 1; i < count; i++) {
+            if (pIndexIn[i].ts > lastTimestamp) {
+                pIndexOut[copyTo] = pIndexIn[i - 1];
+                copyTo++;
+                lastTimestamp = pIndexIn[i].ts;
+            } else if (pIndexIn[i].ts < lastTimestamp) {
+                return -i - 1;
+            }
+        }
+        pIndexOut[copyTo] = pIndexIn[count - 1];
+        return copyTo + 1;
+    }
+    return 0;
+}
 
-int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
+inline int64_t dedup_sorted_timestamp_index_rebase(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
     if (count > 0) {
         int64_t copyTo = 0;
         uint64_t lastTimestamp = pIndexIn[0].ts;
         for (int64_t i = 1; i < count; i++) {
             if (pIndexIn[i].ts > lastTimestamp) {
                 pIndexOut[copyTo].ts = pIndexIn[i - 1].ts;
-                pIndexOut[copyTo].i = i - 1;
+                pIndexOut[copyTo].i = (i - 1) | (1ull << 63);
                 copyTo++;
                 lastTimestamp = pIndexIn[i].ts;
             } else if (pIndexIn[i].ts < lastTimestamp) {
@@ -515,7 +533,7 @@ int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, ind
             }
         }
         pIndexOut[copyTo].ts = pIndexIn[count - 1].ts;
-        pIndexOut[copyTo].i = count - 1;
+        pIndexOut[copyTo].i = (count - 1) | (1ull << 63);
         return copyTo + 1;
     }
     return 0;
@@ -878,6 +896,21 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
         jlong pIndexOut
 ) {
     int64_t merge_count = dedup_sorted_timestamp_index(
+            reinterpret_cast<const index_t *> (pIndexIn),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            reinterpret_cast<index_t *> (pIndexOut)
+    );
+    return merge_count;
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupSortedTimestampIndexRebase(
+        JAVA_STATIC,
+        jlong pIndexIn,
+        jlong count,
+        jlong pIndexOut
+) {
+    int64_t merge_count = dedup_sorted_timestamp_index_rebase(
             reinterpret_cast<const index_t *> (pIndexIn),
             __JLONG_REINTERPRET_CAST__(int64_t, count),
             reinterpret_cast<index_t *> (pIndexOut)

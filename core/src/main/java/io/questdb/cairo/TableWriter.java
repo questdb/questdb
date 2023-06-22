@@ -1599,7 +1599,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long timestampAddr;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
-                timestampAddr = o3TimestampMem.getAddress();
 
                 if (needsOrdering) {
                     LOG.info().$("sorting WAL [table=").$(tableToken)
@@ -1617,15 +1616,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long tsLagOffset = txWriter.getTransientRowCount() << 3;
                     final long tsLagSize = walLagRowCount << 3;
                     final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
-
+                    timestampAddr = o3TimestampMem.getAddress();
 
                     final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                     try {
-                        Vect.radixSortABLongIndexAsc(mappedTimestampIndexAddr,
-                                commitRowCount,
+                        Vect.radixSortABLongIndexAsc(
                                 Math.abs(tsLagBufferAddr),
                                 walLagRowCount,
-
+                                mappedTimestampIndexAddr,
+                                commitRowCount,
                                 timestampAddr,
                                 o3TimestampMemCpy.addressOf(0)
                         );
@@ -1654,8 +1653,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // timestampAddr can be same o3TimestampMem but can be mmaped from file.
                         // Ensure enough capacity in the out buffer o3TimestampMem
                         o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        long deduplicatedRows = Vect.dedupSortedTimestampIndexChecked(
+                        long deduplicatedRows = Vect.dedupSortedTimestampIndexRebaseChecked(
                                 walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES), totalUncommitted, o3TimestampMem.getAddress());
+
                         if (deduplicatedRows != totalUncommitted) {
                             timestampAddr = o3TimestampMem.getAddress();
                             o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
@@ -4323,13 +4323,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
-            long src2 = mappedMem.addressOf(mappedRowLo << shl);
+            long src1 = mappedMem.addressOf(mappedRowLo << shl);
             long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
-                long src1 = Math.abs(lagAddr);
+                long src2 = Math.abs(lagAddr);
                 final long dest = destMem.addressOf(0);
-                if (src1 == 0 && lagRows != 0) {
+                if (src2 == 0 && lagRows != 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, lag rows are missing [table").put(tableToken.getTableName())
                             .put(", columnName=").put(metadata.getColumnName(columnIndex))
@@ -4337,7 +4337,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(", lagRows=").put(lagRows)
                             .put(']');
                 }
-                if (src2 == 0) {
+                if (src1 == 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, rows are missing [table").put(tableToken.getTableName())
                             .put(", columnName=").put(metadata.getColumnName(columnIndex))
@@ -4486,10 +4486,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         Vect.oooMergeCopyStrColumn(
                                 mergedTimestampAddress,
                                 mergeCount,
-                                lagIndxAddr,
-                                lagDataAddr,
                                 src1IndxAddr,
                                 src1DataAddr,
+                                lagIndxAddr,
+                                lagDataAddr,
                                 destIndxAddr,
                                 destDataAddr,
                                 0L
@@ -4498,10 +4498,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         Vect.oooMergeCopyBinColumn(
                                 mergedTimestampAddress,
                                 mergeCount,
-                                lagIndxAddr,
-                                lagDataAddr,
                                 src1IndxAddr,
                                 src1DataAddr,
+                                lagIndxAddr,
+                                lagDataAddr,
                                 destIndxAddr,
                                 destDataAddr,
                                 0L
