@@ -34,6 +34,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
+import io.questdb.test.fuzz.FuzzTransactionOperation;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -51,7 +52,9 @@ public class DedupInsertTest extends AbstractFuzzTest {
                         1,
                         "2020-02-24T04:30",
                         initialDelta,
-                        4 * 24 * 5, 1
+                        4 * 24 * 5,
+                        1 + rnd.nextInt(1),
+                        rnd
                 )
         );
         applyWal(transactions, tableName, 1, rnd);
@@ -69,7 +72,8 @@ public class DedupInsertTest extends AbstractFuzzTest {
                         from,
                         delta,
                         count,
-                        rowsWithSameTimestamp
+                        rowsWithSameTimestamp,
+                        rnd
                 )
         );
 
@@ -82,7 +86,7 @@ public class DedupInsertTest extends AbstractFuzzTest {
                 , sqlExecutionContext);
     }
 
-    private FuzzTransaction generateInsertsTransactions(int commit, String from, long delta, int count, int rowsWithSameTimestamp) {
+    private FuzzTransaction generateInsertsTransactions(int commit, String from, long delta, int count, int rowsWithSameTimestamp, Rnd rnd) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = parseFloorPartialTimestamp(from) - delta;
         for (int i = 0; i < count * rowsWithSameTimestamp; i++) {
@@ -91,6 +95,9 @@ public class DedupInsertTest extends AbstractFuzzTest {
             }
             // Don't change timestamp sometimes with probabilityOfRowsSameTimestamp
             transaction.operationList.add(new FuzzStableInsertOperation(timestamp, commit));
+        }
+        if (rnd.nextBoolean()) {
+            shuffle(transaction.operationList, rnd);
         }
         return transaction;
     }
@@ -101,6 +108,18 @@ public class DedupInsertTest extends AbstractFuzzTest {
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void shuffle(ObjList<FuzzTransactionOperation> operationList, Rnd rnd) {
+        for (int i = operationList.size(); i > 1; i--) {
+            swap(operationList, i - 1, rnd.nextInt(i));
+        }
+    }
+
+    private void swap(ObjList<FuzzTransactionOperation> operationList, int i, int j) {
+        FuzzTransactionOperation tmp = operationList.getQuick(i);
+        operationList.setQuick(i, operationList.getQuick(j));
+        operationList.setQuick(j, tmp);
     }
 
     private void validateNoTimestampDuplicates(String tableName, String from, long delta, long initialDelta, long commit2Count) {
