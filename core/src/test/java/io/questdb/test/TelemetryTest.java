@@ -26,8 +26,8 @@ package io.questdb.test;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -107,7 +107,7 @@ public class TelemetryTest extends AbstractCairoTest {
                 TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 expectedSql = "id\tversion\n" +
                         "0x01\t\n" +
-                        "0x01\tUnknown Version\n";
+                        "0x01\t[DEVELOPMENT]\n";
                 TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink,
                         expectedSql);
                 Misc.free(telemetryJob);
@@ -206,7 +206,12 @@ public class TelemetryTest extends AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getQuestDbVersion() {
+            public CharSequence getSwName() {
+                return null;
+            }
+
+            @Override
+            public CharSequence getSwVersion() {
                 return refVersion.get();
             }
         };
@@ -250,6 +255,7 @@ public class TelemetryTest extends AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void assertEventAndOrigin(CharSequence expected) {
         try (TableReader reader = newTableReader(configuration, TELEMETRY)) {
             sink.clear();
