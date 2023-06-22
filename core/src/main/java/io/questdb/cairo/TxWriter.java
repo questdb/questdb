@@ -78,6 +78,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         commit(denseSymbolMapWriters);
     }
 
+    public void resetStructureVersionUnsafe() {
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
+    }
+
     public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion = Numbers.encodeLowHighInts(getMetadataVersion(), getColumnStructureVersion() + 1);
