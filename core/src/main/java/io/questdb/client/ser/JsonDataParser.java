@@ -45,6 +45,19 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.ColumnType.*;
 
 public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
+    private static final int STATE_DATA_ARRAY = 4;
+    private static final int STATE_DATA_CELL = 10;
+    private static final int STATE_DATA_ROW = 6;
+    private static final int STATE_IGNORE_RECURSIVE = 12;
+    private static final int STATE_MAIN_ATTR_NAMES = 1;
+    private static final int STATE_METADATA_ARRAY = 3;
+    private static final int STATE_METADATA_ATTR_COLUMN_NAME = 8;
+    private static final int STATE_METADATA_ATTR_COLUMN_TYPE = 9;
+    private static final int STATE_METADATA_ATTR_NAMES = 7;
+    private static final int STATE_METADATA_OBJ = 5;
+    private static final int STATE_METADATA_TIMESTAMP = 11;
+    private static final int STATE_QUERY_TEXT = 2;
+    private static final int STATE_START = 0;
     private final CreateTableModel createTableModel = CreateTableModel.FACTORY.newInstance();
     private final CairoEngine engine;
     private final JsonLexer lexer = new JsonLexer(1024, 1024);
@@ -58,7 +71,7 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
     private int ignoreDepth = 0;
     private int ignoreReturnState;
     private TableWriter.Row row;
-    private int state = 0;
+    private int state = STATE_START;
     private TableWriterAPI writer;
 
     public JsonDataParser(CairoEngine engine) {
@@ -71,7 +84,7 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
 
     @Override
     public void clear() {
-        this.state = 0;
+        this.state = STATE_START;
         columnIndex = 0;
         columnName = null;
         lexer.clear();
@@ -93,22 +106,22 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
         switch (code) {
             case JsonLexer.EVT_OBJ_START:
                 switch (state) {
-                    case 0:
+                    case STATE_START:
                         // expecting root object
-                        state = 1;
+                        state = STATE_MAIN_ATTR_NAMES;
                         // expect main attributes
                         // "query"
                         // "columns"
                         // "dataset"
                         break;
-                    case 5:
+                    case STATE_METADATA_OBJ:
                         // expect metadata attribute
-                        state = 7;
+                        state = STATE_METADATA_ATTR_NAMES;
                         // expect:
                         // "name"
                         // "type"
                         break;
-                    case 12: // ignore
+                    case STATE_IGNORE_RECURSIVE: // ignore
                         ignoreDepth++;
                         break;
                     default:
@@ -117,13 +130,14 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                 break;
             case JsonLexer.EVT_OBJ_END:
                 switch (state) {
-                    case 1: // the end
+                    case STATE_MAIN_ATTR_NAMES: // the end
+                        state = STATE_START;
                         System.out.println("done");
                         break;
-                    case 7: // column definition end
-                        state = 5;
+                    case STATE_METADATA_ATTR_NAMES: // column definition end
+                        state = STATE_METADATA_OBJ;
                         break;
-                    case 12: // ignore
+                    case STATE_IGNORE_RECURSIVE: // ignore
                         ignoreDepth--;
                         break;
                     default:
@@ -132,34 +146,34 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                 break;
             case JsonLexer.EVT_NAME:
                 switch (state) {
-                    case 1: // expecting any main attribute name
+                    case STATE_MAIN_ATTR_NAMES: // expecting any main attribute name
                         if (Chars.equals(tag, "query")) {
-                            state = 2; // expect query text
+                            state = STATE_QUERY_TEXT; // expect query text
                         } else if (Chars.equals(tag, "columns")) {
-                            state = 3; // expect metadata array
+                            state = STATE_METADATA_ARRAY; // expect metadata array
                         } else if (Chars.equals(tag, "dataset")) {
-                            state = 4; // expect data array
+                            state = STATE_DATA_ARRAY; // expect data array
                         } else if (Chars.equals(tag, "timestamp")) {
-                            state = 11; // expect timestamp index
+                            state = STATE_METADATA_TIMESTAMP; // expect timestamp index
                         } else {
                             // ignore nested
-                            state = 12;
-                            ignoreReturnState = 1;
+                            state = STATE_IGNORE_RECURSIVE;
+                            ignoreReturnState = STATE_MAIN_ATTR_NAMES;
                             ignoreDepth = 1;
                         }
                         break;
-                    case 7: // metadata attribute
+                    case STATE_METADATA_ATTR_NAMES: // metadata attribute
                         if (Chars.equals(tag, "name")) {
                             // column name
-                            state = 8;
+                            state = STATE_METADATA_ATTR_COLUMN_NAME;
                         } else if (Chars.equals(tag, "type")) {
                             // column type
-                            state = 9;
+                            state = STATE_METADATA_ATTR_COLUMN_TYPE;
                         } else {
                             assert false;
                         }
                         break;
-                    case 12: // ignore
+                    case STATE_IGNORE_RECURSIVE: // ignore
                         ignoreDepth++;
                         break;
                     default:
@@ -168,23 +182,23 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                 break;
             case JsonLexer.EVT_VALUE:
                 switch (state) {
-                    case 2: // query text
+                    case STATE_QUERY_TEXT: // query text
                         // expect main attribute name
-                        state = 1;
+                        state = STATE_MAIN_ATTR_NAMES;
                         break;
-                    case 3: // columns array
+                    case STATE_METADATA_ARRAY: // columns array
                         createTableModel.clear();
                         // going deeper
                         break;
-                    case 8: // column name
+                    case STATE_METADATA_ATTR_COLUMN_NAME: // column name
                         this.columnName = Chars.toString(tag);
                         // back to metadata attribute name
-                        state = 7;
+                        state = STATE_METADATA_ATTR_NAMES;
                         break;
-                    case 9: // column type
+                    case STATE_METADATA_ATTR_COLUMN_TYPE: // column type
                         try {
                             createTableModel.addColumn(columnName, ColumnType.typeOf(tag), 128);
-                            state = 7;
+                            state = STATE_METADATA_ATTR_NAMES;
                         } catch (SqlException e) {
                             throw new JsonException().put(e.getFlyweightMessage());
                         }
@@ -203,9 +217,9 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                         }
                         createTable();
                         // back to main attributes
-                        state = 1;
+                        state = STATE_MAIN_ATTR_NAMES;
                         break;
-                    case 12: // ignoring
+                    case STATE_IGNORE_RECURSIVE: // ignoring
                         if (--ignoreDepth == 0) {
                             state = ignoreReturnState;
                         }
@@ -216,14 +230,14 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                 break;
             case JsonLexer.EVT_ARRAY_START:
                 switch (state) {
-                    case 3: // metadata array
-                        state = 5; // expect metadata object
+                    case STATE_METADATA_ARRAY: // metadata array
+                        state = STATE_METADATA_OBJ; // expect metadata object
                         break;
-                    case 4: // data array
-                        state = 6; // expect metadata row
+                    case STATE_DATA_ARRAY: // data array
+                        state = STATE_DATA_ROW; // expect metadata row
                         break;
-                    case 6: // data row array (nested into data array)
-                        state = 10;
+                    case STATE_DATA_ROW: // data row array (nested into data array)
+                        state = STATE_DATA_CELL;
                         // start processing from column 0
                         columnIndex = 0;
                         // timestamp value is not yet determined because
@@ -232,7 +246,7 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                         // value parser will later overwrite timestamp value by index
                         row = writer.newRowDeferTimestamp();
                         break;
-                    case 12: // ignore
+                    case STATE_IGNORE_RECURSIVE: // ignore
                         ignoreDepth++;
                         break;
                     default:
@@ -240,89 +254,86 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                 }
                 break;
             case JsonLexer.EVT_ARRAY_VALUE:
-                switch (state) {
-                    case 10: // column value
-                        try {
-                            switch (createTableModel.getColumnType(columnIndex)) {
-                                case BOOLEAN:
-                                    row.putBool(columnIndex, (tag.charAt(0) | 32) == 't');
-                                    break;
-                                case BYTE:
-                                    row.putByte(columnIndex, (byte) Numbers.parseInt(tag));
-                                    break;
-                                case SHORT:
-                                    row.putShort(columnIndex, (short) Numbers.parseInt(tag));
-                                    break;
-                                case CHAR:
-                                    row.putChar(columnIndex, tag.length() > 0 ? tag.charAt(0) : 0);
-                                    break;
-                                case INT:
-                                    row.putInt(columnIndex, Numbers.parseInt(tag));
-                                    break;
-                                case LONG:
-                                    row.putLong(columnIndex, Numbers.parseLong(tag));
-                                    break;
-                                case DATE:
-                                    row.putDate(columnIndex, DateFormatUtils.parseUTCDate(tag));
-                                    break;
-                                case TIMESTAMP:
-                                    row.putTimestamp(columnIndex, TimestampFormatUtils.parseUTCTimestamp(tag));
-                                    break;
-                                case FLOAT:
-                                    row.putFloat(columnIndex, Numbers.parseFloat(tag));
-                                    break;
-                                case DOUBLE:
-                                    row.putDouble(columnIndex, Numbers.parseDouble(tag));
-                                    break;
-                                case STRING:
-                                    row.putStr(columnIndex, tag);
-                                    break;
-                                case SYMBOL:
-                                    row.putSym(columnIndex, tag);
-                                    break;
-                                case LONG256:
-                                    row.putLong256(columnIndex, tag);
-                                    break;
-                                case GEOBYTE:
-                                case GEOSHORT:
-                                case GEOINT:
-                                case GEOLONG:
-                                    row.putGeoStr(columnIndex, tag);
-                                    break;
-                                case BINARY:
-                                    break;
-                                case UUID:
-                                    row.putUuid(columnIndex, tag);
-                                    break;
-                                default:
-                                    assert false;
-                            }
-                            columnIndex++;
-                        } catch (NumericException e) {
-                            row.cancel();
-                            throw JsonException.$(position, "could not parse value [value=").put(tag).put(", type=").put(ColumnType.nameOf(createTableModel.getColumnType(columnIndex))).put(']');
+                if (state == STATE_DATA_CELL) {
+                    try {
+                        switch (createTableModel.getColumnType(columnIndex)) {
+                            case BOOLEAN:
+                                row.putBool(columnIndex, (tag.charAt(0) | 32) == 't');
+                                break;
+                            case BYTE:
+                                row.putByte(columnIndex, (byte) Numbers.parseInt(tag));
+                                break;
+                            case SHORT:
+                                row.putShort(columnIndex, (short) Numbers.parseInt(tag));
+                                break;
+                            case CHAR:
+                                row.putChar(columnIndex, tag.length() > 0 ? tag.charAt(0) : 0);
+                                break;
+                            case INT:
+                                row.putInt(columnIndex, Numbers.parseInt(tag));
+                                break;
+                            case LONG:
+                                row.putLong(columnIndex, Numbers.parseLong(tag));
+                                break;
+                            case DATE:
+                                row.putDate(columnIndex, DateFormatUtils.parseUTCDate(tag));
+                                break;
+                            case TIMESTAMP:
+                                row.putTimestamp(columnIndex, TimestampFormatUtils.parseUTCTimestamp(tag));
+                                break;
+                            case FLOAT:
+                                row.putFloat(columnIndex, Numbers.parseFloat(tag));
+                                break;
+                            case DOUBLE:
+                                row.putDouble(columnIndex, Numbers.parseDouble(tag));
+                                break;
+                            case STRING:
+                                row.putStr(columnIndex, tag);
+                                break;
+                            case SYMBOL:
+                                row.putSym(columnIndex, tag);
+                                break;
+                            case LONG256:
+                                row.putLong256(columnIndex, tag);
+                                break;
+                            case GEOBYTE:
+                            case GEOSHORT:
+                            case GEOINT:
+                            case GEOLONG:
+                                row.putGeoStr(columnIndex, tag);
+                                break;
+                            case BINARY:
+                                break;
+                            case UUID:
+                                row.putUuid(columnIndex, tag);
+                                break;
+                            default:
+                                assert false;
                         }
-                        break;
-                    default:
-                        assert false;
-                        break;
+                        columnIndex++;
+                    } catch (NumericException e) {
+                        row.cancel();
+                        throw JsonException.$(position, "could not parse value [value=").put(tag).put(", type=").put(ColumnType.nameOf(createTableModel.getColumnType(columnIndex))).put(']');
+                    }
+                } else {
+                    throw JsonException.$(position, "unexpected array value");
                 }
                 break;
             case JsonLexer.EVT_ARRAY_END:
                 switch (state) {
-                    case 5: // metadata array end
+                    case STATE_METADATA_OBJ: // metadata array end
                         // back to main attributes:
-                        state = 1;
+                        state = STATE_MAIN_ATTR_NAMES;
                         break;
-                    case 6: // data array end
-                        state = 1;
+                    case STATE_DATA_ROW: // data array end
+                        state = STATE_MAIN_ATTR_NAMES;
                         writer.commit();
                         break;
-                    case 10: // data row array end
+                    case STATE_DATA_CELL: // data row array end
                         row.append();
-                        state = 6; // expect data row array
+                        state = STATE_DATA_ROW; // expect data row array
                         break;
-                    case 12: // ignore
+                    case STATE_IGNORE_RECURSIVE: // ignore
                         ignoreDepth--;
                         break;
                     default:
