@@ -648,7 +648,7 @@ public class O3FailureTest extends AbstractO3Test {
                 new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {
-                        if (offset == 0 && len == storageLength * (records - 1)) {
+                        if (offset == 0 && len == storageLength * (records - 2)) {
                             return -1;
                         }
                         return super.write(fd, address, len, offset);
@@ -987,7 +987,7 @@ public class O3FailureTest extends AbstractO3Test {
                 new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {
-                        if (offset == 0 && len == storageLength * (records - 1)) {
+                        if (offset == 0 && len == storageLength * (records - 2)) {
                             return -1;
                         }
                         return super.write(fd, address, len, offset);
@@ -1796,7 +1796,7 @@ public class O3FailureTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         //
         // ----- last partition
@@ -1815,6 +1815,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -1854,6 +1855,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "insert into x " +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -1892,6 +1894,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -1904,7 +1907,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(549920000000L,100000L) ts," +
+                        " timestamp_sequence(549930000000L,100000L) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -1938,12 +1941,15 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
+        compiler.compile("create table y as (x union all append)", sqlExecutionContext);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        assertSqlResultAgainstFile(
+        assertO3DataConsistencyStableSort(
+                engine,
                 compiler,
                 sqlExecutionContext,
-                "/o3/testColumnTopLastDataOOOData.txt"
+                null,
+                null
         );
 
     }
@@ -2910,6 +2916,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2943,6 +2950,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2968,6 +2976,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3023,7 +3032,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts, commit");
         TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
         TestUtils.assertEquals(sink, sink2);
 

@@ -131,14 +131,14 @@ public class VectTest {
                     index.toString()
             );
 
-            long dedupCount = Vect.dedupSortedTimestampIndexChecked(
+            long dedupCount = Vect.dedupSortedTimestampIndexRebaseChecked(
                     index.getAddress(),
                     indexLen + 1,
                     index.getAddress()
             );
             index.setPos(dedupCount * 2);
             Assert.assertEquals(
-                    "10 1:i, 20 3:i, 30 5:i, 40 7:i, 50 9:i, 55 10:i",
+                    "10 1:s, 20 3:s, 30 5:s, 40 7:s, 50 9:s, 55 10:s",
                     printMergeIndex(index)
             );
         }

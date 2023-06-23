@@ -222,6 +222,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 assert srcTimestampFd != -1 && srcTimestampFd != 1;
 
                 int branch;
+                long mergeEquals = tableWriter.isDeduplicationEnabled() ? 1 : 0;
 
                 if (o3TimestampLo >= dataTimestampLo) {
                     //   +------+
@@ -229,7 +230,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     //   |      |  | OOO |
                     //   |      |  |     |
 
-                    if (o3TimestampLo > dataTimestampHi) {
+                    if (o3TimestampLo >= dataTimestampHi + mergeEquals) {
 
                         // +------+
                         // | data |

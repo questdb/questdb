@@ -394,7 +394,7 @@ public class LatestByTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByPartitionByDesignatedTimestamp() throws Exception {
-        compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+        compile("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
 
         // forecasts for 2020-05-05
         compile("insert into forecasts values " +
@@ -412,15 +412,15 @@ public class LatestByTest extends AbstractGriffinTest {
         );
 
         // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
-        String query = "select when, version, temperature from forecasts latest on version partition by version";
-        String expected = "when\tversion\ttemperature\n" +
+        String query = "select when, ts, temperature from forecasts latest on ts partition by ts";
+        String expected = "when\tts\ttemperature\n" +
                 "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
                 "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
-                "2020-05-05T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t41.0\n" +
+                "2020-05-06T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t141.0\n" +
                 "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
                 "2020-05-07T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t143.0\n";
 
-        assertQuery(expected, query, "version", true, true);
+        assertQuery(expected, query, "ts", true, true);
     }
 
     @Test
