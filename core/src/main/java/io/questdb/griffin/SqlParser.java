@@ -596,6 +596,40 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
+        if (tok != null && (isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+            if (!model.isWalEnabled()) {
+                throw SqlException.position(lexer.getPosition()).put("deduplication is possible only on WAL tables");
+            }
+            model.setDedupKeyFlag(model.getTimestampIndex());
+            tok = optTok(lexer);
+            if (tok != null && Chars.equals(tok, '(')) {
+                tok = optTok(lexer);
+                while (tok != null && !Chars.equals(tok, ')')) {
+                    final CharSequence columnName = tok;
+                    validateLiteral(lexer.lastTokenPosition(), tok);
+                    int colIndex = model.getColumnIndex(columnName);
+                    if (colIndex < 0) {
+                        throw SqlException.position(lexer.getPosition()).put("deduplicate column not found [column=").put(columnName).put(']');
+                    }
+                    int columnType = model.getColumnType(colIndex);
+                    if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
+                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                    }
+                    model.setDedupKeyFlag(colIndex);
+                    tok = optTok(lexer);
+                    if (tok != null && Chars.equals(tok, ',')) {
+                        tok = optTok(lexer);
+                    }
+                }
+
+                if (!Chars.equals(tok, ')')) {
+                    throw SqlException.position(lexer.getPosition()).put("')' expected");
+                }
+                tok = optTok(lexer);
+            }
+        }
+
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
         }
@@ -2151,6 +2185,7 @@ public class SqlParser {
             case ',':
             case '`':
             case '\'':
+            case ';':
                 throw SqlException.position(pos).put("literal expected");
             default:
                 break;

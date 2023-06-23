@@ -1391,7 +1391,7 @@ public final class TableUtils {
                 }
 
                 if (isColumnDedupKey(metaMem, i)) {
-                    if (!ColumnType.isSymbol(type) && !ColumnType.isInt(type)) {
+                    if (!ColumnType.isSymbol(type) && !ColumnType.isInt(type) && i != timestampIndex) {
                         throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for SYMBOL and INT column types").put(" at [").put(i).put(']');
                     }
                 }

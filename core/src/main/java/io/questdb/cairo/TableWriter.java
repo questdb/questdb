@@ -1391,7 +1391,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean isDeduplicationEnabled() {
-        return metadata.isWalEnabled();
+        int tsIndex = metadata.timestampIndex;
+        return tsIndex > -1 && metadata.isDedupKey(tsIndex);
     }
 
     public boolean isOpen() {

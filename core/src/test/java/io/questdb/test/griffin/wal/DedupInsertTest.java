@@ -78,11 +78,11 @@ public class DedupInsertTest extends AbstractFuzzTest {
         );
 
         applyWal(transactions, tableName, 1, rnd);
-        validateNoTimestampDuplicates(tableName, from, delta, initialDelta, count);
+        validateNoTimestampDuplicates(tableName, from, delta, count);
     }
 
     private void createEmptyTable(String tableName) throws SqlException {
-        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL"
+        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL DEDUP"
                 , sqlExecutionContext);
     }
 
@@ -122,7 +122,7 @@ public class DedupInsertTest extends AbstractFuzzTest {
         operationList.setQuick(j, tmp);
     }
 
-    private void validateNoTimestampDuplicates(String tableName, String from, long delta, long initialDelta, long commit2Count) {
+    private void validateNoTimestampDuplicates(String tableName, String from, long delta, long commit2Count) {
 
         LOG.info().$("Validating no timestamp duplicates [from=").$(from)
                 .$(", delta=").$(delta)
