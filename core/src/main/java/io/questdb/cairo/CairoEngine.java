@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -83,6 +84,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private @NotNull WalListener walListener;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -108,6 +110,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        this.walListener = WalListener.DEFAULT;
         try {
             this.tableIdGenerator.open();
         } catch (Throwable e) {
@@ -155,11 +158,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         }
-    }
-
-    @SuppressWarnings("unused")
-    public void applyTableRename(TableToken token, TableToken updatedTableToken) {
-        tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
     }
 
     @TestOnly
@@ -544,6 +542,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
 
+    public @NotNull WalListener getWalListener() {
+        return walListener;
+    }
+
     // For testing only
     @TestOnly
     public WalReader getWalReader(
@@ -820,6 +822,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    public void setWalListener(@NotNull WalListener walListener) {
+        this.walListener = walListener;
     }
 
     public void unlock(
