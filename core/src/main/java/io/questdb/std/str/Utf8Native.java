@@ -22,21 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.str;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.std.Unsafe;
 
-public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
-    public static final FactoryProviderFactory INSTANCE = new FactoryProviderFactoryImpl();
-
-    @Override
-    public FactoryProvider getInstance(
-            ServerConfiguration configuration,
-            CairoEngine engine,
-            FunctionFactoryCache functionFactoryCache,
-            FreeOnExit freeOnExit
-    ) {
-        return new FactoryProviderImpl(configuration);
+/**
+ * Read-only interface for a UTF-8 string with native ptr access.
+ */
+public interface Utf8Native extends Utf8Sequence {
+    /**
+     * Returns byte at index.
+     * Note: Unchecked bounds.
+     *
+     * @param index byte index
+     * @return byte at index
+     */
+    default byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(ptr() + index);
     }
+
+    /**
+     * Address one past the last character.
+     */
+    default long hi() {
+        return ptr() + size();
+    }
+
+    /**
+     * Address of the first character (alias of `.ptr()`).
+     */
+    default long lo() {
+        return ptr();
+    }
+
+    /**
+     * Address of the first character.
+     */
+    long ptr();
 }
