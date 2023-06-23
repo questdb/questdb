@@ -69,7 +69,8 @@ public interface MetadataService {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isSequential,
+            boolean isDedupKey
     );
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);

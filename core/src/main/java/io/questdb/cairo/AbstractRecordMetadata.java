@@ -105,6 +105,11 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     }
 
     @Override
+    public boolean isDedupKey(int columnIndex) {
+        return getColumnMetadata(columnIndex).isDedupKey();
+    }
+
+    @Override
     public boolean isSymbolTableStatic(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolTableStatic();
     }

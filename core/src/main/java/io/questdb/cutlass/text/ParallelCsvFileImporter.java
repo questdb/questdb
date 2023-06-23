@@ -1590,6 +1590,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public boolean isDedupKey(int columnIndex) {
+            return false;
+        }
+
+        @Override
         public boolean isIndexed(int columnIndex) {
             return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
         }

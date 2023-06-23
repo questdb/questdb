@@ -119,6 +119,11 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public boolean isDedupKey(int columnIndex) {
+        return false;
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return false;
     }

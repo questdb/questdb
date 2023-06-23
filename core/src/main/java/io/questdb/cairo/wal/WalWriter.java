@@ -162,7 +162,8 @@ public class WalWriter implements TableWriterAPI {
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
-                configuration.getIndexValueBlockSize()
+                configuration.getIndexValueBlockSize(),
+                false
         );
     }
 
@@ -173,7 +174,8 @@ public class WalWriter implements TableWriterAPI {
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isDedupKey
     ) {
         alterOp.clear();
         alterOp.ofAddColumn(
@@ -186,7 +188,8 @@ public class WalWriter implements TableWriterAPI {
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
-                indexValueBlockCapacity
+                indexValueBlockCapacity,
+                isDedupKey
         );
         apply(alterOp, true);
     }
@@ -1453,7 +1456,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                boolean isDedupKey
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1539,7 +1543,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                boolean isDedupKey
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 

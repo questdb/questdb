@@ -404,7 +404,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isDedupKey
     ) {
         addColumn(
                 columnName,
@@ -413,7 +414,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                false
+                false,
+                isDedupKey
         );
     }
 
@@ -454,7 +456,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isSequential,
+            boolean isDedupKey
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -473,7 +476,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential);
+        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -539,7 +542,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         bumpMetadataAndColumnStructureVersion();
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey);
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -2329,7 +2332,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
-            boolean sequentialFlag
+            boolean sequentialFlag,
+            boolean dedupKeyFlag
     ) {
         int index;
         try {
@@ -2354,6 +2358,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (sequentialFlag) {
                 flags |= META_FLAG_BIT_SEQUENTIAL;
+            }
+
+            if (dedupKeyFlag) {
+                flags |= META_FLAG_BIT_DEDUP_KEY;
             }
 
             ddlMem.putLong(flags);

@@ -189,6 +189,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return volumeAlias;
     }
 
+    @Override
+    public boolean isDedupKey(int columnIndex) {
+        return false;
+    }
+
     public boolean isIgnoreIfExists() {
         return ignoreIfExists;
     }

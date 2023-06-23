@@ -723,7 +723,8 @@ public class SqlCompiler implements Closeable {
                     Numbers.ceilPow2(symbolCapacity),
                     cache,
                     indexed,
-                    Numbers.ceilPow2(indexValueBlockCapacity)
+                    Numbers.ceilPow2(indexValueBlockCapacity),
+                    false
             );
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -2875,6 +2876,11 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return model.isDedupKey(columnIndex);
         }
 
         @Override

@@ -195,7 +195,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         0,
                         false,
                         null,
-                        columnMetadata.size()
+                        columnMetadata.size(),
+                        false
                 )
         );
         columnCount++;

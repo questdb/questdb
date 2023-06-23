@@ -30,6 +30,7 @@ import io.questdb.griffin.Plannable;
 import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata implements Plannable {
+    private final boolean isDedupKey;
     @Nullable
     private final RecordMetadata metadata;
     private final boolean symbolTableStatic;
@@ -44,7 +45,7 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
-        this(name, type, false, 0, false, metadata, -1);
+        this(name, type, false, 0, false, metadata, -1, false);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -58,7 +59,7 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
-        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1);
+        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false);
     }
 
     public TableColumnMetadata(
@@ -68,7 +69,8 @@ public class TableColumnMetadata implements Plannable {
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
-            int writerIndex
+            int writerIndex,
+            boolean dedupKeyFlag
     ) {
         this.name = name;
         this.type = type;
@@ -77,6 +79,7 @@ public class TableColumnMetadata implements Plannable {
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
+        this.isDedupKey = dedupKeyFlag;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -98,6 +101,10 @@ public class TableColumnMetadata implements Plannable {
 
     public int getWriterIndex() {
         return writerIndex;
+    }
+
+    public boolean isDedupKey() {
+        return isDedupKey;
     }
 
     public boolean isDeleted() {

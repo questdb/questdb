@@ -84,6 +84,8 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
      */
     int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);
 
+    TableColumnMetadata getColumnMetadata(int columnIndex);
+
     /**
      * Retrieves column name.
      *
@@ -167,6 +169,12 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
     boolean isColumnIndexed(int columnIndex);
 
     /**
+     * @param columnIndex numeric index of the column
+     * @return true if column is part of deduplication key used in inserts.
+     */
+    boolean isDedupKey(int columnIndex);
+
+    /**
      * @param columnName name of the column
      * @return true if symbol table is static, otherwise false.
      */
@@ -227,6 +235,4 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
             sink.val(getColumnName(i));
         }
     }
-
-    TableColumnMetadata getColumnMetadata(int columnIndex);
 }

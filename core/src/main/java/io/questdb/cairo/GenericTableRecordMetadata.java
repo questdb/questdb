@@ -39,7 +39,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             boolean columnIndexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
-            int writerIndex
+            int writerIndex,
+            boolean isDedupKey
     ) {
         if (columnType > -1L) {
             add(
@@ -50,7 +51,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
                             indexValueBlockCapacity,
                             symbolTableStatic,
                             null,
-                            writerIndex
+                            writerIndex,
+                            isDedupKey
                     )
             );
         }
