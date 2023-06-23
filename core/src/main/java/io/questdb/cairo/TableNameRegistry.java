@@ -139,16 +139,6 @@ public interface TableNameRegistry extends Closeable {
 
     void removeAlias(TableToken tableToken);
 
-    /**
-     * Updates table name in registry.
-     *
-     * @param oldName    old table  name
-     * @param newName    new table name
-     * @param tableToken table token to make sure intended table name is updated
-     * @return updated table token
-     */
-    TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken);
-
     void replaceAlias(TableToken alias, TableToken replaceWith);
 
     /**

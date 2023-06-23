@@ -22,21 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.cairo.TableToken;
 
-public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
-    public static final FactoryProviderFactory INSTANCE = new FactoryProviderFactoryImpl();
+public interface WalListener {
+    WalListener DEFAULT = new WalListener() {
+    };
 
-    @Override
-    public FactoryProvider getInstance(
-            ServerConfiguration configuration,
-            CairoEngine engine,
-            FunctionFactoryCache functionFactoryCache,
-            FreeOnExit freeOnExit
-    ) {
-        return new FactoryProviderImpl(configuration);
+    default void dataTxnCommitted(TableToken tableToken, long txn, int walId, int segmentId, int segmentTxn) {
+    }
+
+    default void nonDataTxnCommitted(TableToken tableToken, long txn) {
+    }
+
+    default void segmentClosed(final TableToken tabletoken, int walId, int segmentId) {
+    }
+
+    default void tableDropped(TableToken tableToken, long txn) {
+    }
+
+    default void tableRenamed(TableToken tableToken, long txn, TableToken oldTableToken) {
     }
 }

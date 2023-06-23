@@ -22,21 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.str;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
+/**
+ * A sequence of UTF-8 bytes.
+ */
+public interface Utf8Sequence {
+    /**
+     * Returns byte at index.
+     * Note: Unchecked bounds.
+     *
+     * @param index byte index
+     * @return byte at index
+     */
+    byte byteAt(int index);
 
-public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
-    public static final FactoryProviderFactory INSTANCE = new FactoryProviderFactoryImpl();
-
-    @Override
-    public FactoryProvider getInstance(
-            ServerConfiguration configuration,
-            CairoEngine engine,
-            FunctionFactoryCache functionFactoryCache,
-            FreeOnExit freeOnExit
-    ) {
-        return new FactoryProviderImpl(configuration);
-    }
+    /**
+     * Number of bytes in the string.
+     * <p>
+     * This is NOT the number of 16-bit chars or code points in the string.
+     * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
+     */
+    int size();
 }
