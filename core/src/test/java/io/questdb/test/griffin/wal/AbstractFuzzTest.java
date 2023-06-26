@@ -197,29 +197,6 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         }
     }
 
-    private String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
-        String[] symbols = new String[totalSymbols];
-        int symbolIndex = 0;
-
-        try (TableReader reader = getReader(baseSymbolTableName)) {
-            TableReaderMetadata metadata = reader.getMetadata();
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-                int columnType = metadata.getColumnType(i);
-                if (ColumnType.isSymbol(columnType)) {
-                    SymbolMapReader symbolReader = reader.getSymbolMapReader(i);
-                    for (int sym = 0; symbolIndex < totalSymbols && sym < symbolReader.getSymbolCount() - 1; sym++) {
-                        symbols[symbolIndex++] = Chars.toString(symbolReader.valueOf(sym));
-                    }
-                }
-            }
-        }
-
-        for (; symbolIndex < totalSymbols; symbolIndex++) {
-            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
-        }
-        return symbols;
-    }
-
     protected static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName, Rnd reloadRnd) {
 
         try (
@@ -306,6 +283,29 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         compile("alter table " + tableName1 + " add column sym_top symbol index");
 
         return engine.verifyTableName(tableName1);
+    }
+
+    protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
+        String[] symbols = new String[totalSymbols];
+        int symbolIndex = 0;
+
+        try (TableReader reader = getReader(baseSymbolTableName)) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                int columnType = metadata.getColumnType(i);
+                if (ColumnType.isSymbol(columnType)) {
+                    SymbolMapReader symbolReader = reader.getSymbolMapReader(i);
+                    for (int sym = 0; symbolIndex < totalSymbols && sym < symbolReader.getSymbolCount() - 1; sym++) {
+                        symbols[symbolIndex++] = Chars.toString(symbolReader.valueOf(sym));
+                    }
+                }
+            }
+        }
+
+        for (; symbolIndex < totalSymbols; symbolIndex++) {
+            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
+        }
+        return symbols;
     }
 
     protected void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {

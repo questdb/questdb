@@ -27,9 +27,7 @@ package io.questdb.test.griffin.wal;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
@@ -38,7 +36,9 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DedupInsertTest extends AbstractFuzzTest {
+import java.util.Arrays;
+
+public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStep() throws SqlException {
         String tableName = testName.getMethodName();
@@ -47,6 +47,61 @@ public class DedupInsertTest extends AbstractFuzzTest {
         ObjList<FuzzTransaction> transactions = new ObjList<>();
         Rnd rnd = generateRandom(LOG);
         long initialDelta = Timestamps.MINUTE_MICROS * 15;
+        int initialCount = 4 * 24 * 5;
+        transactions.add(
+                generateInsertsTransactions(
+                        1,
+                        "2020-02-24T04:30",
+                        initialDelta,
+                        initialCount,
+                        1 + rnd.nextInt(1),
+                        null,
+                        rnd
+                )
+        );
+        applyWal(transactions, tableName, 1, rnd);
+
+        transactions.clear();
+
+        double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
+        long delta = (long) (initialDelta * deltaMultiplier);
+        long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
+        String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+        int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
+        int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+
+        transactions.add(
+                generateInsertsTransactions(
+                        2,
+                        from,
+                        delta,
+                        count,
+                        rowsWithSameTimestamp,
+                        null,
+                        rnd
+                )
+        );
+
+        applyWal(transactions, tableName, 1, rnd);
+        validateNoTimestampDuplicates(tableName, from, delta, count, null);
+    }
+
+    @Test
+    public void testDedupWithRandomShiftAndStepAndSymbolKey() throws SqlException {
+        String tableName = testName.getMethodName();
+        compile(
+                "create table " + tableName +
+                        " (ts timestamp, commit int, s symbol) " +
+                        " , index(s) timestamp(ts) partition by DAY WAL " +
+                        " DEDUPLICATE(s)",
+                sqlExecutionContext
+        );
+
+        ObjList<FuzzTransaction> transactions = new ObjList<>();
+        Rnd rnd = generateRandom(LOG);
+        long initialDelta = Timestamps.MINUTE_MICROS * 15;
+        String[] symbols = generateSymbols(rnd, 1 + rnd.nextInt(10), 4, tableName);
+        String[] initialSymbols = Arrays.copyOf(symbols, rnd.nextInt(symbols.length));
         transactions.add(
                 generateInsertsTransactions(
                         1,
@@ -54,9 +109,11 @@ public class DedupInsertTest extends AbstractFuzzTest {
                         initialDelta,
                         4 * 24 * 5,
                         1 + rnd.nextInt(1),
+                        initialSymbols,
                         rnd
                 )
         );
+
         applyWal(transactions, tableName, 1, rnd);
 
         transactions.clear();
@@ -73,12 +130,27 @@ public class DedupInsertTest extends AbstractFuzzTest {
                         delta,
                         count,
                         rowsWithSameTimestamp,
+                        symbols,
                         rnd
                 )
         );
 
         applyWal(transactions, tableName, 1, rnd);
-        validateNoTimestampDuplicates(tableName, from, delta, count);
+        validateNoTimestampDuplicates(tableName, from, delta, count, symbols);
+    }
+
+    private void assertAllSet(
+            boolean[] foundSymbols,
+            String[] symbols,
+            long timestamp
+    ) {
+        for (int i = 0; i < foundSymbols.length; i++) {
+            if (!foundSymbols[i]) {
+                CharSequence symbol = symbols[i];
+                Assert.fail("Symbol " + symbol + " not found for timestamp " + Timestamps.toUSecString(timestamp));
+            }
+            foundSymbols[i] = false;
+        }
     }
 
     private void createEmptyTable(String tableName) throws SqlException {
@@ -86,15 +158,28 @@ public class DedupInsertTest extends AbstractFuzzTest {
                 , sqlExecutionContext);
     }
 
-    private FuzzTransaction generateInsertsTransactions(int commit, String from, long delta, int count, int rowsWithSameTimestamp, Rnd rnd) {
+    private FuzzTransaction generateInsertsTransactions(
+            int commit,
+            String from,
+            long delta,
+            int count,
+            int rowsWithSameTimestamp,
+            String[] symbols,
+            Rnd rnd
+    ) {
         FuzzTransaction transaction = new FuzzTransaction();
-        long timestamp = parseFloorPartialTimestamp(from) - delta;
-        for (int i = 0; i < count * rowsWithSameTimestamp; i++) {
-            if (i % rowsWithSameTimestamp == 0) {
-                timestamp += delta;
+        long timestamp = parseFloorPartialTimestamp(from);
+        for (int i = 0; i < count; i++) {
+            for (int j = 0; j < rowsWithSameTimestamp; j++) {
+                if (symbols != null && symbols.length > 0) {
+                    for (int s = 0; s < symbols.length; s++) {
+                        transaction.operationList.add(new FuzzStableInsertOperation(timestamp, commit, symbols[s]));
+                    }
+                } else {
+                    transaction.operationList.add(new FuzzStableInsertOperation(timestamp, commit));
+                }
             }
-            // Don't change timestamp sometimes with probabilityOfRowsSameTimestamp
-            transaction.operationList.add(new FuzzStableInsertOperation(timestamp, commit));
+            timestamp += delta;
         }
         if (rnd.nextBoolean()) {
             shuffle(transaction.operationList, rnd);
@@ -122,7 +207,7 @@ public class DedupInsertTest extends AbstractFuzzTest {
         operationList.setQuick(j, tmp);
     }
 
-    private void validateNoTimestampDuplicates(String tableName, String from, long delta, long commit2Count) {
+    private void validateNoTimestampDuplicates(String tableName, String from, long delta, long commit2Count, String[] symbols) {
 
         LOG.info().$("Validating no timestamp duplicates [from=").$(from)
                 .$(", delta=").$(delta)
@@ -133,6 +218,14 @@ public class DedupInsertTest extends AbstractFuzzTest {
         long toTimestamp = fromTimestamp + delta * commit2Count;
         StringSink sink = new StringSink();
         boolean started = false;
+        ObjIntHashMap<CharSequence> symbolSet = new ObjIntHashMap<>();
+        boolean[] foundSymbols = null;
+        if (symbols != null) {
+            for (int i = 0; i < symbols.length; i++) {
+                symbolSet.put(symbols[i], i);
+            }
+            foundSymbols = new boolean[symbols.length];
+        }
 
         try (TableReader rdr = getReader(tableName)) {
             var cursor = rdr.getCursor();
@@ -144,12 +237,23 @@ public class DedupInsertTest extends AbstractFuzzTest {
                     int commit = rec.getInt(1);
                     if (timestamp >= (fromTimestamp - Timestamps.MINUTE_MICROS * 5) || started) {
                         started = true;
-                        sink.putISODate(timestamp).put(',').put(commit).put('\n');
+                        sink.putISODate(timestamp).put(',').put(commit);
+                        if (symbols != null) {
+                            sink.put(',').put(rec.getSym(2));
+                        }
+                        sink.put('\n');
                     }
 
                     if (fail == null) {
                         if (timestamp == lastTimestamp) {
-                            Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp));
+                            if (symbols == null) {
+                                Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp));
+                            }
+                            int symbolIndex = symbolSet.get(rec.getSym(2));
+                            if (foundSymbols[symbolIndex]) {
+                                Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp) + " for symbol " + rec.getSym(2));
+                            }
+                            foundSymbols[symbolIndex] = true;
                         }
 
                         if (timestamp < lastTimestamp) {
@@ -165,9 +269,15 @@ public class DedupInsertTest extends AbstractFuzzTest {
                                 && timestamp < toTimestamp) {
                             Assert.assertEquals("expected commit at timestamp " + Timestamps.toUSecString(timestamp), 2, commit);
                         }
+
                         Assert.assertTrue("commit must be 1 or 2", commit > 0);
-                        lastTimestamp = timestamp;
+                        if (symbols != null) {
+                            if (timestamp > lastTimestamp && lastTimestamp != Long.MIN_VALUE) {
+                                assertAllSet(foundSymbols, symbols, lastTimestamp);
+                            }
+                        }
                     }
+                    lastTimestamp = timestamp;
 
                     if (timestamp > (toTimestamp + Timestamps.MINUTE_MICROS * 5)) {
                         break;
@@ -183,4 +293,5 @@ public class DedupInsertTest extends AbstractFuzzTest {
             }
         }
     }
+
 }

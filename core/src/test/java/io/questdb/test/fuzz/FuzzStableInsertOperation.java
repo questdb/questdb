@@ -30,11 +30,22 @@ import io.questdb.std.Rnd;
 
 public class FuzzStableInsertOperation implements FuzzTransactionOperation {
     private final int commit;
+    private final String symbol;
     private final long timestamp;
+    private final boolean withSymbol;
 
     public FuzzStableInsertOperation(long timestamp, int commit) {
         this.timestamp = timestamp;
         this.commit = commit;
+        this.symbol = null;
+        this.withSymbol = false;
+    }
+
+    public FuzzStableInsertOperation(long timestamp, int commit, String symbol) {
+        this.timestamp = timestamp;
+        this.commit = commit;
+        this.symbol = symbol;
+        this.withSymbol = true;
     }
 
     @Override
@@ -44,6 +55,9 @@ public class FuzzStableInsertOperation implements FuzzTransactionOperation {
             row.putTimestamp(virtualTimestampIndex, timestamp);
         }
         row.putInt(1, commit);
+        if (withSymbol) {
+            row.putSym(2, symbol);
+        }
         row.append();
         return false;
     }

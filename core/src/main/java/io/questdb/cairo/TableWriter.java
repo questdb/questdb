@@ -5647,7 +5647,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     // We're appending onto the last (active) partition.
-                    final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
+                    final boolean append = last && (srcDataMax == 0 || (isDeduplicationEnabled() && o3Timestamp > maxTimestamp) || (!isDeduplicationEnabled() && o3Timestamp >= maxTimestamp));
 
                     // Number of rows to insert from the O3 segment into this partition.
                     final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
