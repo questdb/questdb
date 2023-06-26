@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -39,11 +38,9 @@ import org.jetbrains.annotations.NotNull;
  * Iterates on master factory in outer loop and on slave factory in inner loop
  * and returns all row pairs matching filter plus all unmatched rows from master factory.
  */
-public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final NestedLoopLeftRecordCursor cursor;
     private final Function filter;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
 
     public NestedLoopLeftJoinRecordCursorFactory(
             RecordMetadata metadata,
@@ -53,9 +50,7 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
             @NotNull Function filter,
             @NotNull Record nullRecord
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, null, masterFactory, slaveFactory);
         this.filter = filter;
         this.cursor = new NestedLoopLeftRecordCursor(columnSplit, filter, nullRecord);
     }

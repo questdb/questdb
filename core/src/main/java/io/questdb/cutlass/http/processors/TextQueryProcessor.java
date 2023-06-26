@@ -105,7 +105,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
             circuitBreaker.resetTimer();
-            state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
+            state.factoryAndPermissions = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getSecurityContext(),
@@ -114,10 +114,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     context.getFd(),
                     circuitBreaker.of(context.getFd())
             );
-            if (state.recordCursorFactory == null) {
+            if (state.factoryAndPermissions == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
-                    state.recordCursorFactory = cc.getRecordCursorFactory();
+                    state.factoryAndPermissions = QueryCache.getThreadLocalInstance().newFactoryAndPermissions(context, cc.getRecordCursorFactory());
                 } else if (isExpRequest) {
                     throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                 }
@@ -134,28 +134,34 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
             }
 
-            if (state.recordCursorFactory != null) {
+            if (state.factoryAndPermissions != null) {
+                SecurityContext securityContext = context.getSecurityContext();
+                if (!securityContext.matches(state.factoryAndPermissions.entityName, state.factoryAndPermissions.entityVersion)) {
+                    securityContext.authorizeFactory(state.factoryAndPermissions.factory);
+                    state.factoryAndPermissions.of(securityContext.getEntityName(), securityContext.getVersion());
+                }
+
                 try {
                     boolean runQuery = true;
                     for (int retries = 0; runQuery; retries++) {
                         try {
-                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                            state.cursor = state.factoryAndPermissions.factory.getCursor(sqlExecutionContext);
                             runQuery = false;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                                 throw e;
                             }
                             info(state).$(e.getFlyweightMessage()).$();
-                            state.recordCursorFactory = Misc.free(state.recordCursorFactory);
+                            state.factoryAndPermissions.factory = Misc.free(state.factoryAndPermissions.factory);
                             final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                             if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
                                 throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                             }
 
-                            state.recordCursorFactory = cc.getRecordCursorFactory();
+                            state.factoryAndPermissions.factory = cc.getRecordCursorFactory();
                         }
                     }
-                    state.metadata = state.recordCursorFactory.getMetadata();
+                    state.metadata = state.factoryAndPermissions.factory.getMetadata();
                     header(context.getChunkedResponseSocket(), state, 200);
                     doResumeSend(context);
                 } catch (CairoException e) {

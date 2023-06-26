@@ -26,11 +26,15 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.LongGauge;
+import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.AssociativeCache;
+import io.questdb.std.Misc;
+import io.questdb.std.WeakSelfReturningObjectPool;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -41,10 +45,13 @@ public final class QueryCache implements Closeable {
     private static ThreadLocal<QueryCache> TL_QUERY_CACHE;
     private static HttpServerConfiguration httpServerConfiguration;
     private static Metrics metrics;
-    private final AssociativeCache<RecordCursorFactory> cache;
+    private final AssociativeCache<FactoryAndPermissions> cache;
+
+    private final WeakSelfReturningObjectPool<FactoryAndPermissions> factoryAndPermissionsPool;
 
     public QueryCache(int blocks, int rows, LongGauge cachedQueriesGauge) {
         this.cache = new AssociativeCache<>(blocks, rows, cachedQueriesGauge);
+        this.factoryAndPermissionsPool = new WeakSelfReturningObjectPool<>(FactoryAndPermissions::new, blocks * rows);
     }
 
     public static void configure(HttpServerConfiguration configuration, Metrics metrics) {
@@ -82,13 +89,19 @@ public final class QueryCache implements Closeable {
         LOG.info().$("closed").$();
     }
 
-    public RecordCursorFactory poll(CharSequence sql) {
-        final RecordCursorFactory factory = cache.poll(sql);
+    public FactoryAndPermissions newFactoryAndPermissions(HttpConnectionContext context, RecordCursorFactory factory) {
+        FactoryAndPermissions result = factoryAndPermissionsPool.pop();
+        result.of(context, factory);
+        return result;
+    }
+
+    public FactoryAndPermissions poll(CharSequence sql) {
+        final FactoryAndPermissions factory = cache.poll(sql);
         log(factory == null ? "miss" : "hit", sql);
         return factory;
     }
 
-    public void push(CharSequence sql, RecordCursorFactory factory) {
+    public void push(CharSequence sql, FactoryAndPermissions factory) {
         if (factory != null) {
             cache.put(sql, factory);
             log("push", sql);
@@ -101,4 +114,38 @@ public final class QueryCache implements Closeable {
                 .$(", sql=").utf8(sql)
                 .I$();
     }
+
+    public static class FactoryAndPermissions extends AbstractSelfReturningObject<FactoryAndPermissions> implements Closeable {
+        CharSequence entityName;
+        long entityVersion;
+        RecordCursorFactory factory;
+
+        public FactoryAndPermissions(WeakSelfReturningObjectPool<FactoryAndPermissions> parentPool) {
+            super(parentPool);
+        }
+
+        @Override
+        public void close() {
+            entityVersion = -1;
+            entityName = null;
+            factory = Misc.free(factory);
+            super.close();
+        }
+
+        public void of(HttpConnectionContext context, RecordCursorFactory factory) {
+            of(context.getSecurityContext().getEntityName(), context.getSecurityContext().getVersion(), factory);
+        }
+
+        public void of(CharSequence entityName, long entityVersion, RecordCursorFactory factory) {
+            this.entityName = entityName;
+            this.entityVersion = entityVersion;
+            this.factory = factory;
+        }
+
+        public void of(CharSequence entityName, long entityVersion) {
+            this.entityName = entityName;
+            this.entityVersion = entityVersion;
+        }
+    }
+
 }

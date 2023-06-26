@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -34,6 +35,15 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public interface MultiArgFunction extends Function {
+
+    @Override
+    default void authorizeWith(SecurityContext context) {
+        ObjList<Function> args = getArgs();
+
+        for (int i = 0, n = args.size(); i < n; i++) {
+            context.authorizeFunction(args.getQuick(i));
+        }
+    }
 
     @Override
     default void close() {

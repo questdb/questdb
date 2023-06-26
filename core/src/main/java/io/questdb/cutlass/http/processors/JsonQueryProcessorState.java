@@ -45,6 +45,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.cutlass.http.processors.QueryCache.FactoryAndPermissions;
 
 import java.io.Closeable;
 
@@ -60,7 +61,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = 7;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
-    private int queryTimestampIndex;
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
@@ -80,17 +80,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private RecordCursor cursor;
     private long executeStartNanos;
     private boolean explain = false;
+    private FactoryAndPermissions factoryAndPermissions;
     private boolean noMeta = false;
     private OperationFuture operationFuture;
     private boolean pausedQuery = false;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
     private int queryState = QUERY_PREFIX;
+    private int queryTimestampIndex;
     private short queryType;
     private boolean quoteLargeNum = false;
     private Record record;
     private long recordCountNanos;
-    private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
     private long skip;
     private long stop;
@@ -127,13 +128,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
         record = null;
-        if (recordCursorFactory != null) {
+        if (factoryAndPermissions != null) {
             if (queryCacheable) {
-                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
+                QueryCache.getThreadLocalInstance().push(query, factoryAndPermissions);
             } else {
-                recordCursorFactory.close();
+                factoryAndPermissions.close();
             }
-            recordCursorFactory = null;
+            factoryAndPermissions = null;
         }
         query.clear();
         columnsQueryParameter.clear();
@@ -155,7 +156,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @Override
     public void close() {
         cursor = Misc.free(cursor);
-        recordCursorFactory = Misc.free(recordCursorFactory);
+        factoryAndPermissions = Misc.free(factoryAndPermissions);
         freeAsyncOperation();
     }
 
@@ -797,25 +798,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     boolean of(
-            RecordCursorFactory factory,
+            FactoryAndPermissions factory,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         return of(factory, true, sqlExecutionContext);
     }
 
     boolean of(
-            RecordCursorFactory factory,
+            FactoryAndPermissions factoryAndPermissions,
             boolean queryCacheable,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        this.recordCursorFactory = factory;
+        this.factoryAndPermissions = factoryAndPermissions;
         this.queryCacheable = queryCacheable;
-        this.queryJitCompiled = factory.usesCompiledFilter();
+        this.queryJitCompiled = factoryAndPermissions.factory.usesCompiledFilter();
         // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
-        this.cursor = factory.getCursor(sqlExecutionContext);
-        final RecordMetadata metadata = factory.getMetadata();
+        this.cursor = factoryAndPermissions.factory.getCursor(sqlExecutionContext);
+        final RecordMetadata metadata = factoryAndPermissions.factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectByteCharSequence columnNames = header.getUrlParam("cols");

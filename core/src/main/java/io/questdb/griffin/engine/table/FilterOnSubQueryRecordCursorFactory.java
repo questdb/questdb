@@ -82,6 +82,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return recordCursorFactory;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnSubQuery");
         sink.optAttr("filter", filter);

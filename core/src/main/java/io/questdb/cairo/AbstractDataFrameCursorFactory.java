@@ -70,4 +70,9 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
                 tableVersion
         );
     }
+
+    @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
 }

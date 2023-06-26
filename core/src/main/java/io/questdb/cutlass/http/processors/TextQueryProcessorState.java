@@ -26,13 +26,13 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.cutlass.http.processors.QueryCache.FactoryAndPermissions;
 
 import java.io.Closeable;
 
@@ -44,13 +44,14 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     boolean countRows = false;
     RecordCursor cursor;
     char delimiter = ',';
+
+    FactoryAndPermissions factoryAndPermissions;
     String fileName;
     RecordMetadata metadata;
     boolean noMeta = false;
     boolean pausedQuery = false;
     int queryState = JsonQueryProcessorState.QUERY_PREFIX;
     Record record;
-    RecordCursorFactory recordCursorFactory;
     Rnd rnd;
     long skip;
     long stop;
@@ -68,13 +69,13 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);
-        if (null != recordCursorFactory) {
+        if (null != factoryAndPermissions) {
             if (queryCacheable) {
-                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
+                QueryCache.getThreadLocalInstance().push(query, factoryAndPermissions);
             } else {
-                recordCursorFactory.close();
+                factoryAndPermissions.close();
             }
-            recordCursorFactory = null;
+            factoryAndPermissions = null;
         }
         queryCacheable = false;
         query.clear();
@@ -91,7 +92,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     @Override
     public void close() {
         cursor = Misc.free(cursor);
-        recordCursorFactory = Misc.free(recordCursorFactory);
+        factoryAndPermissions = Misc.free(factoryAndPermissions);
     }
 
     public int getFd() {

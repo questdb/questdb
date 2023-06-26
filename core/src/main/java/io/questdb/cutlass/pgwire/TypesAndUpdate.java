@@ -50,7 +50,7 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
         return compiledQuery;
     }
 
-    public void of(CompiledQuery updateQuery, BindVariableService bindVariableService) {
+    public void of(CompiledQuery updateQuery, BindVariableService bindVariableService, CharSequence entityName, long version) {
         // Compiled query from SqlCompiler cannot be used
         // to store compiled statements because the instance re-used for every new compilation
         UpdateOperation updateOperation = updateQuery.getUpdateOperation();
@@ -59,5 +59,7 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
         compiledQuery.withSqlStatement(sqlStatement);
         updateOperation.withSqlStatement(sqlStatement);
         copyTypesFrom(bindVariableService);
+        this.entityName = entityName;
+        this.version = version;
     }
 }

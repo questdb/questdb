@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -112,6 +114,12 @@ public interface SecurityContext {
     default void authorizeEnableUser() {
     }
 
+    default void authorizeFactory(RecordCursorFactory factory) {
+    }
+
+    default void authorizeFunction(Function function) {
+    }
+
     @SuppressWarnings("unused")
     default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
     }
@@ -158,5 +166,22 @@ public interface SecurityContext {
     }
 
     default void exitRole(CharSequence roleName) {
+    }
+
+    default CharSequence getEntityName() {
+        return null;
+    }
+
+    default long getVersion() {
+        return 0;
+    }
+
+    /**
+     * @param entityName - name of the user or role
+     * @param version    - security context version number
+     * @return true if this context belongs to entityName and has given version, false otherwise .
+     */
+    default boolean matches(CharSequence entityName, long version) {
+        return true;
     }
 }

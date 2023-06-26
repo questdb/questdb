@@ -30,6 +30,7 @@ import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
@@ -918,6 +919,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isSelectTranslation;
     }
 
+    public boolean isTemporalJoin() {
+        return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
+    }
+
     public boolean isTopDownNameMissing(CharSequence columnName) {
         return topDownNameSet.excludes(columnName);
     }
@@ -1174,6 +1179,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } else if (modelType == ExecutionModel.UPDATE) {
             updateToSink(sink);
         }
+    }
+
+    // method to make debugging easier 
+    // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
+    @SuppressWarnings("unused")
+    public String toString0() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        this.toSink0(sink, true, true);
+        return sink.toString();
     }
 
     @Override

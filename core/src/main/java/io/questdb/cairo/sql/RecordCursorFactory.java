@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
@@ -62,6 +63,13 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_BACKWARD = 2;
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
+
+    default void authorizeWith(SecurityContext context) {
+        RecordCursorFactory baseFactory = getBaseFactory();
+        if (baseFactory != null) {
+            context.authorizeFactory(baseFactory);
+        }
+    }
 
     @Override
     default void close() {
@@ -113,7 +121,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     default RecordCursorFactory getBaseFactory() {
-        throw new UnsupportedOperationException("Unsupported for: " + getClass());
+        return null;
     }
 
     /**
@@ -153,6 +161,15 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default int getScanDirection() {
         return SCAN_DIRECTION_FORWARD;
+    }
+
+    /**
+     * If factory operates on table directly returns table's token, null otherwise.
+     *
+     * @return table token of table used by this factory
+     */
+    default TableToken getTableToken() {
+        return null;
     }
 
     /* Returns true if this factory handles limit M , N clause already and false otherwise .

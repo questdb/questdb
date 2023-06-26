@@ -32,6 +32,8 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 
 public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> extends AbstractSelfReturningObject<T> {
     private final IntList types = new IntList();
+    protected CharSequence entityName;
+    protected long version;
     private boolean closing;
 
     public AbstractTypeContainer(WeakSelfReturningObjectPool<T> parentPool) {
@@ -52,6 +54,11 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
         for (int i = 0, n = types.size(); i < n; i++) {
             bindVariableService.define(i, types.getQuick(i), 0);
         }
+    }
+
+    public void of(CharSequence entityName, long version) {
+        this.entityName = entityName;
+        this.version = version;
     }
 
     void copyTypesFrom(BindVariableService bindVariableService) {

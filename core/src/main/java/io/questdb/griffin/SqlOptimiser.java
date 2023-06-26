@@ -767,7 +767,7 @@ public class SqlOptimiser {
         assert postFilterRemoved.size() == pc;
     }
 
-    private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
+    private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model, boolean requireTimestamp) {
         if (model != null) {
             if (model.getTableName() != null) {
                 ExpressionNode tableNameExpr = model.getTableNameExpr();
@@ -781,11 +781,20 @@ public class SqlOptimiser {
                             tab.setLo(lo + QueryModel.NO_ROWID_MARKER.length());
                         }
                         try {
-                            // copy column names
+                            // copy column names 
                             literalCollectorANames.clear();
                             final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+                            boolean checkTimestamp = requireTimestamp && model.getTimestamp() != null;
+                            boolean timestampFound = false;
+                            CharSequence tstmpToken = checkTimestamp ? model.getTimestamp().token : null;
                             for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-                                literalCollectorANames.add(topDownColumns.getQuick(i).getName());
+                                CharSequence colName = topDownColumns.getQuick(i).getName();
+                                literalCollectorANames.add(colName);
+                                timestampFound |= checkTimestamp && !timestampFound && Chars.equals(tstmpToken, colName);
+                            }
+
+                            if (checkTimestamp && !timestampFound) {
+                                literalCollectorANames.add(tstmpToken);
                             }
 
                             executionContext.getSecurityContext().authorizeSelect(
@@ -795,19 +804,31 @@ public class SqlOptimiser {
                         } finally {
                             tab.setLo(lo);
                         }
+
+                        ObjList<QueryModel> joinModels = model.getJoinModels();
+                        for (int i = 1, n = joinModels.size(); i < n; i++) {
+                            // exclude 0 index, it is the same as "model"
+                            QueryModel joinModel = joinModels.getQuick(i);
+                            authorizeColumnAccess(executionContext, joinModel, requireTimestamp || joinModel.isTemporalJoin());
+                        }
+                        authorizeColumnAccess(executionContext, model.getUnionModel(), requireTimestamp);
+
+                        break;
+                    case FUNCTION:
                         break;
                     default:
                         // todo: function call
                         break;
                 }
             } else {
-                authorizeColumnAccess(executionContext, model.getNestedModel());
+                authorizeColumnAccess(executionContext, model.getNestedModel(), model.getSampleBy() != null);
+
                 ObjList<QueryModel> joinModels = model.getJoinModels();
                 for (int i = 1, n = joinModels.size(); i < n; i++) {
                     // exclude 0 index, it is the same as "model"
-                    authorizeColumnAccess(executionContext, joinModels.getQuick(i));
+                    authorizeColumnAccess(executionContext, joinModels.getQuick(i), requireTimestamp);
                 }
-                authorizeColumnAccess(executionContext, model.getUnionModel());
+                authorizeColumnAccess(executionContext, model.getUnionModel(), requireTimestamp);
             }
         }
     }
@@ -4719,7 +4740,7 @@ public class SqlOptimiser {
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            authorizeColumnAccess(sqlExecutionContext, rewrittenModel, false);
             return rewrittenModel;
         } catch (SqlException e) {
             // at this point models may have functions than need to be freed

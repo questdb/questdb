@@ -38,13 +38,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
-public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final LtJoinRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
     private final IntList slaveColumnIndex; // maps columns after the split to columns in the slave cursor
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public LtJoinRecordCursorFactory(
@@ -63,9 +60,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, joinContext, masterFactory, slaveFactory);
         Map joinKeyMap = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
@@ -82,7 +77,6 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 columnIndex
         );
         this.slaveColumnIndex = columnIndex;
-        this.joinContext = joinContext;
     }
 
     @Override

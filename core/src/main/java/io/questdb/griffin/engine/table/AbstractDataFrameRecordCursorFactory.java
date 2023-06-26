@@ -75,4 +75,9 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException;
+
+    @Override
+    public TableToken getTableToken() {
+        return dataFrameCursorFactory.getTableToken();
+    }
 }

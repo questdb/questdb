@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -45,6 +46,12 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
+    }
+
+    @Override
+    public void authorizeWith(SecurityContext context) {
+        super.authorizeWith(context);
+        context.authorizeFunction(filter);
     }
 
     @Override

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -46,14 +45,11 @@ import org.jetbrains.annotations.NotNull;
  * Same as HashOuterJoinLightRecordCursorFactory but with added filtering (for non-equality
  * or complex join conditions that use functions).
  */
-public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
     private final HashOuterJoinLightRecordCursor cursor;
     private final Function filter;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public HashOuterJoinFilteredLightRecordCursorFactory(
@@ -69,9 +65,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
             @NotNull Function filter,
             JoinContext joinContext
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, joinContext, masterFactory, slaveFactory);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         cursor = new HashOuterJoinLightRecordCursor(
@@ -82,7 +76,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
                 configuration
         );
         this.filter = filter;
-        this.joinContext = joinContext;
     }
 
     @Override

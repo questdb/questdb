@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -31,6 +32,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface TernaryFunction extends Function {
+
+    @Override
+    default void authorizeWith(SecurityContext context) {
+        context.authorizeFunction(getLeft());
+        context.authorizeFunction(getCenter());
+        context.authorizeFunction(getRight());
+    }
 
     @Override
     default void close() {

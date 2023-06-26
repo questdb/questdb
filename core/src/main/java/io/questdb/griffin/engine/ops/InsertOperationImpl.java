@@ -40,12 +40,15 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class InsertOperationImpl implements InsertOperation {
+
+    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<>();
     private final InsertOperationFuture doneFuture = new InsertOperationFuture();
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long metadataVersion;
     private final TableToken tableToken;
+    private ObjList<CharSequence> columnNames;
 
     public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
         this.engine = engine;
@@ -84,6 +87,27 @@ public class InsertOperationImpl implements InsertOperation {
             insertMethod.execute();
             insertMethod.commit();
             return doneFuture;
+        }
+    }
+
+    public ObjList<CharSequence> getColumnNames() {
+        return columnNames;
+    }
+
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    public void setColumnNames(ObjList<CharSequence> columnNameList) {
+        if (columnNames == null) {
+            if (columnNameList.size() == 0) {
+                columnNames = EMPTY_COLUMN_LIST;
+            } else {
+                columnNames = new ObjList<>(columnNameList);
+            }
+        } else {
+            columnNames.clear();
+            columnNames.addAll(columnNameList);
         }
     }
 

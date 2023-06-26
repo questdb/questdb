@@ -21,35 +21,35 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+package io.questdb.griffin.engine.join;
 
-package io.questdb.cutlass.pgwire;
-
-import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Misc;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.JoinContext;
 
-public class TypesAndSelect extends AbstractTypeContainer<TypesAndSelect> {
-    private RecordCursorFactory factory;
+public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    public TypesAndSelect(WeakSelfReturningObjectPool<TypesAndSelect> parentPool) {
-        super(parentPool);
+    protected final JoinContext joinContext;
+    protected final RecordCursorFactory masterFactory;
+    protected final RecordCursorFactory slaveFactory;
+
+    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, JoinContext joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+        super(metadata);
+        this.joinContext = joinContext;
+        this.masterFactory = masterFactory;
+        this.slaveFactory = slaveFactory;
     }
 
     @Override
-    public void close() {
-        super.close();
-        factory = Misc.free(factory);
+    public void authorizeWith(SecurityContext context) {
+        context.authorizeFactory(masterFactory);
+        context.authorizeFactory(slaveFactory);
     }
 
-    public RecordCursorFactory getFactory() {
-        return factory;
-    }
-
-    public void of(RecordCursorFactory factory, BindVariableService bindVariableService, CharSequence entityName, long version) {
-        this.factory = factory;
-        copyTypesFrom(bindVariableService);
-        this.entityName = entityName;
-        this.version = version;
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return null;
     }
 }

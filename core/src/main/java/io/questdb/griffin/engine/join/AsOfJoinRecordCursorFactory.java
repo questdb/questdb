@@ -38,13 +38,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
-public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final IntList columnIndex;
     private final AsOfJoinRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public AsOfJoinRecordCursorFactory(
@@ -62,9 +59,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, joinContext, masterFactory, slaveFactory);
         Map joinKeyMap = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
@@ -81,7 +76,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 columnIndex
         );
         this.columnIndex = columnIndex;
-        this.joinContext = joinContext;
     }
 
     @Override

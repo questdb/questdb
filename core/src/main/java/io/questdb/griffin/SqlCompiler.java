@@ -37,6 +37,8 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -1917,6 +1919,7 @@ public class SqlCompiler implements Closeable {
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
+            boolean hasBindVariable = false;
             for (int tupleIndex = 0, n = model.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
                 Function timestampFunction = null;
                 listColumnFilter.clear();
@@ -1931,6 +1934,8 @@ public class SqlCompiler implements Closeable {
                                     EmptyRecordMetadata.INSTANCE,
                                     executionContext
                             );
+
+                            hasBindVariable |= function instanceof NamedParameterLinkFunction || function instanceof IndexedParameterLinkFunction;
 
                             insertValidateFunctionAndAddToList(
                                     model,
@@ -1969,6 +1974,7 @@ public class SqlCompiler implements Closeable {
                         final ExpressionNode node = values.getQuick(i);
 
                         Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                        hasBindVariable |= function instanceof NamedParameterLinkFunction || function instanceof IndexedParameterLinkFunction;
                         insertValidateFunctionAndAddToList(
                                 model,
                                 tupleIndex,
@@ -1997,6 +2003,11 @@ public class SqlCompiler implements Closeable {
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
                 insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
             }
+
+            if (hasBindVariable) {//we need column names only for inserts with bind vars that are cached
+                insertOperation.setColumnNames(columnNameList);
+            }
+
             return compiledQuery.ofInsert(insertOperation);
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);

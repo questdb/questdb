@@ -39,8 +39,10 @@ public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
         return insert;
     }
 
-    public void of(InsertOperation insert, BindVariableService bindVariableService) {
+    public void of(InsertOperation insert, BindVariableService bindVariableService, CharSequence entityName, long version) {
         this.insert = insert;
         copyTypesFrom(bindVariableService);
+        this.entityName = entityName;
+        this.version = version;
     }
 }

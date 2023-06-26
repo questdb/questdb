@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -54,6 +55,12 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         this.factoryB = factoryB;
         this.castFunctionsB = castFunctionsB;
         this.castFunctionsA = castFunctionsA;
+    }
+
+    @Override
+    public void authorizeWith(SecurityContext context) {
+        context.authorizeFactory(factoryA);
+        context.authorizeFactory(factoryB);
     }
 
     @Override
