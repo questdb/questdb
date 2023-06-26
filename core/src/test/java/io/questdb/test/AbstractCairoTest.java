@@ -384,6 +384,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
     }
 
+    protected static void configOverrideWriterMixedIOEnabled(boolean enableMixedIO) {
+        node1.getConfigurationOverrides().setWriterMixedIOEnabled(enableMixedIO);
+    }
+
     protected static void configureForBackups() throws IOException {
         backupDir = temp.newFolder().getAbsolutePath();
         backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");

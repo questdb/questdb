@@ -29,7 +29,11 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.*;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -77,25 +81,18 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         Misc.free(roMetaMem);
     }
 
-    public void copyFrom(TableDescriptor model, TableToken tableToken, int tableId, long structureVersion, boolean suspended) {
-        reset();
-        this.tableToken = tableToken;
-        this.timestampIndex = model.getTimestampIndex();
-        this.tableId = tableId;
-        this.suspended = suspended;
-
-        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
-            final CharSequence name = model.getColumnName(i);
-            final int type = model.getColumnType(i);
-            addColumn0(name, type);
-        }
-
-        this.structureVersion.set(structureVersion);
-        columnCount = columnMetadata.size();
+    public void create(TableStructure tableStruct, TableToken tableToken, Path path, int pathLen, int tableId) {
+        create(tableStruct, tableToken, path, pathLen, tableId, true);
     }
 
-    public void create(TableDescriptor model, TableToken tableToken, Path path, int pathLen, int tableId) {
-        copyFrom(model, tableToken, tableId, 0, false);
+    public void create(TableStructure tableStruct, TableToken tableToken, Path path, int pathLen, int tableId, boolean writeInitialMetadata) {
+        copyFrom(tableStruct, tableToken, tableId);
+        openSmallFile(ff, path, pathLen, metaMem, WalUtils.INITIAL_META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+        if (writeInitialMetadata) {
+            TableUtils.writeMetadata(tableStruct, ColumnType.VERSION, tableId, metaMem);
+        }
+        metaMem.sync(false);
+        metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
         switchTo(path, pathLen);
     }
 
@@ -132,7 +129,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         return true;
     }
 
-    public void open(Path path, int pathLen) {
+    public void open(Path path, int pathLen, TableToken tableToken) {
         reset();
         openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
 
@@ -149,6 +146,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
         suspended = roMetaMem.getBool(SEQ_META_SUSPENDED);
+        this.tableToken = tableToken;
 
         if (readonly) {
             // close early
@@ -166,10 +164,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
-    public void switchTo(Path path, int pathLen) {
-        assert metaMem.getFd() == -1;
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        syncToMetaFile();
+    public void renameTable(CharSequence toTableName) {
+        if (!Chars.equalsIgnoreCaseNc(toTableName, tableToken.getTableName())) {
+            tableToken = tableToken.renamed(Chars.toString(toTableName));
+        }
+        structureVersion.incrementAndGet();
     }
 
     public void syncToDisk() {
@@ -177,6 +176,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void updateTableToken(TableToken newTableToken) {
+        assert newTableToken != null;
         this.tableToken = newTableToken;
     }
 
@@ -197,6 +197,23 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 )
         );
         columnCount++;
+    }
+
+    private void copyFrom(TableStructure tableStruct, TableToken tableToken, int tableId) {
+        reset();
+        this.tableToken = tableToken;
+        this.timestampIndex = tableStruct.getTimestampIndex();
+        this.tableId = tableId;
+        this.suspended = false;
+
+        for (int i = 0, n = tableStruct.getColumnCount(); i < n; i++) {
+            final CharSequence name = tableStruct.getColumnName(i);
+            final int type = tableStruct.getColumnType(i);
+            addColumn0(name, type);
+        }
+
+        this.structureVersion.set(0);
+        columnCount = columnMetadata.size();
     }
 
     private void loadSequencerMetadata(MemoryMR metaMem) {
@@ -251,6 +268,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         tableToken = null;
         tableId = -1;
         suspended = false;
+    }
+
+    private void switchTo(Path path, int pathLen) {
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+        syncToMetaFile();
     }
 
     boolean isSuspended() {

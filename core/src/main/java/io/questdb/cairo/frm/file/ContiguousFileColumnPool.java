@@ -37,13 +37,13 @@ import java.io.Closeable;
 
 public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
+    private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
     private boolean canWrite;
     private boolean isClosed;
-    private final CairoConfiguration configuration;
 
     public ContiguousFileColumnPool(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
@@ -70,13 +70,13 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private class ColumnTypePool implements FrameColumnTypePool {
 
         @Override
-        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex) {
+        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex, boolean isEmpty) {
             boolean isIndexed = indexBlockCapacity > 0;
             switch (columnType) {
                 case ColumnType.SYMBOL:
                     if (canWrite && isIndexed) {
                         ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
-                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex);
+                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, isEmpty);
                         return indexedColumn;
                     }
 
@@ -85,7 +85,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
                     }
                     return column;
                 }
@@ -96,7 +96,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
                     }
                     return column;
                 }
@@ -125,7 +125,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             if (varColumnPool.size() > 0) {
                 return varColumnPool.pop();
             }
-            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(ff, configuration.getWriterFileOpenOpts());
+            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(configuration);
             col.setPool(varColumnPool);
             return col;
         }

@@ -238,6 +238,46 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testApplyFromLag() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "ts timestamp" +
+                    ") timestamp(ts) partition by HOUR WAL WITH maxUncommittedRows=" + rnd.nextInt(20));
+
+            int count = rnd.nextInt(22);
+            long rowCount = 0;
+            for (int i = 0; i < 2; i++) {
+                int rows = rnd.nextInt(200);
+                compile("insert into " + tableName +
+                        " select x, timestamp_sequence('2022-02-24T0" + i + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
+                rowCount += rows;
+
+            }
+
+            // Eject after every transaction
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(1);
+
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                for (int i = 0; i < count; i++) {
+                    walApplyJob.run(0);
+                    engine.releaseInactive();
+                    int rows = rnd.nextInt(200);
+                    compile("insert into " + tableName +
+                            " select x, timestamp_sequence('2022-02-24T" + String.format("%02d", i + 2) + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
+                    rowCount += rows;
+                }
+            }
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(Timestamps.MINUTE_MICROS);
+            drainWalQueue();
+
+            assertSql("select count(*) from " + tableName, "count\n" + rowCount + "\n");
+        });
+    }
+
+    @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -660,6 +700,48 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
                 checkWalFilesRemoved(sysTableName1);
             }
+        });
+    }
+
+    @Test
+    public void testConvertToWalAfterAlter() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            );
+            compile("alter table " + tableName + " add col1 int");
+            TableToken sysTableName = engine.verifyTableName(tableName);
+            compile("alter table " + tableName + " set type wal", sqlExecutionContext);
+            engine.releaseInactive();
+            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            engine.reloadTableNames(convertedTables);
+
+            compile("alter table " + tableName + " add col2 int");
+            compile("insert into " + tableName + "(ts, col1, col2) values('2022-02-24T01', 1, 2)");
+            drainWalQueue();
+
+            assertSql("select ts, col1, col2 from " + tableName, "ts\tcol1\tcol2\n" +
+                    "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
+                    "2022-02-24T01:00:00.000000Z\t1\t2\n");
+
+            compile("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
+            engine.releaseInactive();
+            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            engine.reloadTableNames(convertedTables);
+
+            compile("alter table " + tableName + " drop column col2");
+            compile("alter table " + tableName + " add col3 int");
+            compile("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
+
+            assertSql("select ts, col1, col3 from " + tableName, "ts\tcol1\tcol3\n" +
+                    "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
+                    "2022-02-24T01:00:00.000000Z\t1\tNaN\n" +
+                    "2022-02-24T01:00:00.000000Z\t3\t4\n");
         });
     }
 
@@ -1218,8 +1300,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("rename table " + tableName + " to " + newTableName);
             compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
-            TableToken newTabledirectoryName = engine.verifyTableName(newTableName);
-            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
+            TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
             drainWalQueue();
 
@@ -1239,18 +1321,59 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 refreshTablesInBaseEngine();
 
                 TableToken newTabledirectoryName2 = engine.verifyTableName(newTableName);
-                Assert.assertEquals(newTabledirectoryName, newTabledirectoryName2);
+                Assert.assertEquals(newTableDirectoryName, newTabledirectoryName2);
                 assertSql(newTableName, "x\tsym2\tts\n" +
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                         "100\t\t2022-02-25T00:00:00.000000Z\n");
             }
 
             assertSql("select name, directoryName from tables() order by name", "name\tdirectoryName\n" +
-                    newTableName + "\t" + newTabledirectoryName.getDirName() + "\n");
+                    newTableName + "\t" + newTableDirectoryName.getDirName() + "\n");
             assertSql("select table from all_tables()", "table\n" +
                     newTableName + "\n");
             assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
                     newTableName + "\n");
+        });
+    }
+
+    @Test
+    public void testRenameTableToCaseInsensitive() throws Exception {
+        String tableName = testName.getMethodName();
+        String upperCaseName = testName.getMethodName().toUpperCase();
+        String newTableName = testName.getMethodName() + "_new";
+
+        assertMemoryLeak(ff, () -> {
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            TableToken table2directoryName = engine.verifyTableName(tableName);
+            compile("rename table " + tableName + " to " + upperCaseName);
+            compile("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
+            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+
+            TableToken newTableDirectoryName = engine.verifyTableName(upperCaseName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
+
+            drainWalQueue();
+
+            assertSql("select * from " + upperCaseName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+
+            compile("rename table " + upperCaseName + " to " + newTableName);
+
+            assertSql("select * from " + newTableName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
         });
     }
 

@@ -34,12 +34,10 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
-import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
-import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
+import io.questdb.cutlass.auth.EllipticCurveLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
@@ -51,14 +49,10 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.File;
-import java.security.PublicKey;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
@@ -66,10 +60,10 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ServerConfiguration config;
     private final CairoEngine engine;
-    private final ObjList<Closeable> freeOnExitList = new ObjList<>();
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
+    private final FreeOnExit freeOnExit = new FreeOnExit();
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -86,19 +80,19 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+        engine = freeOnExit.register(new CairoEngine(cairoConfig, metrics));
 
         // obtain function factory cache
-        engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
         FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
-        // TODO: now the engine has access to the FFC, so all methods bellow
+        // TODO: now the engine has access to the FFC, so all methods below
         //       that pass it in their signature should be simplified. Not
         //       done for compatibility with enterprise
-        config.init(engine, ffCache);
+        config.init(engine, ffCache, freeOnExit);
 
-        freeOnExit(config.getFactoryProvider());
+        freeOnExit.register(config.getFactoryProvider());
 
         // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
+        final DatabaseSnapshotAgent snapshotAgent = freeOnExit.register(new DatabaseSnapshotAgent(engine));
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
@@ -154,7 +148,7 @@ public class ServerMain implements Closeable {
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                        freeOnExitList.add(telemetryJob);
+                        freeOnExit.register(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
                         }
@@ -175,7 +169,7 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExit(Services.createHttpServer(
+        freeOnExit.register(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -185,7 +179,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        freeOnExit(Services.createMinHttpServer(
+        freeOnExit.register(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -193,7 +187,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit(Services.createPGWireServer(
+        freeOnExit.register(Services.createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
@@ -204,7 +198,7 @@ public class ServerMain implements Closeable {
 
         if (!isReadOnly) {
             // ilp/tcp
-            freeOnExit(Services.createLineTcpReceiver(
+            freeOnExit.register(Services.createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
                     workerPoolManager,
@@ -212,7 +206,7 @@ public class ServerMain implements Closeable {
             ));
 
             // ilp/udp
-            freeOnExit(Services.createLineUdpReceiver(
+            freeOnExit.register(Services.createLineUdpReceiver(
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
@@ -229,11 +223,9 @@ public class ServerMain implements Closeable {
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
             // we need "root/" here, not "root/db/"
             final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
-            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
-            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
-            authenticatorFactory = new EllipticCurveAuthenticatorFactory(
+            authenticatorFactory = new EllipticCurveLineAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new StaticChallengeResponseMatcher(authDb)
+                    new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
             );
         } else {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
@@ -274,11 +266,7 @@ public class ServerMain implements Closeable {
     public void close() {
         if (closed.compareAndSet(false, true)) {
             workerPoolManager.halt();
-            // free instances in reverse order to which we allocated them
-            for (int i = freeOnExitList.size() - 1; i >= 0; i--) {
-                Misc.free(freeOnExitList.getQuick(i));
-            }
-            freeOnExitList.clear();
+            freeOnExit.close();
         }
     }
 
@@ -337,13 +325,6 @@ public class ServerMain implements Closeable {
                 System.err.println("QuestDB is shutdown.");
             }
         }));
-    }
-
-    protected <T extends Closeable> T freeOnExit(T closeable) {
-        if (closeable != null) {
-            freeOnExitList.add(closeable);
-        }
-        return closeable;
     }
 
     protected void setupWalApplyJob(
