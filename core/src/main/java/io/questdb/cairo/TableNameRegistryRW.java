@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 
@@ -44,9 +43,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken addTableAlias(String newName, TableToken tableToken) {
-        TableToken newNameRecord = new TableToken(newName, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
-        TableToken oldToken = nameTableTokenMap.putIfAbsent(newName, newNameRecord);
-        return oldToken == null ? newNameRecord: null;
+        final TableToken newNameRecord = tableToken.renamed(newName);
+        final TableToken oldToken = nameTableTokenMap.putIfAbsent(newName, newNameRecord);
+        return oldToken == null ? newNameRecord : null;
     }
 
     @Override
@@ -66,9 +65,12 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
-        TableToken newNameRecord = new TableToken(tableName, dirName, tableId, isWal);
-        TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
-        return registeredRecord == null ? newNameRecord : null;
+        final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
+        if (registeredRecord == null) {
+            return new TableToken(tableName, dirName, tableId, isWal);
+        } else {
+            return null;
+        }
     }
 
     @Override
@@ -109,28 +111,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.logDropTable(alias);
             nameStore.appendEntry(replaceWith);
             reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
-        }
-    }
-
-    @Override
-    public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
-        String newTableNameStr = Chars.toString(newName);
-        TableToken newNameRecord = new TableToken(newTableNameStr, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
-
-        if (nameTableTokenMap.putIfAbsent(newTableNameStr, newNameRecord) == null) {
-            if (nameTableTokenMap.remove(oldName, tableToken)) {
-                // Persist to file
-                nameStore.logDropTable(tableToken);
-                nameStore.appendEntry(newNameRecord);
-                reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
-                return newNameRecord;
-            } else {
-                // Already renamed by another thread. Revert new name reservation.
-                nameTableTokenMap.remove(newTableNameStr, newNameRecord);
-                throw CairoException.tableDoesNotExist(oldName);
-            }
-        } else {
-            throw CairoException.nonCritical().put("table '").put(newName).put("' already exists");
         }
     }
 

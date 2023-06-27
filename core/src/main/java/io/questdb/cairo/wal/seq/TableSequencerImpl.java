@@ -107,9 +107,10 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void dropTable() {
         checkDropped();
-        tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
+        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
         metadata.dropTable();
         engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+        engine.getWalListener().tableDropped(tableToken, txn);
     }
 
     @Override
@@ -220,6 +221,8 @@ public class TableSequencerImpl implements TableSequencer {
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, microClock.getTicks());
 
+                final TableToken oldTableToken = tableToken;
+
                 // Re-read serialised change to ensure it can be read.
                 AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(expectedStructureVersion, alterCommandWalFormatter);
 
@@ -235,6 +238,15 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+
+                if (!metadata.isSuspended()) {
+                    engine.notifyWalTxnCommitted(tableToken, txn);
+                    if (!tableToken.equals(oldTableToken)) {
+                        engine.getWalListener().tableRenamed(tableToken, txn, oldTableToken);
+                    } else {
+                        engine.getWalListener().nonDataTxnCommitted(tableToken, txn);
+                    }
+                }
             } else {
                 return NO_TXN;
             }
@@ -244,10 +256,6 @@ public class TableSequencerImpl implements TableSequencer {
                     .$(", error=").$(th.getMessage())
                     .I$();
             throw th;
-        }
-
-        if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(tableToken, txn);
         }
         return txn;
     }
@@ -275,6 +283,7 @@ public class TableSequencerImpl implements TableSequencer {
 
         if (!metadata.isSuspended()) {
             engine.notifyWalTxnCommitted(tableToken, txn);
+            engine.getWalListener().dataTxnCommitted(tableToken, txn, walId, segmentId, segmentTxn);
         }
         return txn;
     }

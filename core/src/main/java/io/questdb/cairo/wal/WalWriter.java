@@ -1188,6 +1188,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void releaseSegmentLock(int segmentId, int segmentLockFd) {
         if (ff.close(segmentLockFd)) {
+            sequencer.notifySegmentClosed(tableToken, walId, segmentId);
             LOG.debug().$("released segment lock [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .$(", fd=").$(segmentLockFd)
@@ -1693,7 +1694,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
-            tableToken = new TableToken(Chars.toString(toTableName), metadata.getTableToken().getDirName(), metadata.getTableToken().getTableId(), metadata.getTableToken().isWal());
+            tableToken = metadata.getTableToken().renamed(Chars.toString(toTableName));
             metadata.renameTable(tableToken);
         }
     }

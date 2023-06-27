@@ -466,7 +466,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        this(root, properties, env, log, buildInformation, FilesFacadeImpl.INSTANCE, (configuration, engine, functionFactoryCache) -> DefaultFactoryProvider.INSTANCE);
+        this(
+                root,
+                properties,
+                env,
+                log,
+                buildInformation,
+                FilesFacadeImpl.INSTANCE,
+                (configuration, engine, functionFactoryCache, freeOnExitList) -> DefaultFactoryProvider.INSTANCE);
     }
 
     public PropServerConfiguration(
@@ -1193,8 +1200,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public void init(CairoEngine engine, FunctionFactoryCache functionFactoryCache) {
-        this.factoryProvider = fpf.getInstance(this, engine, functionFactoryCache);
+    public void init(CairoEngine engine, FunctionFactoryCache functionFactoryCache, FreeOnExit freeOnExit) {
+        this.factoryProvider = fpf.getInstance(this, engine, functionFactoryCache, freeOnExit);
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int workerCount) throws ServerConfigurationException {
