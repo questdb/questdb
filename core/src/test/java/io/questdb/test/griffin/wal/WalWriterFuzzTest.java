@@ -48,7 +48,7 @@ import java.util.Collection;
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
 @RunWith(Parameterized.class)
-public class WalWriterFuzzTest extends AbstractWalWriterFuzzTest {
+public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     protected boolean allowMixedIO;
 
@@ -65,12 +65,12 @@ public class WalWriterFuzzTest extends AbstractWalWriterFuzzTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractWalWriterFuzzTest.setUpStatic();
+        AbstractFuzzTest.setUpStatic();
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        AbstractWalWriterFuzzTest.tearDownStatic();
+        AbstractFuzzTest.tearDownStatic();
     }
 
     @Before
