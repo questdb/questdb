@@ -187,6 +187,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int columnCount;
     private CommitListener commitListener;
     private long committedMasterRef;
+    private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
@@ -1231,6 +1232,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
+    }
+
+    public DedupColumnCommitAddresses getDedupCommitAddresses() {
+        return dedupColumnCommitAddresses;
     }
 
     @TestOnly
@@ -3115,6 +3120,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void configureColumnMemory() {
         symbolMapWriters.setPos(columnCount);
+        int dedupColCount = 0;
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i), i);
@@ -3135,6 +3141,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
             }
+            if (metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+                // Calculate non-timestamp dedup column count
+                dedupColCount++;
+            }
+        }
+        if (isDeduplicationEnabled()) {
+            if (dedupColumnCommitAddresses == null) {
+                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
+            }
+            dedupColumnCommitAddresses.setDedupColumnCount(dedupColCount);
         }
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
@@ -4134,7 +4150,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long srcDataMax,
             long srcNameTxn,
             O3Basket o3Basket,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            long dedupColSinkAddr
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -4159,7 +4176,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this,
                     columnCounter,
                     o3Basket,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    dedupColSinkAddr
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -4183,7 +4201,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this,
                     columnCounter,
                     o3Basket,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    dedupColSinkAddr
             );
         }
     }
@@ -5814,7 +5833,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
                             flattenTimestamp = false;
                         }
-
+                        final long dedupColSinkAddr = isDeduplicationEnabled() ? dedupColumnCommitAddresses.allocateBlock() : 0;
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -5829,7 +5848,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcDataMax,
                                 srcNameTxn,
                                 o3Basket,
-                                partitionUpdateSinkAddr
+                                partitionUpdateSinkAddr,
+                                dedupColSinkAddr
                         );
                     }
                 } catch (CairoException | CairoError e) {
@@ -7424,6 +7444,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (isSequential(metaMem, i)) {
             flags |= META_FLAG_BIT_SEQUENTIAL;
+        }
+
+        if (isColumnDedupKey(metaMem, i)) {
+            flags |= META_FLAG_BIT_DEDUP_KEY;
         }
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));

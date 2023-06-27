@@ -339,6 +339,66 @@ public class VectTest {
     }
 
     @Test
+    public void testMergeDedupIndexWithKey() {
+        try (DirectLongList src = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT);
+             DirectLongList srcDedupCol = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT)) {
+            try (DirectLongList index = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT);
+                 DirectLongList indexDedupCol = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT)) {
+                try (DirectLongList dest = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT)) {
+                    src.add(10);
+                    src.add(20);
+                    src.add(20);
+                    src.add(30);
+                    src.add(40);
+                    src.add(40);
+                    src.add(50);
+                    srcDedupCol.add(Numbers.encodeLowHighInts(1, 0));
+                    srcDedupCol.add(Numbers.encodeLowHighInts(0, 1));
+                    srcDedupCol.add(Numbers.encodeLowHighInts(0, 1));
+                    srcDedupCol.add(Numbers.encodeLowHighInts(0, 1));
+                    Assert.assertEquals("10:1, 20:0, 20:0, 30:1, 40:0, 40:1, 50:0", printTsWithDedupKey(src, srcDedupCol));
+
+                    index.add(10);
+                    index.add(0);
+                    index.add(20);
+                    index.add(0);
+                    index.add(30);
+                    index.add(0);
+                    index.add(40);
+                    index.add(0);
+                    indexDedupCol.add(Numbers.encodeLowHighInts(0, 0));
+                    indexDedupCol.add(Numbers.encodeLowHighInts(0, 0));
+                    Assert.assertEquals("10:0, 20:0, 30:0, 40:0", printTsIndexWithDedupKey(index, indexDedupCol));
+
+                    try (DirectLongList dedupValues = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
+                        dedupValues.add(srcDedupCol.getAddress());
+                        dedupValues.add(0);
+                        dedupValues.add(indexDedupCol.getAddress());
+                        dest.setPos(index.size() + src.size() * 2);
+
+                        long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                                src.getAddress(),
+                                0,
+                                src.size() - 1,
+                                index.getAddress(),
+                                0,
+                                index.size() / 2 - 1,
+                                dest.getAddress(),
+                                1,
+                                dedupValues.getAddress(),
+                                dedupValues.getAddress() + Long.BYTES,
+                                dedupValues.getAddress() + Long.BYTES * 2
+                        );
+                        dest.setPos(mergedCount * 2);
+                        Assert.assertEquals("10 0:s, 10 0:i, 20 1:i, 20 1:i, 30 3:s, 30 2:i, 40 3:i, 40 5:s, 50 6:s", printMergeIndex(dest));
+                    }
+                }
+            }
+        }
+    }
+
+
+    @Test
     public void testMergeFourSameSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int count = 1_000_000;
@@ -507,6 +567,12 @@ public class VectTest {
         } catch (IllegalArgumentException e) {
             TestUtils.assertContains(e.getMessage(), "Count of indexes to merge should at least be 2.");
         }
+    }
+
+    @Test
+    public void testQuickSort1M() {
+        rnd = TestUtils.generateRandom(null);
+        testQuickSort(1_000_000);
     }
 
     @Test
@@ -682,14 +748,15 @@ public class VectTest {
 
     @Test
     public void testSort1M() {
-        testSort(1_000_000);
+        rnd = TestUtils.generateRandom(null);
+        testSort(10_000_000);
     }
 
     @Test
-    public void testSortAB1M() {
+    public void testSortAB10M() {
         rnd = TestUtils.generateRandom(null);
-        int split = rnd.nextInt(1_000_000);
-        testSortAB(1_000_000 - split, split);
+        int split = rnd.nextInt(10_000_000);
+        testSortAB(10_000_000 - split, split);
     }
 
     @Test
@@ -764,6 +831,36 @@ public class VectTest {
         }
     }
 
+    private String printTsIndexWithDedupKey(DirectLongList tsIndex, DirectLongList key) {
+        StringSink sink = new StringSink();
+        for (int i = 0; i < tsIndex.size() / 2; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+
+            long tsVal = tsIndex.get(i * 2L);
+            long value = key.get(i / 2);
+            int keyVal = i % 2 == 1 ? Numbers.decodeHighInt(value) : Numbers.decodeLowInt(value);
+            sink.put(tsVal).put(':').put(keyVal);
+        }
+        return sink.toString();
+    }
+
+    private String printTsWithDedupKey(DirectLongList ts, DirectLongList key) {
+        StringSink sink = new StringSink();
+        for (int i = 0; i < ts.size(); i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+
+            long tsVal = ts.get(i);
+            long value = key.get(i / 2);
+            int keyVal = i % 2 == 1 ? Numbers.decodeHighInt(value) : Numbers.decodeLowInt(value);
+            sink.put(tsVal).put(':').put(keyVal);
+        }
+        return sink.toString();
+    }
+
     private long seedAndSort(int count) {
         final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         seedMem2Longs(count, indexAddr);
@@ -783,6 +880,18 @@ public class VectTest {
             final long z = rnd.nextPositiveLong();
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
+        }
+    }
+
+    private void testQuickSort(int count) {
+        final int size = count * 2 * Long.BYTES;
+        final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            seedMem2Longs(count, indexAddr);
+            Vect.quickSortLongIndexAscInPlace(indexAddr, count);
+            assertIndexAsc(count, indexAddr);
+        } finally {
+            Unsafe.free(indexAddr, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

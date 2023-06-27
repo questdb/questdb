@@ -103,6 +103,8 @@ public interface CairoConfiguration {
 
     CharSequence getConfRoot(); // same as root/../conf
 
+    LongSupplier getCopyIDSupplier();
+
     int getCopyPoolCapacity();
 
     int getCreateAsSelectRetryCount();
@@ -132,6 +134,8 @@ public interface CairoConfiguration {
     int getDoubleToStrCastScale();
 
     int getExplainPoolCapacity();
+
+    FactoryProvider getFactoryProvider();
 
     int getFileOperationRetryCount();
 
@@ -166,8 +170,6 @@ public interface CairoConfiguration {
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
-
-    int getO3LastPartitionMaxSplits();
 
     int getMaxSwapFileCount();
 
@@ -209,6 +211,8 @@ public interface CairoConfiguration {
         return 1.5;
     }
 
+    int getO3LastPartitionMaxSplits();
+
     /**
      * Default commit lag in microseconds for new tables. This value
      * can be overridden with 'create table' statement.
@@ -244,9 +248,9 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
-    int getPartitionPurgeListCapacity();
-
     long getPartitionO3SplitMinSize();
+
+    int getPartitionPurgeListCapacity();
 
     int getQueryCacheEventQueueCapacity();
 
@@ -458,6 +462,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMultiKeyDedupEnabled();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
@@ -494,8 +500,4 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
-
-    LongSupplier getCopyIDSupplier();
-
-    FactoryProvider getFactoryProvider();
 }

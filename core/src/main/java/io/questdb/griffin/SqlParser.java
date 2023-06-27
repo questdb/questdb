@@ -603,30 +603,35 @@ public class SqlParser {
             model.setDedupKeyFlag(model.getTimestampIndex());
             tok = optTok(lexer);
             if (tok != null && Chars.equals(tok, '(')) {
-                tok = optTok(lexer);
-                while (tok != null && !Chars.equals(tok, ')')) {
-                    final CharSequence columnName = tok;
-                    validateLiteral(lexer.lastTokenPosition(), tok);
-                    int colIndex = model.getColumnIndex(columnName);
-                    if (colIndex < 0) {
-                        throw SqlException.position(lexer.getPosition()).put("deduplicate column not found [column=").put(columnName).put(']');
-                    }
-                    int columnType = model.getColumnType(colIndex);
-                    if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
-                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
-                                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
-                    }
-                    model.setDedupKeyFlag(colIndex);
-                    tok = optTok(lexer);
-                    if (tok != null && Chars.equals(tok, ',')) {
-                        tok = optTok(lexer);
-                    }
-                }
 
-                if (!Chars.equals(tok, ')')) {
-                    throw SqlException.position(lexer.getPosition()).put("')' expected");
+                if (configuration.isMultiKeyDedupEnabled()) {
+                    tok = optTok(lexer);
+                    while (tok != null && !Chars.equals(tok, ')')) {
+                        final CharSequence columnName = tok;
+                        validateLiteral(lexer.lastTokenPosition(), tok);
+                        int colIndex = model.getColumnIndex(columnName);
+                        if (colIndex < 0) {
+                            throw SqlException.position(lexer.getPosition()).put("deduplicate column not found [column=").put(columnName).put(']');
+                        }
+                        int columnType = model.getColumnType(colIndex);
+                        if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
+                            throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                                    .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                        }
+                        model.setDedupKeyFlag(colIndex);
+                        tok = optTok(lexer);
+                        if (tok != null && Chars.equals(tok, ',')) {
+                            tok = optTok(lexer);
+                        }
+                    }
+
+                    if (!Chars.equals(tok, ')')) {
+                        throw SqlException.position(lexer.getPosition()).put("')' expected");
+                    }
+                    tok = optTok(lexer);
+                } else {
+                    throw SqlException.position(lexer.getPosition()).put("multi key deduplication is not supported");
                 }
-                tok = optTok(lexer);
             }
         }
 
