@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 public interface MetadataService {
@@ -100,6 +101,8 @@ public interface MetadataService {
     void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName);
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
+
+    void setDeduplicationStatus(boolean status, LongList columnsIndexes, int startIndex, long count);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

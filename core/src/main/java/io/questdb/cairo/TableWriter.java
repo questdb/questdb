@@ -2047,6 +2047,71 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.commitListener = commitListener;
     }
 
+    @Override
+    public void setDeduplicationStatus(boolean status, LongList columnsIndexes, int startIndex, long count) {
+        assert txWriter.getLagRowCount() == 0;
+        checkDistressed();
+
+        LOG.info().$(status ? "enabling row deduplication [table=" : "disabling row deduplication [table=")
+                .utf8(tableToken.getTableName())
+                .$(", rows").I$();
+
+        if (status) {
+            for (int i = startIndex; i < startIndex + count; i++) {
+                int dedupColIndex = (int) columnsIndexes.getQuick(i);
+                if (dedupColIndex < 0 || dedupColIndex >= metadata.getColumnCount()) {
+                    throw CairoException.nonCritical().put("Invalid column index to make a dedup key [table=")
+                            .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
+                }
+
+                int columnType = metadata.getColumnType(dedupColIndex);
+                if (!ColumnType.isSymbol(columnType)) {
+                    if (columnType < 0) {
+                        throw CairoException.nonCritical().put("Invalid column used as deduplicate key, column is dropped [table=")
+                                .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
+                    }
+
+                    throw CairoException.nonCritical().put("Unsupported column type used as deduplicate key [table=")
+                            .put(tableToken.getTableName())
+                            .put(", column=").put(metadata.getColumnName(dedupColIndex))
+                            .put(", columnType=").put(ColumnType.nameOf(columnType));
+                }
+            }
+        }
+
+        commit();
+        try {
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+
+            ddlMem.putInt(columnCount);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            copyVersionAndLagValues();
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                writeColumnEntry(i, false, status && columnsIndexes.indexOf(startIndex, i) >= 0);
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+            this.metaSwapIndex = index;
+        } finally {
+            ddlMem.close();
+        }
+
+        finishMetaSwapUpdate();
+        clearTodoLog();
+
+        for (int i = 0; i < columnCount; i++) {
+            metadata.getColumnMetadata(i).setDedupKeyFlag(status && columnsIndexes.indexOf(startIndex, i) >= 0);
+        }
+    }
+
     public void setExtensionListener(ExtensionListener listener) {
         txWriter.setExtensionListener(listener);
     }
@@ -2352,7 +2417,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
             }
 
             // add new column metadata to bottom of list
@@ -3183,7 +3248,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
-                    writeColumnEntry(i, false);
+                    writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
                 } else {
                     ddlMem.putInt(getColumnType(metaMem, i));
                     long flags = indexedFlag;
@@ -3219,7 +3284,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -6366,7 +6431,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, i == index);
+                writeColumnEntry(i, i == index, isColumnDedupKey(metaMem, i));
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -6547,7 +6612,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -7429,7 +7494,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void writeColumnEntry(int i, boolean markDeleted) {
+    private void writeColumnEntry(int i, boolean markDeleted, boolean columnDedupKey) {
         int columnType = getColumnType(metaMem, i);
         // When column is deleted it's written to metadata with negative type
         if (markDeleted) {
@@ -7446,7 +7511,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             flags |= META_FLAG_BIT_SEQUENTIAL;
         }
 
-        if (isColumnDedupKey(metaMem, i)) {
+        if (columnDedupKey) {
             flags |= META_FLAG_BIT_DEDUP_KEY;
         }
         ddlMem.putLong(flags);

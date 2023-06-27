@@ -30,13 +30,13 @@ import io.questdb.griffin.Plannable;
 import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata implements Plannable {
-    private final boolean isDedupKey;
     @Nullable
     private final RecordMetadata metadata;
     private final boolean symbolTableStatic;
     private final int writerIndex;
     private int indexValueBlockCapacity;
     private boolean indexed;
+    private boolean isDedupKey;
     private String name;
     private int type;
 
@@ -121,6 +121,10 @@ public class TableColumnMetadata implements Plannable {
 
     public void markDeleted() {
         type = -Math.abs(type);
+    }
+
+    public void setDedupKeyFlag(boolean dedupKeyFlag) {
+        isDedupKey = dedupKeyFlag;
     }
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {

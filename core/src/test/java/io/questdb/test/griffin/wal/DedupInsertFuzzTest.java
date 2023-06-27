@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
@@ -33,6 +35,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -201,6 +204,36 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         validateNoTimestampDuplicates(tableName, from, delta, count, null);
     }
 
+    @Test
+    public void testWalWriteFullRandom() throws Exception {
+        Rnd rnd = generateRandom(LOG, 198226909945333L, 1687870574777L);
+        setFuzzProbabilities(
+                0.5 * rnd.nextDouble(),
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.5 * rnd.nextDouble(),
+                rnd.nextDouble() / 100,
+                rnd.nextDouble() / 100,
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
+                0.0
+        );
+
+        setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(2_000_000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000),
+                5 + rnd.nextInt(10)
+        );
+
+        runFuzz(rnd);
+    }
+
     private void assertAllSymbolsSet(
             boolean[] foundSymbols,
             String[] symbols,
@@ -357,6 +390,52 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 throw fail;
             }
         }
+    }
+
+    protected void runFuzz(Rnd rnd) throws Exception {
+        configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
+
+        assertMemoryLeak(() -> {
+            String tableNameBase = getTestName();
+            String tableNameWal = tableNameBase + "_wal";
+            String tableNameNoWal = tableNameBase + "_nonwal";
+
+            createInitialTable(tableNameWal, true, initialRowCount);
+            createInitialTable(tableNameNoWal, false, initialRowCount);
+
+            ObjList<FuzzTransaction> transactions;
+            try (TableReader reader = newTableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+
+                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+                long end = start + partitionCount * Timestamps.DAY_MICROS;
+                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
+            }
+
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            sharedWorkerPool.start(LOG);
+
+            try {
+                applyNonWal(transactions, tableNameNoWal, rnd);
+
+                applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
+                // Apply same transactions again, should be deduped. Leave only last data transactions
+                int firstNonDataTransaction = transactions.size() - 1;
+                for (; firstNonDataTransaction > -1; firstNonDataTransaction--) {
+                    if (transactions.get(firstNonDataTransaction).operationList.size() == 1) {
+                        break;
+                    }
+                }
+                transactions.remove(0, firstNonDataTransaction);
+                applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
+
+                String limit = "";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+            } finally {
+                sharedWorkerPool.halt();
+            }
+        });
     }
 
 }

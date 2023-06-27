@@ -67,6 +67,9 @@ public interface SecurityContext {
     default void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
+    default void authorizeAlterTableSetDedup(TableToken tableToken) {
+    }
+
     default void authorizeAlterTableSetType(TableToken tableToken) {
     }
 

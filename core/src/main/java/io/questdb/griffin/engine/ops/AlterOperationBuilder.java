@@ -210,6 +210,16 @@ public class AlterOperationBuilder {
         extraStrInfo.add(newName);
     }
 
+    public AlterOperationBuilder ofSetDedup(int tableNamePosition, TableToken tableToken, boolean status) {
+        this.command = SET_DEDUP;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableToken.getTableId();
+        this.extraInfo.add(status ? 1 : -1);
+        this.extraInfo.add(0);
+        return this;
+    }
+
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableNamePosition = tableNamePosition;
@@ -234,5 +244,9 @@ public class AlterOperationBuilder {
         this.tableToken = tableToken;
         this.tableId = tableToken.getTableId();
         return this;
+    }
+
+    public void setDedupKeyFlag(int colIndex) {
+        extraInfo.add(colIndex);
     }
 }

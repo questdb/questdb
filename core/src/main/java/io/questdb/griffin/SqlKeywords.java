@@ -531,6 +531,21 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
+    public static boolean isDisableKeyword(CharSequence tok) {
+        if (tok.length() != 7) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'b'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isDistinctKeyword(CharSequence tok) {
         if (tok.length() != 8) {
             return false;
@@ -1001,6 +1016,18 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 'p';
+    }
+
+    public static boolean isKeysKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'k'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'y'
+                && (tok.charAt(i) | 32) == 's';
     }
 
     public static boolean isLastKeyword(CharSequence tok) {
@@ -1936,6 +1963,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isUpsertKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i) | 32) == 't';
+    }
+
     public static boolean isValuesKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -2061,6 +2102,20 @@ public class SqlKeywords {
 
     public static boolean validateExtractPart(CharSequence token) {
         return TIMESTAMP_PART_SET.contains(token);
+    }
+
+    public static void validateLiteral(int pos, CharSequence tok) throws SqlException {
+        switch (tok.charAt(0)) {
+            case '(':
+            case ')':
+            case ',':
+            case '`':
+            case '\'':
+            case ';':
+                throw SqlException.position(pos).put("literal expected");
+            default:
+                break;
+        }
     }
 
     private static boolean isGeoHashKeyword(CharSequence tok, int i) {

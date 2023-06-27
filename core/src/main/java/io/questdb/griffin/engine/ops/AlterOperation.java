@@ -53,6 +53,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short REMOVE_SYMBOL_CACHE = 7;
     public final static short RENAME_COLUMN = 9;
     public final static short RENAME_TABLE = 14;
+    public final static short SET_DEDUP = 15;
     public final static short SET_PARAM_COMMIT_LAG = 11;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
     public final static short SQUASH_PARTITIONS = 13;
@@ -142,6 +143,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SQUASH_PARTITIONS:
                     squashPartitions(svc);
+                    break;
+                case SET_DEDUP:
+                    applySetDedup(svc);
                     break;
                 default:
                     LOG.error()
@@ -457,6 +461,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyRenameTable(MetadataService svc) {
         svc.renameTable(activeExtraStrInfo.getStrA(0), activeExtraStrInfo.getStrB(1));
+    }
+
+    private void applySetDedup(MetadataService svc) {
+        boolean status = extraInfo.get(0) == 1;
+        long columnCount = extraInfo.get(1);
+        assert extraInfo.size() >= 2 + columnCount;
+        svc.setDeduplicationStatus(status, extraInfo, 2, columnCount);
     }
 
     private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {

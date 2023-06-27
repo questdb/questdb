@@ -28,6 +28,7 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 public interface MetadataServiceStub extends MetadataService {
@@ -75,6 +76,10 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean removePartition(long partitionTimestamp) {
         throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
+    }
+
+    @Override
+    default void setDeduplicationStatus(boolean status, LongList columnsIndexes, int startIndex, long count) {
     }
 
     @Override
