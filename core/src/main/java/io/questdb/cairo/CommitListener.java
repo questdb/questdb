@@ -28,7 +28,4 @@ import java.io.Closeable;
 
 public interface CommitListener extends Closeable {
     void onCommit(long txn, long rowsAdded);
-
-    default void close() {
-    }
 }
