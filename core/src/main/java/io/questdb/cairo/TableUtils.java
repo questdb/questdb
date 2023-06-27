@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
@@ -1279,6 +1280,7 @@ public final class TableUtils {
                 Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);
                 break;
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
                 break;
             case ColumnType.GEOINT:

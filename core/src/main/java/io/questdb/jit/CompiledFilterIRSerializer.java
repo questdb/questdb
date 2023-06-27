@@ -247,6 +247,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.CHAR:
                 return I2_TYPE;
             case ColumnType.INT:
+            case ColumnType.IPv4:
             case ColumnType.GEOINT:
             case ColumnType.STRING: // symbol variables are represented with string type
                 return I4_TYPE;
@@ -278,6 +279,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.CHAR:
                 return I2_TYPE;
             case ColumnType.INT:
+            case ColumnType.IPv4:
             case ColumnType.GEOINT:
             case ColumnType.SYMBOL:
                 return I4_TYPE;

@@ -1232,7 +1232,7 @@ public class SqlCompiler implements Closeable {
         if (cq == null) {
             cq = compileUsingModel(executionContext);
         }
-        final short type = cq.getType();
+         final short type = cq.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
             cq.withSqlStatement(Chars.toString(query));
         }

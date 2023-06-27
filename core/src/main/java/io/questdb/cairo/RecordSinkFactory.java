@@ -109,6 +109,7 @@ public class RecordSinkFactory {
             final int type = columnTypes.getColumnType(index);
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
+                case ColumnType.IPv4:
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
