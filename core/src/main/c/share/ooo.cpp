@@ -428,7 +428,7 @@ typedef struct {
 } java_index_entry_t;
 
 int64_t merge_dedup_long_index(
-        const int64_t *src,
+        const uint64_t *src,
         const int64_t src_lo,
         const int64_t src_hi_incl,
         const index_t *index,
@@ -438,68 +438,47 @@ int64_t merge_dedup_long_index(
 ) {
     int64_t src_pos = src_lo;
     int64_t index_pos = index_lo;
-    index_t *dest = dest_start - 1;
-
-    int64_t last_result = std::numeric_limits<int64_t>::min();
-    int64_t index_last = std::numeric_limits<int64_t>::min();
-    int64_t src_next, index_next;
+    index_t *dest = dest_start;
 
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
-        src_next = src[src_pos];
-        index_next = (int64_t) index[index_pos].ts;
-
-        if (src_next < index_next) {
-            if (src_next > index_last) {
-                dest++;
-                dest[0].ts = src_next;
-                dest[0].i = src_pos | (1ull << 63);
-                last_result = src_next;
-            } else if (src_next == index_last) {
-                dest++;
-                dest[0].ts = index_last;
-                dest[0].i = (index_pos - 1);
-                last_result = src_next;
-            }
+        if (src[src_pos] < index[index_pos].ts) {
+            dest[0].ts = src[src_pos];
+            dest[0].i = src_pos | (1ull << 63);
+            dest++;
             src_pos++;
-        } else {
-            if (index_next > last_result) {
-                last_result = index_next;
-                src_pos += src_next == index_next;
-                dest++;
-            }
-            dest[0].ts = index_next;
-            dest[0].i = index_pos;
-            index_last = index_next;
+        } else if (src[src_pos] > index[index_pos].ts) {
+            dest[0] = index[index_pos];
+            dest++;
             index_pos++;
+        } else {
+            // index_ts == src_ts
+            const uint64_t conflict_ts = src[src_pos];
+            while (index_pos <= index_hi_incl && index[index_pos].ts == conflict_ts) {
+                index_pos++;
+            }
+
+            // replace all records with same timestamp with last version from index
+            while (src[src_pos] == conflict_ts) {
+                dest[0] = index[index_pos - 1];
+                dest++;
+                src_pos++;
+            }
         }
     }
 
     while (index_pos <= index_hi_incl) {
-        index_next = (int64_t) index[index_pos].ts;
-        if (index_next > last_result) {
-            last_result = index_next;
-            dest++;
-        }
-        dest[0].ts = index_next;
-        dest[0].i = index_pos;
+        dest[0] = index[index_pos];
+        dest++;
         index_pos++;
     }
 
     while (src_pos <= src_hi_incl) {
-        src_next = src[src_pos];
-        if (src_next > index_last) {
-            dest++;
-            dest[0].ts = src_next;
-            dest[0].i = src_pos | (1ull << 63);
-        } else if (src_next == index_last) {
-            dest++;
-            dest[0].ts = index_last;
-            dest[0].i = index_pos;
-        }
+        dest[0].ts = src[src_pos];
+        dest[0].i = src_pos | (1ull << 63);
+        dest++;
         src_pos++;
     }
-
-    return dest - dest_start + 1;
+    return dest - dest_start;
 }
 
 int64_t merge_dedup_long_index_int_keys(
@@ -733,8 +712,6 @@ void binary_merge_ts_long_index(
         const int64_t index_count,
         index_t *dest
 ) {
-
-    // calculate size of the tree
     int64_t its = timestampLo, iidx = 0, r = 0;
     int64_t timestamps_hi = timestampLo + timestamps_count;
 
@@ -906,7 +883,8 @@ JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB,
                                                  jlong countB, jlong pDataOut, jlong pDataCpy) {
     radix_sort_ab_long_index_asc(reinterpret_cast<uint64_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB),
-                                 countB, reinterpret_cast<index_t *>(pDataOut), reinterpret_cast<index_t *>(pDataCpy));
+                                 countB, reinterpret_cast<index_t *>(pDataOut),
+                                 reinterpret_cast<index_t *>(pDataCpy));
 }
 
 JNIEXPORT void JNICALL
@@ -925,7 +903,8 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStructArray, jint cnt, jlong mergedIndex) {
+Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStructArray, jint cnt,
+                                                  jlong mergedIndex) {
     // prepare merge entries
     // they need to have mutable current position "pos" in index
 
@@ -984,7 +963,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
         jlong indexHiInclusive,
         jlong pDestIndex) {
     int64_t merge_count = merge_dedup_long_index(
-            reinterpret_cast<int64_t *> (pSrc),
+            reinterpret_cast<uint64_t *> (pSrc),
             __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
             __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive),
             reinterpret_cast<index_t *> (pIndex),

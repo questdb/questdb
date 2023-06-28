@@ -465,9 +465,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applySetDedup(MetadataService svc) {
         boolean status = extraInfo.get(0) == 1;
-        long columnCount = extraInfo.get(1);
-        assert extraInfo.size() >= 2 + columnCount;
-        svc.setDeduplicationStatus(status, extraInfo, 2, columnCount);
+        assert !status || extraInfo.size() > 1;
+        svc.setDeduplicationStatus(status, extraInfo, 1, extraInfo.size() - 1);
     }
 
     private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {

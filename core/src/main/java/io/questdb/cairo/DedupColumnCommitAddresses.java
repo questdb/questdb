@@ -24,12 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.MemoryTag;
-import io.questdb.std.PagedDirectLongList;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
-public class DedupColumnCommitAddresses {
+import java.io.Closeable;
+
+public class DedupColumnCommitAddresses implements Closeable {
     private static final long COL_DATA_ARRAY_INDEX = 0L;
     private static final long COL_DATA_SIZE_ARRAY_INDEX = COL_DATA_ARRAY_INDEX + 1L;
     private static final long COL_DATA_TOP_ARRAY_INDEX = COL_DATA_SIZE_ARRAY_INDEX + 1L;
@@ -48,6 +47,11 @@ public class DedupColumnCommitAddresses {
 
     public void clear(long dedupColSinkAddr) {
         Vect.memset(dedupColSinkAddr, 0, columnCount * Long.BYTES * LONG_PER_COL);
+    }
+
+    @Override
+    public void close() {
+        addresses = Misc.free(addresses);
     }
 
     public long getColDataAddresses(long dedupBlockAddress) {

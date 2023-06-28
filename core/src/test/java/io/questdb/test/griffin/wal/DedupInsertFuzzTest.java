@@ -32,6 +32,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -46,169 +47,175 @@ import java.util.stream.Collectors;
 
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
-    public void testDedupWithRandomShiftAndStep() throws SqlException {
-        String tableName = testName.getMethodName();
-        createEmptyTable(tableName);
+    public void testDedupWithRandomShiftAndStep() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createEmptyTable(tableName);
 
-        ObjList<FuzzTransaction> transactions = new ObjList<>();
-        Rnd rnd = generateRandom(LOG);
-        long initialDelta = Timestamps.MINUTE_MICROS * 15;
-        int initialCount = 4 * 24 * 5;
-        transactions.add(
-                generateInsertsTransactions(
-                        1,
-                        "2020-02-24T04:30",
-                        initialDelta,
-                        initialCount,
-                        1 + rnd.nextInt(1),
-                        null,
-                        rnd
-                )
-        );
-        applyWal(transactions, tableName, 1, rnd);
+            ObjList<FuzzTransaction> transactions = new ObjList<>();
+            Rnd rnd = generateRandom(LOG);
+            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+            int initialCount = 4 * 24 * 5;
+            transactions.add(
+                    generateInsertsTransactions(
+                            1,
+                            "2020-02-24T04:30",
+                            initialDelta,
+                            initialCount,
+                            1 + rnd.nextInt(1),
+                            null,
+                            rnd
+                    )
+            );
+            applyWal(transactions, tableName, 1, rnd);
 
-        transactions.clear();
+            transactions.clear();
 
-        double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
-        long delta = (long) (initialDelta * deltaMultiplier);
-        long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-        String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
-        int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
-        int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+            double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
+            long delta = (long) (initialDelta * deltaMultiplier);
+            long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
+            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
+            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
-        transactions.add(
-                generateInsertsTransactions(
-                        2,
-                        from,
-                        delta,
-                        count,
-                        rowsWithSameTimestamp,
-                        null,
-                        rnd
-                )
-        );
+            transactions.add(
+                    generateInsertsTransactions(
+                            2,
+                            from,
+                            delta,
+                            count,
+                            rowsWithSameTimestamp,
+                            null,
+                            rnd
+                    )
+            );
 
-        applyWal(transactions, tableName, 1, rnd);
-        validateNoTimestampDuplicates(tableName, from, delta, count, null);
+            applyWal(transactions, tableName, 1, rnd);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null);
+        });
     }
 
     @Test
-    public void testDedupWithRandomShiftAndStepAndSymbolKey() throws SqlException {
-        Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
+    public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
 
-        Assume.assumeFalse(true); // Multi key dedup is not ready to release yet
-        String tableName = testName.getMethodName();
-        compile(
-                "create table " + tableName +
-                        " (ts timestamp, commit int, s symbol) " +
-                        " , index(s) timestamp(ts) partition by DAY WAL "
-                        + " DEDUP(s)"
-                ,
-                sqlExecutionContext
-        );
+            Assume.assumeFalse(true); // Multi key dedup is not ready to release yet
+            String tableName = testName.getMethodName();
+            compile(
+                    "create table " + tableName +
+                            " (ts timestamp, commit int, s symbol) " +
+                            " , index(s) timestamp(ts) partition by DAY WAL "
+                            + " DEDUP(s)"
+                    ,
+                    sqlExecutionContext
+            );
 
-        ObjList<FuzzTransaction> transactions = new ObjList<>();
-        Rnd rnd = generateRandom(LOG);
-        long initialDelta = Timestamps.MINUTE_MICROS * 15;
-        int rndCount = rnd.nextInt(10);
-        List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, 4, tableName)).distinct()
-                .collect(Collectors.toList());
-        String[] symbols = new String[distinctSymbols.size()];
-        distinctSymbols.toArray(symbols);
-        String[] initialSymbols = symbols.length == 1
-                ? symbols
-                : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
-        transactions.add(
-                generateInsertsTransactions(
-                        1,
-                        "2020-02-24T04:30",
-                        initialDelta,
-                        4 * 24 * 5,
-                        1 + rnd.nextInt(1),
-                        initialSymbols,
-                        rnd
-                )
-        );
+            ObjList<FuzzTransaction> transactions = new ObjList<>();
+            Rnd rnd = generateRandom(LOG);
+            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+            int rndCount = rnd.nextInt(10);
+            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, 4, tableName)).distinct()
+                    .collect(Collectors.toList());
+            String[] symbols = new String[distinctSymbols.size()];
+            distinctSymbols.toArray(symbols);
+            String[] initialSymbols = symbols.length == 1
+                    ? symbols
+                    : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
+            transactions.add(
+                    generateInsertsTransactions(
+                            1,
+                            "2020-02-24T04:30",
+                            initialDelta,
+                            4 * 24 * 5,
+                            1 + rnd.nextInt(1),
+                            initialSymbols,
+                            rnd
+                    )
+            );
 
-        applyWal(transactions, tableName, 1, rnd);
+            applyWal(transactions, tableName, 1, rnd);
 
-        transactions.clear();
-        long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
-                rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
-        String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
-        long delta = Timestamps.MINUTE_MICROS;
-        int count = rnd.nextInt(48) * 60;
-        int rowsWithSameTimestamp = 1;// 1 + rnd.nextInt(2);
-        transactions.add(
-                generateInsertsTransactions(
-                        2,
-                        from,
-                        delta,
-                        count,
-                        rowsWithSameTimestamp,
-                        symbols,
-                        rnd
-                )
-        );
+            transactions.clear();
+            long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
+                    rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
+            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            long delta = Timestamps.MINUTE_MICROS;
+            int count = rnd.nextInt(48) * 60;
+            int rowsWithSameTimestamp = 1;// 1 + rnd.nextInt(2);
+            transactions.add(
+                    generateInsertsTransactions(
+                            2,
+                            from,
+                            delta,
+                            count,
+                            rowsWithSameTimestamp,
+                            symbols,
+                            rnd
+                    )
+            );
 
-        applyWal(transactions, tableName, 1, rnd);
-        validateNoTimestampDuplicates(tableName, from, delta, count, symbols);
+            applyWal(transactions, tableName, 1, rnd);
+            validateNoTimestampDuplicates(tableName, from, delta, count, symbols);
+        });
     }
 
     @Test
-    public void testDedupWithRandomShiftWithColumnTop() throws SqlException {
-        String tableName = testName.getMethodName();
-        createEmptyTable(tableName);
+    public void testDedupWithRandomShiftWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createEmptyTable(tableName);
 
-        ObjList<FuzzTransaction> transactions = new ObjList<>();
-        Rnd rnd = generateRandom(LOG);
-        long initialDelta = Timestamps.MINUTE_MICROS * 15;
-        int initialCount = 2 * 24 * 5;
-        transactions.add(
-                generateInsertsTransactions(
-                        1,
-                        "2020-02-24T04:30",
-                        initialDelta,
-                        initialCount,
-                        1 + rnd.nextInt(1),
-                        null,
-                        rnd
-                )
-        );
-        String[] symbols = generateSymbols(rnd, 20, 4, tableName);
-        applyWal(transactions, tableName, 1, rnd);
-        transactions.clear();
+            ObjList<FuzzTransaction> transactions = new ObjList<>();
+            Rnd rnd = generateRandom(LOG);
+            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+            int initialCount = 2 * 24 * 5;
+            transactions.add(
+                    generateInsertsTransactions(
+                            1,
+                            "2020-02-24T04:30",
+                            initialDelta,
+                            initialCount,
+                            1 + rnd.nextInt(1),
+                            null,
+                            rnd
+                    )
+            );
+            String[] symbols = generateSymbols(rnd, 20, 4, tableName);
+            applyWal(transactions, tableName, 1, rnd);
+            transactions.clear();
 
-        compile("alter table " + tableName + " add s symbol index", sqlExecutionContext);
+            compile("alter table " + tableName + " add s symbol index", sqlExecutionContext);
 
-        double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
-        long delta = (long) (initialDelta * deltaMultiplier);
-        long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-        String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
-        int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
-        int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+            double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
+            long delta = (long) (initialDelta * deltaMultiplier);
+            long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
+            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
+            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
-        transactions.add(
-                generateInsertsTransactions(
-                        2,
-                        from,
-                        delta,
-                        count,
-                        rowsWithSameTimestamp,
-                        symbols,
-                        rnd
-                )
-        );
+            transactions.add(
+                    generateInsertsTransactions(
+                            2,
+                            from,
+                            delta,
+                            count,
+                            rowsWithSameTimestamp,
+                            symbols,
+                            rnd
+                    )
+            );
 
-        applyWal(transactions, tableName, 1, rnd);
-        validateNoTimestampDuplicates(tableName, from, delta, count, null);
+            applyWal(transactions, tableName, 1, rnd);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null);
+        });
     }
 
     @Test
-    public void testWalWriteFullRandom() throws Exception {
-        Rnd rnd = generateRandom(LOG, 198226909945333L, 1687870574777L);
+    public void testWalWriteFullRandomDedupRepeat() throws Exception {
+        Rnd rnd = generateRandom(LOG, 249149246868791L, 1687975427577L);
         setFuzzProbabilities(
-                0.5 * rnd.nextDouble(),
+                0,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.5 * rnd.nextDouble(),
@@ -222,7 +229,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         setFuzzCounts(
                 rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
+                rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
@@ -231,7 +238,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        runFuzz(rnd);
+        runFuzzWithRepeatDedup(rnd);
     }
 
     private void assertAllSymbolsSet(
@@ -249,8 +256,53 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void createEmptyTable(String tableName) throws SqlException {
-        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL DEDUP"
+        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL DEDUP upsert keys(ts)"
                 , sqlExecutionContext);
+    }
+
+    private ObjList<FuzzTransaction> duplicateInserts(ObjList<FuzzTransaction> transactions, Rnd rnd) {
+        ObjList<FuzzTransaction> result = new ObjList<>();
+        FuzzTransaction prevInsertTrans = null;
+
+        for (int i = 0; i < transactions.size(); i++) {
+            FuzzTransaction transaction = transactions.getQuick(i);
+
+            if (!transaction.rollback && transaction.operationList.size() > 1) {
+                int size = transaction.operationList.size();
+                FuzzTransaction duplicateTrans = new FuzzTransaction();
+                for (int op = 0; op < size; op++) {
+                    int dupStep = Math.max(2, transaction.operationList.size() / (1 + rnd.nextInt(10)));
+                    FuzzTransactionOperation operation = transaction.operationList.getQuick(op);
+                    if (operation instanceof FuzzInsertOperation) {
+                        FuzzInsertOperation insertOperation = (FuzzInsertOperation) operation;
+                        if (op % dupStep == 1) {
+                            FuzzInsertOperation duplicate = new FuzzInsertOperation(
+                                    rnd.nextLong(),
+                                    rnd.nextLong(),
+                                    insertOperation.getTimestamp(),
+                                    rnd.nextDouble(),
+                                    rnd.nextDouble(),
+                                    rnd.nextDouble(),
+                                    insertOperation.getStrLen(),
+                                    insertOperation.getSymbols()
+                            );
+                            if (prevInsertTrans != null && rnd.nextBoolean()) {
+                                prevInsertTrans.operationList.add(duplicate);
+                            } else {
+                                duplicateTrans.operationList.add(duplicate);
+                            }
+                        }
+                    }
+                    duplicateTrans.operationList.add(operation);
+                }
+
+                result.add(duplicateTrans);
+                prevInsertTrans = duplicateTrans;
+            } else {
+                result.add(transaction);
+            }
+        }
+        return result;
     }
 
     private FuzzTransaction generateInsertsTransactions(
@@ -290,6 +342,46 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private void runFuzzWithRepeatDedup(Rnd rnd) throws Exception {
+        configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
+
+        assertMemoryLeak(() -> {
+            String tableNameBase = getTestName();
+            String tableNameWal = tableNameBase + "_wal";
+            String tableNameNoWal = tableNameBase + "_nonwal";
+
+            createInitialTable(tableNameWal, true, initialRowCount);
+            createInitialTable(tableNameNoWal, false, initialRowCount);
+
+            ObjList<FuzzTransaction> transactions;
+            try (TableReader reader = getReader(tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+
+                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+                long end = start + partitionCount * Timestamps.DAY_MICROS;
+                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
+            }
+
+            transactions = uniqueInserts(transactions);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            sharedWorkerPool.start(LOG);
+
+            try {
+                applyNonWal(transactions, tableNameNoWal, rnd);
+
+                ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
+                compile("alter table " + tableNameWal + " dedup upsert keys(ts)", sqlExecutionContext);
+                applyWal(transactionsWithDups, tableNameWal, 1 + rnd.nextInt(4), rnd);
+
+                String limit = "";// limit 5190, 5205";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+            } finally {
+                sharedWorkerPool.halt();
+            }
+        });
+    }
+
     private void shuffle(ObjList<FuzzTransactionOperation> operationList, Rnd rnd) {
         for (int i = operationList.size(); i > 1; i--) {
             swap(operationList, i - 1, rnd.nextInt(i));
@@ -300,6 +392,32 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         FuzzTransactionOperation tmp = operationList.getQuick(i);
         operationList.setQuick(i, operationList.getQuick(j));
         operationList.setQuick(j, tmp);
+    }
+
+    private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions) {
+        ObjList<FuzzTransaction> result = new ObjList<>();
+        LongHashSet uniqueTimestamps = new LongHashSet();
+
+        for (int i = 0; i < transactions.size(); i++) {
+            FuzzTransaction transaction = transactions.getQuick(i);
+            if (!transaction.rollback) {
+                FuzzTransaction unique = new FuzzTransaction();
+                for (int j = 0; j < transaction.operationList.size(); j++) {
+                    FuzzTransactionOperation operation = transaction.operationList.getQuick(j);
+                    if (operation instanceof FuzzInsertOperation) {
+                        if (uniqueTimestamps.add(((FuzzInsertOperation) operation).getTimestamp())) {
+                            unique.operationList.add(operation);
+                        }
+                    } else {
+                        unique.operationList.add(operation);
+                    }
+                }
+                result.add(unique);
+            } else {
+                result.add(transaction);
+            }
+        }
+        return result;
     }
 
     private void validateNoTimestampDuplicates(String tableName, String from, long delta, long commit2Count, String[] symbols) {
@@ -390,52 +508,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 throw fail;
             }
         }
-    }
-
-    protected void runFuzz(Rnd rnd) throws Exception {
-        configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
-
-        assertMemoryLeak(() -> {
-            String tableNameBase = getTestName();
-            String tableNameWal = tableNameBase + "_wal";
-            String tableNameNoWal = tableNameBase + "_nonwal";
-
-            createInitialTable(tableNameWal, true, initialRowCount);
-            createInitialTable(tableNameNoWal, false, initialRowCount);
-
-            ObjList<FuzzTransaction> transactions;
-            try (TableReader reader = newTableReader(configuration, tableNameWal)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-
-                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
-                long end = start + partitionCount * Timestamps.DAY_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
-            }
-
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
-            sharedWorkerPool.start(LOG);
-
-            try {
-                applyNonWal(transactions, tableNameNoWal, rnd);
-
-                applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
-                // Apply same transactions again, should be deduped. Leave only last data transactions
-                int firstNonDataTransaction = transactions.size() - 1;
-                for (; firstNonDataTransaction > -1; firstNonDataTransaction--) {
-                    if (transactions.get(firstNonDataTransaction).operationList.size() == 1) {
-                        break;
-                    }
-                }
-                transactions.remove(0, firstNonDataTransaction);
-                applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
-
-                String limit = "";
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
-            } finally {
-                sharedWorkerPool.halt();
-            }
-        });
     }
 
 }

@@ -165,6 +165,35 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(1));
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
+
+            compile("ALTER table " + tableName + " dedup disable");
+            compile("ALTER table " + tableName + " drop column x");
+            compile("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)");
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertTrue(writer.isDeduplicationEnabled());
+                Assert.assertTrue(writer.getMetadata().isDedupKey(0));
+                Assert.assertFalse(writer.getMetadata().isDedupKey(1));
+                Assert.assertTrue(writer.getMetadata().isDedupKey(2));
+            }
+
+            compile("ALTER table " + tableName + " dedup disable");
+            compile("ALTER table " + tableName + " drop column s");
+            try {
+                compile("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "deduplicate column not found [column=s]");
+            }
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertFalse(writer.isDeduplicationEnabled());
+                Assert.assertFalse(writer.getMetadata().isDedupKey(0));
+                Assert.assertFalse(writer.getMetadata().isDedupKey(1));
+                Assert.assertFalse(writer.getMetadata().isDedupKey(2));
+            }
         });
     }
 

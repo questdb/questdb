@@ -216,7 +216,6 @@ public class AlterOperationBuilder {
         this.tableToken = tableToken;
         this.tableId = tableToken.getTableId();
         this.extraInfo.add(status ? 1 : -1);
-        this.extraInfo.add(0);
         return this;
     }
 
@@ -246,7 +245,7 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public void setDedupKeyFlag(int colIndex) {
-        extraInfo.add(colIndex);
+    public void setDedupKeyFlag(int writerColumnIndex) {
+        extraInfo.add(writerColumnIndex);
     }
 }

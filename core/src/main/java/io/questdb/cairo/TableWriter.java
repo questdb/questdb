@@ -1656,7 +1656,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Columns = o3MemColumns;
                     copiedToMemory = true;
                 } else {
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
                     if (needsDedup) {
                         LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
                         // timestampAddr can be same o3TimestampMem but can be mmaped from file.
@@ -1666,6 +1665,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES), totalUncommitted, o3TimestampMem.getAddress());
 
                         if (deduplicatedRows != totalUncommitted) {
+                            o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
                             timestampAddr = o3TimestampMem.getAddress();
                             o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
                             o3MergeIntoLag(timestampAddr, deduplicatedRows, 0, rowLo, rowHi, timestampIndex);
@@ -1677,10 +1677,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3Columns = o3MemColumns;
                             copiedToMemory = true;
                         } else {
+                            o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
                             timestampAddr = walTimestampColumn.addressOf(0);
                             copiedToMemory = false;
                         }
                     } else {
+                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
                         timestampAddr = walTimestampColumn.addressOf(0);
                         copiedToMemory = false;
                     }
@@ -2060,18 +2062,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (int i = startIndex; i < startIndex + count; i++) {
                 int dedupColIndex = (int) columnsIndexes.getQuick(i);
                 if (dedupColIndex < 0 || dedupColIndex >= metadata.getColumnCount()) {
-                    throw CairoException.nonCritical().put("Invalid column index to make a dedup key [table=")
+                    throw CairoException.critical(0).put("Invalid column index to make a dedup key [table=")
                             .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
                 }
 
                 int columnType = metadata.getColumnType(dedupColIndex);
-                if (!ColumnType.isSymbol(columnType)) {
+                if (dedupColIndex != metadata.getTimestampIndex() && !ColumnType.isSymbol(columnType)) {
                     if (columnType < 0) {
-                        throw CairoException.nonCritical().put("Invalid column used as deduplicate key, column is dropped [table=")
+                        throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
                                 .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
                     }
 
-                    throw CairoException.nonCritical().put("Unsupported column type used as deduplicate key [table=")
+                    throw CairoException.critical(0).put("Unsupported column type used as deduplicate key [table=")
                             .put(tableToken.getTableName())
                             .put(", column=").put(metadata.getColumnName(dedupColIndex))
                             .put(", columnType=").put(ColumnType.nameOf(columnType));
@@ -3435,6 +3437,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
+        Misc.free(dedupColumnCommitAddresses);
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;
@@ -5898,7 +5901,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
                             flattenTimestamp = false;
                         }
-                        final long dedupColSinkAddr = isDeduplicationEnabled() ? dedupColumnCommitAddresses.allocateBlock() : 0;
+                        final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,

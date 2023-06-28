@@ -218,4 +218,16 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
         }
         return false;
     }
+
+    public int getStrLen() {
+        return strLen;
+    }
+
+    public String[] getSymbols() {
+        return symbols;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
+    }
 }

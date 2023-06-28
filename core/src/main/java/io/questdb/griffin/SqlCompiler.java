@@ -1115,7 +1115,7 @@ public class SqlCompiler implements Closeable {
                                     .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                         }
                     }
-                    setDedup.setDedupKeyFlag(colIndex);
+                    setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
                     dedupColumns++;
 
                     tok = SqlUtil.fetchNext(lexer);

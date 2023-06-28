@@ -128,8 +128,6 @@ public final class Vect {
 
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
-    public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
-
     public static native double maxDouble(long pDouble, long count);
 
     public static native int maxInt(long pInt, long count);

@@ -709,7 +709,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Path tableRootPath,
             long tempIndexAddr
     ) {
-        if (dedupCommitAddresses.getColumnCount() == 0) {
+        if (dedupCommitAddresses == null || dedupCommitAddresses.getColumnCount() == 0) {
             return Vect.mergeDedupTimestampWithLongIndexAsc(
                     srcTimestampAddr,
                     mergeDataLo,
