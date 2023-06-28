@@ -919,6 +919,14 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static int parseIPv4(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+
+        return parseIPv4_0(sequence, sequence.length());
+    }
+
     public static long parseLong(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -2225,6 +2233,37 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
+    }
+
+    private static int parseIPv4_0(CharSequence sequence, int lim) throws NumericException {
+        int hi;
+        int lo = 0;
+        int num;
+        int ipv4 = 0;
+        int count = 0;
+
+        if(lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        final char sign = sequence.charAt(0);
+
+        if(notDigit(sign)){
+            throw NumericException.INSTANCE;
+        }
+
+        while((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+            num = parseInt(sequence, lo, hi);
+            ipv4 = (ipv4 << 8) | num;
+            count++;
+            lo = hi + 1;
+        }
+
+        if(count != 3) {
+            throw NumericException.INSTANCE;
+        }
+
+        return (ipv4 << 8) | parseInt(sequence, lo, sequence.length());
     }
 
     private static long parseLong0(CharSequence sequence, final int p, int lim) throws NumericException {

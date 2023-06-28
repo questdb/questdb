@@ -263,6 +263,23 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         Numbers.appendUuid(lo, hi, socket);
     }
 
+    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col){
+        final int i = rec.getInt(col);
+        if (i == Integer.MIN_VALUE) {
+            socket.put("null");
+        } else {
+            socket.put('"');
+            Numbers.append(socket, i & 0xff);
+            socket.put('.');
+            Numbers.append(socket, (i >> 8) & 0xff);
+            socket.put('.');
+            Numbers.append(socket, (i >> 16) & 0xff);
+            socket.put('.');
+            Numbers.append(socket, (i >> 24) & 0xff);
+            socket.put('"');
+        }
+    }
+
     private static void readyForNextRequest(HttpConnectionContext context) {
         LOG.info().$("all sent [fd=").$(context.getFd())
                 .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
@@ -602,6 +619,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
+            case ColumnType.IPv4:
+                putIPv4Value(socket, rec, col);
+                break;
             default:
                 assert false;
         }

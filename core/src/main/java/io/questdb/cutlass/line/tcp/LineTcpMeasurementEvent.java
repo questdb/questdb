@@ -420,7 +420,17 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
-
+                        case ColumnType.IPv4: {
+                            final long entityValue = entity.getLongValue();
+                            if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
+                                offset = buffer.addInt(offset, (int) entityValue);
+                            } else if (entityValue == Numbers.LONG_NaN) {
+                                offset = buffer.addInt(offset, Numbers.INT_NaN);
+                            } else {
+                                throw boundsError(entityValue, nEntity, ColumnType.IPv4);
+                            }
+                            break;
+                        }
                         default:
                             throw castError("integer", columnWriterIndex, colType, entity.getName());
                     }
@@ -534,6 +544,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.INT:
+                        case ColumnType.IPv4:
                             offset = buffer.addInt(offset, entityValue);
                             break;
 

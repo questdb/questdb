@@ -140,6 +140,8 @@ public class TypeManager implements Mutable {
                 if (adapter != null) {
                     return adapter;
                 }
+            case ColumnType.IPv4:
+                return IPv4Adapter.INSTANCE;
             default:
                 throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
@@ -173,5 +175,6 @@ public class TypeManager implements Mutable {
         probes.add(getTypeAdapter(ColumnType.BOOLEAN));
         probes.add(getTypeAdapter(ColumnType.LONG256));
         probes.add(getTypeAdapter(ColumnType.UUID));
+        probes.add(getTypeAdapter(ColumnType.IPv4));
     }
 }

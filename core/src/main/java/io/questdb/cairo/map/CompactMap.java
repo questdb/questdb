@@ -275,6 +275,7 @@ public class CompactMap implements Map, Reopenable {
                 case ColumnType.FLOAT:
                 case ColumnType.INT:
                 case ColumnType.GEOINT:
+                case ColumnType.IPv4:
                     sz = 4;
                     break;
                 case ColumnType.SHORT:

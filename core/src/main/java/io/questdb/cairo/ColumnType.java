@@ -71,15 +71,16 @@ public final class ColumnType {    //@formatter:off
     // inside the MAX type value.
     public static final short GEOHASH = RECORD + 1;     // = 23;
     public static final short LONG128 = GEOHASH + 1;    // = 24; // Limited support, few tests only
+    public static final short IPv4 = LONG128 + 1;
     // PG specific types to work with 3rd party software with canned catalogue queries
-    public static final short REGCLASS = LONG128 + 1;   // = 25;
+    public static final short REGCLASS = IPv4 + 1;   // = 25;
     public static final short REGPROCEDURE = REGCLASS + 1;      // = 26;
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 27;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 28;
     public static final short NULL = PARAMETER + 1;             // = 29;
-    public static final short IPv4 = NULL + 1;
+    //public static final short IPv4 = NULL + 1;
     // Overload matrix algo depends on the fact that MAX == NULL
-    public static final short MAX = IPv4;
+    public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
@@ -202,7 +203,7 @@ public final class ColumnType {    //@formatter:off
         return columnType == NULL;
     }
 
-    public static boolean isIPv4(int columnType) { return columnType == IPv4; }
+    //public static boolean isIPv4(int columnType) { return columnType == IPv4; }
 
     public static boolean isString(int columnType) {
         return columnType == STRING;

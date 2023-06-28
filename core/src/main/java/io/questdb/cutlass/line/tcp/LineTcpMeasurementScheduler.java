@@ -486,6 +486,18 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 r.putSym(columnIndex, ent.getValue());
                                 break;
 
+                            case ColumnType.IPv4: {
+                                final long entityValue = ent.getLongValue();
+                                if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
+                                    r.putInt(columnIndex, (int) entityValue);
+                                } else if (entityValue == Numbers.LONG_NaN) {
+                                    r.putInt(columnIndex, Numbers.INT_NaN);
+                                } else {
+                                    throw boundsError(entityValue, i, ColumnType.IPv4);
+                                }
+                                break;
+                            }
+
                             default:
                                 throw castError("integer", i, colType, ent.getName());
                         }
@@ -585,6 +597,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 break;
 
                             case ColumnType.INT:
+                            case ColumnType.IPv4:
                                 r.putInt(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
 
