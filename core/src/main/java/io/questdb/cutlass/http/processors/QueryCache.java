@@ -116,8 +116,8 @@ public final class QueryCache implements Closeable {
     }
 
     public static class FactoryAndPermissions extends AbstractSelfReturningObject<FactoryAndPermissions> implements Closeable {
+        long accessListVersion;
         CharSequence entityName;
-        long entityVersion;
         RecordCursorFactory factory;
 
         public FactoryAndPermissions(WeakSelfReturningObjectPool<FactoryAndPermissions> parentPool) {
@@ -126,7 +126,7 @@ public final class QueryCache implements Closeable {
 
         @Override
         public void close() {
-            entityVersion = -1;
+            accessListVersion = -1;
             entityName = null;
             factory = Misc.free(factory);
             super.close();
@@ -138,14 +138,13 @@ public final class QueryCache implements Closeable {
 
         public void of(CharSequence entityName, long entityVersion, RecordCursorFactory factory) {
             this.entityName = entityName;
-            this.entityVersion = entityVersion;
+            this.accessListVersion = entityVersion;
             this.factory = factory;
         }
 
         public void of(CharSequence entityName, long entityVersion) {
             this.entityName = entityName;
-            this.entityVersion = entityVersion;
+            this.accessListVersion = entityVersion;
         }
     }
-
 }

@@ -136,7 +136,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
             if (state.factoryAndPermissions != null) {
                 SecurityContext securityContext = context.getSecurityContext();
-                if (!securityContext.matches(state.factoryAndPermissions.entityName, state.factoryAndPermissions.entityVersion)) {
+                if (!securityContext.matches(state.factoryAndPermissions.entityName, state.factoryAndPermissions.accessListVersion)) {
                     securityContext.authorizeFactory(state.factoryAndPermissions.factory);
                     state.factoryAndPermissions.of(securityContext.getEntityName(), securityContext.getVersion());
                 }
