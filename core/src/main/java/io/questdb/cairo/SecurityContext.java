@@ -129,7 +129,7 @@ public interface SecurityContext {
     }
 
     default long getVersion() {
-        return 0;
+        return 0L;
     }
 
     /**
