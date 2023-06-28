@@ -57,7 +57,7 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
-    protected DataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
+    protected AbstractLatestByValueRecordCursor createDataFrameCursorFor(int symbolKey) {
         if (filter == null) {
             return new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
         }

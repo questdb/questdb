@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -32,15 +33,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
-
-    protected final int columnIndex;
-    protected final int symbolKey;
+class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
     private final Function filter;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private boolean hasNext;
-    private boolean isFindPending;
-    private boolean isRecordFound;
 
     public LatestByValueIndexedFilteredRecordCursor(
             int columnIndex,
@@ -48,9 +43,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
             @NotNull Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(columnIndexes);
-        this.columnIndex = columnIndex;
-        this.symbolKey = symbolKey;
+        super(columnIndexes, columnIndex, symbolKey);
         this.filter = filter;
     }
 
@@ -77,6 +70,11 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
         filter.init(this, executionContext);
         isRecordFound = false;
         isFindPending = false;
+    }
+
+    @Override
+    public void setSymbolKey(int symbolKey) {
+        super.setSymbolKey(TableUtils.toIndexKey(symbolKey));
     }
 
     @Override
