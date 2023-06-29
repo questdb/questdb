@@ -40,7 +40,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     protected final IntList columnIndexes;
     protected final Function filter;
     private final Function symbolFunc;
-    private DataFrameRecordCursor cursor;
+    private AbstractLatestByValueRecordCursor cursor;
 
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -66,13 +66,18 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
 
     private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
         final CharSequence symbol = symbolFunc.getStr(null);
-        int symbolKey = dataFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+        int newSymbolKey = dataFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
+        if (newSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
             dataFrameCursor.close();
             return true;
         }
 
-        cursor = createDataFrameCursorFor(symbolKey);
+        if (cursor != null) {
+            cursor.setSymbolKey(newSymbolKey);
+        } else {
+            cursor = createDataFrameCursorFor(newSymbolKey);
+        }
+
         return false;
     }
 
@@ -84,14 +89,14 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         }
     }
 
-    protected abstract DataFrameRecordCursor createDataFrameCursorFor(int symbolKey);
+    protected abstract AbstractLatestByValueRecordCursor createDataFrameCursorFor(int symbolKey);
 
     @Override
     protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (cursor == null && lookupDeferredSymbol(dataFrameCursor)) {
+        if (lookupDeferredSymbol(dataFrameCursor)) {
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }
