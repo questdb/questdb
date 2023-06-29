@@ -366,7 +366,7 @@ inline void swap(T *a, T *b) {
  *
  **/
 template<typename T>
-uint64_t partition(T *index, uint64_t low, uint64_t high) {
+inline uint64_t partition(T *index, uint64_t low, uint64_t high) {
     const auto pivot = index[high];    // pivot
     auto i = (low - 1);  // Index of smaller element
 
@@ -996,7 +996,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
             __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
             __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive),
             reinterpret_cast<index_t *> (pDestIndex),
-            reinterpret_cast<const int32_t> (dedupKeyCount),
+            dedupKeyCount,
             reinterpret_cast<const int32_t **> (dedupColBuffs),
             reinterpret_cast<const int64_t *> (dedupColTops),
             reinterpret_cast<const int32_t **> (dedupO3Buffs)
