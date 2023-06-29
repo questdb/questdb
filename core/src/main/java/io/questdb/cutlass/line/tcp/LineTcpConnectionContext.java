@@ -366,7 +366,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {
-                    logParseError();
+                    if (!ex.isAuthorizationError()) {
+                        logParseError();
+                    }
                     return IOContextResult.NEEDS_DISCONNECT;
                 }
                 goodMeasurement = false;

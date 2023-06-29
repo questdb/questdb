@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
-import io.questdb.cutlass.auth.PublicKeyRepo;
+import io.questdb.cutlass.auth.ChallengeResponseMatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
@@ -37,43 +37,29 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
-import java.security.*;
-import java.util.Base64;
+import java.security.SecureRandom;
 
 public class EllipticCurveAuthenticator implements Authenticator {
     private static final int CHALLENGE_LEN = 512;
     private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
     private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
-    private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
-        try {
-            return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
-        } catch (NoSuchAlgorithmException ex) {
-            throw new Error(ex);
-        }
-    });
-    private static final ThreadLocal<Signature> tlSigP1363 = new ThreadLocal<>(() -> {
-        try {
-            return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_P1363);
-        } catch (NoSuchAlgorithmException ex) {
-            throw new Error(ex);
-        }
-    });
+
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
+    private final ChallengeResponseMatcher challengeResponseMatcher;
     private final NetworkFacade nf;
-    private final PublicKeyRepo publicKeyRepo;
+    private final DirectByteCharSequence signatureFlyweight = new DirectByteCharSequence();
     private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
     protected long recvBufPseudoStart;
     private AuthState authState;
     private int fd;
     private String principal;
-    private PublicKey pubKey;
     private long recvBufEnd;
     private long recvBufPos;
     private long recvBufStart;
 
-    public EllipticCurveAuthenticator(NetworkFacade networkFacade, PublicKeyRepo publicKeyRepo) {
-        this.publicKeyRepo = publicKeyRepo;
+    public EllipticCurveAuthenticator(NetworkFacade networkFacade, ChallengeResponseMatcher challengeResponseMatcher) {
+        this.challengeResponseMatcher = challengeResponseMatcher;
         this.nf = networkFacade;
     }
 
@@ -120,7 +106,6 @@ public class EllipticCurveAuthenticator implements Authenticator {
         }
         this.fd = fd;
         authState = AuthState.WAITING_FOR_KEY_ID;
-        pubKey = null;
         this.recvBufStart = recvBuffer;
         this.recvBufPos = recvBuffer;
         this.recvBufEnd = recvBufferLimit;
@@ -129,16 +114,6 @@ public class EllipticCurveAuthenticator implements Authenticator {
     @Override
     public boolean isAuthenticated() {
         return authState == AuthState.COMPLETE;
-    }
-
-    private static boolean checkAllZeros(byte[] signatureRaw) {
-        int n = signatureRaw.length;
-        for (int i = 0; i < n; i++) {
-            if (signatureRaw[i] != 0) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private int findLineEnd() throws AuthenticatorException {
@@ -182,7 +157,6 @@ public class EllipticCurveAuthenticator implements Authenticator {
             userNameFlyweight.of(recvBufStart, recvBufStart + lineEnd);
             principal = Chars.toString(userNameFlyweight);
             LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(userNameFlyweight).$(']').$();
-            pubKey = publicKeyRepo.getPublicKey(userNameFlyweight);
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;
@@ -228,36 +202,13 @@ public class EllipticCurveAuthenticator implements Authenticator {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
             // Verify signature
-            if (null == pubKey) {
-                LOG.info().$('[').$(fd).$("] authentication failed, unknown key id").$();
+            if (lineEnd > AuthUtils.MAX_SIGNATURE_LENGTH_BASE64) {
+                LOG.info().$('[').$(fd).$("] authentication signature is too long").$();
                 throw AuthenticatorException.INSTANCE;
             }
-
-            byte[] signature = new byte[lineEnd];
-            for (int n = 0; n < lineEnd; n++) {
-                signature[n] = Unsafe.getUnsafe().getByte(recvBufStart + n);
-            }
-
+            signatureFlyweight.of(recvBufStart, recvBufStart + lineEnd);
             authState = AuthState.FAILED;
-
-            byte[] signatureRaw = Base64.getDecoder().decode(signature);
-            Signature sig = signatureRaw.length == 64 ? tlSigP1363.get() : tlSigDER.get();
-            boolean verified;
-            try {
-                // On some out of date JDKs zeros can be valid signature because of a bug in the JDK code
-                // Check that it's not the case.
-                if (checkAllZeros(signatureRaw)) {
-                    LOG.info().$('[').$(fd).$("] invalid signature, can be cyber attack!").$();
-                    throw AuthenticatorException.INSTANCE;
-                }
-                sig.initVerify(pubKey);
-                sig.update(challengeBytes);
-                verified = sig.verify(signatureRaw);
-            } catch (InvalidKeyException | SignatureException ex) {
-                LOG.info().$('[').$(fd).$("] authentication exception ").$(ex).$();
-                throw AuthenticatorException.INSTANCE;
-            }
-
+            boolean verified = challengeResponseMatcher.verifyLineToken(principal, challengeBytes, signatureFlyweight);
             if (!verified) {
                 LOG.info().$('[').$(fd).$("] authentication failed, signature was not verified").$();
                 throw AuthenticatorException.INSTANCE;
