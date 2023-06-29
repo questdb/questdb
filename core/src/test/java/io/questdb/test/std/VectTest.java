@@ -120,9 +120,9 @@ public class VectTest {
     public void testDedupSorted() {
         int indexLen = 10;
         try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
-            index.setPos(indexLen * 2);
             for (int i = 0; i < indexLen * 2; i += 2) {
-                index.set(i, (i / 4 + 1) * 10L);
+                index.add((i / 4 + 1) * 10L);
+                index.add(0);
             }
             index.add(55);
             index.add(0);
