@@ -1933,7 +1933,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model);
             }
 
-
             try (TableWriter writer = newTableWriter(configuration, "weather", metrics)) {
                 TableWriter.Row r;
                 r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-31"));

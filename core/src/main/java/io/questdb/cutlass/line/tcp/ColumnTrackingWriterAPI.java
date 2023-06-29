@@ -42,7 +42,7 @@ import org.jetbrains.annotations.NotNull;
  * Wraps given {@link TableWriterAPI} and tracks columns written via {@link TableWriter.Row}
  * since the last commit/rollback for the purpose of further permission tracking.
  */
-class ColumnTrackingWriterAPI implements TableWriterAPI {
+public class ColumnTrackingWriterAPI implements TableWriterAPI {
     private final TableWriterAPI delegate;
     private final Row row = new Row();
     private final ObjList<CharSequence> writtenColumnNames = new ObjList<>();
