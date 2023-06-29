@@ -935,21 +935,17 @@ Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStruc
     k_way_merge_long_index(entries, size, size - count, merged_index);
 }
 
-JNIEXPORT jlong JNICALL
+JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
-        JAVA_STATIC, jlong pTs, jlong tsIndexLo, jlong tsCount, jlong pIndex, long jIndexCount) {
-    index_entry_t entries[2];
-    uint64_t merged_index_size = tsCount + jIndexCount;
-    auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
+        JAVA_STATIC, jlong pTs, jlong tsIndexLo, jlong tsCount, jlong pIndex, jlong jIndexCount, jlong pIndexDest) {
     binary_merge_ts_long_index(
             reinterpret_cast<int64_t *>(pTs),
             (int64_t) tsIndexLo,
             (int64_t) tsCount,
             reinterpret_cast<index_t *>(pIndex),
             (int64_t) jIndexCount,
-            merged_index
+            reinterpret_cast<index_t *>(pIndexDest)
     );
-    return reinterpret_cast<jlong>(merged_index);
 }
 
 JNIEXPORT jlong JNICALL
@@ -1032,11 +1028,6 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexRebase(
             reinterpret_cast<index_t *> (pIndexOut)
     );
     return merge_count;
-}
-
-JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_freeMergedIndex(JNIEnv *env, jclass cl, jlong pIndex) {
-    free(reinterpret_cast<void *>(pIndex));
 }
 
 DECLARE_DISPATCHER(re_shuffle_int32) ;

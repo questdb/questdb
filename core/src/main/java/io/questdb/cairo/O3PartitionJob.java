@@ -682,15 +682,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
         // have to go back and find data rows we need to move accordingly
-        long ptr = Vect.mergeTwoLongIndexesAsc(
+        long timestampIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+        Vect.mergeTwoLongIndexesAsc(
                 srcDataTimestampAddr,
                 mergeDataLo,
                 mergeDataHi - mergeDataLo + 1,
                 sortedTimestampsAddr + mergeOOOLo * 16,
-                mergeOOOHi - mergeOOOLo + 1
+                mergeOOOHi - mergeOOOLo + 1,
+                timestampIndexAddr
         );
-        Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
-        return ptr;
+        return timestampIndexAddr;
     }
 
     private static long getDedupRows(

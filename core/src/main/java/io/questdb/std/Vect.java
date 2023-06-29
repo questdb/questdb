@@ -88,11 +88,6 @@ public final class Vect {
 
     public static native void flattenIndex(long pIndex, long count);
 
-    public static void freeMergedIndex(long pIndex, long indexSize) {
-        freeMergedIndex(pIndex);
-        Unsafe.recordMemAlloc(-indexSize, MemoryTag.NATIVE_O3);
-    }
-
     public static native long getPerformanceCounter(int index);
 
     public static native int getPerformanceCountersCount();
@@ -202,7 +197,7 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count);
+    public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);
 
     public static native double minDouble(long pDouble, long count);
 
@@ -296,8 +291,6 @@ public final class Vect {
     public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
-
-    private static native void freeMergedIndex(long pIndex);
 
     private static native int memcmp(long src, long dst, long len);
 

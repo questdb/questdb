@@ -312,12 +312,15 @@ public class VectTest {
                     Assert.assertEquals(srcLen + indexLen, mergedCount);
                     dest.setPos(mergedCount * 2);
 
-                    long ptr = Vect.mergeTwoLongIndexesAsc(
+                    int timestampIndexSize = (srcLen + indexLen) * Long.BYTES * 2;
+                    long ptr = Unsafe.malloc(timestampIndexSize, MemoryTag.NATIVE_O3);
+                    Vect.mergeTwoLongIndexesAsc(
                             src.getAddress(),
                             0,
                             srcLen,
                             index.getAddress(),
-                            indexLen
+                            indexLen,
+                            ptr
                     );
 
                     try {
@@ -325,10 +328,10 @@ public class VectTest {
                         assertEqualLongs(
                                 ptr,
                                 dest.getAddress(),
-                                2 * srcLen + indexLen
+                                timestampIndexSize / Long.BYTES
                         );
                     } finally {
-                        Unsafe.getUnsafe().freeMemory(ptr);
+                        Unsafe.free(ptr, timestampIndexSize, MemoryTag.NATIVE_O3);
                     }
                 }
             }
