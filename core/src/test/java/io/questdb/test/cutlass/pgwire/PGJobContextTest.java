@@ -2343,6 +2343,14 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDisconnectDuringAuth() throws Exception {
+        skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
+        for (int i = 0; i < 3; i++) {
+            testDisconnectDuringAuth0(i, 10);
+        }
+    }
+
+    @Test
     public void testDotNetHex() throws Exception {
         // DotNet code sends the following:
         //   SELECT version()
@@ -4384,6 +4392,48 @@ nodejs code:
                     Assert.assertEquals(24963.57352782434, sum, 0.00000001);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testLatestByDeferredValueFactoriesWithBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (connection, binary) -> {
+
+            try (PreparedStatement pstmt = connection.prepareStatement("CREATE TABLE IF NOT EXISTS tab (" +
+                    "ts timestamp, " +
+                    "sym symbol, " +
+                    "isym symbol," +
+                    "h string," +
+                    "type char," +
+                    "stat char" +
+                    "), index(isym) timestamp(ts) partition by MONTH")) {
+                pstmt.executeUpdate();
+            }
+
+            try (PreparedStatement pstmt = connection.prepareStatement("insert into tab values (0, 'S1', 'S1', 'h1', 'X', 'Y' )," +
+                    " (1, 'S2', 'S2', 'h2', 'X', 'Y' ), (3, null, null, 'h3', 'X', 'Y' )")) {
+                pstmt.executeUpdate();
+            }
+
+            mayDrainWalQueue();
+
+            testExecuteWithDifferentBindVariables(connection,
+                    "select h, isym from " +// LatestByValueFilteredRecordCursor
+                            "(select h, stat, isym from tab " +
+                            "where sym = ? and type = 'X' latest on ts partition by sym " +
+                            ") where stat='Y'");
+
+            testExecuteWithDifferentBindVariables(connection,
+                    "select h, isym from " + // LatestByValueRecordCursor 
+                            "(select h, stat, isym from tab " +
+                            "where sym = ? latest on ts partition by sym " +
+                            ") where stat='Y'");
+
+            testExecuteWithDifferentBindVariables(connection,
+                    "select h, isym from " + // LatestByValueIndexedFilteredRecordCursor 
+                            "(select h, stat, isym from tab " +
+                            "where isym = ? and type = 'X' latest on ts partition by isym" +
+                            ") where stat='Y'");
         });
     }
 
@@ -7535,53 +7585,6 @@ create table tab as (
     }
 
     @Test
-    public void testDisconnectDuringAuth() throws Exception {
-        skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
-        for (int i = 0; i < 3; i++) {
-            testDisconnectDuringAuth0(i, 10);
-        }
-    }
-
-    private void testDisconnectDuringAuth0(int allowedSendCount, int clientCount) throws Exception {
-        DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
-        assertMemoryLeak(() -> {
-            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
-                @Override
-                public NetworkFacade getNetworkFacade() {
-                    return nf;
-                }
-
-
-                @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public NetworkFacade getNetworkFacade() {
-                            return nf;
-                        }
-                    };
-                }
-            };
-            try (
-                    final PGWireServer server = createPGServer(configuration);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                for (int i = 0; i < clientCount; i++) {
-                    try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
-                        fail("Connection should not be established when server disconnects during authentication");
-                    } catch (PSQLException ignored) {
-
-                    }
-                    Assert.assertEquals(0, nf.getAfterDisconnectInteractions());
-                    TestUtils.assertEventually(() -> Assert.assertTrue(nf.isSocketClosed()));
-                    nf.reset();
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSlowClient2() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -8312,10 +8315,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8353,6 +8352,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8389,10 +8392,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
@@ -8442,6 +8441,10 @@ create table tab as (
                         "9,2.6,2020-06-01 00:00:06.0\n" +
                         "9,3.0,2020-06-01 00:00:12.0\n");
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
@@ -9817,6 +9820,74 @@ create table tab as (
         });
     }
 
+    private void testDisconnectDuringAuth0(int allowedSendCount, int clientCount) throws Exception {
+        DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
+        assertMemoryLeak(() -> {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+                @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public NetworkFacade getNetworkFacade() {
+                            return nf;
+                        }
+                    };
+                }
+
+                @Override
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
+                }
+            };
+            try (
+                    final PGWireServer server = createPGServer(configuration);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                for (int i = 0; i < clientCount; i++) {
+                    try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
+                        fail("Connection should not be established when server disconnects during authentication");
+                    } catch (PSQLException ignored) {
+
+                    }
+                    Assert.assertEquals(0, nf.getAfterDisconnectInteractions());
+                    TestUtils.assertEventually(() -> Assert.assertTrue(nf.isSocketClosed()));
+                    nf.reset();
+                }
+            }
+        });
+    }
+
+    private void testExecuteWithDifferentBindVariables(Connection connection, String query) throws SQLException, IOException {
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setString(1, "S1");
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n" +
+                        "h1,S1\n", sink, rs);
+            }
+
+            stmt.setString(1, "S2");
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n" +
+                        "h2,S2\n", sink, rs);
+            }
+
+            stmt.setString(1, null);
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n" + "h3,null\n", sink, rs);
+            }
+
+            stmt.setString(1, "S0");
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n", sink, rs);
+            }
+        }
+    }
+
     private void testFetchDisconnnectReleasesReader(String query) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -10561,60 +10632,6 @@ create table tab as (
         void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
     }
 
-    private static class DisconnectOnSendNetworkFacade extends NetworkFacadeImpl {
-        private final int initialAllowedSendCalls;
-        // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
-        // we also *read* it from a test thread -> volatile is needed
-        private volatile int remainingAllowedSendCalls;
-        private volatile boolean socketClosed = false;
-
-        private DisconnectOnSendNetworkFacade(int allowedSendCount) {
-            this.remainingAllowedSendCalls = allowedSendCount;
-            this.initialAllowedSendCalls = allowedSendCount;
-        }
-
-
-        @Override
-        public int send(int fd, long buffer, int bufferLen) {
-            remainingAllowedSendCalls--;
-            if (remainingAllowedSendCalls < 0) {
-                return -1;
-            }
-            return super.send(fd, buffer, bufferLen);
-        }
-
-        @Override
-        public int recv(int fd, long buffer, int bufferLen) {
-            if (remainingAllowedSendCalls < 0) {
-                remainingAllowedSendCalls--;
-                return -1;
-            }
-            return super.recv(fd, buffer, bufferLen);
-        }
-
-        @Override
-        public int close(int fd) {
-            socketClosed = true;
-            return super.close(fd);
-        }
-
-        boolean isSocketClosed() {
-            return socketClosed;
-        }
-
-        int getAfterDisconnectInteractions() {
-            if (remainingAllowedSendCalls >= 0) {
-                return 0;
-            }
-            return -(remainingAllowedSendCalls + 1);
-        }
-
-        void reset() {
-            remainingAllowedSendCalls = initialAllowedSendCalls;
-            socketClosed = false;
-        }
-    }
-
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
         private final AtomicInteger delayedAttemptsCounter = new AtomicInteger(0);
         private final AtomicBoolean delaying = new AtomicBoolean(false);
@@ -10634,6 +10651,59 @@ create table tab as (
         void startDelaying() {
             delayedAttemptsCounter.set(1000);
             delaying.set(true);
+        }
+    }
+
+    private static class DisconnectOnSendNetworkFacade extends NetworkFacadeImpl {
+        private final int initialAllowedSendCalls;
+        // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
+        // we also *read* it from a test thread -> volatile is needed
+        private volatile int remainingAllowedSendCalls;
+        private volatile boolean socketClosed = false;
+
+        private DisconnectOnSendNetworkFacade(int allowedSendCount) {
+            this.remainingAllowedSendCalls = allowedSendCount;
+            this.initialAllowedSendCalls = allowedSendCount;
+        }
+
+        @Override
+        public int close(int fd) {
+            socketClosed = true;
+            return super.close(fd);
+        }
+
+        @Override
+        public int recv(int fd, long buffer, int bufferLen) {
+            if (remainingAllowedSendCalls < 0) {
+                remainingAllowedSendCalls--;
+                return -1;
+            }
+            return super.recv(fd, buffer, bufferLen);
+        }
+
+        @Override
+        public int send(int fd, long buffer, int bufferLen) {
+            remainingAllowedSendCalls--;
+            if (remainingAllowedSendCalls < 0) {
+                return -1;
+            }
+            return super.send(fd, buffer, bufferLen);
+        }
+
+        int getAfterDisconnectInteractions() {
+            if (remainingAllowedSendCalls >= 0) {
+                return 0;
+            }
+            return -(remainingAllowedSendCalls + 1);
+        }
+
+        boolean isSocketClosed() {
+            return socketClosed;
+        }
+
+        void reset() {
+            remainingAllowedSendCalls = initialAllowedSendCalls;
+            socketClosed = false;
         }
     }
 }
