@@ -24,10 +24,29 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractGriffinTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByRewriteTest extends AbstractGriffinTest {
+
+    @Test
+    public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                compile("CREATE TABLE telemetry (created timestamp)");
+
+                assertQuery("sum\tsum1\tsum2\tsum3\n" +
+                                "3\t7\t23\t27\n",
+                        "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);", null, false, false, true);
+            });
+            throw new RuntimeException("query above should have thrown");
+        } catch (SqlException e) {
+            String expected = "[49] unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,BOOLEAN,INT constant)";
+            Assert.assertEquals(expected, e.getMessage());
+        }
+    }
 
     @Test
     public void testRewriteAggregateOnJoin1() throws Exception {
