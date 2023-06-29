@@ -702,6 +702,8 @@ void k_way_merge_long_index(
     }
 }
 
+DECLARE_DISPATCHER(make_timestamp_index);
+
 void binary_merge_ts_long_index(
         const int64_t *timestamps,
         const int64_t timestampLo,
@@ -1232,7 +1234,6 @@ Java_io_questdb_std_Vect_binarySearchIndexT(JNIEnv *env, jclass cl, jlong pData,
     return binary_search<index_t>(reinterpret_cast<index_t *>(pData), value, low, high, scan_dir);
 }
 
-DECLARE_DISPATCHER(make_timestamp_index) ;
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData, jlong low,
                                             jlong high, jlong pIndex) {
