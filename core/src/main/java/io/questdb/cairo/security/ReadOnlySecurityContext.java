@@ -267,7 +267,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public long getVersion() {
-        return 0;
+        return 0L;
     }
 
     @Override

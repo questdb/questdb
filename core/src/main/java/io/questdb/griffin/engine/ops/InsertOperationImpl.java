@@ -38,10 +38,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 
 public class InsertOperationImpl implements InsertOperation {
 
-    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<>();
+    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<>() {
+        @Override
+        public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
+            throw new UnsupportedOperationException();
+        }
+    };
     private final InsertOperationFuture doneFuture = new InsertOperationFuture();
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
@@ -99,15 +105,10 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     public void setColumnNames(ObjList<CharSequence> columnNameList) {
-        if (columnNames == null) {
-            if (columnNameList.size() == 0) {
-                columnNames = EMPTY_COLUMN_LIST;
-            } else {
-                columnNames = new ObjList<>(columnNameList);
-            }
+        if (columnNameList.size() == 0) {
+            columnNames = EMPTY_COLUMN_LIST;
         } else {
-            columnNames.clear();
-            columnNames.addAll(columnNameList);
+            columnNames = new ObjList<>(columnNameList);
         }
     }
 
