@@ -39,8 +39,6 @@ public class EllipticCurveLineAuthenticatorFactory implements LineAuthenticatorF
 
     @Override
     public Authenticator getLineTCPAuthenticator() {
-        return new EllipticCurveAuthenticator(
-                networkFacade,
-                publicKeyRepo);
+        return new EllipticCurveAuthenticator(networkFacade, publicKeyRepo);
     }
 }

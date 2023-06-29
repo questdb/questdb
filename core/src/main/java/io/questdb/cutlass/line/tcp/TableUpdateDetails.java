@@ -54,6 +54,7 @@ public class TableUpdateDetails implements Closeable {
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
+    private final SecurityContext securityContext;
     private final ByteCharSequence tableNameUtf8;
     private final TableToken tableToken;
     private final int timestampIndex;
@@ -66,13 +67,14 @@ public class TableUpdateDetails implements Closeable {
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
-    private TableWriterAPI writerAPI;
+    private ColumnTrackingWriterAPI writerAPI;
     private volatile boolean writerInError;
     private int writerThreadId;
 
     public TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
+            SecurityContext securityContext,
             TableWriterAPI writer,
             int writerThreadId,
             NetworkIOJob[] netIoJobs,
@@ -81,12 +83,13 @@ public class TableUpdateDetails implements Closeable {
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
+        this.securityContext = securityContext;
         this.defaultColumnTypes = defaultColumnTypes;
         final CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
-        this.writerAPI = writer;
+        this.writerAPI = new ColumnTrackingWriterAPI(writer);
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
         this.tableToken = writer.getTableToken();
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
@@ -135,8 +138,9 @@ public class TableUpdateDetails implements Closeable {
         if (writerThreadId != Integer.MIN_VALUE) {
             LOG.info().$("closing table writer [tableName=").$(tableToken).$(']').$();
             closeLocals();
-            if (null != writerAPI) {
+            if (writerAPI != null) {
                 try {
+                    securityContext.authorizeInsert(tableToken, writerAPI.getWrittenColumnNames());
                     writerAPI.commit();
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
@@ -157,7 +161,12 @@ public class TableUpdateDetails implements Closeable {
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
-                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
+                LOG.debug()
+                        .$("time-based commit ").$(withLag ? "with lag " : "")
+                        .$("[rows=").$(writerAPI.getUncommittedRowCount())
+                        .$(", table=").$(tableToken)
+                        .I$();
+                securityContext.authorizeInsert(tableToken, writerAPI.getWrittenColumnNames());
                 if (withLag) {
                     writerAPI.ic();
                 } else {
@@ -331,10 +340,11 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
+                    securityContext.authorizeInsert(tableToken, writerAPI.getWrittenColumnNames());
                     writerAPI.commit();
                 }
             } catch (Throwable ex) {
-                LOG.error().$("writer commit fails, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
+                LOG.error().$("writer commit failed, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
             } finally {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
@@ -538,8 +548,8 @@ public class TableUpdateDetails implements Closeable {
             if (txReader != null) {
                 txReader.clear();
             }
-            this.clean = true;
-            this.latestKnownMetadata = Misc.free(latestKnownMetadata);
+            clean = true;
+            latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
         void clearColumnTypes() {
