@@ -170,7 +170,7 @@ public final class AuthUtils {
     }
 
     private static boolean checkAllZeros(ByteBuffer signatureRaw) {
-        int n = signatureRaw.remaining();
+        int n = signatureRaw.limit();
         for (int i = signatureRaw.position(); i < n; i++) {
             if (signatureRaw.get(i) != 0) {
                 return false;
