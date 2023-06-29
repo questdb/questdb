@@ -298,7 +298,7 @@ radix_sort_ab_long_index_asc(const uint64_t *arrayA, const uint64_t sizeA, const
         counts.c3[t3]++;
         counts.c2[t2]++;
         counts.c1[t1]++;
-        MM_PREFETCH_T2(arrayA + x + 64);
+        MM_PREFETCH_T2(arrayB + x + 64);
     }
 
     // convert counts to offsets
