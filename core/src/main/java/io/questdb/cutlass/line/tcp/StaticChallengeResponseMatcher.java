@@ -39,7 +39,7 @@ import java.security.SignatureException;
 public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher {
     private static final Log LOG = LogFactory.getLog(StaticChallengeResponseMatcher.class);
     private final CharSequenceObjHashMap<PublicKey> publicKeyByKeyId;
-    private final ByteBuffer signatureBuffer = ByteBuffer.allocate(72);
+    private final ByteBuffer signatureBuffer = ByteBuffer.allocate(AuthUtils.MAX_SIGNATURE_LENGTH);
 
     public StaticChallengeResponseMatcher(CharSequenceObjHashMap<PublicKey> authDb) {
         this.publicKeyByKeyId = authDb;
@@ -48,6 +48,10 @@ public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher 
     @Override
     public boolean verifyLineToken(CharSequence username, byte[] challenge, CharSequence signature) {
         PublicKey publicKey = getPublicKey(username);
+        if (publicKey == null) {
+            LOG.info().$("authentication failed, unknown key [id=").$(username).$(']').$();
+            return false;
+        }
         signatureBuffer.clear();
         Chars.base64Decode(signature, signatureBuffer);
         signatureBuffer.flip();

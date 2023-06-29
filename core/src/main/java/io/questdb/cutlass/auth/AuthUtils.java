@@ -48,8 +48,7 @@ public final class AuthUtils {
     // 1. sigP1363 format is 64 bytes
     // 2. sigDER format is 72 bytes
     public static final int MAX_SIGNATURE_LENGTH = 72;
-    // (72 bytes / 3) * 4 = 96
-    public static final int MAX_SIGNATURE_LENGTH_BASE64 = 96;
+    public static final int MAX_SIGNATURE_LENGTH_BASE64 = (MAX_SIGNATURE_LENGTH / 3) * 4; // 96
     public static final String SIGNATURE_TYPE_DER = "SHA256withECDSA";
     public static final String SIGNATURE_TYPE_P1363 = "SHA256withECDSAinP1363Format";
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
@@ -172,7 +171,7 @@ public final class AuthUtils {
 
     private static boolean checkAllZeros(ByteBuffer signatureRaw) {
         int n = signatureRaw.remaining();
-        for (int i = 0; i < n; i++) {
+        for (int i = signatureRaw.position(); i < n; i++) {
             if (signatureRaw.get(i) != 0) {
                 return false;
             }
