@@ -56,8 +56,7 @@ public interface SecurityContext {
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableSetDedup(TableToken tableToken) {
-    }
+    void authorizeAlterTableSetDedup(TableToken tableToken);
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
