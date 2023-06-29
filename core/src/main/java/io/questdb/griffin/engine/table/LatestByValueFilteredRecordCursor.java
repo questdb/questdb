@@ -27,22 +27,15 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
 
-    private final int columnIndex;
     private final Function filter;
-    private final int symbolKey;
-    private SqlExecutionCircuitBreaker circuitBreaker;
-    private boolean hasNext;
-    private boolean isFindPending;
-    private boolean isRecordFound;
 
     public LatestByValueFilteredRecordCursor(
             int columnIndex,
@@ -50,9 +43,7 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
             @NotNull Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(columnIndexes);
-        this.columnIndex = columnIndex;
-        this.symbolKey = symbolKey;
+        super(columnIndexes, columnIndex, symbolKey);
         this.filter = filter;
     }
 
