@@ -702,8 +702,6 @@ void k_way_merge_long_index(
     }
 }
 
-DECLARE_DISPATCHER(make_timestamp_index);
-
 void binary_merge_ts_long_index(
         const int64_t *timestamps,
         const int64_t timestampLo,
