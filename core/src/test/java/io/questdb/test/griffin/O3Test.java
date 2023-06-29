@@ -1228,17 +1228,13 @@ public class O3Test extends AbstractO3Test {
         if (o3InsertSQL != null) {
             compiler.compile(o3InsertSQL, sqlExecutionContext);
         }
-        sink2.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, referenceSQL, sink2);
-
         testXAndIndex(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                sink2,
+                referenceSQL,
                 assertSQL
         );
-        sink2.clear();
 
         TestUtils.assertEquals(
                 compiler,
@@ -4845,13 +4841,11 @@ public class O3Test extends AbstractO3Test {
 
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "y order by ts, commit", sink2);
-
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        testXAndIndex(engine, compiler, sqlExecutionContext, sink2, "x");
+        testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
         assertMaxTimestamp(
                 engine,
@@ -5817,9 +5811,6 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        TestUtils.printSql(compiler, sqlExecutionContext, "y order by ts, commit", sink2);
-
         // The query above generates expected result, but there is a problem using it
         // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
         // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
@@ -5836,7 +5827,7 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                sink2,
+                "y order by ts, commit",
                 "x"
         );
 
@@ -5934,7 +5925,6 @@ public class O3Test extends AbstractO3Test {
         );
 
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
-        TestUtils.printSql(compiler, sqlExecutionContext, "y order by ts, commit", sink2);
 
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
@@ -5943,7 +5933,7 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                sink2,
+                "y order by ts, commit",
                 "x"
         );
 
@@ -5954,7 +5944,7 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                sink2,
+                "y order by ts, commit",
                 "x"
         );
 
@@ -6049,9 +6039,6 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        TestUtils.printSql(compiler, sqlExecutionContext, "y order by ts", sink2);
-
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
@@ -6059,7 +6046,7 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                sink2,
+                "y order by ts",
                 "x"
         );
 
@@ -6355,14 +6342,11 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        TestUtils.printSql(compiler, sqlExecutionContext, "y order by ts, commit", sink2);
-
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        testXAndIndex(engine, compiler, sqlExecutionContext, sink2, "x");
+        testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
         assertMaxTimestamp(
                 engine,
@@ -6465,16 +6449,11 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts, commit");
-
-        String expected = Chars.toString(sink);
-
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        testXAndIndex(engine, compiler, sqlExecutionContext, expected, "x");
+        testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
         assertMaxTimestamp(
                 engine,
@@ -7762,15 +7741,13 @@ public class O3Test extends AbstractO3Test {
         }
     }
 
-    private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, String assertSql) throws SqlException {
-        printSqlResult(compiler, sqlExecutionContext, assertSql);
-        TestUtils.assertEquals(expected, sink);
+    private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expectedSql, String assertSql) throws SqlException {
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedSql, assertSql, LOG, true);
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         // test that after reader is re-opened we can still see the same data
         engine.releaseAllReaders();
-        printSqlResult(compiler, sqlExecutionContext, assertSql);
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedSql, assertSql, LOG, true);
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
     }
 
