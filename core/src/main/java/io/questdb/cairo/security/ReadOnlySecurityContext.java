@@ -27,11 +27,17 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+ import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 public class ReadOnlySecurityContext implements SecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
+
+    @Override
+    public void assumeRole(CharSequence roleName) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
 
     @Override
     public void authorizeAddPassword() {
@@ -164,8 +170,8 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
-        throw CairoException.authorization().put("Grant permission denied").setCacheable(true);
+    public void authorizeGrant(LongList permissions, CharSequence tableName, ObjList<CharSequence> columns) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
@@ -181,6 +187,10 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public void authorizeRemoveUser() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -225,6 +235,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizeUnassignRole() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void exitRole(CharSequence roleName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 }
