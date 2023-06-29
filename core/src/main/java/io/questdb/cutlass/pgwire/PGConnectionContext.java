@@ -587,7 +587,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
     }
 
-    private static boolean isRevalidationRequired(SqlExecutionContext context, AbstractTypeContainer<? extends AbstractTypeContainer<?>> statement) {
+    private static boolean isReauthorizationRequired(SqlExecutionContext context, AbstractTypeContainer<? extends AbstractTypeContainer<?>> statement) {
         return !context.getSecurityContext().matches(statement.entityName, statement.version);
     }
 
@@ -1178,7 +1178,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // poll this cache because it is shared and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
-                if (isRevalidationRequired(sqlExecutionContext, typesAndInsert)) {
+                if (isReauthorizationRequired(sqlExecutionContext, typesAndInsert)) {
                     authorizeColumnAccess(sqlExecutionContext.getSecurityContext(), typesAndInsert.getInsert());
                     typesAndInsert.of(sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
                 }
@@ -1190,7 +1190,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
-                if (isRevalidationRequired(sqlExecutionContext, typesAndUpdate)) {
+                if (isReauthorizationRequired(sqlExecutionContext, typesAndUpdate)) {
                     authorizeColumnAccess(sqlExecutionContext.getSecurityContext(), typesAndUpdate.getCompiledQuery().getUpdateOperation());
                     typesAndUpdate.of(sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
                 }
@@ -1203,7 +1203,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                if (isRevalidationRequired(sqlExecutionContext, typesAndSelect)) {
+                if (isReauthorizationRequired(sqlExecutionContext, typesAndSelect)) {
                     authorizeColumnAccess(sqlExecutionContext.getSecurityContext(), typesAndSelect.getFactory());
                     typesAndSelect.of(sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
                 }
@@ -1584,7 +1584,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw BadProtocolException.INSTANCE;
         }
         CharSequence principal = authenticator.getPrincipal();
-        SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+        SecurityContext securityContext = securityContextFactory.getInstance(principal.toString(), SecurityContextFactory.PGWIRE);
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker);
         sendRNQ = true;
 

@@ -29,12 +29,19 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 public class ReadOnlySecurityContext implements SecurityContext {
-    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
+    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(Constants.USER_NAME);
+
+    private final CharSequence principal;
+
+    public ReadOnlySecurityContext(CharSequence principal) {
+        this.principal = principal;
+    }
 
     @Override
     public void assumeRole(CharSequence roleName) {
@@ -251,5 +258,20 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public void exitRole(CharSequence roleName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public CharSequence getEntityName() {
+        return principal;
+    }
+
+    @Override
+    public long getVersion() {
+        return 0;
+    }
+
+    @Override
+    public boolean matches(CharSequence entityName, long version) {
+        return true;
     }
 }

@@ -124,20 +124,14 @@ public interface SecurityContext {
 
     void exitRole(CharSequence roleName);
 
-    default CharSequence getEntityName() {
-        return null;
-    }
+    CharSequence getEntityName();
 
-    default long getVersion() {
-        return 0L;
-    }
+    long getVersion();
 
     /**
      * @param entityName - name of the user or role
      * @param version    - security context version number
      * @return true if this context belongs to entityName and has given version, false otherwise .
      */
-    default boolean matches(CharSequence entityName, long version) {
-        return true;
-    }
+    boolean matches(CharSequence entityName, long version);
 }

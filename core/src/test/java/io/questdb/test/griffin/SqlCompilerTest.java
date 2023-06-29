@@ -2983,6 +2983,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGetCurrentUser() throws SqlException {
+        assertQuery("current_user\n" +
+                "admin\n", "select current_user()", null, true, true);
+    }
+
+    @Test
     public void testInsertAsSelect() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -4645,23 +4651,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
-        assertFailure("select 1 from tab where (\"\")",
-                "create table tab (i int)",
-                25, "Invalid column");
-
-        assertFailure("select 1 from tab where (\"a\")",
-                null,
-                25, "Invalid column");
-
-        assertFailure("select 1 from tab where ('')", null,
-                25, "boolean expression expected");
-
-        assertFailure("select 1 from tab where ('a')", null,
-                25, "boolean expression expected");
-    }
-
-    @Test
     public void testSelectLongInListContainingNull() throws Exception {
         assertQuery("c\n1\nNaN\n",
                 "select * from x where c in (1,null, 1::byte, 1::short, 1::int, 1::long)",
@@ -4769,6 +4758,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table x as (select 1::timestamp c union all select null::timestamp )",
                 null, true, false
         );
+    }
+
+    @Test
+    public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
+        assertFailure("select 1 from tab where (\"\")",
+                "create table tab (i int)",
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where (\"a\")",
+                null,
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where ('')", null,
+                25, "boolean expression expected");
+
+        assertFailure("select 1 from tab where ('a')", null,
+                25, "boolean expression expected");
     }
 
     @Test

@@ -7,6 +7,6 @@ public final class ReadOnlySecurityContextFactory implements SecurityContextFact
 
     @Override
     public SecurityContext getInstance(CharSequence principal, int interfaceId) {
-        return ReadOnlySecurityContext.INSTANCE;
+        return new ReadOnlySecurityContext(principal);
     }
 }

@@ -32,9 +32,16 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
 
 public class AllowAllSecurityContext implements SecurityContext {
-    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
+    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext(Constants.USER_NAME);
+
+    private final CharSequence principal;
+
+    public AllowAllSecurityContext(CharSequence principal) {
+        this.principal = principal;
+    }
 
     @Override
     public void assumeRole(CharSequence roleName) {
@@ -210,5 +217,20 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void exitRole(CharSequence roleName) {
+    }
+
+    @Override
+    public CharSequence getEntityName() {
+        return principal;
+    }
+
+    @Override
+    public long getVersion() {
+        return 0;
+    }
+
+    @Override
+    public boolean matches(CharSequence entityName, long version) {
+        return true;
     }
 }

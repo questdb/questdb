@@ -34,6 +34,6 @@ public class AllowAllSecurityContextFactory implements SecurityContextFactory {
 
     @Override
     public SecurityContext getInstance(CharSequence principal, int interfaceId) {
-        return AllowAllSecurityContext.INSTANCE;
+        return new AllowAllSecurityContext(principal);
     }
 }
