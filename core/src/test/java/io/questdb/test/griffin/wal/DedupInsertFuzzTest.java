@@ -27,6 +27,8 @@ package io.questdb.test.griffin.wal;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
@@ -441,8 +443,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
 
         try (TableReader rdr = getReader(tableName)) {
-            var cursor = rdr.getCursor();
-            var rec = cursor.getRecord();
+            TableReaderRecordCursor cursor = rdr.getCursor();
+            Record rec = cursor.getRecord();
             AssertionError fail = null;
             while (cursor.hasNext()) {
                 try {
