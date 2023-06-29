@@ -231,6 +231,9 @@ inline void merge_copy_var_column(
         __MEMCPY(dst_var + dst_var_offset + sizeof(T), src_var_ptr + sizeof(T), char_count);
         dst_var_offset += char_count + sizeof(T);
     }
+    if (merge_index_size > 0) {
+        dst_fix[merge_index_size] = dst_var_offset;
+    }
 }
 
 void MULTI_VERSION_NAME (platform_memcpy)(void *dst, const void *src, const size_t len) {
