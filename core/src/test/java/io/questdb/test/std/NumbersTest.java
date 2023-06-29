@@ -813,6 +813,16 @@ public class NumbersTest {
         Assert.assertEquals(-23346346, Numbers.parseInt("-23346346"));
     }
 
+    @Test
+    public void testParseIPv4() throws Exception {
+        Assert.assertEquals(84413540, Numbers.parseIPv4("5.8.12.100"));
+    }
+
+    @Test
+    public void testParseIPv4_0() throws Exception {
+        Assert.assertEquals(84413540, Numbers.parseIPv4_0("5.8.12.100", 10));
+    }
+
     @Test(expected = NumericException.class)
     public void testParseIntEmpty() throws Exception {
         Numbers.parseInt("");

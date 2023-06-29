@@ -2235,7 +2235,7 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
-    private static int parseIPv4_0(CharSequence sequence, int lim) throws NumericException {
+    public static int parseIPv4_0(CharSequence sequence, int lim) throws NumericException {
         int hi;
         int lo = 0;
         int num;

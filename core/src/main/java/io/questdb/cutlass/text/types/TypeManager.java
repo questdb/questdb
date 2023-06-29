@@ -132,6 +132,8 @@ public class TypeManager implements Mutable {
                 return Long256Adapter.INSTANCE;
             case ColumnType.UUID:
                 return UuidAdapter.INSTANCE;
+            case ColumnType.IPv4:
+                return IPv4Adapter.INSTANCE;
             case ColumnType.GEOBYTE:
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
@@ -140,8 +142,6 @@ public class TypeManager implements Mutable {
                 if (adapter != null) {
                     return adapter;
                 }
-            case ColumnType.IPv4:
-                return IPv4Adapter.INSTANCE;
             default:
                 throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }

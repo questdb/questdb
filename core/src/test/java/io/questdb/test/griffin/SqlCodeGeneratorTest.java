@@ -75,6 +75,22 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntToIpv4NOWAL() throws Exception {
+        //int, short, byte (WAL + NO WAL)
+        //make sure I can print it + copy other way around
+        compiler.compile("create table x as (select x::int from long_sequence(10))", sqlExecutionContext);
+        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+
+        assertQuery("",
+                "select * from y",
+                "insert into y select * from x",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
         assertQuery("col_k\ta\tk\tcol_k1\n" +
                         "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +

@@ -497,7 +497,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 }
                                 break;
                             }
-
                             default:
                                 throw castError("integer", i, colType, ent.getName());
                         }

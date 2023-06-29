@@ -420,6 +420,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
+
                         case ColumnType.IPv4: {
                             final long entityValue = entity.getLongValue();
                             if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
@@ -431,6 +432,8 @@ class LineTcpMeasurementEvent implements Closeable {
                             }
                             break;
                         }
+
+
                         default:
                             throw castError("integer", columnWriterIndex, colType, entity.getName());
                     }

@@ -232,6 +232,17 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
+                case ColumnType.IPv4:
+                    asm.invokeInterface(rGetInt);
+                    switch(toColumnTypeTag) {
+                        case ColumnType.IPv4:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        default:
+                            assert false;
+                            break;
+                    }
+                    break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong);
                     switch (toColumnTypeTag) {

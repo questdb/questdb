@@ -47,7 +47,7 @@ public final class ColumnType {    //@formatter:off
     public static final short BOOLEAN = 1;
     public static final short BYTE = BOOLEAN + 1;       // = 2;
     public static final short SHORT = BYTE + 1;         // = 3;
-    public static final short CHAR = SHORT + 1;         // = 4
+    public static final short CHAR = SHORT + 1;         // = 4;
     public static final short INT = CHAR + 1;           // = 5;
     public static final short LONG = INT + 1;           // = 6;
     public static final short DATE = LONG + 1;          // = 7;
@@ -71,13 +71,13 @@ public final class ColumnType {    //@formatter:off
     // inside the MAX type value.
     public static final short GEOHASH = RECORD + 1;     // = 23;
     public static final short LONG128 = GEOHASH + 1;    // = 24; // Limited support, few tests only
-    public static final short IPv4 = LONG128 + 1;
+    public static final short IPv4 = LONG128 + 1;       // = 25;
     // PG specific types to work with 3rd party software with canned catalogue queries
-    public static final short REGCLASS = IPv4 + 1;   // = 25;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 26;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 27;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 28;
-    public static final short NULL = PARAMETER + 1;             // = 29;
+    public static final short REGCLASS = IPv4 + 1;   // = 26;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 27;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
+    public static final short NULL = PARAMETER + 1;             // = 30;
     //public static final short IPv4 = NULL + 1;
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
