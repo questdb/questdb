@@ -27,7 +27,9 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
- import io.questdb.std.LongList;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
@@ -167,6 +169,14 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public void authorizeEnableUser() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeFactory(RecordCursorFactory factory) {
+    }
+
+    @Override
+    public void authorizeFunction(Function function) {
     }
 
     @Override

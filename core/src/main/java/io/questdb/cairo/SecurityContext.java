@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.LongList;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -88,13 +88,11 @@ public interface SecurityContext {
 
     void authorizeEnableUser();
 
+    void authorizeFactory(RecordCursorFactory factory);
+
+    void authorizeFunction(Function function);
+
     void authorizeGrant(LongList permissions, CharSequence tableName, ObjList<CharSequence> columns);
-
-    default void authorizeFactory(RecordCursorFactory factory) {
-    }
-
-    default void authorizeFunction(Function function) {
-    }
 
     // columnNames.size() = 0 means all columns
     void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames);
@@ -131,7 +129,7 @@ public interface SecurityContext {
     }
 
     default long getVersion() {
-        return 0;
+        return 0L;
     }
 
     /**

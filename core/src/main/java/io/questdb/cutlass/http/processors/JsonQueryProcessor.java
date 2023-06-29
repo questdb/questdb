@@ -169,7 +169,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             final FactoryAndPermissions factoryAndPerms = QueryCache.getThreadLocalInstance().poll(state.getQuery());
             if (factoryAndPerms != null) {
                 SecurityContext securityContext = context.getSecurityContext();
-                if (!securityContext.matches(factoryAndPerms.entityName, factoryAndPerms.entityVersion)) {
+                if (!securityContext.matches(factoryAndPerms.entityName, factoryAndPerms.accessListVersion)) {
                     securityContext.authorizeFactory(factoryAndPerms.factory);
                     factoryAndPerms.of(securityContext.getEntityName(), securityContext.getVersion());
                 }
