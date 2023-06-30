@@ -497,6 +497,17 @@ public class SqlUtil {
         return Numbers.INT_NaN;
     }
 
+    public static int implicitCastStrAsIPv4(CharSequence value) {
+        if(value != null) {
+            try {
+                return Numbers.parseIPv4(value);
+            } catch (NumericException exception) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.IPv4);
+            }
+        }
+        return Numbers.INT_NaN;
+    }
+
     public static long implicitCastStrAsLong(CharSequence value) {
         if (value != null) {
             try {

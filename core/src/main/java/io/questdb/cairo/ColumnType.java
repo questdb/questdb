@@ -229,7 +229,8 @@ public final class ColumnType {    //@formatter:off
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
-                || isImplicitParsingCast(fromType, toType);
+                || isImplicitParsingCast(fromType, toType)
+                || isIPv4Cast(fromType, toType);
     }
 
     public static boolean isUndefined(int columnType) {
@@ -359,6 +360,13 @@ public final class ColumnType {    //@formatter:off
                 || (fromType == CHAR && toType == SYMBOL)
                 || (fromType == CHAR && toType == STRING)
                 || (fromType == UUID && toType == STRING);
+    }
+
+    private static boolean isIPv4Cast(int fromType, int toType) {
+        return (fromType == INT && toType == IPv4)
+                || (fromType == BYTE && toType == IPv4)
+                || (fromType == SHORT && toType == IPv4)
+                || (fromType == IPv4 && toType == INT);
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

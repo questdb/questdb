@@ -924,7 +924,7 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        return parseIPv4_0(sequence, sequence.length());
+        return parseIPv4_0(sequence, 0, sequence.length());
     }
 
     public static long parseLong(CharSequence sequence) throws NumericException {
@@ -2235,9 +2235,9 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
-    public static int parseIPv4_0(CharSequence sequence, int lim) throws NumericException {
+    public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
         int hi;
-        int lo = 0;
+        int lo = p;
         int num;
         int ipv4 = 0;
         int count = 0;

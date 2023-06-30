@@ -820,7 +820,7 @@ public class NumbersTest {
 
     @Test
     public void testParseIPv4_0() throws Exception {
-        Assert.assertEquals(84413540, Numbers.parseIPv4_0("5.8.12.100", 10));
+        Assert.assertEquals(84413540, Numbers.parseIPv4_0("5.8.12.100", 0,10));
     }
 
     @Test(expected = NumericException.class)
