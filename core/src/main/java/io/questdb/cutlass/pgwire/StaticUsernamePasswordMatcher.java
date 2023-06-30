@@ -45,7 +45,7 @@ public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
     }
 
     @Override
-    public boolean match(CharSequence username, CharSequence password) {
+    public boolean verifyPassword(CharSequence username, CharSequence password) {
         boolean matchRo = roUsername != null && roPassword != null && Chars.equals(roUsername, username) && Chars.equals(roPassword, password);
         return matchRo || Chars.equals(defaultUsername, username) && Chars.equals(defaultPassword, password);
     }
