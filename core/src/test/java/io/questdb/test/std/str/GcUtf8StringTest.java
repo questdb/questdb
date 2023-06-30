@@ -24,7 +24,7 @@
 
 package io.questdb.test.std.str;
 
-import io.questdb.std.str.Utf8Native;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.GcUtf8String;
 import org.junit.Assert;
@@ -112,13 +112,13 @@ public class GcUtf8StringTest {
 
     @Test
     public void testUtf8Native() {
-        final Utf8Native s1 = new GcUtf8String("");
+        final DirectUtf8Sequence s1 = new GcUtf8String("");
         Assert.assertNotEquals(0, s1.ptr());
         Assert.assertNotEquals(0, s1.lo());
         Assert.assertNotEquals(0, s1.hi());
         Assert.assertEquals(s1.lo(), s1.hi());
 
-        final Utf8Native s2 = new GcUtf8String("hi");
+        final DirectUtf8Sequence s2 = new GcUtf8String("hi");
         Assert.assertEquals(2, s2.size());
         Assert.assertNotEquals(0, s2.ptr());
         Assert.assertNotEquals(0, s2.lo());
