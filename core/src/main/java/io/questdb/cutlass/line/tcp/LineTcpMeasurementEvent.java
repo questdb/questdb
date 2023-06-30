@@ -295,14 +295,13 @@ class LineTcpMeasurementEvent implements Closeable {
             LineTcpParser parser,
             int workerId
     ) {
-        // Authorize insert as an all-columns one to avoid the performance penalty
-        // of tracking written columns for non-WAL tables.
-        securityContext.authorizeInsert(tud.getTableToken(), ALL_COLUMNS_AUTHORIZE_LIST);
-
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
-        this.tableUpdateDetails = tud;
+        tableUpdateDetails = tud;
+        // authorize insert as an all-columns one to avoid the performance penalty
+        // of tracking written columns for non-WAL tables
+        securityContext.authorizeInsert(tud.getTableToken(), ALL_COLUMNS_AUTHORIZE_LIST);
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
