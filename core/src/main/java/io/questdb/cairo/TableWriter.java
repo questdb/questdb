@@ -4166,9 +4166,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // reshuffle all columns according to timestamp index
             long mergeRowCount = o3RowCount;
-            if (isDeduplicationEnabled()) {
-                mergeRowCount = Vect.dedupSortedTimestampIndexChecked(sortedTimestampsAddr, o3RowCount, sortedTimestampsAddr);
-            }
             o3Sort(sortedTimestampsAddr, timestampIndex, mergeRowCount, o3RowCount);
             LOG.info()
                     .$("sorted [table=").utf8(tableToken.getTableName())

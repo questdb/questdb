@@ -25,11 +25,16 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.LongList;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -225,6 +230,96 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(0));
                 Assert.assertFalse(writer.getMetadata().isDedupKey(1));
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
+            }
+        });
+    }
+
+    @Test
+    public void testEnableDedupDroppedColumnColumnConcurrently() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNameStr = testName.getMethodName();
+            compile("create table " + tableNameStr + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableNameStr);
+
+            try (TableWriterAPI tw1 = engine.getTableWriterAPI(tableToken, "test")) {
+                try (TableWriterAPI tw2 = engine.getTableWriterAPI(tableToken, "test")) {
+
+                    AlterOperationBuilder setDedupAlterBuilder = new AlterOperationBuilder()
+                            .ofSetDedup(1, tableToken, true);
+                    setDedupAlterBuilder.setDedupKeyFlag(1);
+                    AlterOperation ao = setDedupAlterBuilder.build();
+                    ao.withContext(sqlExecutionContext);
+                    ao.withSqlStatement("ALTER TABLE " + tableToken.getTableName() + " DEDUP UPSERT KEYS (ts, sym)");
+
+                    AlterOperationBuilder dropColumnAlterBuilder = new AlterOperationBuilder()
+                            .ofDropColumn(1, tableToken, 0)
+                            .ofDropColumn("sym");
+
+                    tw1.apply(dropColumnAlterBuilder.build(), true);
+                    tw2.apply(ao, true);
+                }
+            }
+
+            drainWalQueue();
+
+            try (TableWriter tw = getWriter(tableToken)) {
+                Assert.assertFalse(tw.isDeduplicationEnabled());
+            }
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
+
+    @Test
+    public void testEnableDedupDroppedColumnColumnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNameStr = testName.getMethodName();
+            compile("create table " + tableNameStr + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            TableToken tableToken = engine.verifyTableName(tableNameStr);
+            drainWalQueue();
+
+            try (TableWriter tw = getWriter(tableToken)) {
+                LongList columnIndexes = new LongList();
+                columnIndexes.add(-1);
+                try {
+                    tw.setDeduplicationStatus(true, columnIndexes, 0, 1);
+                    Assert.assertFalse(tw.isDeduplicationEnabled());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
+                }
+
+                columnIndexes.clear();
+                columnIndexes.add(0);
+                try {
+                    tw.setDeduplicationStatus(true, columnIndexes, 0, 1);
+                    Assert.assertFalse(tw.isDeduplicationEnabled());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Unsupported column type used as deduplicate key");
+                }
+            }
+
+            compiler.compile("ALTER TABLE " + tableNameStr + " drop column sym", sqlExecutionContext);
+            try (TableWriter tw = getWriter(tableToken)) {
+                LongList columnIndexes = new LongList();
+                columnIndexes.add(1);
+                try {
+                    tw.setDeduplicationStatus(true, columnIndexes, 0, 1);
+                    Assert.assertFalse(tw.isDeduplicationEnabled());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
+                }
             }
         });
     }
