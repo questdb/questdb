@@ -87,12 +87,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
 
-            // enable services
+            // enable all services, but UDP; it has to be enabled per test
             writer.println("http.enabled=true");
             writer.println("http.min.enabled=true");
             writer.println("pg.enabled=true");
             writer.println("line.tcp.enabled=true");
-            writer.println("line.udp.enabled=true");
 
             // disable services
             writer.println("http.query.cache.enabled=false");
