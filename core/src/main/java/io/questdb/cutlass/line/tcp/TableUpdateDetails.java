@@ -38,6 +38,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -54,7 +55,8 @@ public class TableUpdateDetails implements Closeable {
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
-    private final SecurityContext securityContext;
+    // Set only for WAL tables, i.e. when writerThreadId == -1.
+    private final SecurityContext ownSecurityContext;
     private final ByteCharSequence tableNameUtf8;
     private final TableToken tableToken;
     private final int timestampIndex;
@@ -67,14 +69,15 @@ public class TableUpdateDetails implements Closeable {
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
-    private ColumnTrackingWriterAPI writerAPI;
+    private ColumnTrackingWriterAPI trackingWriterAPI;
+    private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
     private int writerThreadId;
 
     public TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
-            SecurityContext securityContext,
+            @Nullable SecurityContext ownSecurityContext,
             TableWriterAPI writer,
             int writerThreadId,
             NetworkIOJob[] netIoJobs,
@@ -83,13 +86,13 @@ public class TableUpdateDetails implements Closeable {
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
-        this.securityContext = securityContext;
+        this.ownSecurityContext = ownSecurityContext;
         this.defaultColumnTypes = defaultColumnTypes;
         final CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
-        this.writerAPI = new ColumnTrackingWriterAPI(writer);
+        this.writerAPI = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
         this.tableToken = writer.getTableToken();
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
@@ -140,7 +143,7 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (writerAPI != null) {
                 try {
-                    securityContext.authorizeInsert(tableToken, writerAPI.getWrittenColumnNames());
+                    authorizeWalCommit();
                     writerAPI.commit();
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
@@ -166,7 +169,7 @@ public class TableUpdateDetails implements Closeable {
                         .$("[rows=").$(writerAPI.getUncommittedRowCount())
                         .$(", table=").$(tableToken)
                         .I$();
-                securityContext.authorizeInsert(tableToken, writerAPI.getWrittenColumnNames());
+                authorizeWalCommit();
                 if (withLag) {
                     writerAPI.ic();
                 } else {
@@ -215,6 +218,13 @@ public class TableUpdateDetails implements Closeable {
         return tableToken;
     }
 
+    public ColumnTrackingWriterAPI getTrackingWriterAPI() {
+        if (trackingWriterAPI == null) {
+            trackingWriterAPI = new ColumnTrackingWriterAPI(writerAPI);
+        }
+        return trackingWriterAPI;
+    }
+
     public int getWriterThreadId() {
         return writerThreadId;
     }
@@ -258,6 +268,13 @@ public class TableUpdateDetails implements Closeable {
     public void tick() {
         if (metadataService != null) {
             metadataService.tick();
+        }
+    }
+
+    private void authorizeWalCommit() {
+        // We track and validate column-level permissions for WAL tables only.
+        if (ownSecurityContext != null) {
+            ownSecurityContext.authorizeInsert(tableToken, getTrackingWriterAPI().getWrittenColumnNames());
         }
     }
 
@@ -340,7 +357,7 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    securityContext.authorizeInsert(tableToken, writerAPI.getWrittenColumnNames());
+                    authorizeWalCommit();
                     writerAPI.commit();
                 }
             } catch (Throwable ex) {

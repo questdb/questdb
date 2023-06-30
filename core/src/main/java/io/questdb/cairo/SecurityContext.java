@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface SecurityContext {
@@ -39,22 +40,22 @@ public interface SecurityContext {
 
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
-    void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableAttachPartition(TableToken tableToken);
 
     void authorizeAlterTableDetachPartition(TableToken tableToken);
 
-    void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableDropPartition(TableToken tableToken);
 
     // the names are pairs from-to
-    void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
@@ -86,16 +87,16 @@ public interface SecurityContext {
 
     void authorizeEnableUser();
 
-    void authorizeGrant(LongList permissions, CharSequence tableName, ObjList<CharSequence> columns);
+    void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
     // columnNames.size() = 0 means all columns
-    void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeRemovePassword();
 
     void authorizeRemoveUser();
 
-    void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
@@ -110,7 +111,7 @@ public interface SecurityContext {
 
     void authorizeTableTruncate(TableToken tableToken);
 
-    void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableVacuum(TableToken tableToken);
 

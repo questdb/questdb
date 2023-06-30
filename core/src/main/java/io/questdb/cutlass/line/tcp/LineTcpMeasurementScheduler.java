@@ -352,7 +352,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
         ld.resetStateIfNecessary();
         ld.clearColumnTypes();
 
-        TableWriterAPI writer = tud.getWriter();
+        // We need tracking writer API here for further column-level permission checks.
+        final ColumnTrackingWriterAPI writer = tud.getTrackingWriterAPI();
         assert writer.supportsMultipleWriters();
         TableRecordMetadata metadata = writer.getMetadata();
         long initialMetadataVersion = ld.getMetadataVersion();
@@ -824,7 +825,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         final TableUpdateDetails tud = new TableUpdateDetails(
                 configuration,
                 engine,
-                securityContext,
+                null,
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails
