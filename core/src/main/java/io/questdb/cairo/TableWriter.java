@@ -1642,8 +1642,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     if (needsDedup) {
-                        LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
-                        totalUncommitted = Vect.dedupSortedTimestampIndexChecked(timestampAddr, totalUncommitted, timestampAddr);
+                        totalUncommitted = deduplicateSortedIndex(totalUncommitted, timestampAddr);
                         o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
                     }
                     o3MergeIntoLag(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, timestampIndex);
@@ -3412,6 +3411,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return identical;
     }
 
+    private long deduplicateSortedIndex(long longIndexLength, long timestampAddr) {
+        LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
+        try {
+            if (dedupColumnCommitAddresses != null) {
+                long dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
+                int dedupKeyIndex = 0;
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    if (metadata.getColumnType(i) > 0 && metadata.isDedupKey(i)) {
+                        long colMem = o3Columns.get(getPrimaryColumnIndex(i)).getPageAddress(0);
+                        long o3Mem = o3MemColumns.get(getPrimaryColumnIndex(i)).getPageAddress(0);
+                        long o3MemCopy = o3MemColumns2.get(getPrimaryColumnIndex(i)).getPageAddress(0);
+                        dedupColumnCommitAddresses.setArrayValues(
+                                dedupCommitAddr,
+                                dedupKeyIndex,
+                                colMem,
+                                o3Mem,
+                                o3MemCopy,
+                                IGNORE,
+                                IGNORE
+                        );
+                    }
+                }
+            }
+            return Vect.dedupSortedTimestampIndexChecked(timestampAddr, longIndexLength, timestampAddr);
+        } finally {
+            if (dedupColumnCommitAddresses != null) {
+                dedupColumnCommitAddresses.clear();
+            }
+        }
+    }
+
     private void dispatchO3CallbackQueue(RingQueue<O3CallbackTask> queue, int queuedCount) {
         // This is work stealing, can run tasks from other table writers
         final Sequence subSeq = this.messageBus.getO3CallbackSubSeq();
@@ -4177,9 +4207,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // reshuffle all columns according to timestamp index
             long mergeRowCount = o3RowCount;
-            if (isDeduplicationEnabled()) {
-                mergeRowCount = Vect.dedupSortedTimestampIndexChecked(sortedTimestampsAddr, o3RowCount, sortedTimestampsAddr);
-            }
             o3Sort(sortedTimestampsAddr, timestampIndex, mergeRowCount, o3RowCount);
             LOG.info()
                     .$("sorted [table=").utf8(tableToken.getTableName())

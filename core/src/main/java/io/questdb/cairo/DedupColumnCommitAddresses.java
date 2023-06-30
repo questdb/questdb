@@ -37,16 +37,36 @@ public class DedupColumnCommitAddresses implements Closeable {
     private static final int LONG_PER_COL = (int) COL_OOO_ARRAY_INDEX + 1;
     private PagedDirectLongList addresses;
     private int columnCount;
+    private int lastSetBlockCount;
 
     public long allocateBlock() {
         if (columnCount == 0) {
             return -1;
         }
+        if (lastSetBlockCount != columnCount) {
+            setDedupColumnCount(columnCount);
+            lastSetBlockCount = columnCount;
+        }
+        return addresses.allocateBlock();
+    }
+
+    public long allocateDoubleBlock() {
+        if (columnCount == 0) {
+            return -1;
+        }
+        if (lastSetBlockCount != columnCount * 2) {
+            setDedupColumnCount(columnCount * 2);
+            lastSetBlockCount = columnCount * 2;
+        }
         return addresses.allocateBlock();
     }
 
     public void clear(long dedupColSinkAddr) {
-        Vect.memset(dedupColSinkAddr, 0, columnCount * Long.BYTES * LONG_PER_COL);
+        Vect.memset(dedupColSinkAddr, 0, lastSetBlockCount * Long.BYTES * LONG_PER_COL);
+    }
+
+    public void clear() {
+        addresses.clear();
     }
 
     @Override
@@ -80,6 +100,22 @@ public class DedupColumnCommitAddresses implements Closeable {
 
     public int getOpenFd(long dedupColSinkAddr, int dedupKeyIndex) {
         return (int) getArrayElement(dedupColSinkAddr, COL_FD_ARRAY_INDEX, dedupKeyIndex);
+    }
+
+    public void setArrayValues(
+            long dedupCommitAddr,
+            int dedupKeyIndex,
+            long val0,
+            long val1,
+            long val2,
+            long val3,
+            long val4
+    ) {
+        setArrayElement(dedupCommitAddr, 0, dedupKeyIndex, val0);
+        setArrayElement(dedupCommitAddr, 1, dedupKeyIndex, val1);
+        setArrayElement(dedupCommitAddr, 2, dedupKeyIndex, val2);
+        setArrayElement(dedupCommitAddr, 3, dedupKeyIndex, val3);
+        setArrayElement(dedupCommitAddr, 4, dedupKeyIndex, val4);
     }
 
     public void setColumnMapAddress(long dedupColSinkAddr, int dedupKeyIndex, long mappedAddress) {
