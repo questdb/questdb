@@ -345,7 +345,8 @@ public class LogAlertSocketWriterTest {
             resourcePath = resourcePath.substring(1);
         }
         Path template = Path.getThreadLocal2(resourcePath).$();
-        Assert.assertTrue(Files.copy(template, dstPath) > 0);
+        int result = Files.copy(template, dstPath);
+        Assert.assertTrue("Copying " + resourcePath + " to " + dstPath + " result: " + result, result >= 0);
         String location = dstPath.toString();
 
         testOnLogRecord(location);
