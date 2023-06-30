@@ -41,6 +41,7 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -98,11 +99,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    @Ignore
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
 
-            Assume.assumeFalse(true); // Multi key dedup is not ready to release yet
             String tableName = testName.getMethodName();
             compile(
                     "create table " + tableName +

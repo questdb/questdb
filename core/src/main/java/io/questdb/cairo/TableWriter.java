@@ -187,7 +187,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int columnCount;
     private CommitListener commitListener;
     private long committedMasterRef;
-    private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
@@ -1232,10 +1231,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
-    }
-
-    public DedupColumnCommitAddresses getDedupCommitAddresses() {
-        return dedupColumnCommitAddresses;
     }
 
     @TestOnly
@@ -3213,12 +3208,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dedupColCount++;
             }
         }
-        if (isDeduplicationEnabled()) {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
-            }
-            dedupColumnCommitAddresses.setDedupColumnCount(dedupColCount);
-        }
+        assert dedupColCount <= 1;
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3MemColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
@@ -3437,7 +3427,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
-        Misc.free(dedupColumnCommitAddresses);
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;
@@ -5901,7 +5890,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
                             flattenTimestamp = false;
                         }
-                        final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -5917,7 +5905,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcNameTxn,
                                 o3Basket,
                                 partitionUpdateSinkAddr,
-                                dedupColSinkAddr
+                                0L
                         );
                     }
                 } catch (CairoException | CairoError e) {
