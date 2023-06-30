@@ -39,9 +39,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Rule;
+import org.junit.rules.Timeout;
 
 import java.io.PrintWriter;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final String CHARSET = "UTF8";
@@ -55,6 +58,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
