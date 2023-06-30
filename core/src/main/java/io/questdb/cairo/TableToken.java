@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.GcUtf8String;
-import io.questdb.std.str.Utf8Native;
+import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
@@ -86,7 +86,7 @@ public class TableToken implements Sinkable {
     /**
      * @return UTF-8 buffer naming the directory where the table is located.
      */
-    public @NotNull Utf8Native getDirNameUtf8() {
+    public @NotNull DirectUtf8Sequence getDirNameUtf8() {
         return dirName;
     }
 
