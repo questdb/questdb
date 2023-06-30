@@ -24,8 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -35,19 +39,45 @@ import org.junit.Test;
 public class CreateTableDedupTest extends AbstractGriffinTest {
 
     @Test
+    public void testAlterReadonlyFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table dups as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+
+            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+                    ReadOnlySecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1
+                    , null
+            );
+
+            try {
+                compiler.compile("Alter table dups dedup upsert keys(ts)", roExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
+            }
+        });
+    }
+
+    @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             compile("create table a (ts timestamp, i int, s symbol, l long) timestamp(ts) partition by day wal");
-            String alterPrefix = "alter table a";
+            String alterPrefix = "alter table a ";
 
-            assertCreate(alterPrefix + " deduplicate UPSERT KEYS(l);", "UPSERT KEYS(l)", "deduplicate key column can only be INT or SYMBOL type");
-            assertCreate(alterPrefix + " deduplicate UPSERT KEYS", "UPSERT KEYS", "deduplication column list expected");
-            assertCreate(alterPrefix + " deduplicate UPSERT KEYS (;", "UPSERT KEYS (;", "literal expected");
-            assertCreate(alterPrefix + " deduplicate UPSERT KEYS (a)", "UPSERT KEYS (a)", "deduplicate column not found ");
-            assertCreate(alterPrefix + " deduplicate UPSERT KEYS (s)", "UPSERT KEYS (s)", "deduplicate key list must include dedicated timestamp column");
-            assertCreate(alterPrefix + " deduplicate KEYS (s);", "deduplicate KEYS ", "expected 'upsert'");
-            assertCreate(alterPrefix + " deduplicate UPSERT (s);", "deduplicate UPSERT (", "expected 'keys'");
-            assertCreate(alterPrefix + " deduplicate UPSERT KEYS", "UPSERT KEYS", "column list expected");
+            assertCreate(alterPrefix + "deduplicate UPSERT KEYS(l);", "UPSERT KEYS(l)", "deduplicate key column can only be INT or SYMBOL type");
+            assertCreate(alterPrefix + "deduplicate UPSERT KEYS", "UPSERT KEYS", "deduplication column list expected");
+            assertCreate(alterPrefix + "deduplicate UPSERT KEYS (;", "UPSERT KEYS (;", "literal expected");
+            assertCreate(alterPrefix + "deduplicate UPSERT KEYS (a)", "UPSERT KEYS (a)", "deduplicate column not found ");
+            assertCreate(alterPrefix + "deduplicate UPSERT KEYS (s)", "UPSERT KEYS (s)", "deduplicate key list must include dedicated timestamp column");
+            assertCreate(alterPrefix + "deduplicate KEYS (s);", "deduplicate KEYS ", "expected 'upsert'");
+            assertCreate(alterPrefix + "deduplicate UPSERT (s);", "deduplicate UPSERT (", "expected 'keys'");
+            assertCreate(alterPrefix + "deduplicate UPSERT KEYS", "UPSERT KEYS", "column list expected");
         });
     }
 

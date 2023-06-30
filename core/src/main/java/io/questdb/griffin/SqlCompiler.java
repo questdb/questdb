@@ -80,7 +80,7 @@ public class SqlCompiler implements Closeable {
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
     protected final CairoEngine engine;
-    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -2795,39 +2795,22 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
 
         keywordBasedExecutors.put("truncate", truncateTables);
-        keywordBasedExecutors.put("TRUNCATE", truncateTables);
         keywordBasedExecutors.put("alter", alterTable);
-        keywordBasedExecutors.put("ALTER", alterTable);
         keywordBasedExecutors.put("reindex", reindexTable);
-        keywordBasedExecutors.put("REINDEX", reindexTable);
         keywordBasedExecutors.put("set", compileSet);
-        keywordBasedExecutors.put("SET", compileSet);
         keywordBasedExecutors.put("begin", compileBegin);
-        keywordBasedExecutors.put("BEGIN", compileBegin);
         keywordBasedExecutors.put("commit", compileCommit);
-        keywordBasedExecutors.put("COMMIT", compileCommit);
         keywordBasedExecutors.put("rollback", compileRollback);
-        keywordBasedExecutors.put("ROLLBACK", compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("DISCARD", compileSet);
         keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("CLOSE", compileSet);  //no-op
         keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("UNLISTEN", compileSet);  //no-op
         keywordBasedExecutors.put("reset", compileSet);  //no-op
-        keywordBasedExecutors.put("RESET", compileSet);  //no-op
         keywordBasedExecutors.put("drop", dropTable);
-        keywordBasedExecutors.put("DROP", dropTable);
         keywordBasedExecutors.put("backup", sqlBackup);
-        keywordBasedExecutors.put("BACKUP", sqlBackup);
         keywordBasedExecutors.put("show", sqlShow);
-        keywordBasedExecutors.put("SHOW", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("VACUUM", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
-        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
-        keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
     }
 
     @SuppressWarnings({"unused"})
