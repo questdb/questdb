@@ -70,7 +70,7 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
-    public static native long dedupSortedTimestampIndexIntKeys(
+    public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
             long count,
             long outIndexAddr,
@@ -85,7 +85,7 @@ public final class Vect {
             int dedupColumnCount,
             long dedupColBuffs
     ) {
-        long dedupCount = dedupSortedTimestampIndexIntKeys(
+        long dedupCount = dedupSortedTimestampIndex(
                 inIndexAddr,
                 count,
                 outIndexAddr,

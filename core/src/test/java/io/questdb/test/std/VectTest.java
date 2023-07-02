@@ -147,10 +147,10 @@ public class VectTest {
 
     @Test
     public void testDedupWithKey() {
-        Rnd rnd = TestUtils.generateRandom(null);
+        Rnd rnd = TestUtils.generateRandom(null, 311851819508041L, 1688338161975L);
         int indexLen = rnd.nextInt(10000);
         try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-            try (DirectLongList keys = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+            try (DirectLongList keys = new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT)) {
                 LongHashSet distinctKeys = new LongHashSet();
 
                 // Generate data
@@ -172,15 +172,17 @@ public class VectTest {
                 }
 
                 try (DirectLongList colBuffs = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
-                    colBuffs.add(keys.getAddress());
-                    long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
-                            index.getAddress(),
-                            indexLen + 1,
-                            index.getAddress(),
-                            1,
-                            colBuffs.getAddress()
-                    );
-                    Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+                        colBuffs.add(keys.getAddress());
+                        long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+                                index.getAddress(),
+                                indexLen,
+                                copy.getAddress(),
+                                1,
+                                colBuffs.getAddress()
+                        );
+                        Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    }
                 }
             }
         }
