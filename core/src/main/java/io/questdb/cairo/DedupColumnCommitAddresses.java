@@ -154,7 +154,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         return Unsafe.getUnsafe().getLong(dedupColSinkAddr + Long.BYTES * arrayIndex * columnCount + dedupKeyIndex * Long.BYTES);
     }
 
-    private long getArrayPtr(long dedupBlockAddress, long arrayIndex) {
+    public long getArrayPtr(long dedupBlockAddress, long arrayIndex) {
         return dedupBlockAddress + arrayIndex * Long.BYTES * columnCount;
     }
 

@@ -3414,27 +3414,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long deduplicateSortedIndex(long longIndexLength, long timestampAddr) {
         LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
         try {
+            int dedupKeyIndex = 0;
+            long dedupCommitAddr = 0;
             if (dedupColumnCommitAddresses != null) {
-                long dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
-                int dedupKeyIndex = 0;
+                dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     if (metadata.getColumnType(i) > 0 && metadata.isDedupKey(i)) {
-                        long colMem = o3Columns.get(getPrimaryColumnIndex(i)).getPageAddress(0);
-                        long o3Mem = o3MemColumns.get(getPrimaryColumnIndex(i)).getPageAddress(0);
-                        long o3MemCopy = o3MemColumns2.get(getPrimaryColumnIndex(i)).getPageAddress(0);
                         dedupColumnCommitAddresses.setArrayValues(
                                 dedupCommitAddr,
-                                dedupKeyIndex,
-                                colMem,
-                                o3Mem,
-                                o3MemCopy,
+                                dedupKeyIndex++,
+                                o3Columns.get(getPrimaryColumnIndex(i)).getPageAddress(0),
+                                IGNORE,
+                                IGNORE,
                                 IGNORE,
                                 IGNORE
                         );
                     }
                 }
             }
-            return Vect.dedupSortedTimestampIndexChecked(timestampAddr, longIndexLength, timestampAddr);
+            return Vect.dedupSortedTimestampIndexIntKeysChecked(
+                    timestampAddr,
+                    longIndexLength,
+                    timestampAddr,
+                    dedupKeyIndex,
+                    dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.getColDataAddresses(dedupCommitAddr) : 0L
+            );
         } finally {
             if (dedupColumnCommitAddresses != null) {
                 dedupColumnCommitAddresses.clear();

@@ -146,6 +146,48 @@ public class VectTest {
     }
 
     @Test
+    public void testDedupWithKey() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int indexLen = rnd.nextInt(10000);
+        try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+            try (DirectLongList keys = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+                LongHashSet distinctKeys = new LongHashSet();
+
+                // Generate data
+                int indexVal = 1000;
+                for (int i = 0; i < indexLen; i++) {
+                    if (rnd.nextDouble() < 0.3) {
+                        indexVal += rnd.nextInt(50);
+                    }
+                    int keyVal = rnd.nextInt(5);
+                    index.add(indexVal);
+                    index.add(i);
+                    keys.add(keyVal);
+                    distinctKeys.add(Numbers.encodeLowHighInts(indexVal, keyVal));
+                }
+
+                // Squash keys from longs to ints
+                for (int i = 0; i < keys.size(); i++) {
+                    keys.set(i, Numbers.encodeLowHighInts((int) keys.get(2L * i), (int) keys.get(2L * i + 1)));
+                }
+
+                try (DirectLongList colBuffs = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
+                    colBuffs.add(keys.getAddress());
+                    long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+                            index.getAddress(),
+                            indexLen + 1,
+                            index.getAddress(),
+                            1,
+                            colBuffs.getAddress()
+                    );
+                    Assert.assertEquals(distinctKeys.size(), dedupCount);
+                }
+            }
+        }
+    }
+
+
+    @Test
     public void testMemeq() {
         int maxSize = 1024 * 1024;
         int[] sizes = {16, 1024, maxSize};
