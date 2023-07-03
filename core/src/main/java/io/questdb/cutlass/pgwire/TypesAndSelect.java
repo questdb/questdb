@@ -46,10 +46,8 @@ public class TypesAndSelect extends AbstractTypeContainer<TypesAndSelect> {
         return factory;
     }
 
-    public void of(RecordCursorFactory factory, BindVariableService bindVariableService, CharSequence entityName, long version) {
+    public void of(RecordCursorFactory factory, BindVariableService bindVariableService) {
         this.factory = factory;
         copyTypesFrom(bindVariableService);
-        this.entityName = entityName;
-        this.version = version;
     }
 }

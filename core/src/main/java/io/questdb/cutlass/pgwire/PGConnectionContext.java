@@ -587,10 +587,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
     }
 
-    private static boolean isReauthorizationRequired(SqlExecutionContext context, AbstractTypeContainer<? extends AbstractTypeContainer<?>> statement) {
-        return !context.getSecurityContext().matches(statement.entityName, statement.version);
-    }
-
     private static void setupBindVariables(long lo, IntList bindVariableTypes, int count) {
         bindVariableTypes.setPos(count);
         for (int i = 0; i < count; i++) {
@@ -1002,29 +998,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         throw BadProtocolException.INSTANCE;
     }
 
-    private void authorizeColumnAccess(SecurityContext securityContext, InsertOperation operation) {
-        TableToken token = operation.getTableToken();
-        ObjList<CharSequence> columnNames = operation.getColumnNames();
-        securityContext.authorizeInsert(token, columnNames);
-    }
-
-    private void authorizeColumnAccess(SecurityContext securityContext, UpdateOperation operation) {
-        TableToken token = operation.getTableToken();
-        RecordCursorFactory factory = operation.getFactory();
-        RecordMetadata metadata = factory.getMetadata();
-
-        ObjList<CharSequence> columns = new ObjList<>();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            columns.add(metadata.getColumnName(i));
-        }
-        securityContext.authorizeTableUpdate(token, columns);
-        authorizeColumnAccess(securityContext, factory);
-    }
-
-    private void authorizeColumnAccess(SecurityContext securityContext, RecordCursorFactory rcf) {
-        securityContext.authorizeFactory(rcf);
-    }
-
     private long bindValuesAsStrings(long lo, long msgLimit, short parameterValueCount) throws BadProtocolException, SqlException {
         for (int j = 0; j < parameterValueCount; j++) {
             final int valueLen = getInt(lo, msgLimit, "malformed bind variable");
@@ -1178,10 +1151,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // poll this cache because it is shared and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
-                if (isReauthorizationRequired(sqlExecutionContext, typesAndInsert)) {
-                    authorizeColumnAccess(sqlExecutionContext.getSecurityContext(), typesAndInsert.getInsert());
-                    typesAndInsert.of(sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
-                }
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return false;
@@ -1190,10 +1159,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
-                if (isReauthorizationRequired(sqlExecutionContext, typesAndUpdate)) {
-                    authorizeColumnAccess(sqlExecutionContext.getSecurityContext(), typesAndUpdate.getCompiledQuery().getUpdateOperation());
-                    typesAndUpdate.of(sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
-                }
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
                 typesAndUpdateIsCached = true;
@@ -1203,10 +1168,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                if (isReauthorizationRequired(sqlExecutionContext, typesAndSelect)) {
-                    authorizeColumnAccess(sqlExecutionContext.getSecurityContext(), typesAndSelect.getFactory());
-                    typesAndSelect.of(sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
-                }
                 LOG.info().$("query cache used [fd=").$(fd).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
@@ -1434,6 +1395,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
                 processCompiledQuery(cc);
+            } catch (CairoException e) {
+                if (!e.isAuthorizationError()) {
+                    typesAndUpdate = Misc.free(typesAndUpdate);
+                }
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
+                throw e;
             } catch (Throwable e) {
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 if (transactionState == IN_TRANSACTION) {
@@ -1584,7 +1553,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw BadProtocolException.INSTANCE;
         }
         CharSequence principal = authenticator.getPrincipal();
-        SecurityContext securityContext = securityContextFactory.getInstance(principal.toString(), SecurityContextFactory.PGWIRE);
+        SecurityContext securityContext = securityContextFactory.getInstance(Chars.toString(principal), SecurityContextFactory.PGWIRE);
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker);
         sendRNQ = true;
 
@@ -2053,18 +2022,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 //explain results should not be cached
                 typesAndSelectIsCached = false;
                 typesAndSelect = typesAndSelectPool.pop();
-                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService, sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
+                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 queryTag = TAG_EXPLAIN;
             case CompiledQuery.SELECT:
                 typesAndSelect = typesAndSelectPool.pop();
-                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService, sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
+                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 queryTag = TAG_SELECT;
                 LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                 break;
             case CompiledQuery.INSERT:
                 queryTag = TAG_INSERT;
                 typesAndInsert = typesAndInsertPool.pop();
-                typesAndInsert.of(cq.getInsertOperation(), bindVariableService, sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
+                typesAndInsert.of(cq.getInsertOperation(), bindVariableService);
                 if (bindVariableService.getIndexedVariableCount() > 0) {
                     LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                     // we can add insert to cache right away because it is local to the connection
@@ -2074,7 +2043,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
-                typesAndUpdate.of(cq, bindVariableService, sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
+                typesAndUpdate.of(cq, bindVariableService);
                 typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
@@ -2087,7 +2056,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // this query is non-cacheable
                     typesAndSelectIsCached = false;
                     typesAndSelect = typesAndSelectPool.pop();
-                    typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService, sqlExecutionContext.getSecurityContext().getEntityName(), sqlExecutionContext.getSecurityContext().getVersion());
+                    typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 }
                 queryTag = TAG_PSEUDO_SELECT;
                 break;

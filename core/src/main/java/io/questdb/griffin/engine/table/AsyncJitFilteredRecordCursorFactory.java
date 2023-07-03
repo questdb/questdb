@@ -107,12 +107,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public void authorizeWith(SecurityContext context) {
-        super.authorizeWith(context);
-        context.authorizeFunction(filterAtom.getFilter(-1));
-    }
-
-    @Override
     public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }

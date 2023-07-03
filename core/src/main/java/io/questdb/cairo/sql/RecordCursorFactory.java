@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
@@ -63,13 +62,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_BACKWARD = 2;
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
-
-    default void authorizeWith(SecurityContext context) {
-        RecordCursorFactory baseFactory = getBaseFactory();
-        if (baseFactory != null) {
-            context.authorizeFactory(baseFactory);
-        }
-    }
 
     @Override
     default void close() {

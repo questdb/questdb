@@ -24,7 +24,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.JoinContext;
@@ -40,12 +39,6 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         this.joinContext = joinContext;
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-    }
-
-    @Override
-    public void authorizeWith(SecurityContext context) {
-        context.authorizeFactory(masterFactory);
-        context.authorizeFactory(slaveFactory);
     }
 
     @Override

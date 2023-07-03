@@ -25,8 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.std.LongList;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -87,10 +85,6 @@ public interface SecurityContext {
     void authorizeDropUser();
 
     void authorizeEnableUser();
-
-    void authorizeFactory(RecordCursorFactory factory);
-
-    void authorizeFunction(Function function);
 
     void authorizeGrant(LongList permissions, CharSequence tableName, ObjList<CharSequence> columns);
 

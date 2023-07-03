@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
@@ -54,12 +55,16 @@ public class InsertOperationImpl implements InsertOperation {
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long metadataVersion;
     private final TableToken tableToken;
+    protected CharSequence entityName;
+    protected long entityVersion;
     private ObjList<CharSequence> columnNames;
 
-    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
+    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion, SecurityContext securityContext) {
         this.engine = engine;
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
+        this.entityName = securityContext.getEntityName();
+        this.entityVersion = securityContext.getVersion();
     }
 
     @Override
@@ -69,6 +74,13 @@ public class InsertOperationImpl implements InsertOperation {
 
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+        SecurityContext securityContext = executionContext.getSecurityContext();
+        if (!securityContext.matches(entityName, entityVersion)) {
+            securityContext.authorizeInsert(tableToken, columnNames);
+            this.entityName = securityContext.getEntityName();
+            this.entityVersion = securityContext.getVersion();
+        }
+
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");

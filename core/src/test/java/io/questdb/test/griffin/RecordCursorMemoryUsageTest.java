@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.SecurityCheckFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.groupby.*;
@@ -99,8 +100,8 @@ public class RecordCursorMemoryUsageTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try (AbstractSampleByRecordCursorFactory factory = (AbstractSampleByRecordCursorFactory) compile("select sym1, sum(d) from tab SAMPLE BY 1d " + fill)
-                    .getRecordCursorFactory()) {
+            try (AbstractSampleByRecordCursorFactory factory = (AbstractSampleByRecordCursorFactory) ((SecurityCheckFactory) compile("select sym1, sum(d) from tab SAMPLE BY 1d " + fill)
+                    .getRecordCursorFactory()).getBase()) {
                 Assert.assertSame(factory.getClass(), expectedFactoryClass);
 
                 long freeDuring;

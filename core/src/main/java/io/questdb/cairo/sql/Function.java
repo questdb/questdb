@@ -25,7 +25,6 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -67,9 +66,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
         throw new UnsupportedOperationException();
-    }
-
-    default void authorizeWith(SecurityContext context) {
     }
 
     @Override

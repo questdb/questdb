@@ -74,6 +74,12 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         }
     }
 
+    public void addAll(ObjList<? extends T> that) {
+        for (int i = 0, n = that.size(); i < n; i++) {
+            this.add(that.getQuick(i));
+        }
+    }
+
     public boolean addAt(int index, T key) {
         if (addAt0(index, key)) {
             list.add(key);
@@ -96,6 +102,10 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
 
     public T get(int index) {
         return list.getQuick(index);
+    }
+
+    public ObjList<T> getList() {
+        return list;
     }
 
     @Override

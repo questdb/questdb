@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.OrderByMnemonic;
@@ -147,6 +148,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     /* Expression clause that is actually part of left/outer join but not in join model.
      *  Inner join expressions */
     private ExpressionNode outerJoinExpressionClause;
+    private QueryPermissions permissions;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByOffset = null;
@@ -758,6 +760,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
+    public QueryPermissions getPermissions() {
+        return permissions;
+    }
+
     public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
@@ -1105,6 +1111,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
         this.outerJoinExpressionClause = outerJoinExpressionClause;
+    }
+
+    public void setPermissions(QueryPermissions permissions) {
+        this.permissions = permissions;
     }
 
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
@@ -1525,6 +1535,75 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         @Override
         public QueryModel newInstance() {
             return new QueryModel();
+        }
+    }
+
+    public static class QueryPermissions {
+        final LongObjHashMap<QueryModel.TablePerms> permissions;
+        boolean checked;
+        CharSequence principal;
+        QueryModel.TablePerms updatePermissions;
+        long version;
+
+        public QueryPermissions(LongObjHashMap<TablePerms> permissions, SecurityContext context) {
+            this.permissions = permissions;
+            this.checked = true;
+            this.principal = context.getEntityName();
+            this.version = context.getVersion();
+        }
+
+        public void addUpdatePermissions(TableToken tableToken, ObjList<CharSequence> columns) {
+            assert updatePermissions == null;
+            updatePermissions = new TablePerms(tableToken);
+            updatePermissions.add(columns);
+        }
+
+        public void check(SecurityContext context) {
+            if (checked) {
+                // skip first check because it was already done in optimiser 
+                checked = false;
+                return;
+            }
+
+            if (context.matches(principal, version)) {
+                return;
+            }
+
+            if (updatePermissions != null) {
+                context.authorizeTableUpdate(updatePermissions.getToken(), updatePermissions.getColumns());
+            }
+
+            permissions.forEach((k, v) -> {
+                context.authorizeSelect(v.getToken(), v.getColumns());
+            });
+
+            this.principal = context.getEntityName();
+            this.version = context.getVersion();
+        }
+    }
+
+    public static class TablePerms {
+        final ObjHashSet<CharSequence> columns;
+        final TableToken token;
+
+        public TablePerms(TableToken token) {
+            this.token = token;
+            columns = new ObjHashSet<>();
+        }
+
+        public void add(ObjList<CharSequence> newColumns) {
+            // columns must not be mutable 
+            for (int i = 0, n = newColumns.size(); i < n; i++) {
+                columns.add(Chars.toString(newColumns.getQuick(i)));
+            }
+        }
+
+        public ObjList<CharSequence> getColumns() {
+            return columns.getList();
+        }
+
+        public TableToken getToken() {
+            return token;
         }
     }
 

@@ -45,7 +45,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
-import io.questdb.cutlass.http.processors.QueryCache.FactoryAndPermissions;
 
 import java.io.Closeable;
 
@@ -80,7 +79,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private RecordCursor cursor;
     private long executeStartNanos;
     private boolean explain = false;
-    private FactoryAndPermissions factoryAndPermissions;
     private boolean noMeta = false;
     private OperationFuture operationFuture;
     private boolean pausedQuery = false;
@@ -92,6 +90,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean quoteLargeNum = false;
     private Record record;
     private long recordCountNanos;
+    private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
     private long skip;
     private long stop;
@@ -128,13 +127,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
         record = null;
-        if (factoryAndPermissions != null) {
+        if (recordCursorFactory != null) {
             if (queryCacheable) {
-                QueryCache.getThreadLocalInstance().push(query, factoryAndPermissions);
+                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
             } else {
-                factoryAndPermissions.close();
+                recordCursorFactory.close();
             }
-            factoryAndPermissions = null;
+            recordCursorFactory = null;
         }
         query.clear();
         columnsQueryParameter.clear();
@@ -156,7 +155,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @Override
     public void close() {
         cursor = Misc.free(cursor);
-        factoryAndPermissions = Misc.free(factoryAndPermissions);
+        recordCursorFactory = Misc.free(recordCursorFactory);
         freeAsyncOperation();
     }
 
@@ -798,25 +797,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     boolean of(
-            FactoryAndPermissions factory,
+            RecordCursorFactory factory,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         return of(factory, true, sqlExecutionContext);
     }
 
     boolean of(
-            FactoryAndPermissions factoryAndPermissions,
+            RecordCursorFactory factory,
             boolean queryCacheable,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        this.factoryAndPermissions = factoryAndPermissions;
+        this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
-        this.queryJitCompiled = factoryAndPermissions.factory.usesCompiledFilter();
+        this.queryJitCompiled = factory.usesCompiledFilter();
         // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
-        this.cursor = factoryAndPermissions.factory.getCursor(sqlExecutionContext);
-        final RecordMetadata metadata = factoryAndPermissions.factory.getMetadata();
+        this.cursor = factory.getCursor(sqlExecutionContext);
+        final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectByteCharSequence columnNames = header.getUrlParam("cols");

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -81,12 +80,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         this.filter = filter;
         this.columnIndex = columnIndex;
         this.func = func;
-    }
-
-    @Override
-    public void authorizeWith(SecurityContext context) {
-        super.authorizeWith(context);
-        context.authorizeFactory(recordCursorFactory);
     }
 
     @Override

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -90,12 +89,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
         this.workerCount = workerCount;
-    }
-
-    @Override
-    public void authorizeWith(SecurityContext context) {
-        super.authorizeWith(context);
-        context.authorizeFunction(filterAtom.getFilter(-1));
     }
 
     @Override

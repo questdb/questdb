@@ -53,6 +53,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final int atomicity;
+    private final CopyContext copyContext;
     private final byte delimiter;
     private final String fileName;
     private final boolean headerFlag;
@@ -62,7 +63,6 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     private final CopyRecord record = new CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private final String tableName;
-    private final CopyContext copyContext;
     private final String timestampColumn;
     private final String timestampFormat;
 
