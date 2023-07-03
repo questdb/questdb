@@ -68,6 +68,10 @@ public class DirectByteCharSink implements Mutable, ByteSequence, Closeable {
         return capacity;
     }
 
+    public long getPtr() {
+        return ptr;
+    }
+
     @Override
     public int length() {
         return (int) (lo - ptr);

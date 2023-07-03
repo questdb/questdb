@@ -1,5 +1,5 @@
 package io.questdb.cutlass.auth;
 
 public interface ChallengeResponseMatcher {
-    boolean verifyLineToken(CharSequence keyId, byte[] challenge, CharSequence response);
+    boolean verifyLineToken(CharSequence keyId, long challengePtr, int challengeLen, long base64SignaturePtr, int base64SignatureLen);
 }

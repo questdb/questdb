@@ -109,7 +109,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             URL u = getClass().getResource("authDb.txt");
             assert u != null;
             CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
-            return new EllipticCurveAuthenticatorFactory(nf, new StaticChallengeResponseMatcher(authDb));
+            return new EllipticCurveAuthenticatorFactory(nf, () -> new StaticChallengeResponseMatcher(authDb));
         }
     };
     protected int partitionByDefault = PartitionBy.DAY;
