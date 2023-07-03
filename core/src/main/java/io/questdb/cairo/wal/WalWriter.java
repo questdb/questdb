@@ -1457,8 +1457,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential,
-                boolean isDedupKey
+                boolean isSequential
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1544,8 +1543,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential,
-                boolean isDedupKey
+                boolean isSequential
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 

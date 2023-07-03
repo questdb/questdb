@@ -458,7 +458,7 @@ int64_t merge_dedup_long_index(
             }
 
             // replace all records with same timestamp with last version from index
-            while (src[src_pos] == conflict_ts) {
+            while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
                 dest[0] = index[index_pos - 1];
                 dest++;
                 src_pos++;

@@ -300,15 +300,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
         return -1;
     }
 
-    public int indexOf(int offset, long o) {
-        for (int i = offset, n = pos; i < n; i++) {
-            if (o == getQuick(i)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     public void insert(int index, int length) {
         ensureCapacity(pos + length);
         if (pos > index) {

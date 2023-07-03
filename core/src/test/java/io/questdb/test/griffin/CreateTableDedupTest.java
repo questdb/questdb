@@ -294,7 +294,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 LongList columnIndexes = new LongList();
                 columnIndexes.add(-1);
                 try {
-                    tw.setDeduplicationStatus(true, columnIndexes, 0, 1);
+                    tw.enableDeduplicationWithUpsertKeys(columnIndexes);
                     Assert.assertFalse(tw.isDeduplicationEnabled());
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
@@ -303,7 +303,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 columnIndexes.clear();
                 columnIndexes.add(0);
                 try {
-                    tw.setDeduplicationStatus(true, columnIndexes, 0, 1);
+                    tw.enableDeduplicationWithUpsertKeys(columnIndexes);
                     Assert.assertFalse(tw.isDeduplicationEnabled());
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Unsupported column type used as deduplicate key");
@@ -315,7 +315,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 LongList columnIndexes = new LongList();
                 columnIndexes.add(1);
                 try {
-                    tw.setDeduplicationStatus(true, columnIndexes, 0, 1);
+                    tw.enableDeduplicationWithUpsertKeys(columnIndexes);
                     Assert.assertFalse(tw.isDeduplicationEnabled());
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");

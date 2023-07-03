@@ -70,8 +70,7 @@ public interface MetadataService {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential,
-            boolean isDedupKey
+            boolean isSequential
     );
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
@@ -82,7 +81,11 @@ public interface MetadataService {
 
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
+    void disableDeduplication();
+
     void dropIndex(@NotNull CharSequence columnName);
+
+    void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
     long getMetaMaxUncommittedRows();
 
@@ -101,8 +104,6 @@ public interface MetadataService {
     void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName);
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
-
-    void setDeduplicationStatus(boolean status, LongList columnsIndexes, int startIndex, long count);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

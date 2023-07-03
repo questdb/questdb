@@ -211,7 +211,7 @@ public class AlterOperationBuilder {
     }
 
     public AlterOperationBuilder ofSetDedup(int tableNamePosition, TableToken tableToken, boolean status) {
-        this.command = SET_DEDUP;
+        this.command = SET_DEDUP_ENABLE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableToken.getTableId();

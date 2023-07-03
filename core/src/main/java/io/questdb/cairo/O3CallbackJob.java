@@ -40,7 +40,7 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
         final int columnIndex = task.getColumnIndex();
         final int columnType = task.getColumnType();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
-        final long mergedCount = task.getMergeCount();
+        final long mergeCount = task.getMergeCount();
         final long row1Count = task.getRow1Count();
         final long row2Lo = task.getRow2Lo();
         final long row2Hi = task.getRow2Hi();
@@ -53,7 +53,7 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
                     columnIndex,
                     columnType,
                     mergedTimestampsAddr,
-                    mergedCount,
+                    mergeCount,
                     row1Count,
                     row2Lo,
                     row2Hi
