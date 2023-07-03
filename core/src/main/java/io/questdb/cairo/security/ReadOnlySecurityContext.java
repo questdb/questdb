@@ -36,7 +36,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
 
     @Override
-    public void assumeRole(CharSequence roleName) {
+    public void assumeServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -101,7 +101,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAssignRole() {
+    public void authorizeAssignServiceAccount() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -126,7 +126,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCreateRole() {
+    public void authorizeCreateServiceAccount() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -156,7 +156,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDropRole() {
+    public void authorizeDropServiceAccount() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -235,12 +235,12 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignRole() {
+    public void authorizeUnassignServiceAccount() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void exitRole(CharSequence roleName) {
+    public void exitServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 }

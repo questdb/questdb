@@ -36,7 +36,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
 
     @Override
-    public void assumeRole(CharSequence roleName) {
+    public void assumeServiceAccount(CharSequence serviceAccountName) {
     }
 
     @Override
@@ -88,7 +88,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAssignRole() {
+    public void authorizeAssignServiceAccount() {
     }
 
     @Override
@@ -108,7 +108,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCreateRole() {
+    public void authorizeCreateServiceAccount() {
     }
 
     @Override
@@ -132,7 +132,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDropRole() {
+    public void authorizeDropServiceAccount() {
     }
 
     @Override
@@ -196,10 +196,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignRole() {
+    public void authorizeUnassignServiceAccount() {
     }
 
     @Override
-    public void exitRole(CharSequence roleName) {
+    public void exitServiceAccount(CharSequence serviceAccountName) {
     }
 }
