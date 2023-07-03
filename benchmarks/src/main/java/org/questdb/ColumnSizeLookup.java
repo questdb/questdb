@@ -77,7 +77,6 @@ public class ColumnSizeLookup {
                 return 8;
             case ColumnType.FLOAT:
             case ColumnType.INT:
-            case ColumnType.IPv4:
             case ColumnType.SYMBOL:
                 return 4;
             case ColumnType.SHORT:
