@@ -118,7 +118,7 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
-    void onTableCreated(TableToken tableToken);
-
     void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
+
+    void onTableCreated(TableToken tableToken);
 }
