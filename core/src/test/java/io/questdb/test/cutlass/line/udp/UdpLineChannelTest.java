@@ -26,9 +26,12 @@ package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.udp.UdpLineChannel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.fail;
@@ -52,6 +55,16 @@ public class UdpLineChannelTest {
             return -1;
         }
     };
+    private static final Log LOG = LogFactory.getLog(UdpLineChannelTest.class);
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // it is necessary to initialise logger before tests start
+        // logger doesn't relinquish memory until JVM stops
+        // which causes memory leak detector to fail should logger be
+        // created mid-test
+        LOG.info().$("setup logger").$();
+    }
 
     @Test
     public void testConstructorLeak_DescriptorsExhausted() throws Exception {

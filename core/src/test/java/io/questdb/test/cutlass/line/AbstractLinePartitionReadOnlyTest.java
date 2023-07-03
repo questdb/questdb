@@ -32,9 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.TestName;
 
@@ -62,17 +60,6 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
 
     @Rule
     public TestName testName = new TestName();
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration(
-                        "cairo.max.uncommitted.rows=500",
-                        "cairo.commit.lag=2000",
-                        "cairo.o3.max.lag=2000"
-                )
-        );
-    }
 
     protected static void checkPartitionReadOnlyState(CairoEngine engine, TableToken tableToken, boolean... partitionIsReadOnly) {
         engine.releaseAllWriters();
