@@ -549,10 +549,14 @@ public class SqlCompiler implements Closeable {
                 tok = expectToken(lexer, "'dedup columns'");
 
                 if (SqlKeywords.isDisableKeyword(tok)) {
-                    return alterTableSetDedup(tableNamePosition, tableToken, tableMetadata, false, lexer);
+                    AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
+                            tableNamePosition,
+                            tableToken
+                    );
+                    return compiledQuery.ofAlter(setDedup.build());
                 } else {
                     lexer.unparseLast();
-                    return alterTableSetDedup(tableNamePosition, tableToken, tableMetadata, true, lexer);
+                    return alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, true, lexer);
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
@@ -821,6 +825,78 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
+    private CompiledQuery alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, boolean status, GenericLexer lexer) throws SqlException {
+        if (!tableMetadata.isWalEnabled()) {
+            throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
+        }
+        AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
+                tableNamePosition,
+                tableToken,
+                status
+        );
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        boolean tsIncludedInDedupColumns = false;
+        int dedupColumns = 0;
+
+        if (tok == null || !isUpsertKeyword(tok)) {
+            throw SqlException.position(lexer.getPosition()).put("expected 'upsert'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isKeysKeyword(tok)) {
+            throw SqlException.position(lexer.getPosition()).put("expected 'keys'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && Chars.equals(tok, '(')) {
+            tok = SqlUtil.fetchNext(lexer);
+
+            while (tok != null && !Chars.equals(tok, ')')) {
+                final CharSequence columnName = tok;
+
+                validateLiteral(lexer.getPosition(), tok);
+                int colIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                if (colIndex < 0) {
+                    throw SqlException.position(lexer.getPosition()).put("deduplicate column not found [column=").put(columnName).put(']');
+                }
+
+                if (colIndex == tableMetadata.getTimestampIndex()) {
+                    tsIncludedInDedupColumns = true;
+                } else {
+                    int columnType = tableMetadata.getColumnType(colIndex);
+                    if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
+                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                    }
+                }
+                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
+                dedupColumns++;
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && Chars.equals(tok, ',')) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+            }
+
+            if (!Chars.equals(tok, ')')) {
+                throw SqlException.position(lexer.getPosition()).put("')' expected");
+            }
+
+            if (!tsIncludedInDedupColumns) {
+                throw SqlException.position(lexer.getPosition()).put("deduplicate key list must include dedicated timestamp column");
+            }
+
+            if (dedupColumns > 0 && !configuration.isMultiKeyDedupEnabled()) {
+                throw SqlException.position(lexer.getPosition()).put("multiple key deduplication is not supported");
+            }
+
+        } else {
+            throw SqlException.$(lexer.getPosition(), "deduplication column list expected");
+        }
+        return compiledQuery.ofAlter(setDedup.build());
+    }
+
     private CompiledQuery alterTableDropColumn(
             SecurityContext securityContext,
             int tableNamePosition,
@@ -1067,80 +1143,6 @@ public class SqlCompiler implements Closeable {
             ex.position(tableNamePosition);
             throw ex;
         }
-    }
-
-    private CompiledQuery alterTableSetDedup(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, boolean status, GenericLexer lexer) throws SqlException {
-        if (!tableMetadata.isWalEnabled()) {
-            throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
-        }
-        AlterOperationBuilder setDedup = alterOperationBuilder.ofSetDedup(
-                tableNamePosition,
-                tableToken,
-                status
-        );
-        if (status) {
-            CharSequence tok = SqlUtil.fetchNext(lexer);
-
-            boolean tsIncludedInDedupColumns = false;
-            int dedupColumns = 0;
-
-            if (tok == null || !isUpsertKeyword(tok)) {
-                throw SqlException.position(lexer.getPosition()).put("expected 'upsert'");
-            }
-
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !isKeysKeyword(tok)) {
-                throw SqlException.position(lexer.getPosition()).put("expected 'keys'");
-            }
-
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && Chars.equals(tok, '(')) {
-                tok = SqlUtil.fetchNext(lexer);
-
-                while (tok != null && !Chars.equals(tok, ')')) {
-                    final CharSequence columnName = tok;
-
-                    validateLiteral(lexer.getPosition(), tok);
-                    int colIndex = tableMetadata.getColumnIndexQuiet(columnName);
-                    if (colIndex < 0) {
-                        throw SqlException.position(lexer.getPosition()).put("deduplicate column not found [column=").put(columnName).put(']');
-                    }
-
-                    if (colIndex == tableMetadata.getTimestampIndex()) {
-                        tsIncludedInDedupColumns = true;
-                    } else {
-                        int columnType = tableMetadata.getColumnType(colIndex);
-                        if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
-                            throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
-                                    .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
-                        }
-                    }
-                    setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
-                    dedupColumns++;
-
-                    tok = SqlUtil.fetchNext(lexer);
-                    if (tok != null && Chars.equals(tok, ',')) {
-                        tok = SqlUtil.fetchNext(lexer);
-                    }
-                }
-
-                if (!Chars.equals(tok, ')')) {
-                    throw SqlException.position(lexer.getPosition()).put("')' expected");
-                }
-
-                if (!tsIncludedInDedupColumns) {
-                    throw SqlException.position(lexer.getPosition()).put("deduplicate key list must include dedicated timestamp column");
-                }
-
-                if (dedupColumns > 0 && !configuration.isMultiKeyDedupEnabled()) {
-                    throw SqlException.position(lexer.getPosition()).put("multiple key deduplication is not supported");
-                }
-
-            } else {
-                throw SqlException.$(lexer.getPosition(), "deduplication column list expected");
-            }
-        }
-        return compiledQuery.ofAlter(setDedup.build());
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNamePosition, TableToken tableToken, int tableNamePosition, int tableId) throws SqlException {
