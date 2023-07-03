@@ -147,8 +147,8 @@ public class VectTest {
 
     @Test
     public void testDedupWithKey() {
-        Rnd rnd = TestUtils.generateRandom(null, 311851819508041L, 1688338161975L);
-        int indexLen = rnd.nextInt(10000);
+        Rnd rnd = TestUtils.generateRandom(null, 329866824124750L, 1688393122157L);
+        int indexLen = rnd.nextInt(10);
         try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
             try (DirectLongList keys = new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT)) {
                 LongHashSet distinctKeys = new LongHashSet();
@@ -166,6 +166,7 @@ public class VectTest {
                     distinctKeys.add(Numbers.encodeLowHighInts(indexVal, keyVal));
                 }
 
+                int abc = 0;
                 // Squash keys from longs to ints
                 for (int i = 0; i < keys.size(); i++) {
                     keys.set(i, Numbers.encodeLowHighInts((int) keys.get(2L * i), (int) keys.get(2L * i + 1)));

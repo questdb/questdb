@@ -10,8 +10,9 @@
 #include <algorithm>
 
 
-void merge_sort(const index_t *pIndex, index_t *pIndex1, int64_t start, int64_t anEnd, const int32_t count,
-                const int32_t **pInt);
+void merge_sort(const index_t *src, index_t *dest, int64_t start, int64_t end, const int32_t **keys, int32_t key_count);
+
+int diff(const int32_t **pInt, int32_t key_count, uint64_t left, uint64_t right);
 
 inline bool key_equals(
         const int64_t count,
@@ -148,32 +149,33 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     }
 
     // find duplicate ranges
-    int64_t dup_start = 0;
+    int64_t dup_start = -1;
     int64_t dup_end = 0;
-    int64_t dup_max_run_count = 0;
-    int64_t dup_run_count = 0;
-    uint64_t lastTimestamp = index_src[0].ts;
+    int64_t ts_index = 0;
 
     for (int64_t i = 1; i < count; i++) {
-        if (index_src[i].ts > lastTimestamp) {
-            dup_max_run_count = std::max(dup_run_count, dup_max_run_count);
-            dup_run_count = 0;
-            dup_end = i;
-        } else if (index_src[i].ts == lastTimestamp) {
-            dup_start = std::min(dup_start, i - 1);
-            dup_run_count++;
-        } else if (index_src[i].ts < lastTimestamp) {
+        if (index_src[i].ts > index_src[ts_index].ts) {
+            if (i > ts_index + 1) {
+                dup_start = dup_start > -1 ? dup_start : ts_index;
+                dup_end = i;
+            }
+            ts_index = i;
+        } else if (index_src[i].ts < index_src[ts_index].ts) {
             return -i - 1;
         }
     }
+    if (index_src[ts_index].ts == index_src[count - 1].ts) {
+        dup_start = dup_start > -1 ? dup_start : 0;
+        dup_end = count;
+    }
 
-    if (dup_max_run_count == 0) {
-        // no dups by timestamp, all good
+    if (dup_end - dup_start <= 0) {
+        // no timestamp duplicates
         return count;
     }
 
     // dedup range from dup_start to dup_end
-    merge_sort(index_src, index_dest, dup_start, dup_end, key_count, key_values);
+    merge_sort(index_src, index_dest, dup_start, dup_end, key_values, key_count);
 
     int64_t copy_to = 0;
     int64_t last = 0;
@@ -200,16 +202,86 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     }
 }
 
-void merge_sort(
+inline void merge_sort_slice(
+        const int32_t **keys,
+        const int32_t &key_count,
+        const index_t *src1,
+        const index_t *src2,
+        index_t *dest,
+        const int64_t &src1_len,
+        const int64_t &src2_len) {
+
+    // Merge from the end.
+    int64_t i1 = src1_len - 1, i2 = src2_len - 1;
+    index_t *dest_ptr = &dest[src1_len + src2_len - 1];
+
+    while (i1 > -1 && i2 > -1) {
+        if (src1[i1].ts < src2[i2].ts) {
+            *dest_ptr = src2[i2--];
+        } else if (src1[i1] > src2[i2].ts) {
+            *dest_ptr = src1[i1--];
+        } else {
+            // same timestamp
+            if (diff(keys, key_count, src1[i1].i, src2[i2].i) > 0) {
+                *dest_ptr = src1[i1--];
+            } else {
+                *dest_ptr = src2[i2--];
+            }
+        }
+        dest_ptr--;
+    }
+
+    if (i1 > -1) {
+        __MEMMOVE(dest, src1, (i1 + 1) * sizeof(index_t));
+    } else {
+        __MEMMOVE(dest, src2, (i2 + 1) * sizeof(index_t));
+    }
+}
+
+int32_t diff(const int32_t **keys, const int32_t key_count, uint64_t left, uint64_t right) {
+    for (int k = 0; k < key_count; k++) {
+        int32_t diff = keys[k][left] - keys[k][right];
+        if (diff != 0) {
+            return diff;
+        }
+    }
+    return 0;
+}
+
+index_t * merge_sort(
         const index_t *index_src,
-        index_t *index_dest,
+        index_t *index_dest1,
+        index_t *index_dest2,
         int64_t start,
         int64_t end,
-        const int32_t count,
-        const int32_t **p_int
+        const int32_t **keys,
+        const int32_t key_count
 ) {
-    // TODO: merge sort here into index_dest
-    __MEMCPY(&index_dest[start], &index_src[start], (end - start) * sizeof(index_t));
+    index_t *dest1 = &index_dest1[start];
+    index_t *dest2 = &index_dest2[start];
+    index_t *dest = dest1;
+
+    const index_t *source = &index_src[start];
+    const int64_t len = end - start;
+    int64_t slice_len = 1;
+
+    do {
+        for (int64_t i = 0; i < len; i += 2 * slice_len) {
+            merge_sort_slice(
+                    keys,
+                    key_count,
+                    &source[i],
+                    &source[i + slice_len],
+                    &dest[i],
+                    slice_len,
+                    std::min(slice_len, len - (i + slice_len))
+            );
+        }
+
+        // After first iteration take destination as the source
+        source = dest;
+        slice_len *= 2;
+    } while (slice_len <= len);
 }
 
 JNIEXPORT jlong JNICALL
