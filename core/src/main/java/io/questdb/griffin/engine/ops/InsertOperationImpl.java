@@ -43,7 +43,7 @@ import io.questdb.std.ReadOnlyObjList;
 
 public class InsertOperationImpl implements InsertOperation {
 
-    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<>() {
+    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
         @Override
         public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
             throw new UnsupportedOperationException();
