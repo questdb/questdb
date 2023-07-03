@@ -31,7 +31,7 @@ import org.jetbrains.annotations.Nullable;
 
 public interface SecurityContext {
 
-    void assumeRole(CharSequence roleName);
+    void assumeServiceAccount(CharSequence serviceAccountName);
 
     void authorizeAddPassword();
 
@@ -58,7 +58,7 @@ public interface SecurityContext {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignRole();
+    void authorizeAssignServiceAccount();
 
     void authorizeCopy();
 
@@ -68,7 +68,7 @@ public interface SecurityContext {
 
     void authorizeCreateJwk();
 
-    void authorizeCreateRole();
+    void authorizeCreateServiceAccount();
 
     void authorizeCreateUser();
 
@@ -80,7 +80,7 @@ public interface SecurityContext {
 
     void authorizeDropJwk();
 
-    void authorizeDropRole();
+    void authorizeDropServiceAccount();
 
     void authorizeDropUser();
 
@@ -114,9 +114,9 @@ public interface SecurityContext {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignRole();
+    void authorizeUnassignServiceAccount();
 
-    void exitRole(CharSequence roleName);
+    void exitServiceAccount(CharSequence serviceAccountName);
 
     CharSequence getEntityName();
 
