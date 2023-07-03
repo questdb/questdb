@@ -201,4 +201,12 @@ public class AllowAllSecurityContext implements SecurityContext {
     @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
     }
+
+    @Override
+    public void onTableCreated(TableToken tableToken) {
+    }
+
+    @Override
+    public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
 }
