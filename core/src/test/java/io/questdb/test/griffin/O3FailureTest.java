@@ -648,7 +648,7 @@ public class O3FailureTest extends AbstractO3Test {
                 new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {
-                        if (offset == 0 && len == storageLength * (records - 2)) {
+                        if (offset == 0 && len == storageLength * (records - 1)) {
                             return -1;
                         }
                         return super.write(fd, address, len, offset);
@@ -987,7 +987,7 @@ public class O3FailureTest extends AbstractO3Test {
                 new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {
-                        if (offset == 0 && len == storageLength * (records - 2)) {
+                        if (offset == 0 && len == storageLength * (records - 1)) {
                             return -1;
                         }
                         return super.write(fd, address, len, offset);
