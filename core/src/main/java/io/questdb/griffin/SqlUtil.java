@@ -500,7 +500,8 @@ public class SqlUtil {
     public static int implicitCastStrAsIPv4(CharSequence value) {
         if(value != null) {
             try {
-                return Numbers.parseIPv4(value);
+                int test = Numbers.parseIPv4(value);
+                return test;
             } catch (NumericException exception) {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.IPv4);
             }

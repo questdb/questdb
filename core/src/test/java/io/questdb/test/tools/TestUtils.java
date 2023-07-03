@@ -831,6 +831,9 @@ public final class TestUtils {
                 case ColumnType.SHORT:
                     sql.append("CAST(x AS SHORT) ").append(colName);
                     break;
+                case ColumnType.IPv4:
+                    sql.append("CAST(x AS IPv4) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }
@@ -1107,6 +1110,9 @@ public final class TestUtils {
                 case ColumnType.LONG128:
                     insertFromSelect.append("to_long128(x, 0) ").append(colName);
                     break;
+                case ColumnType.IPv4:
+                    insertFromSelect.append("CAST(x as IPv4) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }
@@ -1240,6 +1246,23 @@ public final class TestUtils {
                     uuid.toSink(sink);
                 }
                 break;
+            case ColumnType.IPv4: {
+                final int val = r.getInt(i);
+                if (i == Integer.MIN_VALUE) {
+                    sink.put("null");
+                } else {
+                    sink.put('"');
+                    Numbers.append(sink, (val >> 24) & 0xff);
+                    sink.put('.');
+                    Numbers.append(sink, (val >> 16) & 0xff);
+                    sink.put('.');
+                    Numbers.append(sink, (val >> 8) & 0xff);
+                    sink.put('.');
+                    Numbers.append(sink, val & 0xff);
+                    sink.put('"');
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -1417,6 +1440,7 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
                         break;
                     case ColumnType.GEOINT:

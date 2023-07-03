@@ -74,30 +74,160 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
-//    @Test
-//    public void testIntToIpv4_NO_WAL() throws Exception {
-//
-//        compiler.compile("create table x as (select x::int from long_sequence(10))", sqlExecutionContext);
-//        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
-//        compiler.compile("insert into y select * from x", sqlExecutionContext);
-//
-//        assertQuery("0.0.0.1"+
-//                        "0.0.0.2"+
-//                        "0.0.0.3"+
-//                        "0.0.0.4"+
-//                        "0.0.0.5"+
-//                        "0.0.0.6"+
-//                        "0.0.0.7"+
-//                        "0.0.0.8"+
-//                        "0.0.0.9"+
-//                        "0.0.0.10",
-//                "select * from y",
-//                "insert into y select * from x",
-//                null,
-//                true,
-//                true
-//        );
-//    }
+    @Test
+    public void testIntToIpv4_NO_WAL() throws Exception {
+
+            compiler.compile("create table x as (select x::int from long_sequence(10))", sqlExecutionContext);
+            compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+
+            engine.releaseInactive();
+
+            assertQuery("a\n" +
+                            '"' + "0.0.0.1" + '"' + '\n' +
+                            '"' + "0.0.0.2" + '"' + '\n' +
+                            '"' + "0.0.0.3" + '"' + '\n' +
+                            '"' + "0.0.0.4" + '"' + '\n' +
+                            '"' + "0.0.0.5" + '"' + '\n' +
+                            '"' + "0.0.0.6" + '"' + '\n' +
+                            '"' + "0.0.0.7" + '"' + '\n' +
+                            '"' + "0.0.0.8" + '"' + '\n' +
+                            '"' + "0.0.0.9" + '"' + '\n' +
+                            '"' + "0.0.0.10" + '"' + '\n',
+                    "select * from y",
+                    "insert into y select * from x",
+                    null,
+                    true,
+                    true
+            );
+    }
+
+    @Test
+    public void testShortToIpv4_NO_WAL() throws Exception {
+
+        compiler.compile("create table x as (select x::short from long_sequence(10))", sqlExecutionContext);
+        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+
+        engine.releaseInactive();
+
+        assertQuery("a\n" +
+                        '"' + "0.0.0.1" + '"' + '\n' +
+                        '"' + "0.0.0.2" + '"' + '\n' +
+                        '"' + "0.0.0.3" + '"' + '\n' +
+                        '"' + "0.0.0.4" + '"' + '\n' +
+                        '"' + "0.0.0.5" + '"' + '\n' +
+                        '"' + "0.0.0.6" + '"' + '\n' +
+                        '"' + "0.0.0.7" + '"' + '\n' +
+                        '"' + "0.0.0.8" + '"' + '\n' +
+                        '"' + "0.0.0.9" + '"' + '\n' +
+                        '"' + "0.0.0.10" + '"' + '\n',
+                "select * from y",
+                "insert into y select * from x",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testByteToIpv4_NO_WAL() throws Exception {
+
+        compiler.compile("create table x as (select x::byte from long_sequence(10))", sqlExecutionContext);
+        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+
+        engine.releaseInactive();
+
+        assertQuery("a\n" +
+                        '"' + "0.0.0.1" + '"' + '\n' +
+                        '"' + "0.0.0.2" + '"' + '\n' +
+                        '"' + "0.0.0.3" + '"' + '\n' +
+                        '"' + "0.0.0.4" + '"' + '\n' +
+                        '"' + "0.0.0.5" + '"' + '\n' +
+                        '"' + "0.0.0.6" + '"' + '\n' +
+                        '"' + "0.0.0.7" + '"' + '\n' +
+                        '"' + "0.0.0.8" + '"' + '\n' +
+                        '"' + "0.0.0.9" + '"' + '\n' +
+                        '"' + "0.0.0.10" + '"' + '\n',
+                "select * from y",
+                "insert into y select * from x",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testStringToIpv4_NO_WAL() throws Exception {
+
+        compiler.compile("create table x (b string)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into x values('0.0.0.7')");
+        executeInsert("insert into x values('0.0.0.8')");
+        executeInsert("insert into x values('0.0.0.9')");
+        executeInsert("insert into x values('0.0.0.10')");
+        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+
+        engine.releaseInactive();
+
+        assertQuery("a\n" +
+                        '"' + "0.0.0.1" + '"' + '\n' +
+                        '"' + "0.0.0.2" + '"' + '\n' +
+                        '"' + "0.0.0.3" + '"' + '\n' +
+                        '"' + "0.0.0.4" + '"' + '\n' +
+                        '"' + "0.0.0.5" + '"' + '\n' +
+                        '"' + "0.0.0.6" + '"' + '\n' +
+                        '"' + "0.0.0.7" + '"' + '\n' +
+                        '"' + "0.0.0.8" + '"' + '\n' +
+                        '"' + "0.0.0.9" + '"' + '\n' +
+                        '"' + "0.0.0.10" + '"' + '\n',
+                "select * from y",
+                "insert into y select * from x",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIPv4ToInt_NO_WAL() throws Exception {
+
+        compiler.compile("create table x (b IPv4)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into x values('0.0.0.7')");
+        executeInsert("insert into x values('0.0.0.8')");
+        executeInsert("insert into x values('0.0.0.9')");
+        executeInsert("insert into x values('0.0.0.10')");
+        compiler.compile("create table y (a int)", sqlExecutionContext);
+
+        engine.releaseInactive();
+
+        assertQuery("a\n" +
+                        "1" + '\n' +
+                        "2" + '\n' +
+                        "3" + '\n' +
+                        "4" + '\n' +
+                        "5" + '\n' +
+                        "6" + '\n' +
+                        "7" + '\n' +
+                        "8" + '\n' +
+                        "9" + '\n' +
+                        "10" + '\n',
+                "select * from y",
+                "insert into y select * from x",
+                null,
+                true,
+                true
+        );
+    }
 
     @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {

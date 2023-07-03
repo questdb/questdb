@@ -110,6 +110,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 return IntConstant.NULL;
             case ColumnType.LONG:
                 return LongConstant.NULL;

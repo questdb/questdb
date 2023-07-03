@@ -2254,6 +2254,11 @@ public final class Numbers {
 
         while((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
             num = parseInt(sequence, lo, hi);
+
+            if(num > 255) {
+                throw NumericException.INSTANCE;
+            }
+
             ipv4 = (ipv4 << 8) | num;
             count++;
             lo = hi + 1;
@@ -2263,7 +2268,13 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        return (ipv4 << 8) | parseInt(sequence, lo, sequence.length());
+        num = parseInt(sequence, lo, lim);
+
+        if(num > 255) {
+            throw NumericException.INSTANCE;
+        }
+
+        return (ipv4 << 8) | num;
     }
 
     private static long parseLong0(CharSequence sequence, final int p, int lim) throws NumericException {

@@ -269,13 +269,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             socket.put("null");
         } else {
             socket.put('"');
-            Numbers.append(socket, i & 0xff);
-            socket.put('.');
-            Numbers.append(socket, (i >> 8) & 0xff);
+            Numbers.append(socket, (i >> 24) & 0xff);
             socket.put('.');
             Numbers.append(socket, (i >> 16) & 0xff);
             socket.put('.');
-            Numbers.append(socket, (i >> 24) & 0xff);
+            Numbers.append(socket, (i >> 8) & 0xff);
+            socket.put('.');
+            Numbers.append(socket, i & 0xff);
             socket.put('"');
         }
     }

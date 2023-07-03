@@ -222,6 +222,32 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
     }
 
     @Test
+    public void testPutIPv4BadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.INT,
+                "column\tlocation\ttimestamp\n" +
+                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "5\t\t1970-01-01T00:00:04.000000Z\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Long.MAX_VALUE)
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 300.12)
+                            .$(2000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "not a number")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5)
+                            .$(4000000000L);
+                    sender.flush();
+                });
+    }
+
+    @Test
     public void testPutLong256BadValueIsTreatedAsNull() throws Exception {
         testColumnType(
                 ColumnType.LONG256,

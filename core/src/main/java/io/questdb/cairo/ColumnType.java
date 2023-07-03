@@ -203,8 +203,6 @@ public final class ColumnType {    //@formatter:off
         return columnType == NULL;
     }
 
-    //public static boolean isIPv4(int columnType) { return columnType == IPv4; }
-
     public static boolean isString(int columnType) {
         return columnType == STRING;
     }
@@ -366,6 +364,7 @@ public final class ColumnType {    //@formatter:off
         return (fromType == INT && toType == IPv4)
                 || (fromType == BYTE && toType == IPv4)
                 || (fromType == SHORT && toType == IPv4)
+                || (fromType == STRING && toType == IPv4)
                 || (fromType == IPv4 && toType == INT);
     }
 

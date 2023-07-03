@@ -93,7 +93,8 @@ public class CreateTableTestUtils {
                         .col("j", ColumnType.SYMBOL)
                         .col("k", ColumnType.BOOLEAN)
                         .col("l", ColumnType.BINARY)
-                        .col("m", ColumnType.UUID);
+                        .col("m", ColumnType.UUID)
+                        .col("n", ColumnType.IPv4);
                 TestUtils.create(model, engine);
             }
         } catch (RuntimeException e) {
@@ -205,7 +206,7 @@ public class CreateTableTestUtils {
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp();
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp().col("IPv4", ColumnType.IPv4);
 
     }
 

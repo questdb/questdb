@@ -290,6 +290,7 @@ public class RecordComparatorCompiler {
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.INT:
+                case ColumnType.IPv4:
                     fieldType = "I";
                     getterNameA = "getInt";
                     comparatorClass = Integer.class;
