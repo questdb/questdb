@@ -339,7 +339,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     ff,
                     sink
             );
-            alertTemplate.parse(sink, now, properties);
+            // originalTxt needs to be a static text and not a mutable sink because it's referred to in template nodes 
+            alertTemplate.parse(Chars.toString(sink), now, properties);
         }
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(
