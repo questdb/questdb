@@ -47,6 +47,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
+    static final ObjList<CharSequence> ALL_COLUMNS_AUTHORIZE_LIST = new ObjList<>();
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
@@ -69,7 +70,6 @@ public class TableUpdateDetails implements Closeable {
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
-    private ColumnTrackingWriterAPI trackingWriterAPI;
     private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
     private int writerThreadId;
@@ -218,13 +218,6 @@ public class TableUpdateDetails implements Closeable {
         return tableToken;
     }
 
-    public ColumnTrackingWriterAPI getTrackingWriterAPI() {
-        if (trackingWriterAPI == null) {
-            trackingWriterAPI = new ColumnTrackingWriterAPI(writerAPI);
-        }
-        return trackingWriterAPI;
-    }
-
     public int getWriterThreadId() {
         return writerThreadId;
     }
@@ -272,9 +265,8 @@ public class TableUpdateDetails implements Closeable {
     }
 
     private void authorizeWalCommit() {
-        // We track and validate column-level permissions for WAL tables only.
         if (ownSecurityContext != null) {
-            ownSecurityContext.authorizeInsert(tableToken, getTrackingWriterAPI().getWrittenColumnNames());
+            ownSecurityContext.authorizeInsert(tableToken, ALL_COLUMNS_AUTHORIZE_LIST);
         }
     }
 

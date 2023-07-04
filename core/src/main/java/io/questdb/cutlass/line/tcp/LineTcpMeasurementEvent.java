@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -38,7 +41,6 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 
 class LineTcpMeasurementEvent implements Closeable {
-    private static final ObjList<CharSequence> ALL_COLUMNS_AUTHORIZE_LIST = new ObjList<>();
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
@@ -299,9 +301,7 @@ class LineTcpMeasurementEvent implements Closeable {
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
         tableUpdateDetails = tud;
-        // authorize insert as an all-columns one to avoid the performance penalty
-        // of tracking written columns for non-WAL tables
-        securityContext.authorizeInsert(tud.getTableToken(), ALL_COLUMNS_AUTHORIZE_LIST);
+        securityContext.authorizeInsert(tud.getTableToken(), TableUpdateDetails.ALL_COLUMNS_AUTHORIZE_LIST);
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
