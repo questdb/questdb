@@ -36,6 +36,24 @@ import static io.questdb.griffin.CompiledQuery.RENAME_TABLE;
 public class RenameTableTest extends AbstractGriffinTest {
 
     @Test
+    public void testApplyRename() throws SqlException {
+        compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i, " +
+                        " timestamp_sequence(1,1) timestamp " +
+                        " from long_sequence(10)" +
+                        ") timestamp (timestamp);"
+        );
+        TableToken from = engine.verifyTableName("x");
+        TableToken to = from.renamed("y");
+        engine.applyTableRename(from, to);
+
+        Assert.assertEquals(from.getDirName(), engine.verifyTableName("y").getDirName());
+        Assert.assertNull(engine.getTableTokenIfExists("x"));
+    }
+
+    @Test
     public void testFunctionDestTableName() throws Exception {
         assertFailure("rename table x to y()", 18);
     }
