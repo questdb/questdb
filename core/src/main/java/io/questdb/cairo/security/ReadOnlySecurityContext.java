@@ -243,4 +243,12 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public void exitServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
+
+    @Override
+    public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void onTableCreated(TableToken tableToken) {
+    }
 }
