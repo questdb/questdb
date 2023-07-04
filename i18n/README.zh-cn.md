@@ -11,19 +11,19 @@
   <a href="https://slack.questdb.io">
     <img
       src="https://slack.questdb.io/badge.svg"
-      alt="QuestDB community Slack channel"
+      alt="QuestDB 在 Slack 上的社群"
     />
   </a>
-  <a href="#contribute">
+  <a href="#贡献">
     <img
       src="https://img.shields.io/github/all-contributors/questdb/questdb"
-      alt="QuestDB open source contributors"
+      alt="QuestDB 的开源贡献者们"
     />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img
       src="https://img.shields.io/maven-central/v/org.questdb/questdb"
-      alt="QuestDB on Apache Maven"
+      alt="QuestDB 在 Apache Maven 上的仓库"
     />
   </a>
 </p>
@@ -32,83 +32,74 @@
 
 # QuestDB
 
-QuestDB 是一个开源的時序数据库，支持高吞吐数据获取和快速 SQL 查询，操作简单。
-它支持使用InfluxDB连接协议、PostgreSQL协议和REST API进行批量无模式导入和导出。
+QuestDB 是一款开源的时序数据库，它可以使用简单的操作进行高吞吐量下的数据获取和快速 SQL 查询。同时支持使用 InfluxDB 的线路协议（[Line Protocol](https://docs.influxdata.com/influxdb/cloud-serverless/reference/syntax/line-protocol)）、PostgreSQL 的有线协议（[Wire Protocol](https://docs.kinetica.com/7.1/connectors/psql_wire_protocol/)）以及 REST API 进行模式无关的批量化导入导出操作。
 
-QuestDB非常适用于金融市场数据、应用程序指标、传感器数据、实时分析、仪表板和系统基础设施监控。
+QuestDB 非常适合金融市场数据、应用程序指标、传感器数据、实时分析、仪表板以及基础设施监控。
 
-QuestDB使用原生时间序列SQL插件实现了ANSI SQL。这些 SQL 扩展语义能更简单的连接
-（JOIN）多个来源的关系型数据以及时间序列数据。我们通过列导向的存储模型、大规模
-并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和
-C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
+QuestDB 使用原生的时间序列 SQL 扩展实现了 ANSI SQL 标准。这些 SQL 扩展使得关联来自使用关系型和时序连接的多个数据源变得简单。我们通过采用了列式存储模型、并行向量处理、SIMD 指令以及各种低延迟技术实现了它的高性能。整个代码库是用 Java 和 C++ 从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
 
 <div align="center">
   <a href="https://demo.questdb.io">
     <img
-      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
+      alt="QuestDB Web 控制台展示了多条 SQL 语句并将其查询结果可视化为图表"
       src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
       width="600"
     />
   </a>
 </div>
 
-## 尝试 QuestDB
+## 体验 QuestDB
 
-我们提供了一个[在线演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本
-和几个样本数据集：
+我们提供了一个[在线演示](https://demo.questdb.io/)，其中包含了 QuestDB 的最新发行版，以及几个示例数据集，如：
 
-- Trips： 近 10 年的纽约市出租车行程轨迹数据集，含 1.6 亿行的数据。
-- Trades： 每月30M+的实时加密货币市场数据。
-- Pos： 含有 25 万艘船的时序地理数据集。
+- Trips： 10 年间纽约市的出租车行程轨迹数据集，包含 16 亿行的数据；
+- Trades： 每月 3 千万条以上的实时加密货币市场数据；
+- Pos： 含有 25 万艘不同船只的时序地理位置数据集。
 
-| 查询                                                                          | 运行时间                                                                                                                                                                                            |
+| 查询语句                                                                          | 运行时长                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+| `SELECT sum(double) FROM trips`                                               | [0.15 秒](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 秒](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 秒](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 秒](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
+| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 秒](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-我们的[在线演示](https://demo.questdb.io/)运行在 `c5.metal` 上且仅使用 96 个线程中的 24 个线程。
+我们的[在线演示](https://demo.questdb.io/)运行在 `c5.metal` 实例上时，仅占用其 96 个 vCPU 中的 24 个。
 
-## 如何開始
+## 快速入门
 
-### 安裝 QuestDB
+### 安装 QuestDB
 
-你可以使用 Docker 来快速启动一个 QuestDB 实例：
+您可以使用 Docker 来快速启动一个 QuestDB 实例：
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-macOS 用户可以使用 Homebrew 来启动：
+macOS 用户可以使用 Homebrew 来安装启动：
 
 ```bash
 brew install questdb
 brew services start questdb
 
-questdb start // To start questdb
-questdb stop  // To stop questdb
+questdb start // 启动 questdb
+questdb stop  // 停止 questdb
 ```
 
-[QuestDB 下载页面](https://questdb.io/get-questdb/) 提供运行文件的直接下载，并
-提供其他安装和部署方式的详细信息。
+[QuestDB 下载页面](https://questdb.io/get-questdb/) 提供可执行版文件的直接下载，并提供其他安装和部署方式的详细信息。
 
 ### 连接到 QuestDB
 
-你可以使用以下接口与 QuestDB 进行交互。
+您可以使用以下接口与 QuestDB 进行交互。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 将会启动一个 web
-  控制台，默认运行在 `9000` 端口
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
-  持高性能、高吞吐量单向数据插入，默认运行在 `9009` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : 默认运行在 `9000` 端口
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
-  默认运行在 `8812` 端口
+- [Web 控制台](https://questdb.io/docs/develop/web-console/): 在 Web 端启动一个交互式 SQL 编辑器，默认运行在 `9000` 端口；
+- [InfluxDB 线路协议](https://questdb.io/docs/reference/api/influxdb/): 支持高性能、高吞吐量的单向数据插入，默认运行在 `9009` 端口；
+- [REST API](https://questdb.io/docs/reference/api/rest/): 默认运行在 `9000` 端口；
+- [PostgreSQL 有线协议](https://questdb.io/docs/reference/api/postgres/): 默认运行在 `8812` 端口。
 
 ### 写入数据
 
-以下是我们官方开发的questdb客户端，支持多种编程语言：
+以下是我们官方开发的 questdb 客户端，支持多种主流编程语言：
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -118,19 +109,17 @@ questdb stop  // To stop questdb
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
-## QuestDB 与其他开源 TSDB 的对比
+## QuestDB 与其他开源时序数据库的对比
 
-参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
-其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序数据库。
+参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序数据库。
 
-以下是 高维度[时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
-用例的测试结果，基于使用 6 到 16 个工作线程在 32 个 CPU 和 64 GB RAM上测试对比得到：
+以下是在高基数[时间序列基准测试套件](https://github.com/timescale/tsbs)上运行 `cpu-only` 用例的测试结果，基于使用 6 到 16 个工作线程在 32 个 CPU 和 64 GB RAM 上测试对比得到：
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
     <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
+      alt="QuestDB、ClickHouse、TimescaleDB 和 InfluxDB 的最大吞吐量比较图"
+      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/readme-benchmark.png"
     />
   </a>
 </div>
@@ -139,46 +128,38 @@ questdb stop  // To stop questdb
 
 ### 📚 阅读文档
 
-- [QuestDB 文档:](https://questdb.io/docs/introduction/) 描述了如何运行
-  和配置 QuestDB 的技术参考。
-- [教程](https://questdb.io/tutorial/) 逐步了解QuestDB的功能。
-- [产品路线图](https://github.com/questdb/questdb/projects) 了解我们下个产品发布的计划。
+- [QuestDB 文档](https://questdb.io/docs/introduction/) 描述了如何运行和配置 QuestDB 的技术参考。
+- [教程](https://questdb.io/tutorial/) 逐步了解 QuestDB 的功能。
+- [产品路线图](https://github.com/questdb/questdb/projects) 了解我们产品的下个发行计划。
 
 ### ❓ 寻求支持
 
-- [Community Slack:](https://slack.questdb.io) 加入技术讨论，提问问题，与其他用户见面！
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB bugs与问题
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 寻找常见
-  问题的解决方法。
+- [Slack 社群:](https://slack.questdb.io) 加入技术讨论、提出问题、与其他用户交流！
+- [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB 的 bug 与问题；
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 寻找常见问题的解决方法。
 
 ### 🚢 部署 QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI 镜像](https://questdb.io/docs/guides/aws-official-ami)
+- [Google 云平台](https://questdb.io/docs/guides/google-cloud-platform)
+- [官方 Docker 镜像](https://questdb.io/docs/get-started/docker)
+- [DigitalOcean 液滴](https://questdb.io/docs/guides/digitalocean)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
+
 
 ## 贡献
 
-我们总是乐于接受对项目的贡献，无论是源代码、文档、错误报告、功能请求还是反馈。如
-果要开始贡献：
+我们总是乐于接受对项目的贡献，无论是源代码、文档、错误报告、功能请求还是反馈。如果要开始贡献：
 
-- 请看一下 GitHub 上标有
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  的问题。
-- 阅
-  读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
-- 有关构建 QuestDB 的详细信息，请参
-  见[构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)。
-- [创建 QuestDB 的一个分叉](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)，
-  并提交一个 pull request，说明你的修改建议。
+- 可以参考一下 GitHub 上标有 "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)" 的问题；
+- 阅读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)；
+- 有关构建 QuestDB 的详细信息，请参见[构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)；
+- [创建 QuestDB 的一个复刻](https://docs.github.com/zh/github/getting-started-with-github/fork-a-repo)，然后提交一个 pull request 说明您做出的改动。
 
-✨ 为了表示感谢，我们将向贡献者发送一些我们的 QuestDB 礼品，如贴纸和 T 恤衫
-[在这里申领](https://questdb.io/community)
+✨ 为了表示感谢，我们将向贡献者们送出一些我们的 QuestDB 礼品，如贴纸和 T 恤衫
+[在此处申领](https://questdb.io/community)
 
-衷心感谢以下为 QuestDB 作出贡献的优秀人士：
-（[表情符号键](https://allcontributors.org/docs/en/emoji-key)）：
+衷心感谢以下为 QuestDB 作出贡献的优秀人士：（[表情符号键](https://allcontributors.org/docs/en/emoji-key)）：
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
