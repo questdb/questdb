@@ -216,6 +216,13 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.SHORT);
     }
 
+    public static int implicitCastAsIPv4(long value, int fromType) {
+        if(value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
+            return (int) value;
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.IPv4);
+    }
+
     // used by bytecode assembler
     @SuppressWarnings("unused")
     public static byte implicitCastCharAsByte(char value, int toType) {

@@ -387,7 +387,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                                 || columnTypeTag == ColumnType.DATE;
                         break;
                     case ColumnType.INT:
-                    case ColumnType.IPv4:
                         valid = columnTypeTag == ColumnType.INT
                                 || columnTypeTag == ColumnType.SHORT
                                 || columnTypeTag == ColumnType.BYTE;

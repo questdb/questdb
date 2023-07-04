@@ -62,6 +62,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
+                case ColumnType.IPv4:
                 case ColumnType.SHORT:
                 case ColumnType.BYTE:
                 case ColumnType.STRING:
@@ -95,6 +96,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
+                case ColumnType.IPv4:
                 case ColumnType.SHORT:
                 case ColumnType.BYTE:
                     val = func.getLong(null);
@@ -165,6 +167,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                     case ColumnType.BYTE:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.LONG:
                     case ColumnType.TIMESTAMP:
                         val = func.getLong(rec);

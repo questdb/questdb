@@ -327,6 +327,7 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with Long
      */
+
     void setLong(CharSequence name, long value) throws SqlException;
 
     /**

@@ -784,11 +784,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
             switch (tagWithFlag) {
                 case BINARY_TYPE_INT:
-                case BINARY_TYPE_IPv4:
                     appendIntColumnBin(record, i);
                     break;
                 case ColumnType.INT:
-                case ColumnType.IPv4:
                     appendIntCol(record, i);
                     break;
                 case ColumnType.STRING:

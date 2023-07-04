@@ -6889,6 +6889,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 return new ShortConstant((short) val);
             case ColumnType.INT:
                 return new IntConstant(val);
+            case ColumnType.IPv4:
+                return new IPv4Constant(val);
             case ColumnType.LONG:
                 return new LongConstant(val);
             case ColumnType.DATE:

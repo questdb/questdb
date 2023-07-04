@@ -365,6 +365,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             }
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.INT:
+                case ColumnType.IPv4:
                     dstFixMem.putInt(masterRecord.getInt(i));
                     break;
                 case ColumnType.FLOAT:

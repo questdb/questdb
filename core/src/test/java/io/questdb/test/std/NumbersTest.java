@@ -909,12 +909,6 @@ public class NumbersTest {
         Assert.assertEquals(204327201, Numbers.parseIPv4("12.45.201.33"));
     }
 
-    @Test
-    public void testParseIPv4_0() throws Exception {
-        Assert.assertEquals(84413540, Numbers.parseIPv4_0("5.8.12.100", 0,10));
-        Assert.assertEquals(204327201, Numbers.parseIPv4_0("12.45.201.33", 0,12));
-    }
-
     @Test(expected = NumericException.class)
     public void testParseIPv4Empty() throws Exception {
         Numbers.parseIPv4("");
@@ -951,6 +945,55 @@ public class NumbersTest {
     public void testParseIPv4WrongChars() throws Exception {
         Numbers.parseIPv4("1.2.3.ab");
     }
+
+    @Test
+    public void testParseIPv4_0() throws Exception {
+        Assert.assertEquals(84413540, Numbers.parseIPv4_0("5.8.12.100", 0,10));
+        Assert.assertEquals(204327201, Numbers.parseIPv4_0("12.45.201.33", 0,12));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Empty() throws Exception {
+        Numbers.parseIPv4_0("", 0, 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Null() throws Exception {
+        Numbers.parseIPv4_0(null, 0, 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Overflow1() throws Exception {
+        String i1 = "256.256.256.256";
+        Numbers.parseIPv4_0(i1, 0, 15);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Overflow2() throws Exception {
+        String i1 = "255.255.255.256";
+        Numbers.parseIPv4_0(i1, 0, 15);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Overflow3() throws Exception {
+        Numbers.parseIPv4_0("12.1.3500.2", 0, 11);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0SignOnly() throws Exception {
+        Numbers.parseIPv4_0("-", 0, 1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0WrongChars() throws Exception {
+        Numbers.parseIPv4_0("1.2.3.ab", 0, 8);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0WrongCount() throws Exception {
+        Numbers.parseIPv4_0("5.6", 0, 3);
+    }
+
     @Test
     public void testParseLongDurationDay() throws Exception {
         Assert.assertEquals(20 * Timestamps.DAY_MICROS, Numbers.parseLongDuration("20d"));

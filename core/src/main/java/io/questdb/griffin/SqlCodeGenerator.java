@@ -932,10 +932,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new IntColumn(i));
                                 break;
+                            case ColumnType.IPv4:
+                                castFunctions.add(new IPv4Column(i));
+                                break;
                             // wider types are not possible here
                             // INT will be cast to wider types, not other way around
                             // Wider types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                        }
+                        break;
+                    case ColumnType.IPv4:
+                        switch (fromTag) {
+                            case ColumnType.BYTE:
+                                castFunctions.add(new ByteColumn(i));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new ShortColumn(i));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new IntColumn(i));
+                                break;
+                            case ColumnType.IPv4:
+                                castFunctions.add(new IPv4Column(i));
+                                break;
+                            case ColumnType.STRING:
+                                castFunctions.add(new StrColumn(i));
+                                break;
                         }
                         break;
                     case ColumnType.LONG:
@@ -1076,6 +1098,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new CastIntToStrFunctionFactory.CastIntToStrFunction(new IntColumn(i)));
                                 break;
+                            case ColumnType.IPv4:
+                                castFunctions.add(new CastIPv4ToStrFunctionFactory.CastIPv4ToStrFunction(new IPv4Column(i)));
                             case ColumnType.LONG:
                                 castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
                                 break;
@@ -4455,6 +4479,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.CHAR:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.LONG:
                     case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
@@ -4482,7 +4507,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY");
                 }
             }
         }

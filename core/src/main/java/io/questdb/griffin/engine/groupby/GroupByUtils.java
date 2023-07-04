@@ -150,6 +150,9 @@ public class GroupByUtils {
                         case ColumnType.INT:
                             fun = IntColumn.newInstance(keyColumnIndex - 1);
                             break;
+                        case ColumnType.IPv4:
+                            fun = IPv4Column.newInstance(keyColumnIndex - 1);
+                            break;
                         case ColumnType.LONG:
                             fun = LongColumn.newInstance(keyColumnIndex - 1);
                             break;

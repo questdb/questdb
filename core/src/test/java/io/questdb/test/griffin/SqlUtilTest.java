@@ -247,6 +247,27 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testImplicitCastStrAsIPv4() {
+        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastStrAsIPv4(null));
+        Assert.assertEquals(201741578, SqlUtil.implicitCastStrAsIPv4("12.6.85.10"));
+        Assert.assertEquals(4738954, SqlUtil.implicitCastStrAsIPv4("0.72.79.138"));
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4("77823.23232.23232.33");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `77823.23232.23232.33` [STRING -> IPv4]", e.getFlyweightMessage());
+        }
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> IPv4]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
     public void testParseStrLong() {
         Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsLong(null));
         Assert.assertEquals(222221211212123L, SqlUtil.implicitCastStrAsLong("222221211212123"));
@@ -325,4 +346,6 @@ public class SqlUtilTest {
             TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]", e.getFlyweightMessage());
         }
     }
+
+
 }

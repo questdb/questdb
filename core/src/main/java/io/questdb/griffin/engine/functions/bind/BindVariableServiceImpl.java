@@ -45,6 +45,8 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<GeoHashBindVariable> geoHashVarPool;
     private final ObjList<Function> indexedVariables = new ObjList<>();
     private final ObjectPool<IntBindVariable> intVarPool;
+
+    //private final ObjectPool<IPv4BindVariable> IPv4VarPool;
     private final ObjectPool<Long256BindVariable> long256VarPool;
     private final ObjectPool<LongBindVariable> longVarPool;
     private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
@@ -58,6 +60,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.doubleVarPool = new ObjectPool<>(DoubleBindVariable::new, poolSize);
         this.floatVarPool = new ObjectPool<>(FloatBindVariable::new, poolSize);
         this.intVarPool = new ObjectPool<>(IntBindVariable::new, poolSize);
+        //this.IPv4VarPool = new ObjectPool<>(IPv4BindVariable::new, poolSize);
         this.longVarPool = new ObjectPool<>(LongBindVariable::new, poolSize);
         this.timestampVarPool = new ObjectPool<>(TimestampBindVariable::new, poolSize);
         this.dateVarPool = new ObjectPool<>(DateBindVariable::new, poolSize);
@@ -78,6 +81,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         doubleVarPool.clear();
         floatVarPool.clear();
         intVarPool.clear();
+        //IPv4VarPool.clear();
         longVarPool.clear();
         timestampVarPool.clear();
         dateVarPool.clear();

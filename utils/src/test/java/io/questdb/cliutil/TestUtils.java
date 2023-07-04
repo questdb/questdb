@@ -103,6 +103,7 @@ public class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-3);
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
                         break;
                     case ColumnType.GEOINT:
