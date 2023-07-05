@@ -128,4 +128,8 @@ public interface SecurityContext {
      * @return true if this context belongs to entityName and has given version, false otherwise .
      */
     boolean matches(CharSequence entityName, long version);
+
+    void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
+
+    void onTableCreated(TableToken tableToken);
 }

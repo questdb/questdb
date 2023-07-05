@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 
@@ -104,6 +105,29 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public void removeAlias(TableToken tableToken) {
         nameTableTokenMap.remove(tableToken.getTableName());
     }
+
+    @Override
+    public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
+        String newTableNameStr = Chars.toString(newName);
+        TableToken newNameRecord = tableToken.renamed(newTableNameStr);
+
+        if (nameTableTokenMap.putIfAbsent(newTableNameStr, newNameRecord) == null) {
+            if (nameTableTokenMap.remove(oldName, tableToken)) {
+                // Persist to file
+                nameStore.logDropTable(tableToken);
+                nameStore.appendEntry(newNameRecord);
+                reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
+                return newNameRecord;
+            } else {
+                // Already renamed by another thread. Revert new name reservation.
+                nameTableTokenMap.remove(newTableNameStr, newNameRecord);
+                throw CairoException.tableDoesNotExist(oldName);
+            }
+        } else {
+            throw CairoException.nonCritical().put("table '").put(newName).put("' already exists");
+        }
+    }
+
 
     @Override
     public void replaceAlias(TableToken alias, TableToken replaceWith) {

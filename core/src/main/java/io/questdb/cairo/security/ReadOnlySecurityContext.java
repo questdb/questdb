@@ -264,4 +264,12 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public boolean matches(CharSequence entityName, long version) {
         return true;
     }
+    
+    @Override
+    public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void onTableCreated(TableToken tableToken) {
+    }
 }

@@ -57,7 +57,7 @@ public interface TableNameRegistry extends Closeable {
      * @return resolves table name to TableToken. If no token exists, returns null
      */
     TableToken getTableToken(CharSequence tableName);
-
+    
     /**
      * Returns table token by directory name. If table does not exist, returns null.
      *
@@ -138,6 +138,16 @@ public interface TableNameRegistry extends Closeable {
     void reloadTableNameCache(ObjList<TableToken> convertedTables);
 
     void removeAlias(TableToken tableToken);
+
+    /**
+     * Updates table name in registry.
+     *
+     * @param oldName    old table  name
+     * @param newName    new table name
+     * @param tableToken table token to make sure intended table name is updated
+     * @return updated table token
+     */
+    TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken);
 
     void replaceAlias(TableToken alias, TableToken replaceWith);
 
