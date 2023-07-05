@@ -147,48 +147,105 @@ public class VectTest {
 
     @Test
     public void testDedupWithKey() {
-        Rnd rnd = TestUtils.generateRandom(null, 329866824124750L, 1688393122157L);
-        int indexLen = rnd.nextInt(10);
+        Rnd rnd = TestUtils.generateRandom(null);
+        int indexLen = rnd.nextInt(100_000);
+
+        int keyCount = 1 + rnd.nextInt(3);
+        assert keyCount > 0 && keyCount < 5;
+
+        ObjList<DirectLongList> keys = new ObjList<>();
+        int keyMax = 1 + rnd.nextInt(4);
+
         try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-            try (DirectLongList keys = new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT)) {
-                LongHashSet distinctKeys = new LongHashSet();
+            for (int i = 0; i < keyCount; i++) {
+                keys.add(new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT));
+            }
 
-                // Generate data
-                int indexVal = 1000;
+            LongHashSet distinctKeys = new LongHashSet();
+            LongList tsAndKey = new LongList();
+
+            // Generate data
+            int tsVal = 1000;
+            for (int i = 0; i < indexLen; i++) {
+                if (rnd.nextDouble() < 0.3) {
+                    tsVal += rnd.nextInt(50);
+                }
+                index.add(tsVal);
+                index.add(i);
+
+
+                // Encode keys in 4 byte integer
+                int combinedKey = 0;
+                for (int k = 0; k < keyCount; k++) {
+                    int keyVal = rnd.nextInt(keyMax);
+                    keys.get(k).add(keyVal);
+                    combinedKey = combinedKey << 8;
+                    combinedKey += keyVal;
+                }
+                distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
+                tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
+            }
+
+            // Squash keys from longs to ints
+            for (int k = 0; k < keyCount; k++) {
+                DirectLongList keyList = keys.get(k);
                 for (int i = 0; i < indexLen; i++) {
-                    if (rnd.nextDouble() < 0.3) {
-                        indexVal += rnd.nextInt(50);
+                    keyList.set(i, Numbers.encodeLowHighInts((int) keyList.get(2L * i), (int) keyList.get(2L * i + 1)));
+                }
+            }
+
+            try (DirectLongList colBuffs = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
+                try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+                    for (int k = 0; k < keyCount; k++) {
+                        colBuffs.add(keys.get(k).getAddress());
                     }
-                    int keyVal = rnd.nextInt(5);
-                    index.add(indexVal);
-                    index.add(i);
-                    keys.add(keyVal);
-                    distinctKeys.add(Numbers.encodeLowHighInts(indexVal, keyVal));
-                }
+                    copy.setPos(indexLen * 2L);
 
-                int abc = 0;
-                // Squash keys from longs to ints
-                for (int i = 0; i < keys.size(); i++) {
-                    keys.set(i, Numbers.encodeLowHighInts((int) keys.get(2L * i), (int) keys.get(2L * i + 1)));
-                }
+                    long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+                            index.getAddress(),
+                            indexLen,
+                            index.getAddress(),
+                            copy.getAddress(),
+                            keyCount,
+                            colBuffs.getAddress(),
+                            0
+                    );
+                    Assert.assertEquals(distinctKeys.size(), dedupCount);
 
-                try (DirectLongList colBuffs = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
-                    try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-                        colBuffs.add(keys.getAddress());
-                        long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
-                                index.getAddress(),
-                                indexLen,
-                                copy.getAddress(),
-                                1,
-                                colBuffs.getAddress()
-                        );
-                        Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    // assert indexes of the rows are distinct and in correct range
+                    boolean[] indexFound = new boolean[(int) indexLen];
+                    tsAndKey.sort();
+                    int expectedValueIndex = -1;
+                    long expectedValue = -1;
+
+                    for (int i = 0; i < dedupCount; i++) {
+                        expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
+                        expectedValue = tsAndKey.get(expectedValueIndex);
+
+                        long rowIndex = index.get(i * 2L + 1L);
+                        Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
+                        Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
+                        indexFound[(int) rowIndex] = true;
+
+                        Assert.assertEquals(Numbers.decodeHighInt(expectedValue), index.get(i * 2L));
+                        int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
+
+                        int combinedKey = 0;
+                        for (int k = 0; k < keyCount; k++) {
+                            long keyLong = keys.get(k).get(rowIndex / 2L);
+                            int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
+                            combinedKey = combinedKey << 8;
+                            combinedKey += key;
+                        }
+
+                        Assert.assertEquals(expectedCombinedKey, combinedKey);
                     }
                 }
             }
+        } finally {
+            Misc.freeObjList(keys);
         }
     }
-
 
     @Test
     public void testMemeq() {
@@ -917,6 +974,12 @@ public class VectTest {
 
             v = ts;
         }
+    }
+
+    private int getNextDistinctIndex(LongList sortedList, int nextIndex, long expectedValue) {
+        //noinspection StatementWithEmptyBody
+        while (sortedList.get(++nextIndex) == expectedValue) ;
+        return nextIndex;
     }
 
     private String printTsIndexWithDedupKey(DirectLongList tsIndex, DirectLongList key) {

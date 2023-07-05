@@ -10,9 +10,11 @@
 #include <algorithm>
 
 
-void merge_sort(const index_t *src, index_t *dest, int64_t start, int64_t end, const int32_t **keys, int32_t key_count);
+inline index_t *
+merge_sort(const index_t *src, index_t *dest1, index_t *dest2, int64_t start, int64_t end, const int32_t **keys,
+           int32_t key_count);
 
-int diff(const int32_t **pInt, int32_t key_count, uint64_t left, uint64_t right);
+inline int diff(const int32_t **pInt, int32_t key_count, uint64_t left, uint64_t right);
 
 inline bool key_equals(
         const int64_t count,
@@ -141,8 +143,10 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         const index_t *index_src,
         const int64_t count,
         index_t *index_dest,
+        index_t *index_tmp,
         const int32_t key_count,
-        const int32_t **key_values
+        const int32_t **key_values1,
+        const int32_t **key_values2
 ) {
     if (count < 2) {
         return count;
@@ -164,41 +168,51 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
             return -i - 1;
         }
     }
-    if (index_src[ts_index].ts == index_src[count - 1].ts) {
-        dup_start = dup_start > -1 ? dup_start : 0;
+    if (ts_index < count - 1 && index_src[ts_index].ts == index_src[count - 1].ts) {
+        // last element is a duplicate with the previous one
+        dup_start = dup_start > -1 ? dup_start : ts_index;
         dup_end = count;
-    }
-
-    if (dup_end - dup_start <= 0) {
+    } else if (dup_start == -1 || dup_end - dup_start <= 0) {
         // no timestamp duplicates
         return count;
     }
 
-    // dedup range from dup_start to dup_end
-    merge_sort(index_src, index_dest, dup_start, dup_end, key_values, key_count);
+    assert(dup_start > -1 && dup_start < count && "dup_start is incorrect");
+    assert(dup_end > 0 && dup_end <= count && "dup_end is beyond count");
 
-    int64_t copy_to = 0;
-    int64_t last = 0;
+    // dedup range from dup_start to dup_end.
+    // sort the data first by ts and keys using stable merge sort.
+    const index_t *merge_result = merge_sort(index_src, index_dest, index_tmp, dup_start, dup_end, key_values1, key_count);
 
-    for (int64_t i = dup_start; i < dup_end; i++) {
-        if (index_dest[i].ts > index_dest[last].ts ||
-            !key_equals(key_count, index_dest[last].i, key_values, nullptr, index_dest[i].i, key_values)) {
-            index_dest[copy_to] = index_dest[i - 1];
-            copy_to++;
+    int64_t copy_to = dup_start;
+    int64_t last = dup_start;
+
+    for (int64_t i = dup_start + 1; i < dup_end; i++) {
+        if (merge_result[i].ts > merge_result[last].ts ||
+            !key_equals(key_count, merge_result[last].i, key_values1, nullptr, merge_result[i].i, key_values1)) {
+            index_dest[copy_to++] = merge_result[i - 1];
             last = i;
+        } else {
+            assert(merge_result[i].ts == merge_result[last].ts && "sorting failed, timestamp is not sorted");
         }
     }
-    if (copy_to != dup_end - 1) {
+    index_dest[copy_to] = merge_result[dup_end - 1];
+
+    if (copy_to + 1 < dup_end) {
         // Duplicates found
-        index_dest[copy_to] = index_dest[dup_end - 1];
+        // copy prefix and the tail if necessary
+        if (index_src != index_dest) {
+            __MEMCPY(index_dest, index_src, dup_start * sizeof(index_t));
+        }
 
-        __MEMCPY(index_dest, index_src, dup_start);
-        __MEMCPY(&index_dest[copy_to + 1], &index_src[dup_end], count - dup_end);
-
-        return copy_to + 1;
+        const int64_t tail = count - dup_end;
+        __MEMMOVE(&index_dest[copy_to + 1], &index_src[dup_end], tail * sizeof(index_t));
+        return copy_to + 1 + tail;
     } else {
+        assert(copy_to + 1 == dup_end && "sorting failed");
         // Duplicates not found
         return count;
+
     }
 }
 
@@ -209,32 +223,33 @@ inline void merge_sort_slice(
         const index_t *src2,
         index_t *dest,
         const int64_t &src1_len,
-        const int64_t &src2_len) {
+        const int64_t &src2_len,
+        const index_t *end
+) {
 
-    // Merge from the end.
-    int64_t i1 = src1_len - 1, i2 = src2_len - 1;
-    index_t *dest_ptr = &dest[src1_len + src2_len - 1];
+    int64_t i1 = 0, i2 = 0;
 
-    while (i1 > -1 && i2 > -1) {
-        if (src1[i1].ts < src2[i2].ts) {
-            *dest_ptr = src2[i2--];
-        } else if (src1[i1] > src2[i2].ts) {
-            *dest_ptr = src1[i1--];
+    while (i1 < src1_len && i2 < src2_len) {
+        if (src1[i1] > src2[i2].ts) {
+            *dest++ = src2[i2++];
+        } else if (src1[i1].ts < src2[i2].ts) {
+            *dest++ = src1[i1++];
         } else {
             // same timestamp
             if (diff(keys, key_count, src1[i1].i, src2[i2].i) > 0) {
-                *dest_ptr = src1[i1--];
+                *dest++ = src2[i2++];
             } else {
-                *dest_ptr = src2[i2--];
+                *dest++ = src1[i1++];
             }
         }
-        dest_ptr--;
     }
 
-    if (i1 > -1) {
-        __MEMMOVE(dest, src1, (i1 + 1) * sizeof(index_t));
+    if (i1 < src1_len) {
+        __MEMCPY(dest, &src1[i1], (src1_len - i1) * sizeof(index_t));
+        assert(dest + src1_len - i1 <= end && "write beyond allocated boundary");
     } else {
-        __MEMMOVE(dest, src2, (i2 + 1) * sizeof(index_t));
+        __MEMCPY(dest, &src2[i2], (src2_len - i2) * sizeof(index_t));
+        assert(dest + src2_len - i2 <= end && "write beyond allocated boundary");
     }
 }
 
@@ -248,7 +263,7 @@ int32_t diff(const int32_t **keys, const int32_t key_count, uint64_t left, uint6
     return 0;
 }
 
-index_t * merge_sort(
+inline index_t *merge_sort(
         const index_t *index_src,
         index_t *index_dest1,
         index_t *index_dest2,
@@ -257,31 +272,33 @@ index_t * merge_sort(
         const int32_t **keys,
         const int32_t key_count
 ) {
-    index_t *dest1 = &index_dest1[start];
-    index_t *dest2 = &index_dest2[start];
-    index_t *dest = dest1;
-
-    const index_t *source = &index_src[start];
+    index_t * const dest_arr[] = {index_dest2, index_dest1};
+    const index_t *source = index_src;
+    index_t *dest;
     const int64_t len = end - start;
     int64_t slice_len = 1;
 
+    int cycle = 0;
     do {
-        for (int64_t i = 0; i < len; i += 2 * slice_len) {
+        dest = dest_arr[cycle % 2]; // first write to index_dest2 then to index_dest1
+        const int64_t twice_slice = 2 * slice_len;
+        for (int64_t i = start; i < end; i += twice_slice) {
             merge_sort_slice(
                     keys,
                     key_count,
                     &source[i],
                     &source[i + slice_len],
                     &dest[i],
-                    slice_len,
-                    std::min(slice_len, len - (i + slice_len))
+                    std::min(slice_len, end - i),
+                    std::max(0ll, std::min(slice_len, end - (i + slice_len))),
+                    &dest[end]
             );
         }
+        source = dest_arr[cycle++ % 2];
+        slice_len = twice_slice;
+    } while (slice_len < len);
 
-        // After first iteration take destination as the source
-        source = dest;
-        slice_len *= 2;
-    } while (slice_len <= len);
+    return dest;
 }
 
 JNIEXPORT jlong JNICALL
@@ -381,8 +398,10 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
         jlong pIndexIn,
         jlong count,
         jlong pIndexOut,
+        jlong pIndexTemp,
         const jint dedupKeyCount,
-        jlong dedupColBuffs
+        jlong dedupColBuffs1,
+        jlong dedupColBuffs2
 ) {
     if (dedupKeyCount == 0) {
         return dedup_sorted_timestamp_index(
@@ -395,8 +414,10 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                 reinterpret_cast<const index_t *> (pIndexIn),
                 __JLONG_REINTERPRET_CAST__(const int64_t, count),
                 reinterpret_cast<index_t *> (pIndexOut),
+                reinterpret_cast<index_t *> (pIndexTemp),
                 dedupKeyCount,
-                reinterpret_cast<const int32_t **> (dedupColBuffs)
+                reinterpret_cast<const int32_t **> (dedupColBuffs1),
+                reinterpret_cast<const int32_t **> (dedupColBuffs2)
         );
     }
 }

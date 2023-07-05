@@ -74,6 +74,14 @@ public class DedupColumnCommitAddresses implements Closeable {
         addresses = Misc.free(addresses);
     }
 
+    public long getArrayElement(long dedupColSinkAddr, long arrayIndex, long dedupKeyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupColSinkAddr + Long.BYTES * arrayIndex * columnCount + dedupKeyIndex * Long.BYTES);
+    }
+
+    public long getArrayPtr(long dedupBlockAddress, long arrayIndex) {
+        return dedupBlockAddress + arrayIndex * Long.BYTES * columnCount;
+    }
+
     public long getColDataAddresses(long dedupBlockAddress) {
         return getArrayPtr(dedupBlockAddress, COL_DATA_ARRAY_INDEX);
     }
@@ -148,14 +156,6 @@ public class DedupColumnCommitAddresses implements Closeable {
 
     public void setOpenFd(long dedupColSinkAddr, int dedupKeyIndex, int fd) {
         setArrayElement(dedupColSinkAddr, COL_FD_ARRAY_INDEX, dedupKeyIndex, fd);
-    }
-
-    private long getArrayElement(long dedupColSinkAddr, long arrayIndex, long dedupKeyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupColSinkAddr + Long.BYTES * arrayIndex * columnCount + dedupKeyIndex * Long.BYTES);
-    }
-
-    public long getArrayPtr(long dedupBlockAddress, long arrayIndex) {
-        return dedupBlockAddress + arrayIndex * Long.BYTES * columnCount;
     }
 
     private void setArrayElement(long dedupColSinkAddr, long arrayIndex, int dedupKeyIndex, long value) {

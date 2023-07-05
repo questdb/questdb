@@ -102,19 +102,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
 
-            Assume.assumeFalse(true); // Multi key dedup is not ready to release yet
+            Rnd rnd = generateRandom(LOG, 406014657512000L, 1688561036327L);
+
             String tableName = testName.getMethodName();
             compile(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s symbol) " +
                             " , index(s) timestamp(ts) partition by DAY WAL "
-                            + " DEDUP(s)"
+                            + " DEDUP UPSERT KEYS(ts, s)"
                     ,
                     sqlExecutionContext
             );
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandom(LOG);
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int rndCount = rnd.nextInt(10);
             List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, 4, tableName)).distinct()
@@ -124,6 +124,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String[] initialSymbols = symbols.length == 1
                     ? symbols
                     : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
+            
             transactions.add(
                     generateInsertsTransactions(
                             1,

@@ -1567,7 +1567,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 long o3Lo = rowLo;
                 long commitRowCount = rowHi - rowLo;
-                final boolean copiedToMemory;
+                boolean copiedToMemory = false;
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 boolean copyToLagOnly = commitToTimestamp < newMinLagTs
@@ -1606,44 +1606,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean needsOrdering = !ordered || walLagRowCount > 0;
                 boolean needsDedup = isDeduplicationEnabled();
 
-                long timestampAddr;
+                long timestampAddr = 0;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
 
-                if (needsOrdering) {
-                    LOG.info().$("sorting WAL [table=").$(tableToken)
-                            .$(", ordered=").$(ordered)
-                            .$(", lagRowCount=").$(walLagRowCount)
-                            .$(", walRowLo=").$(rowLo)
-                            .$(", walRowHi=").$(rowHi).I$();
+                boolean symbolRemapped = false;
+                if (needsOrdering || needsDedup) {
+                    if (needsOrdering) {
+                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
+                        symbolRemapped = true;
 
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
-                    final long timestampMemorySize = totalUncommitted << 4;
-                    o3TimestampMem.jumpTo(timestampMemorySize);
-                    o3TimestampMemCpy.jumpTo(timestampMemorySize);
+                        LOG.info().$("sorting WAL [table=").$(tableToken)
+                                .$(", ordered=").$(ordered)
+                                .$(", lagRowCount=").$(walLagRowCount)
+                                .$(", walRowLo=").$(rowLo)
+                                .$(", walRowHi=").$(rowHi).I$();
 
-                    MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
-                    final long tsLagOffset = txWriter.getTransientRowCount() << 3;
-                    final long tsLagSize = walLagRowCount << 3;
-                    final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
-                    timestampAddr = o3TimestampMem.getAddress();
+                        final long timestampMemorySize = totalUncommitted << 4;
+                        o3TimestampMem.jumpTo(timestampMemorySize);
+                        o3TimestampMemCpy.jumpTo(timestampMemorySize);
 
-                    final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
-                    try {
-                        Vect.radixSortABLongIndexAsc(
-                                Math.abs(tsLagBufferAddr),
-                                walLagRowCount,
-                                mappedTimestampIndexAddr,
-                                commitRowCount,
-                                timestampAddr,
-                                o3TimestampMemCpy.addressOf(0)
-                        );
-                    } finally {
-                        mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+                        MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
+                        final long tsLagOffset = txWriter.getTransientRowCount() << 3;
+                        final long tsLagSize = walLagRowCount << 3;
+                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
+                        timestampAddr = o3TimestampMem.getAddress();
+
+                        final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
+                        try {
+                            Vect.radixSortABLongIndexAsc(
+                                    Math.abs(tsLagBufferAddr),
+                                    walLagRowCount,
+                                    mappedTimestampIndexAddr,
+                                    commitRowCount,
+                                    timestampAddr,
+                                    o3TimestampMemCpy.addressOf(0)
+                            );
+                        } finally {
+                            mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+                        }
+                    } else {
+                        // Needs deduplication only
+                        timestampAddr = walTimestampColumn.addressOf(0);
                     }
 
                     if (needsDedup) {
-                        totalUncommitted = deduplicateSortedIndex(totalUncommitted, timestampAddr);
+                        o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        assert symbolRemapped || walLagRowCount == 0;
+                        long deduplicatedRowCount = deduplicateSortedIndex(totalUncommitted, timestampAddr, o3TimestampMem.getAddress(), o3TimestampMemCpy.addressOf(0), walLagRowCount);
                         o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        needsDedup = deduplicatedRowCount < totalUncommitted;
+                        totalUncommitted = deduplicatedRowCount;
+                    }
+                }
+
+                if (needsOrdering || needsDedup) {
+                    if (!symbolRemapped) {
+                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
                     }
                     o3MergeIntoLag(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, timestampIndex);
 
@@ -1655,36 +1673,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Columns = o3MemColumns;
                     copiedToMemory = true;
                 } else {
-                    if (needsDedup) {
-                        LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
-                        // timestampAddr can be same o3TimestampMem but can be mmaped from file.
-                        // Ensure enough capacity in the out buffer o3TimestampMem
-                        o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        long deduplicatedRows = Vect.dedupSortedTimestampIndexRebaseChecked(
-                                walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES), totalUncommitted, o3TimestampMem.getAddress());
-
-                        if (deduplicatedRows != totalUncommitted) {
-                            o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
-                            timestampAddr = o3TimestampMem.getAddress();
-                            o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                            o3MergeIntoLag(timestampAddr, deduplicatedRows, 0, rowLo, rowHi, timestampIndex);
-
-                            // Sorted data is now sorted in memory copy of the data from mmap files
-                            // Row indexes start from 0, not rowLo
-                            o3Lo = 0L;
-                            o3Hi = deduplicatedRows;
-                            o3Columns = o3MemColumns;
-                            copiedToMemory = true;
-                        } else {
-                            o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
-                            timestampAddr = walTimestampColumn.addressOf(0);
-                            copiedToMemory = false;
-                        }
-                    } else {
-                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
-                        timestampAddr = walTimestampColumn.addressOf(0);
-                        copiedToMemory = false;
-                    }
+                    // There are no duplicates in the incoming data
+                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
+                    timestampAddr = walTimestampColumn.addressOf(0);
+                    copiedToMemory = false;
                 }
 
                 if (commitToTimestamp < txWriter.getLagMaxTimestamp() && maxLagRows > 0) {
@@ -3411,36 +3403,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return identical;
     }
 
-    private long deduplicateSortedIndex(long longIndexLength, long timestampAddr) {
+    private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows) {
         LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
+        int dedupKeyIndex = 0;
+        long dedupCommitAddr = 0;
         try {
-            int dedupKeyIndex = 0;
-            long dedupCommitAddr = 0;
             if (dedupColumnCommitAddresses != null) {
                 dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
-                    if (metadata.getColumnType(i) > 0 && metadata.isDedupKey(i)) {
+                    int columnType = metadata.getColumnType(i);
+                    if (i != metadata.getTimestampIndex() && columnType > 0 && metadata.isDedupKey(i)) {
+                        int shl = ColumnType.pow2SizeOf(columnType);
+                        long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(i)) << shl : 0L;
+                        long mapSize = lagRows << shl;
+
+                        // Map column buffers for lag rows for deduplication
+                        long lagAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, mapSize, false) : 0L;
+
                         dedupColumnCommitAddresses.setArrayValues(
                                 dedupCommitAddr,
                                 dedupKeyIndex++,
-                                o3Columns.get(getPrimaryColumnIndex(i)).getPageAddress(0),
-                                IGNORE,
-                                IGNORE,
-                                IGNORE,
-                                IGNORE
+                                Math.abs(lagAddr),
+                                o3Columns.get(getPrimaryColumnIndex(i)).addressOf(0),
+                                lagAddr,
+                                lagMemOffset,
+                                mapSize
                         );
                     }
                 }
             }
             return Vect.dedupSortedTimestampIndexIntKeysChecked(
-                    timestampAddr,
+                    indexSrcAddr,
                     longIndexLength,
-                    timestampAddr,
+                    indexDstAddr,
+                    tempIndexAddr,
                     dedupKeyIndex,
-                    dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.getColDataAddresses(dedupCommitAddr) : 0L
+                    dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 0) : 0L,
+                    dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 1) : 0L
             );
         } finally {
             if (dedupColumnCommitAddresses != null) {
+                // Release mapped column buffers for lag rows
+                for (int i = 0; i < dedupKeyIndex; i++) {
+                    long lagAddr = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 2, i);
+                    long lagMemOffset = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 3, i);
+                    long mapSize = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 4, i);
+
+                    mapAppendColumnBufferRelease(lagAddr, lagMemOffset, mapSize);
+                }
                 dedupColumnCommitAddresses.clear();
             }
         }

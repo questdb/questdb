@@ -74,23 +74,29 @@ public final class Vect {
             long inIndexAddr,
             long count,
             long outIndexAddr,
+            long indexAddrTemp,
             int dedupColumnCount,
-            long dedupColBuffs
+            long dedupColBuffs1,
+            long dedupColBuffs2
     );
 
     public static long dedupSortedTimestampIndexIntKeysChecked(
             long inIndexAddr,
             long count,
             long outIndexAddr,
+            long indexAddrTemp,
             int dedupColumnCount,
-            long dedupColBuffs
+            long dedupColBuffs1,
+            long dedupColBuffs2
     ) {
         long dedupCount = dedupSortedTimestampIndex(
                 inIndexAddr,
                 count,
                 outIndexAddr,
+                indexAddrTemp,
                 dedupColumnCount,
-                dedupColBuffs
+                dedupColBuffs1,
+                dedupColBuffs2
         );
         assert dedupCount >= 0 : "unsorted data passed to deduplication";
         return dedupCount;
