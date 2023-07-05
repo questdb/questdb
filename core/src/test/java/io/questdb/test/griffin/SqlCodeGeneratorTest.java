@@ -83,16 +83,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             engine.releaseInactive();
 
             assertQuery("a\n" +
-                            '"' + "0.0.0.1" + '"' + '\n' +
-                            '"' + "0.0.0.2" + '"' + '\n' +
-                            '"' + "0.0.0.3" + '"' + '\n' +
-                            '"' + "0.0.0.4" + '"' + '\n' +
-                            '"' + "0.0.0.5" + '"' + '\n' +
-                            '"' + "0.0.0.6" + '"' + '\n' +
-                            '"' + "0.0.0.7" + '"' + '\n' +
-                            '"' + "0.0.0.8" + '"' + '\n' +
-                            '"' + "0.0.0.9" + '"' + '\n' +
-                            '"' + "0.0.0.10" + '"' + '\n',
+                            "0.0.0.1" + '\n' +
+                            "0.0.0.2" + '\n' +
+                            "0.0.0.3" + '\n' +
+                            "0.0.0.4" + '\n' +
+                            "0.0.0.5" + '\n' +
+                            "0.0.0.6" + '\n' +
+                            "0.0.0.7" + '\n' +
+                            "0.0.0.8" + '\n' +
+                            "0.0.0.9" + '\n' +
+                            "0.0.0.10" + '\n',
                     "select * from y",
                     "insert into y select * from x",
                     null,
@@ -102,26 +102,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testShortToIpv4_NO_WAL() throws Exception {
+    public void testCreateAsSelectCastIntToIPv4() throws Exception {
 
-        compiler.compile("create table x as (select x::short from long_sequence(10))", sqlExecutionContext);
-        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+        compiler.compile("create table x as (select x::int col from long_sequence(10))", sqlExecutionContext);
 
         engine.releaseInactive();
 
-        assertQuery("a\n" +
-                        '"' + "0.0.0.1" + '"' + '\n' +
-                        '"' + "0.0.0.2" + '"' + '\n' +
-                        '"' + "0.0.0.3" + '"' + '\n' +
-                        '"' + "0.0.0.4" + '"' + '\n' +
-                        '"' + "0.0.0.5" + '"' + '\n' +
-                        '"' + "0.0.0.6" + '"' + '\n' +
-                        '"' + "0.0.0.7" + '"' + '\n' +
-                        '"' + "0.0.0.8" + '"' + '\n' +
-                        '"' + "0.0.0.9" + '"' + '\n' +
-                        '"' + "0.0.0.10" + '"' + '\n',
+        assertQuery("col\n" +
+                        "0.0.0.1" + '\n' +
+                        "0.0.0.2" + '\n' +
+                        "0.0.0.3" + '\n' +
+                        "0.0.0.4" + '\n' +
+                        "0.0.0.5" + '\n' +
+                        "0.0.0.6" + '\n' +
+                        "0.0.0.7" + '\n' +
+                        "0.0.0.8" + '\n' +
+                        "0.0.0.9" + '\n' +
+                        "0.0.0.10" + '\n',
                 "select * from y",
-                "insert into y select * from x",
+                "create table y as (x), cast(col as ipv4)",
                 null,
                 true,
                 true
@@ -129,26 +128,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testByteToIpv4_NO_WAL() throws Exception {
+    public void testCreateAsSelectCastIPv4ToInt() throws Exception {
 
-        compiler.compile("create table x as (select x::byte from long_sequence(10))", sqlExecutionContext);
-        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+        compiler.compile("create table x (col ipv4)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into x values('0.0.0.7')");
+        executeInsert("insert into x values('0.0.0.8')");
+        executeInsert("insert into x values('0.0.0.9')");
+        executeInsert("insert into x values('0.0.0.10')");
 
         engine.releaseInactive();
 
-        assertQuery("a\n" +
-                        '"' + "0.0.0.1" + '"' + '\n' +
-                        '"' + "0.0.0.2" + '"' + '\n' +
-                        '"' + "0.0.0.3" + '"' + '\n' +
-                        '"' + "0.0.0.4" + '"' + '\n' +
-                        '"' + "0.0.0.5" + '"' + '\n' +
-                        '"' + "0.0.0.6" + '"' + '\n' +
-                        '"' + "0.0.0.7" + '"' + '\n' +
-                        '"' + "0.0.0.8" + '"' + '\n' +
-                        '"' + "0.0.0.9" + '"' + '\n' +
-                        '"' + "0.0.0.10" + '"' + '\n',
+        assertQuery("col\n" +
+                        "1" + '\n' +
+                        "2" + '\n' +
+                        "3" + '\n' +
+                        "4" + '\n' +
+                        "5" + '\n' +
+                        "6" + '\n' +
+                        "7" + '\n' +
+                        "8" + '\n' +
+                        "9" + '\n' +
+                        "10" + '\n',
                 "select * from y",
-                "insert into y select * from x",
+                "create table y as (x), cast(col as int)",
                 null,
                 true,
                 true
@@ -156,7 +164,45 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testStringToIpv4_NO_WAL() throws Exception {
+    public void testCreateAsSelectCastStrToIPv4() throws Exception {
+
+        compiler.compile("create table x as (select x::string col from long_sequence(0))", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into x values('0.0.0.7')");
+        executeInsert("insert into x values('0.0.0.8')");
+        executeInsert("insert into x values('0.0.0.9')");
+        executeInsert("insert into x values('0.0.0.10')");
+
+        engine.releaseInactive();
+
+        assertQuery("col\n" +
+                        "0.0.0.1" + '\n' +
+                        "0.0.0.2" + '\n' +
+                        "0.0.0.3" + '\n' +
+                        "0.0.0.4" + '\n' +
+                        "0.0.0.5" + '\n' +
+                        "0.0.0.6" + '\n' +
+                        "0.0.0.7" + '\n' +
+                        "0.0.0.8" + '\n' +
+                        "0.0.0.9" + '\n' +
+                        "0.0.0.10" + '\n',
+                "select * from y",
+                "create table y as (x), cast(col as ipv4)",
+                null,
+                true,
+                true
+        );
+    }
+
+
+
+    @Test
+    public void testStringToIpv4() throws Exception {
 
         compiler.compile("create table x (b string)", sqlExecutionContext);
         executeInsert("insert into x values('0.0.0.1')");
@@ -174,16 +220,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         engine.releaseInactive();
 
         assertQuery("a\n" +
-                        '"' + "0.0.0.1" + '"' + '\n' +
-                        '"' + "0.0.0.2" + '"' + '\n' +
-                        '"' + "0.0.0.3" + '"' + '\n' +
-                        '"' + "0.0.0.4" + '"' + '\n' +
-                        '"' + "0.0.0.5" + '"' + '\n' +
-                        '"' + "0.0.0.6" + '"' + '\n' +
-                        '"' + "0.0.0.7" + '"' + '\n' +
-                        '"' + "0.0.0.8" + '"' + '\n' +
-                        '"' + "0.0.0.9" + '"' + '\n' +
-                        '"' + "0.0.0.10" + '"' + '\n',
+                       "0.0.0.1" + '\n' +
+                       "0.0.0.2" + '\n' +
+                       "0.0.0.3" + '\n' +
+                       "0.0.0.4" + '\n' +
+                       "0.0.0.5" + '\n' +
+                       "0.0.0.6" + '\n' +
+                       "0.0.0.7" + '\n' +
+                       "0.0.0.8" + '\n' +
+                       "0.0.0.9" + '\n' +
+                       "0.0.0.10" + '\n',
                 "select * from y",
                 "insert into y select * from x",
                 null,
@@ -193,7 +239,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ToInt_NO_WAL() throws Exception {
+    public void testIPv4ToInt() throws Exception {
 
         compiler.compile("create table x (b IPv4)", sqlExecutionContext);
         executeInsert("insert into x values('0.0.0.1')");

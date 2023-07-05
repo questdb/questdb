@@ -1251,7 +1251,6 @@ public final class TestUtils {
                 if (i == Integer.MIN_VALUE) {
                     sink.put("null");
                 } else {
-                    sink.put('"');
                     Numbers.append(sink, (val >> 24) & 0xff);
                     sink.put('.');
                     Numbers.append(sink, (val >> 16) & 0xff);
@@ -1259,7 +1258,6 @@ public final class TestUtils {
                     Numbers.append(sink, (val >> 8) & 0xff);
                     sink.put('.');
                     Numbers.append(sink, val & 0xff);
-                    sink.put('"');
                 }
                 break;
             }

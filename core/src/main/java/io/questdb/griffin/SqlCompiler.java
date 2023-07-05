@@ -349,7 +349,16 @@ public class SqlCompiler implements Closeable {
     }
 
     private static boolean isCompatibleCase(int from, int to) {
+        if(isIPv4Cast(from, to))
+            return true;
+
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
+    }
+
+    private static boolean isIPv4Cast(int from, int to) {
+        return (from == ColumnType.INT && to == ColumnType.IPv4)
+                || (from == ColumnType.IPv4 && to == ColumnType.INT)
+                || (from == ColumnType.STRING && to == ColumnType.IPv4);
     }
 
     private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {

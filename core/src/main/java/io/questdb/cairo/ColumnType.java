@@ -362,8 +362,6 @@ public final class ColumnType {    //@formatter:off
 
     private static boolean isIPv4Cast(int fromType, int toType) {
         return (fromType == INT && toType == IPv4)
-                || (fromType == BYTE && toType == IPv4)
-                || (fromType == SHORT && toType == IPv4)
                 || (fromType == STRING && toType == IPv4)
                 || (fromType == IPv4 && toType == INT);
     }
