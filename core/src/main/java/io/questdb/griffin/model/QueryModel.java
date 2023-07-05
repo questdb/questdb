@@ -384,6 +384,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
         explicitTimestamp = false;
+        permissions = null;
     }
 
     public void clearColumnMapStructs() {
