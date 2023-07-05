@@ -26,6 +26,7 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -38,7 +39,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     private final CharSequence principal;
 
     public AllowAllSecurityContext(CharSequence principal) {
-        this.principal = principal;
+        this.principal = Chars.toString(principal);
+    }
+
+    public static AllowAllSecurityContext of(CharSequence principal) {
+        if (principal != null && Chars.equals(AllowAllSecurityContext.INSTANCE.getEntityName(), principal)) {
+            return AllowAllSecurityContext.INSTANCE;
+        }
+        return new AllowAllSecurityContext(principal);
     }
 
     @Override
@@ -223,7 +231,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     public boolean matches(CharSequence entityName, long version) {
         return true;
     }
-    
+
     @Override
     public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }

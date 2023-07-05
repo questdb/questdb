@@ -19,26 +19,17 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
 
     @Override
     public SecurityContext getInstance(CharSequence principal, int interfaceId) {
-        String principalStr = toString(principal);
         switch (interfaceId) {
             case SecurityContextFactory.HTTP:
-                return httpReadOnly ? new ReadOnlySecurityContext(principalStr) : new AllowAllSecurityContext(principalStr);
+                return httpReadOnly ? ReadOnlySecurityContext.of(principal) : AllowAllSecurityContext.of(principal);
             case SecurityContextFactory.PGWIRE:
-                return isReadOnlyPgWireUser(principal) ? new ReadOnlySecurityContext(principalStr) : new AllowAllSecurityContext(principalStr);
+                return isReadOnlyPgWireUser(principal) ? ReadOnlySecurityContext.of(principal) : AllowAllSecurityContext.of(principal);
             default:
-                return new AllowAllSecurityContext(principalStr);
+                return AllowAllSecurityContext.of(principal);
         }
     }
 
     private boolean isReadOnlyPgWireUser(CharSequence principal) {
         return pgWireReadOnly || (pgWireReadOnlyUser != null && principal != null && Chars.equals(pgWireReadOnlyUser, principal));
-    }
-
-    private String toString(CharSequence s) {
-        if (s == null) {
-            return "";
-        } else {
-            return s.toString();
-        }
     }
 }

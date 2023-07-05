@@ -40,9 +40,4 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
     }
-
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return null;
-    }
 }

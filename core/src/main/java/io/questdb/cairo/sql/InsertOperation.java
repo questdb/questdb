@@ -24,12 +24,10 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
 
 import java.io.Closeable;
 
@@ -44,8 +42,4 @@ public interface InsertOperation extends Closeable {
     InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
 
     OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException;
-
-    ObjList<CharSequence> getColumnNames();
-
-    TableToken getTableToken();
 }

@@ -108,14 +108,6 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
-    public ObjList<CharSequence> getColumnNames() {
-        return columnNames;
-    }
-
-    public TableToken getTableToken() {
-        return tableToken;
-    }
-
     public void setColumnNames(ObjList<CharSequence> columnNameList) {
         if (columnNameList.size() == 0) {
             columnNames = EMPTY_COLUMN_LIST;

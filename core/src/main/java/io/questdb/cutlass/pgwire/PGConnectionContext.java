@@ -1553,7 +1553,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw BadProtocolException.INSTANCE;
         }
         CharSequence principal = authenticator.getPrincipal();
-        SecurityContext securityContext = securityContextFactory.getInstance(Chars.toString(principal), SecurityContextFactory.PGWIRE);
+        SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker);
         sendRNQ = true;
 
