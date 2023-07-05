@@ -49,7 +49,13 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, @Transient ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final ObjList<Function> functions = new ObjList<>(args.size());
         functions.addAll(args);
         return new ConcatFunction(functions);

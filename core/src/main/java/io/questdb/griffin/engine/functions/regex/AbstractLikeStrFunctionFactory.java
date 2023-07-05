@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -110,7 +109,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             return BooleanConstant.FALSE;
         }
 
-        if (pattern instanceof IndexedParameterLinkFunction) {
+        if (pattern.isRuntimeConstant()) {
             // bind variable
             return new BindLikeStrFunction(value, pattern, isCaseInsensitive());
         }
