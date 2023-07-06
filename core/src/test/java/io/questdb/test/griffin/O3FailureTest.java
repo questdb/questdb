@@ -598,7 +598,7 @@ public class O3FailureTest extends AbstractO3Test {
                  SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
 
-                    Assume.assumeFalse(!Os.isWindows());
+                    Assume.assumeFalse(Os.isWindows());
                     Assert.assertTrue("mixed IO should be enabled non-windows", engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
