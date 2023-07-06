@@ -42,13 +42,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
         this.principal = Chars.toString(principal);
     }
 
-    public static ReadOnlySecurityContext of(CharSequence principal) {
-        if (principal != null && Chars.equals(ReadOnlySecurityContext.INSTANCE.getEntityName(), principal)) {
-            return ReadOnlySecurityContext.INSTANCE;
-        }
-        return new ReadOnlySecurityContext(principal);
-    }
-
     @Override
     public void assumeServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);

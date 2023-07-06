@@ -42,13 +42,6 @@ public class AllowAllSecurityContext implements SecurityContext {
         this.principal = Chars.toString(principal);
     }
 
-    public static AllowAllSecurityContext of(CharSequence principal) {
-        if (principal != null && Chars.equals(AllowAllSecurityContext.INSTANCE.getEntityName(), principal)) {
-            return AllowAllSecurityContext.INSTANCE;
-        }
-        return new AllowAllSecurityContext(principal);
-    }
-
     @Override
     public void assumeServiceAccount(CharSequence serviceAccountName) {
     }

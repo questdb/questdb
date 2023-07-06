@@ -21,11 +21,11 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
     public SecurityContext getInstance(CharSequence principal, int interfaceId) {
         switch (interfaceId) {
             case SecurityContextFactory.HTTP:
-                return httpReadOnly ? ReadOnlySecurityContext.of(principal) : AllowAllSecurityContext.of(principal);
+                return httpReadOnly ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
             case SecurityContextFactory.PGWIRE:
-                return isReadOnlyPgWireUser(principal) ? ReadOnlySecurityContext.of(principal) : AllowAllSecurityContext.of(principal);
+                return isReadOnlyPgWireUser(principal) ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
             default:
-                return AllowAllSecurityContext.of(principal);
+                return AllowAllSecurityContext.INSTANCE;
         }
     }
 
