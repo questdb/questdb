@@ -644,7 +644,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
             try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
-                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
+                m.timestamp("ts").col("sym", ColumnType.SYMBOL);
+                if (walEnabled) {
+                    m.wal();
+                }
                 createTable(m);
             }
 

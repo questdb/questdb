@@ -29,7 +29,7 @@ import io.questdb.std.Unsafe;
 /**
  * Read-only interface for a UTF-8 string with native ptr access.
  */
-public interface Utf8Native extends Utf8Sequence {
+public interface DirectUtf8Sequence extends Utf8Sequence {
     /**
      * Returns byte at index.
      * Note: Unchecked bounds.

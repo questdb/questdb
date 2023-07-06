@@ -1742,6 +1742,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -1754,21 +1759,21 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
         }
 
         @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
         }
 
         @Override
@@ -1861,6 +1866,11 @@ public class WalWriter implements TableWriterAPI {
             putSym(columnIndex, str);
         }
 
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            putInt(columnIndex, key);
+        }
+
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
             // this method will write column name to the buffer if it has to be utf8 decoded
             // otherwise it will write nothing.
@@ -1882,6 +1892,11 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw new UnsupportedOperationException();
             }
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
         @Override

@@ -31,7 +31,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -340,7 +339,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
-    private void appendToWal(SecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException {
+    private void appendToWal(
+            SecurityContext securityContext,
+            NetworkIOJob netIoJob,
+            LineTcpParser parser,
+            TableUpdateDetails tud
+    ) throws CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
@@ -348,8 +352,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
         ld.resetStateIfNecessary();
         ld.clearColumnTypes();
 
-        WalWriter ww = (WalWriter) tud.getWriter();
-        TableRecordMetadata metadata = ww.getMetadata();
+        final TableWriterAPI writer = tud.getWriter();
+        assert writer.supportsMultipleWriters();
+        TableRecordMetadata metadata = writer.getMetadata();
         long initialMetadataVersion = ld.getMetadataVersion();
 
         long timestamp = parser.getTimestamp();
@@ -369,10 +374,10 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                     columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                     if (columnIndex < 0) {
-                        securityContext.authorizeAlterTableAddColumn(ww.getTableToken());
+                        securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                         tud.commit(false);
                         try {
-                            ww.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
+                            writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         } catch (CairoException e) {
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
@@ -404,7 +409,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             ld.addColumnType(columnIndex, columnType);
         }
 
-        TableWriter.Row r = ww.newRow(timestamp);
+        TableWriter.Row r = writer.newRow(timestamp);
         try {
             for (int i = 0; i < entCount; i++) {
                 final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
@@ -747,7 +752,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // Use actual table name from the "details" to avoid case mismatches in the
                         // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
                         // to identify the cause
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());
+                        tud = unsafeAssignTableToWriterThread(
+                                securityContext,
+                                tudKeyIndex,
+                                tud.getTableNameUtf16(),
+                                tud.getTableNameUtf8()
+                        );
                     } else {
                         idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
                         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
@@ -757,13 +767,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     // check if table on disk is WAL
                     path.of(engine.getConfiguration().getRoot());
                     if (engine.isWalTable(tableToken)) {
-                        // create WAL-oriented TUD and NOT add it to the global cache
+                        // create WAL-oriented TUD and DON'T add it to the global cache
                         tud = new TableUpdateDetails(
                                 configuration,
                                 engine,
-                                engine.getWalWriter(
-                                        tableToken
-                                ),
+                                securityContext,
+                                engine.getWalWriter(tableToken),
                                 -1,
                                 netIoJobs,
                                 defaultColumnTypes,
@@ -772,7 +781,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         ctx.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), tud);
                         return tud;
                     } else {
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));
+                        tud = unsafeAssignTableToWriterThread(
+                                securityContext,
+                                tudKeyIndex,
+                                tableNameUtf16,
+                                ByteCharSequence.newInstance(tableNameUtf8)
+                        );
                     }
                 }
             }
@@ -792,6 +806,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
     @NotNull
     private TableUpdateDetails unsafeAssignTableToWriterThread(
+            SecurityContext securityContext,
             int tudKeyIndex,
             CharSequence tableNameUtf16,
             ByteCharSequence tableNameUtf8
@@ -809,6 +824,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         final TableUpdateDetails tud = new TableUpdateDetails(
                 configuration,
                 engine,
+                null,
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails

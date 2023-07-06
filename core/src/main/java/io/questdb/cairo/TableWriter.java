@@ -7759,9 +7759,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putChar(int columnIndex, char value);
 
-        default void putDate(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
+        void putDate(int columnIndex, long value);
 
         void putDouble(int columnIndex, double value);
 
@@ -7769,7 +7767,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putGeoHash(int columnIndex, long value);
 
-        void putGeoHashDeg(int index, double lat, double lon);
+        void putGeoHashDeg(int columnIndex, double lat, double lon);
 
         void putGeoStr(int columnIndex, CharSequence value);
 
@@ -7811,17 +7809,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putSym(int columnIndex, char value);
 
-        default void putSymIndex(int columnIndex, int key) {
-            putInt(columnIndex, key);
-        }
+        void putSymIndex(int columnIndex, int key);
 
-        default void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-            throw new UnsupportedOperationException();
-        }
+        void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars);
 
-        default void putTimestamp(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
+        void putTimestamp(int columnIndex, long value);
 
         void putUuid(int columnIndex, CharSequence uuid);
     }
@@ -7889,7 +7881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putGeoStr(int columnIndex, CharSequence value) {
-
+            // no-op
         }
 
         @Override
@@ -7979,7 +7971,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putUuid(int columnIndex, CharSequence uuid) {
-
+            // no-op
         }
     }
 
@@ -8025,6 +8017,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -8037,21 +8034,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
         }
 
         @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
         }
 
         @Override
@@ -8138,6 +8135,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putSym(int columnIndex, char value) {
             getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            putInt(columnIndex, key);
+        }
+
+        @Override
+        public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
         @Override
