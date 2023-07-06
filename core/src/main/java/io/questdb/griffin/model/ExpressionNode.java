@@ -206,22 +206,22 @@ public class ExpressionNode implements Mutable, Sinkable {
             case 1:
                 sink.put(token);
                 sink.put('(');
-                rhs.toSink(sink);
+                toSink(sink, rhs);
                 sink.put(')');
                 break;
             case 2:
                 if (OperatorExpression.isOperator(token)) {
-                    lhs.toSink(sink);
+                    toSink(sink, lhs);
                     sink.put(' ');
                     sink.put(token);
                     sink.put(' ');
-                    rhs.toSink(sink);
+                    toSink(sink, rhs);
                 } else {
                     sink.put(token);
                     sink.put('(');
-                    lhs.toSink(sink);
+                    toSink(sink, lhs);
                     sink.put(',');
-                    rhs.toSink(sink);
+                    toSink(sink, rhs);
                     sink.put(')');
                 }
                 break;
@@ -229,7 +229,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 int n = args.size();
                 if (OperatorExpression.isOperator(token) && n > 0) {
                     // special case for "in"
-                    args.getQuick(n - 1).toSink(sink);
+                    toSink(sink, args.getQuick(n - 1));
                     sink.put(' ');
                     sink.put(token);
                     sink.put(' ');
@@ -238,7 +238,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                         if (i < n - 2) {
                             sink.put(',');
                         }
-                        args.getQuick(i).toSink(sink);
+                        toSink(sink, args.getQuick(i));
                     }
                     sink.put(')');
                 } else {
@@ -248,7 +248,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                         if (i < n - 1) {
                             sink.put(',');
                         }
-                        args.getQuick(i).toSink(sink);
+                        toSink(sink, args.getQuick(i));
                     }
                     sink.put(')');
                 }
@@ -299,6 +299,14 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
         }
         return true;
+    }
+
+    private static void toSink(CharSink sink, ExpressionNode e) {
+        if (e == null) {
+            sink.put("null");
+        } else {
+            e.toSink(sink);
+        }
     }
 
     public static final class ExpressionNodeFactory implements ObjectFactory<ExpressionNode> {

@@ -149,13 +149,9 @@ public final class Os {
     }
 
     public static void pause() {
-        if (Os.type != Os.WINDOWS) {
-            LockSupport.parkNanos(1);
-        } else {
-            try {
-                Thread.sleep(0);
-            } catch (InterruptedException ignore) {
-            }
+        try {
+            Thread.sleep(0);
+        } catch (InterruptedException ignore) {
         }
     }
 

@@ -101,7 +101,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
         this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.COPY_LOCAL, this::executeCopy);
+        this.queryExecutors.extendAndSet(CompiledQuery.PSEUDO_SELECT, this::executePseudoSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
@@ -471,30 +471,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         executeSelect(state, factory, keepAliveHeader);
     }
 
-    private void executeCopy(
-            JsonQueryProcessorState state,
-            CompiledQuery cq,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        final RecordCursorFactory factory = cq.getRecordCursorFactory();
-        if (factory == null) {
-            // COPY 'id' CANCEL; case
-            updateMetricsAndSendConfirmation(state, cq, keepAliveHeader);
-            return;
-        }
-        // new import case
-        final HttpConnectionContext context = state.getHttpConnectionContext();
-        // Make sure to mark the query as non-cacheable.
-        if (state.of(factory, false, sqlExecutionContext)) {
-            header(context.getChunkedResponseSocket(), keepAliveHeader, 200);
-            doResumeSend(state, context, sqlExecutionContext);
-            metrics.jsonQuery().markComplete();
-        } else {
-            readyForNextRequest(context);
-        }
-    }
-
-    //same as for select new but disallows caching of explain plans  
+    //same as for select new but disallows caching of explain plans
     private void executeExplain(JsonQueryProcessorState state,
                                 CompiledQuery cq,
                                 CharSequence keepAliveHeader)
@@ -538,6 +515,28 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 factory,
                 keepAliveHeader
         );
+    }
+
+    private void executePseudoSelect(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+        final RecordCursorFactory factory = cq.getRecordCursorFactory();
+        if (factory == null) {
+            updateMetricsAndSendConfirmation(state, cq, keepAliveHeader);
+            return;
+        }
+        // new import case
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        // Make sure to mark the query as non-cacheable.
+        if (state.of(factory, false, sqlExecutionContext)) {
+            header(context.getChunkedResponseSocket(), keepAliveHeader, 200);
+            doResumeSend(state, context, sqlExecutionContext);
+            metrics.jsonQuery().markComplete();
+        } else {
+            readyForNextRequest(context);
+        }
     }
 
     private void executeSelect(

@@ -53,7 +53,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest=$(includeTests)
+        "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
         -DfailIfNoTests=false
@@ -75,7 +75,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
-        "--batch-mode --quiet -Dtest=$(includeTests)
+        "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
         $(MAVEN_RUN_OPTS)"

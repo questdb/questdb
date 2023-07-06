@@ -22,13 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.cutlass.http;
 
-public class DefaultAuthenticatorFactory implements AuthenticatorFactory {
-    public static final AuthenticatorFactory INSTANCE = new DefaultAuthenticatorFactory();
+import io.questdb.std.QuietCloseable;
+
+public interface HttpAuthenticator extends QuietCloseable {
+
+    /**
+     * Authenticates incoming HTTP request.
+     *
+     * @param headers request headers
+     * @return true if the authentication succeeded, false - otherwise
+     */
+    boolean authenticate(HttpRequestHeader headers);
+
+    default void clear() {
+    }
 
     @Override
-    public Authenticator getLineTCPAuthenticator() {
-        return AnonymousAuthenticator.INSTANCE;
+    default void close() {
     }
+
+    CharSequence getPrincipal();
 }

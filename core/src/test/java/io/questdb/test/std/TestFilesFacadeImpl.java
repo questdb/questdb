@@ -41,11 +41,16 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     private final static HashMap<Long, String> openFilesFds = new HashMap<>();
     private final static CharSequenceIntHashMap openPaths = new CharSequenceIntHashMap();
 
+    protected int fd = -1;
+
     public static synchronized void resetTracking() {
     }
 
     @Override
     public boolean close(int fd) {
+        if (fd > -1 && fd == this.fd) {
+            this.fd = -1;
+        }
         untrack(fd);
         return super.close(fd);
     }

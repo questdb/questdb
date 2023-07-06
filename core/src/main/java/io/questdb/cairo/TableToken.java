@@ -26,21 +26,31 @@ package io.questdb.cairo;
 
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
     @NotNull
-    private final String dirName;
+    private final GcUtf8String dirName;
     private final boolean isWal;
     private final int tableId;
     @NotNull
     private final String tableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
+        this(tableName, new GcUtf8String(dirName), tableId, isWal);
+    }
+
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
         this.isWal = isWal;
+    }
+
+    public TableToken renamed(String newName) {
+        return new TableToken(newName, dirName, tableId, isWal);
     }
 
     @Override
@@ -56,10 +66,27 @@ public class TableToken implements Sinkable {
         return dirName.equals(that.dirName);
     }
 
+    @Override
+    public String toString() {
+        return "TableToken{" +
+                "tableName=" + tableName +
+                ", dirName=" + dirName +
+                ", tableId=" + tableId +
+                ", isWal=" + isWal +
+                '}';
+    }
+
     /**
      * @return directory where the table is located.
      */
     public @NotNull String getDirName() {
+        return dirName.toString();
+    }
+
+    /**
+     * @return UTF-8 buffer naming the directory where the table is located.
+     */
+    public @NotNull DirectUtf8Sequence getDirNameUtf8() {
         return dirName;
     }
 

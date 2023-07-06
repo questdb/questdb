@@ -24,23 +24,22 @@
 
 package io.questdb.cutlass.auth;
 
-import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
 import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
 import io.questdb.network.NetworkFacade;
 
-public class EllipticCurveAuthenticatorFactory implements AuthenticatorFactory {
+public class EllipticCurveAuthenticatorFactory implements LineAuthenticatorFactory {
+    private final ChallengeResponseMatcher matcher;
     private final NetworkFacade networkFacade;
-    private final StaticPublicKeyRepo publicKeyRepo;
 
-    public EllipticCurveAuthenticatorFactory(NetworkFacade networkFacade, String authDbPath) {
+    public EllipticCurveAuthenticatorFactory(NetworkFacade networkFacade, ChallengeResponseMatcher matcher) {
         this.networkFacade = networkFacade;
-        publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
+        this.matcher = matcher;
     }
 
     @Override
     public Authenticator getLineTCPAuthenticator() {
         return new EllipticCurveAuthenticator(
                 networkFacade,
-                publicKeyRepo);
+                matcher);
     }
 }

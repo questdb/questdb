@@ -49,9 +49,9 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory baseFactory;
     private final long cancelCopyID;
     private final String cancelCopyIDStr;
+    private final CopyContext copyContext;
     private final CopyCancelRecord record = new CopyCancelRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
-    private final CopyContext copyContext;
     private CharSequence status;
 
     public CopyCancelFactory(
@@ -69,9 +69,8 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
-        long activeCopyID = copyContext.getActiveCopyID();
+        final long activeCopyID = copyContext.getActiveCopyID();
 
         if (activeCopyID == cancelCopyID && cancelCopyID != CopyContext.INACTIVE_COPY_ID) {
             copyContext.getOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());

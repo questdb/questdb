@@ -226,4 +226,12 @@ public class AlterOperationBuilder {
     public ObjList<CharSequence> getExtraStrInfo() {
         return extraStrInfo;
     }
+
+    public AlterOperationBuilder ofSquashPartitions(int tableNamePosition, TableToken tableToken) {
+        this.command = SQUASH_PARTITIONS;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableToken.getTableId();
+        return this;
+    }
 }

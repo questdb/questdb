@@ -35,6 +35,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.*;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
@@ -51,19 +54,35 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
-        Function cursorFunction = args.getQuick(1);
+        final Function valueFunction = args.getQuick(0);
+        final Function cursorFunction = args.getQuick(1);
+
+        final int zeroColumnType = !cursorFunction.isNullConstant()
+                ? cursorFunction.getRecordCursorFactory().getMetadata().getColumnType(0)
+                : ColumnType.NULL;
+        if (ColumnType.isNull(zeroColumnType)) {
+            if (valueFunction.isNullConstant()) {
+                return BooleanConstant.TRUE;
+            }
+            final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
+            if (symbolFunction.isSymbolTableStatic()) {
+                return new SymbolInNullCursorFunction(symbolFunction);
+            }
+            return new StrInNullCursorFunction(symbolFunction);
+        } else if (!ColumnType.isSymbolOrString(zeroColumnType)) {
+            throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
+        }
 
         // use first column to create list of values (over multiple records)
         // supported column types are STRING and SYMBOL
 
-        final int zeroColumnType = cursorFunction.getRecordCursorFactory().getMetadata().getColumnType(0);
-        if (!ColumnType.isSymbolOrString(zeroColumnType)) {
-            throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
-        }
-
         final Record.CharSequenceFunction func = ColumnType.isString(zeroColumnType) ? Record.GET_STR : Record.GET_SYM;
 
+        if (valueFunction.isNullConstant()) {
+            return new StrInCursorFunction(NullConstant.NULL, cursorFunction, func);
+        }
+
+        final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
         if (symbolFunction.isSymbolTableStatic()) {
             return new SymbolInCursorFunction(symbolFunction, cursorFunction, func);
         }
@@ -145,6 +164,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(valueArg).val(" in ").val(cursorArg);
+        }
+
         private void buildValueSet() {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
@@ -164,10 +188,44 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 }
             }
         }
+    }
+
+    private static class StrInNullCursorFunction extends BooleanFunction implements UnaryFunction {
+
+        private final Function valueArg;
+
+        public StrInNullCursorFunction(Function valueArg) {
+            this.valueArg = valueArg;
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+        }
+
+        @Override
+        public Function getArg() {
+            return valueArg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return valueArg.getSymbol(rec) == null;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            valueArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return valueArg.isReadThreadSafe();
+        }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(valueArg).val(" in ").val(cursorArg);
+            sink.val(valueArg).val(" in null");
         }
     }
 
@@ -235,6 +293,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(valueArg).val(" in ").val(cursorArg);
+        }
+
         private void buildSymbolKeys() {
             final StaticSymbolTable symbolTable = valueArg.getStaticSymbolTable();
             assert symbolTable != null;
@@ -247,10 +310,44 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 }
             }
         }
+    }
+
+    private static class SymbolInNullCursorFunction extends BooleanFunction implements UnaryFunction {
+
+        private final Function valueArg;
+
+        public SymbolInNullCursorFunction(Function valueArg) {
+            this.valueArg = valueArg;
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+        }
+
+        @Override
+        public Function getArg() {
+            return valueArg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return valueArg.getInt(rec) == SymbolTable.VALUE_IS_NULL;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            valueArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return valueArg.isReadThreadSafe();
+        }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(valueArg).val(" in ").val(cursorArg);
+            sink.val(valueArg).val(" in null");
         }
     }
 }

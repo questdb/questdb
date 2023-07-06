@@ -24,15 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
 
-class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
+import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
+
+public class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata, TableStructure {
     private int maxUncommittedRows;
     private long o3MaxLag;
     private long metadataVersion;
+    private int partitionBy;
     private int symbolMapCount;
     private int tableId;
     private TableToken tableToken;
@@ -50,6 +54,11 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
+    public int getIndexBlockCapacity(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -57,6 +66,36 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     @Override
     public long getO3MaxLag() {
         return o3MaxLag;
+    }
+
+    @Override
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
+    @Override
+    public boolean getSymbolCacheFlag(int columnIndex) {
+        return getColumnMetadata(columnIndex).isSymbolTableStatic();
+    }
+
+    @Override
+    public int getSymbolCapacity(int columnIndex) {
+        return ((WriterTableColumnMetadata)getColumnMetadata(columnIndex)).symbolCapacity;
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return tableToken.getTableName();
+    }
+
+    @Override
+    public boolean isIndexed(int columnIndex) {
+        return  getColumnMetadata(columnIndex).isIndexed();
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+        return ((WriterTableColumnMetadata)getColumnMetadata(columnIndex)).sequential;
     }
 
     @Override
@@ -88,6 +127,7 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     public final void reload(MemoryMR metaMem) {
+        this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap.clear();
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
@@ -110,14 +150,16 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
             int type = TableUtils.getColumnType(metaMem, i);
             String nameStr = Chars.toString(name);
             columnMetadata.add(
-                    new TableColumnMetadata(
+                    new WriterTableColumnMetadata(
                             nameStr,
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
-                            true,
+                            TableUtils.isSymbolCached(metaMem, i),
                             null,
-                            i
+                            i,
+                            TableUtils.isSequential(metaMem, i),
+                            TableUtils.getSymbolCapacity(metaMem, i)
                     )
             );
             columnNameIndexMap.put(nameStr, i);
@@ -148,18 +190,20 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         this.tableToken = tableToken;
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex, boolean sequential, int symbolCapacity) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
-                new TableColumnMetadata(
+                new WriterTableColumnMetadata(
                         str,
                         type,
                         indexFlag,
                         indexValueBlockCapacity,
                         true,
                         null,
-                        columnIndex
+                        columnIndex,
+                        sequential,
+                        symbolCapacity
                 )
         );
         columnCount++;
@@ -188,5 +232,16 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
 
         TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
         oldColumnMetadata.setName(newNameStr);
+    }
+
+    private static class WriterTableColumnMetadata extends TableColumnMetadata {
+        private final boolean sequential;
+        private final int symbolCapacity;
+
+        public WriterTableColumnMetadata(String nameStr, int type, boolean columnIndexed, int indexBlockCapacity, boolean symbolTableStatic, RecordMetadata parent, int i, boolean sequential, int symbolCapacity) {
+            super(nameStr, type, columnIndexed, indexBlockCapacity, symbolTableStatic, parent, i);
+            this.sequential = sequential;
+            this.symbolCapacity = symbolCapacity;
+        }
     }
 }

@@ -110,7 +110,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     private void mergeAllPartitions(TableToken merged) {
         FilesFacade ff = configuration.getFilesFacade();
         try (TableWriter writer = getWriter(merged)) {
-            writer.squashAllPartitions();
+            writer.squashAllPartitionsIntoOne();
         }
 
         engine.releaseInactive();
@@ -130,7 +130,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         ff.close(metaFd);
     }
 
-    private void runFuzz(Rnd rnd) throws Exception {
+    @Override
+    protected void runFuzz(Rnd rnd) throws Exception {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
         assertMemoryLeak(() -> {

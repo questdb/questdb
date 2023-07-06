@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.network.PeerDisconnectedException;
@@ -34,9 +35,11 @@ import io.questdb.network.PeerIsSlowToReadException;
 public class HealthCheckProcessor implements HttpRequestProcessor {
 
     private final boolean pessimisticMode;
+    private final boolean requiresAuthentication;
 
-    public HealthCheckProcessor(boolean pessimisticMode) {
-        this.pessimisticMode = pessimisticMode;
+    public HealthCheckProcessor(HttpMinServerConfiguration configuration) {
+        this.pessimisticMode = configuration.isPessimisticHealthCheckEnabled();
+        this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
     }
 
     @Override
@@ -60,5 +63,10 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
         r.sendHeader();
         r.put("Status: Healthy");
         r.sendChunk(true);
+    }
+
+    @Override
+    public boolean requiresAuthentication() {
+        return requiresAuthentication;
     }
 }

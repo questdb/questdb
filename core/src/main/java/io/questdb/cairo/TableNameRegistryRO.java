@@ -46,6 +46,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
+    public TableToken addTableAlias(String newName, TableToken tableToken) {
+        throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
     public boolean dropTable(TableToken token) {
         throw CairoException.critical(0).put("instance is read only");
     }
@@ -96,7 +101,17 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
+    public void removeAlias(TableToken tableToken) {
+        throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
     public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
+        throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
+    public void replaceAlias(TableToken alias, TableToken replaceWith) {
         throw CairoException.critical(0).put("instance is read only");
     }
 

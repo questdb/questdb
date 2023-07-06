@@ -40,6 +40,8 @@ import java.lang.management.ThreadMXBean;
 public class TestListener extends RunListener {
     private final static Log LOG = LogFactory.getLog(TestListener.class);
 
+    long testStartMs = -1;
+
     public static void dumpThreadStacks() {
         StringBuilder s = new StringBuilder();
 
@@ -67,6 +69,8 @@ public class TestListener extends RunListener {
                 .$("***** Test Failed *****")
                 .$(description.getClassName()).$('.')
                 .$(description.getMethodName())
+                .$(" duration_ms=")
+                .$(getTestDuration())
                 .$(" : ")
                 .$(failure.getException()).$();
     }
@@ -78,12 +82,17 @@ public class TestListener extends RunListener {
 
     @Override
     public void testFinished(Description description) {
-        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$(" duration_ms=").$(getTestDuration()).$();
     }
 
     @Override
     public void testStarted(Description description) {
+        testStartMs = System.currentTimeMillis();
         LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+    }
+
+    private long getTestDuration() {
+        return (System.currentTimeMillis() - testStartMs);
     }
 
     static {

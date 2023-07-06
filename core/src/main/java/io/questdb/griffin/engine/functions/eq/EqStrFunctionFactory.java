@@ -37,6 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "=(SS)";
@@ -48,14 +49,20 @@ public class EqStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
         // 2. when one of arguments is constant, save method call and use a field
 
-        Function a = args.getQuick(0);
-        Function b = args.getQuick(1);
+        final Function a = args.getQuick(0);
+        final Function b = args.getQuick(1);
 
         if (a.isConstant() && !b.isConstant()) {
             return createHalfConstantFunc(a, b);
@@ -134,7 +141,6 @@ public class EqStrFunctionFactory implements FunctionFactory {
             } else {
                 return "=";
             }
-
         }
     }
 

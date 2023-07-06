@@ -83,6 +83,20 @@ public class TableTransactionLog implements Closeable {
         }
     }
 
+    public boolean reload(Path path) {
+        if (txnMem.isOpen()) {
+            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
+            if (maxTxnInFile == maxTxn.get()) {
+                return false;
+            }
+            txnMem.close(false);
+            txnMetaMem.close(false);
+            txnMetaMemIndex.close(false);
+        }
+        open(path);
+        return true;
+    }
+
     private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
         final int rootLen = path.length();
         path.concat(fileName).$();
@@ -315,6 +329,7 @@ public class TableTransactionLog implements Closeable {
                     } else {
                         // Set empty. This is not an error, it just means that there are no changes.
                         txnMetaOffset = txnMetaOffsetHi = 0;
+                        return;
                     }
                 }
 

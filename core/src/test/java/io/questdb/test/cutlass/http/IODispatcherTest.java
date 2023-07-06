@@ -5375,7 +5375,7 @@ public class IODispatcherTest extends AbstractTest {
 
                             @Override
                             public HttpRequestProcessor getDefaultProcessor() {
-                                return new HealthCheckProcessor(false);
+                                return new HealthCheckProcessor(httpServerConfiguration);
                             }
 
                             @Override
@@ -5588,7 +5588,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
                         "2a\r\n" +
-                        "Bad request. non-multipart GET expected.\r\n" +
+                        "Bad request. Non-multipart GET expected.\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",

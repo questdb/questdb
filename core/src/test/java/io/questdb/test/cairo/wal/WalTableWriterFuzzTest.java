@@ -35,7 +35,6 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.tasks.WalTxnNotificationTask;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
 import io.questdb.test.tools.TestUtils;
@@ -877,8 +876,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         AtomicReference<TableToken> tableToken = new AtomicReference<>();
         // tableName is WAL enabled
         try (TableModel model = createTableModel(tableName).wal()) {
-            forEachNode(node ->
-                    tableToken.set(CreateTableTestUtils.create(node.getEngine(), model))
+            forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
             );
         }
 

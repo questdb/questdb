@@ -38,17 +38,6 @@ public class CreateTableTestUtils {
         return TestUtils.create(model, AbstractCairoTest.engine);
     }
 
-    public static TableToken create(CairoEngine engine, TableModel model) {
-        return engine.createTable(
-                engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                model.getMem(),
-                model.getPath(),
-                false,
-                model,
-                false
-        );
-    }
-
     public static void createAllTable(CairoEngine engine, int partitionBy) {
         try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy)) {
             TestUtils.create(model, engine);

@@ -80,6 +80,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+        this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
         clear();
         this.checkIdleInterval = configuration.getMaintenanceInterval();
         this.commitInterval = configuration.getCommitInterval();
@@ -87,7 +88,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
-        this.authenticator = configuration.getFactoryProvider().getAuthenticatorFactory().getLineTCPAuthenticator();
     }
 
     public void checkIdle(long millis) {
@@ -104,6 +104,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     @Override
     public void clear() {
         securityContext = DenyAllSecurityContext.INSTANCE;
+        authenticator.clear();
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         resetParser();
@@ -120,6 +121,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public void close() {
         this.fd = -1;
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
+        Misc.free(authenticator);
         clear();
     }
 
@@ -364,7 +366,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {
-                    logParseError();
+                    if (!ex.isAuthorizationError()) {
+                        logParseError();
+                    }
                     return IOContextResult.NEEDS_DISCONNECT;
                 }
                 goodMeasurement = false;

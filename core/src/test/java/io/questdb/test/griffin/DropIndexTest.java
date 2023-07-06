@@ -85,7 +85,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
-        compiler2 = new SqlCompiler(engine, null, snapshotAgent);
+        compiler2 = new SqlCompiler(engine, snapshotAgent);
         sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(dirName);

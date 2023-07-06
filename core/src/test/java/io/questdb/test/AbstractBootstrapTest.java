@@ -79,6 +79,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             int httpMinPort,
             int pgPort,
             int ilpPort,
+            String root,
             String... extra
     ) throws Exception {
         final String confPath = root + Files.SEPARATOR + "conf";
@@ -102,13 +103,14 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("metrics.enabled=false");
             writer.println("telemetry.enabled=false");
 
-            // configure end points
+            // configure endpoints
             writer.println("http.bind.to=0.0.0.0:" + httpPort);
             writer.println("http.min.net.bind.to=0.0.0.0:" + httpMinPort);
             writer.println("pg.net.bind.to=0.0.0.0:" + pgPort);
             writer.println("line.tcp.net.bind.to=0.0.0.0:" + ilpPort);
             writer.println("line.udp.bind.to=0.0.0.0:" + ilpPort);
             writer.println("line.udp.receive.buffer.size=" + ILP_BUFFER_SIZE);
+            writer.println("http.frozen.clock=true");
 
             // configure worker pools
             writer.println("shared.worker.count=2");
@@ -143,7 +145,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     protected static void createDummyConfiguration(String... extra) throws Exception {
-        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
+        createDummyConfigurationInRoot(root, extra);
+    }
+
+    protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
+        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
     }
 
     protected static void drainWalQueue(CairoEngine engine) {

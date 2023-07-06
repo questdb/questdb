@@ -68,7 +68,11 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
     }
 
     private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
-        parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        if (seq != null) {
+            parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        } else {
+            addHiLoInterval(Numbers.LONG_NaN, Numbers.LONG_NaN, IntervalOperation.INTERSECT, out);
+        }
         applyLastEncodedIntervalEx(out);
     }
 

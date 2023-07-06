@@ -42,8 +42,8 @@ public class InCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testNullConstant() {
-        assertFailure(11, "CHAR constant expected", 'c', 'c', null);
+    public void testNullConstant() throws SqlException {
+        call('c', 'c', null).andAssert(true);
     }
 
     @Test

@@ -73,9 +73,8 @@ public class LtCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            char left = this.left.getChar(rec);
-            char right = this.right.getChar(rec);
-
+            final char left = this.left.getChar(rec);
+            final char right = this.right.getChar(rec);
             if (left == CHAR_NULL || right == CHAR_NULL) {
                 return false;
             }

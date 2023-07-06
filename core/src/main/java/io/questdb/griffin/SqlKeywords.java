@@ -1642,6 +1642,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
+    public static boolean isSquashKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'q'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i) | 32) == 'h';
+    }
+
     public static boolean isStandardConformingStrings(CharSequence tok) {
         if (tok.length() != 27) {
             return false;
@@ -1700,20 +1714,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'b'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i) | 32) == 'l';
-    }
-
-    public static boolean isSystemKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i++) | 32) == 'y'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i) | 32) == 'm';
     }
 
     public static boolean isTableKeyword(CharSequence tok) {
@@ -1890,20 +1890,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'n';
     }
 
-    public static boolean isUnlockKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'u'
-                && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i) | 32) == 'k';
-    }
-
     public static boolean isUpdateKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -2006,20 +1992,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'h'
                 && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i) | 32) == 'n';
-    }
-
-    public static boolean isWriterKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'w'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i) | 32) == 'r';
     }
 
     public static boolean isYearKeyword(CharSequence tok) {

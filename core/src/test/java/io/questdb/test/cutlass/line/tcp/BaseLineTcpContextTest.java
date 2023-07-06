@@ -29,8 +29,9 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
+import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -49,6 +50,7 @@ import org.junit.Before;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.PublicKey;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -138,13 +140,14 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
-            public AuthenticatorFactory getAuthenticatorFactory() {
+            public LineAuthenticatorFactory getLineAuthenticatorFactory() {
                 if (withAuth) {
                     URL u = getClass().getResource("authDb.txt");
                     assert u != null;
-                    return new EllipticCurveAuthenticatorFactory(nf, u.getFile());
+                    CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
+                    return new EllipticCurveAuthenticatorFactory(nf, new StaticChallengeResponseMatcher(authDb));
                 }
-                return super.getAuthenticatorFactory();
+                return super.getLineAuthenticatorFactory();
             }
         };
         return new DefaultLineTcpReceiverConfiguration() {

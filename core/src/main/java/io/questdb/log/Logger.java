@@ -167,7 +167,18 @@ public final class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $(Object x) {
-        sink().put(x == null ? "null" : x.toString());
+        if (x == null) {
+            sink().put("null");
+        } else {
+            try {
+                sink().put(x.toString());
+            } catch (Throwable t) {
+                // Complex toString() method could throw e.g. NullPointerException.
+                // If that happens, we've to release cursor to prevent blocking log queue.
+                $();
+                throw t;
+            }
+        }
         return this;
     }
 
@@ -176,7 +187,14 @@ public final class Logger implements LogRecord, Log {
         if (x == null) {
             sink().put("null");
         } else {
-            x.toSink(sink());
+            try {
+                x.toSink(sink());
+            } catch (Throwable t) {
+                // Complex toSink() method could throw e.g. NullPointerException.
+                // If that happens, we've to release cursor to prevent blocking log queue.
+                $();
+                throw t;
+            }
         }
         return this;
     }

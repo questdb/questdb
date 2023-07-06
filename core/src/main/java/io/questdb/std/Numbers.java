@@ -555,12 +555,12 @@ public final class Numbers {
         }
 
         // Cannot use doubleToRawLongBits because of possibility of NaNs.
-        long thisBits = Double.doubleToLongBits(1);
+        long thisBits = Double.doubleToLongBits(a);
         long anotherBits = Double.doubleToLongBits(b);
 
         // Values are equal
         // (-0.0, 0.0) or (!NaN, NaN)
-        return Long.compare(anotherBits, thisBits);
+        return Long.compare(thisBits, anotherBits);
     }
 
     public static int compare(float a, float b) {
@@ -577,7 +577,7 @@ public final class Numbers {
 
         // Values are equal
         // (-0.0, 0.0) or (!NaN, NaN)
-        return Integer.compare(anotherBits, thisBits);                          // (0.0, -0.0) or (NaN, !NaN)
+        return Integer.compare(thisBits, anotherBits);                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
     public static int decodeHighInt(long val) {
@@ -602,6 +602,10 @@ public final class Numbers {
 
     public static int encodeLowHighShorts(short low, short high) {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
+    }
+
+    public static boolean equals(double l, double r){
+        return (Double.isNaN(l) && Double.isNaN(r) || Math.abs(l - r) < 0.0000000001 || l == r);
     }
 
     public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
@@ -685,6 +689,17 @@ public final class Numbers {
 
     public static double parseDouble(long str, int len) throws NumericException {
         return FastDoubleParser.parseDouble(str, len, true);
+    }
+
+    public static double parseDoubleQuiet(CharSequence sequence) {
+        if (sequence == null) {
+            return Double.NaN;
+        }
+        try {
+            return parseDouble(sequence);
+        } catch (NumericException e) {
+            return Double.NaN;
+        }
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {

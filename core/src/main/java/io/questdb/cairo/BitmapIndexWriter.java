@@ -206,6 +206,8 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
+                // Don't truncate the file on close.
+                this.keyMem.close(false);
                 LOG.error().$("file too short [corrupt] [fd=").$(keyFd).$(']').$();
                 throw CairoException.critical(0).put("Index file too short (w): [fd=").put(keyFd).put(']');
             }

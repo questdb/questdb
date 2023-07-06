@@ -55,7 +55,7 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
+    private final BuildInformation buildInformation;
     private final String banner;
     private final ServerConfiguration config;
     private final Log log;
@@ -71,6 +71,7 @@ public class Bootstrap {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
         this.banner = bootstrapConfiguration.getBanner();
+        this.buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
 
         // non /server.conf properties
         final CharSequenceObjHashMap<String> argsMap = processArgs(args);
@@ -103,7 +104,7 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
+        log.advisoryW().$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
         String archName;
         boolean isOsSupported = true;
         switch (Os.type) {
@@ -271,13 +272,13 @@ public class Bootstrap {
             final byte[] buffer = new byte[1024 * 1024];
 
             boolean extracted = false;
-            final String oldVersionStr = getPublicVersion(publicDir);
-            final CharSequence dbVersion = buildInformation.getQuestDbVersion();
-            if (oldVersionStr == null) {
+            final String oldSwVersion = getPublicVersion(publicDir);
+            final CharSequence newSwVersion = buildInformation.getSwVersion();
+            if (oldSwVersion == null) {
                 if (thisVersion != 0) {
                     extractSite0(publicDir, buffer, Long.toString(thisVersion));
                 } else {
-                    extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
                 }
                 extracted = true;
             } else {
@@ -285,8 +286,8 @@ public class Bootstrap {
                 // in this package "thisVersion" is always 0, and we need to fall back
                 // to the database version.
                 if (thisVersion == 0) {
-                    if (!Chars.equals(oldVersionStr, dbVersion)) {
-                        extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    if (!Chars.equals(oldSwVersion, newSwVersion)) {
+                        extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
                         extracted = true;
                     }
                 } else {
@@ -294,7 +295,7 @@ public class Bootstrap {
                     // which means user might have switched from RT distribution to no-JVM on the same data dir
                     // in this case we might fail to parse the version string
                     try {
-                        final long oldVersion = Numbers.parseLong(oldVersionStr);
+                        final long oldVersion = Numbers.parseLong(oldSwVersion);
                         if (thisVersion > oldVersion) {
                             extractSite0(publicDir, buffer, Long.toString(thisVersion));
                             extracted = true;

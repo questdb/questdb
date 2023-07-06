@@ -33,6 +33,8 @@ import java.io.Closeable;
 public interface TableNameRegistry extends Closeable {
     TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false);
 
+    TableToken addTableAlias(String newName, TableToken tableToken);
+
     /**
      * cleans the registry and releases all resources
      */
@@ -55,15 +57,14 @@ public interface TableNameRegistry extends Closeable {
      * @return resolves table name to TableToken. If no token exists, returns null
      */
     TableToken getTableToken(CharSequence tableName);
-
+    
     /**
      * Returns table token by directory name. If table does not exist, returns null.
      *
      * @param dirName directory name
-     * @param tableId table id
      * @return resolves private table name to TableToken. If no token exists, returns null
      */
-    TableToken getTableToken(String dirName, int tableId);
+    TableToken getTableTokenByDirName(String dirName);
 
     /**
      * Returns total count of table tokens. Among live tables it can count dropped tables which are not fully deleted yet.
@@ -136,6 +137,8 @@ public interface TableNameRegistry extends Closeable {
      */
     void reloadTableNameCache(ObjList<TableToken> convertedTables);
 
+    void removeAlias(TableToken tableToken);
+
     /**
      * Updates table name in registry.
      *
@@ -145,6 +148,8 @@ public interface TableNameRegistry extends Closeable {
      * @return updated table token
      */
     TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken);
+
+    void replaceAlias(TableToken alias, TableToken replaceWith);
 
     /**
      * Resets table name storage memory to initial value. Used to not false detect memory leaks in tests.

@@ -37,4 +37,6 @@ public interface StaticContentProcessorConfiguration {
     MimeTypesCache getMimeTypesCache();
 
     CharSequence getPublicDirectory();
+
+    boolean isAuthenticationRequired();
 }

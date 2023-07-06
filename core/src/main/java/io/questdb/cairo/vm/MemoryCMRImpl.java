@@ -35,6 +35,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
+import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
+
 //contiguous mapped readable 
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
@@ -91,6 +93,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
                 throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
             }
         }
+        assert !PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
         map(ff, name, size);
     }
 

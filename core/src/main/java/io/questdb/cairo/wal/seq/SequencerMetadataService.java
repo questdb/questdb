@@ -26,10 +26,12 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.std.Chars;
+import org.jetbrains.annotations.NotNull;
 
 public class SequencerMetadataService implements MetadataServiceStub {
     private final SequencerMetadata metadata;
-    private final TableToken tableToken;
+    private TableToken tableToken;
 
     public SequencerMetadataService(SequencerMetadata metadata, TableToken tableToken) {
         this.metadata = metadata;
@@ -59,12 +61,19 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void removeColumn(CharSequence columnName) {
+    public void removeColumn(@NotNull CharSequence columnName) {
         metadata.removeColumn(columnName);
     }
 
     @Override
-    public void renameColumn(CharSequence columnName, CharSequence newName) {
+    public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
         metadata.renameColumn(columnName, newName);
+    }
+
+    @Override
+    public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+        assert Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName());
+        metadata.renameTable(toTableName);
+        this.tableToken = metadata.getTableToken();
     }
 }
