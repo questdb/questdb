@@ -1540,14 +1540,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public static class QueryPermissions extends AbstractSelfReturningObject<QueryPermissions> {
+        final LongObjHashMap<TablePermissions> permissions;
         boolean checked;
-        LongObjHashMap<TablePermissions> permissions;
         CharSequence principal;
         TablePermissions updatePermissions;
         long version;
 
         public QueryPermissions(WeakSelfReturningObjectPool<QueryPermissions> parentPool) {
             super(parentPool);
+            this.permissions = new LongObjHashMap<>();
+        }
+
+        public void add(TableToken tableToken, TablePermissions newPermissions) {
+            permissions.put(tableToken.getTableId(), newPermissions);
         }
 
         public void check(SecurityContext context) {
@@ -1582,8 +1587,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             super.close();
         }
 
-        public QueryPermissions of(LongObjHashMap<TablePermissions> permissions, SecurityContext context) {
-            this.permissions = permissions;
+        public TablePermissions get(TableToken tableToken) {
+            return permissions.get(tableToken.getTableId());
+        }
+
+        public QueryPermissions of(SecurityContext context) {
             this.checked = true;
             this.principal = context.getEntityName();
             this.version = context.getVersion();
@@ -1610,7 +1618,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 CharSequence newColumn = newColumns.getQuick(i);
                 int idx = columns.keyIndex(newColumn);
                 if (idx >= 0) {
-                    columns.addAt(idx, Chars.toString(newColumn));// columns must not be mutable
+                    assert newColumn instanceof String;// column must not be mutable
+                    columns.addAt(idx, newColumn);
                 }
             }
         }

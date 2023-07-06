@@ -108,7 +108,7 @@ public class SqlOptimiser {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
-    private LongObjHashMap<QueryModel.TablePermissions> permissions;
+    private QueryModel.QueryPermissions permissions;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
@@ -794,12 +794,18 @@ public class SqlOptimiser {
                             CharSequence tstmpToken = checkTimestamp ? model.getTimestamp().token : null;
                             for (int i = 0, n = topDownColumns.size(); i < n; i++) {
                                 CharSequence colName = topDownColumns.getQuick(i).getName();
-                                literalCollectorANames.add(colName);
+
+                                CharSequence immutableColName = model.getAliasToColumnMap().get(colName).getAlias();
+                                assert immutableColName instanceof String && Chars.equalsIgnoreCase(colName, immutableColName);
+
+                                literalCollectorANames.add(immutableColName);
                                 timestampFound |= checkTimestamp && !timestampFound && Chars.equals(tstmpToken, colName);
                             }
 
                             if (checkTimestamp && !timestampFound) {
-                                literalCollectorANames.add(tstmpToken);
+                                CharSequence immutableColName = model.getAliasToColumnMap().get(tstmpToken).getAlias();
+                                assert immutableColName instanceof String && Chars.equalsIgnoreCase(tstmpToken, immutableColName);
+                                literalCollectorANames.add(immutableColName);
                             }
 
                             TableToken tableToken = executionContext.getTableToken(tab);
@@ -808,13 +814,12 @@ public class SqlOptimiser {
                                     literalCollectorANames
                             );
 
-                            QueryModel.TablePermissions tablePerms = permissions.get(tableToken.getTableId());
-                            if (tablePerms == null) {
-                                tablePerms = tablePermissionsPool.pop().of(tableToken);
-                                permissions.put(tableToken.getTableId(), tablePerms);
+                            QueryModel.TablePermissions tablePermissions = permissions.get(tableToken);
+                            if (tablePermissions == null) {
+                                tablePermissions = tablePermissionsPool.pop().of(tableToken);
+                                permissions.add(tableToken, tablePermissions);
                             }
-
-                            tablePerms.add(literalCollectorANames);
+                            tablePermissions.add(literalCollectorANames);
                         } finally {
                             tab.setLo(lo);
                         }
@@ -4765,12 +4770,15 @@ public class SqlOptimiser {
     }
 
     QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        permissions = new LongObjHashMap<>();
+        permissions = queryPermissionsPool.pop().of(sqlExecutionContext.getSecurityContext());
         try {
             // only set permissions on the outermost model
             QueryModel rewrittenModel = optimiseInner(model, sqlExecutionContext);
-            rewrittenModel.setPermissions(queryPermissionsPool.pop().of(permissions, sqlExecutionContext.getSecurityContext()));
+            rewrittenModel.setPermissions(permissions);
             return rewrittenModel;
+        } catch (Throwable t) {
+            permissions = Misc.free(permissions);
+            throw t;
         } finally {
             permissions = null;
         }
