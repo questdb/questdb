@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.SuspendException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -431,7 +431,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                 return nextEvent;
             });
             if (computedEvent != null) {
-                throw DataUnavailableException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
+                throw SuspendException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
             }
         }
     }

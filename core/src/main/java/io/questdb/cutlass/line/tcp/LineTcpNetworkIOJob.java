@@ -104,17 +104,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
-        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
-        if (keyIndex < 0) {
-            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
-            tableUpdateDetailsUtf8.removeAt(keyIndex);
-            return tud;
-        }
-        return null;
-    }
-
-    @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
         assert this.workerId == workerId;
         boolean busy = false;

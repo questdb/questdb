@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SuspendException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -301,7 +304,7 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
                     foundRowCount += LatestByArguments.getRowsSize(address);
                 }
             }
-        } catch (DataUnavailableException e) {
+        } catch (SuspendException e) {
             // We're not yet done, so no need to cancel the circuit breaker. 
             throw e;
         } catch (Throwable t) {

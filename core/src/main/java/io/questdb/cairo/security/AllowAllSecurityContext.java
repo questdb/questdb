@@ -25,6 +25,7 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SuspendException;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
@@ -212,6 +213,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void awaitForTxn(long txn) throws SuspendException {
+    }
+
+    @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
     }
 
@@ -220,6 +225,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void onTableCreated(TableToken tableToken) {
+    public long onTableCreated(TableToken tableToken) {
+        return -1;
     }
 }

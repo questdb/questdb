@@ -29,6 +29,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -72,8 +73,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_NO_WAIT = 0x0;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+    protected final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
         @Override
         public int getBindIPv4Address() {
             return 0;
@@ -89,6 +89,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             return 15;
         }
     };
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
     protected boolean autoCreateNewColumns = true;
@@ -100,6 +101,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+    protected int partitionByDefault = PartitionBy.DAY;
+    protected SecurityContextFactory securityContextFactory;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
         @Override
         public LineAuthenticatorFactory getLineAuthenticatorFactory() {
@@ -111,8 +114,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
             return new EllipticCurveAuthenticatorFactory(nf, new StaticChallengeResponseMatcher(authDb));
         }
+
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory != null ? securityContextFactory : super.getSecurityContextFactory();
+        }
     };
-    protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
@@ -244,6 +251,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         partitionByDefault = PartitionBy.DAY;
         disconnectOnError = false;
         symbolAsFieldSupported = false;
+        securityContextFactory = null;
         nf = NetworkFacadeImpl.INSTANCE;
     }
 
@@ -319,7 +327,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void send(int wait, Runnable sendToSocket, CharSequence... tableNames) {
-
         if (wait == WAIT_NO_WAIT) {
             sendToSocket.run();
             return;

@@ -426,7 +426,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         total++;
                     }
                 }
-            } catch (DataUnavailableException e) {
+            } catch (SuspendException e) {
                 // We're not yet done, so no need to cancel the circuit breaker. 
                 throw e;
             } catch (Throwable e) {

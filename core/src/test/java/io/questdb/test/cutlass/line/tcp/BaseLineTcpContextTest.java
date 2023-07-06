@@ -29,6 +29,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -72,6 +73,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected NoNetworkIOJob noNetworkIOJob = new NoNetworkIOJob();
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
+    protected SecurityContextFactory securityContextFactory;
     protected boolean stringAsTagSupported;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
@@ -91,6 +93,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         integerDefaultColumnType = ColumnType.LONG;
         autoCreateNewColumns = true;
         autoCreateNewTables = true;
+        securityContextFactory = null;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
     }
 
@@ -120,7 +123,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void closeContext() {
-        if (null != scheduler) {
+        if (scheduler != null) {
             workerPool.halt();
             Assert.assertFalse(context.invalid());
             Assert.assertEquals(FD, context.getFd());
@@ -148,6 +151,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                     return new EllipticCurveAuthenticatorFactory(nf, new StaticChallengeResponseMatcher(authDb));
                 }
                 return super.getLineAuthenticatorFactory();
+            }
+
+            @Override
+            public SecurityContextFactory getSecurityContextFactory() {
+                return securityContextFactory != null ? securityContextFactory : super.getSecurityContextFactory();
             }
         };
         return new DefaultLineTcpReceiverConfiguration() {
@@ -299,7 +307,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 null,
                 workerPool = createWorkerPool(nWriterThreads, false)
         ) {
-
             @Override
             public boolean scheduleEvent(
                     SecurityContext securityContext,
@@ -414,17 +421,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         @Override
         public void releaseWalTableDetails() {
             scheduler.releaseWalTableDetails(localTableUpdateDetailsByTableName);
-        }
-
-        @Override
-        public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
-            final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
-            if (keyIndex < 0) {
-                TableUpdateDetails tud = localTableUpdateDetailsByTableName.valueAtQuick(keyIndex);
-                localTableUpdateDetailsByTableName.removeAt(keyIndex);
-                return tud;
-            }
-            return null;
         }
 
         @Override

@@ -203,7 +203,9 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableInsecure(securityContext, mem, path, ifNotExists, struct, keepLock, false);
+        final TableToken tableToken = createTableInsecure(mem, path, ifNotExists, struct, keepLock, false);
+        securityContext.onTableCreated(tableToken);
+        return tableToken;
     }
 
     public @NotNull TableToken createTableInVolume(
@@ -215,11 +217,12 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableInsecure(securityContext, mem, path, ifNotExists, struct, keepLock, true);
+        final TableToken tableToken = createTableInsecure(mem, path, ifNotExists, struct, keepLock, true);
+        securityContext.onTableCreated(tableToken);
+        return tableToken;
     }
 
     public @NotNull TableToken createTableInsecure(
-            SecurityContext securityContext,
             MemoryMARW mem,
             Path path,
             boolean ifNotExists,
@@ -278,7 +281,6 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(tableToken);
         }
 
-        securityContext.onTableCreated(tableToken);
         return tableToken;
     }
 

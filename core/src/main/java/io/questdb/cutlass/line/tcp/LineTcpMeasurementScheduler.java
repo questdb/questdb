@@ -78,6 +78,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
     private final long writerIdleTimeout;
+    private long tablePermissionsTxn = -1;
 
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -285,6 +286,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     .$("`]")
                     .$();
             return true;
+        } catch (SuspendException ex) {
+            // We're waiting for the newly created table permissions.
+            throw ex;
         } catch (CairoException ex) {
             // Table could not be created
             LOG.error().$("could not create table [tableName=").$(measurementName)
@@ -737,8 +741,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     securityContext.authorizeLineTableCreate();
-                    tableToken = engine.createTableInsecure(securityContext, ddlMem, path, true, tsa, false, false);
+                    tableToken = engine.createTableInsecure(ddlMem, path, true, tsa, false, false);
+                    tablePermissionsTxn = securityContext.onTableCreated(tableToken);
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
+                }
+
+                if (tablePermissionsTxn != -1) {
+                    // Wait until table permissions are applied to the end table.
+                    // This method throws SuspendException on failed check.
+                    securityContext.awaitForTxn(tablePermissionsTxn);
+                    tablePermissionsTxn = -1;
                 }
 
                 // by the time we get here, definitely exists on disk
@@ -754,7 +766,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
                         // to identify the cause
                         tud = unsafeAssignTableToWriterThread(
-                                securityContext,
                                 tudKeyIndex,
                                 tud.getTableNameUtf16(),
                                 tud.getTableNameUtf8()
@@ -783,7 +794,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         return tud;
                     } else {
                         tud = unsafeAssignTableToWriterThread(
-                                securityContext,
                                 tudKeyIndex,
                                 tableNameUtf16,
                                 ByteCharSequence.newInstance(tableNameUtf8)
@@ -807,7 +817,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
     @NotNull
     private TableUpdateDetails unsafeAssignTableToWriterThread(
-            SecurityContext securityContext,
             int tudKeyIndex,
             CharSequence tableNameUtf16,
             ByteCharSequence tableNameUtf8

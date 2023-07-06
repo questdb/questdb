@@ -29,24 +29,32 @@ import io.questdb.network.SuspendEvent;
 import io.questdb.std.ThreadLocal;
 
 /**
- * Thrown when the queried data is in a cold partition and a request to download it
- * to a local disk has been started. The querying side should switch to other tasks
- * and retry {@link RecordCursor#hasNext()} call later when the data is moved to
- * the local disk.
+ * Thrown when the event loop task has to be suspended to allow other tasks to proceed, e.g.
+ * when the queried data is in a cold partition and a request to download it to a local disk
+ * has been started. The querying side should switch to other tasks and retry
+ * {@link RecordCursor#hasNext()} call later when the data is moved to the local disk.
  */
-public class DataUnavailableException extends CairoException {
-    private static final ThreadLocal<DataUnavailableException> tlException = new ThreadLocal<>(DataUnavailableException::new);
+public class SuspendException extends CairoException {
+    private static final ThreadLocal<SuspendException> tlException = new ThreadLocal<>(SuspendException::new);
 
     private SuspendEvent event;
 
-    public static DataUnavailableException instance(TableToken tableToken, CharSequence partition, SuspendEvent event) {
-        DataUnavailableException ex = tlException.get();
+    public static SuspendException instance(TableToken tableToken, CharSequence partition, SuspendEvent event) {
+        SuspendException ex = tlException.get();
         ex.message.clear();
         ex.errno = CairoException.NON_CRITICAL;
         ex.event = event;
         ex.put("partition is located in cold storage, query will be suspended [table=").put(tableToken)
                 .put(", partition=").put(partition)
                 .put(']');
+        return ex;
+    }
+
+    public static SuspendException instance(SuspendEvent event) {
+        SuspendException ex = tlException.get();
+        ex.message.clear();
+        ex.errno = CairoException.NON_CRITICAL;
+        ex.event = event;
         return ex;
     }
 

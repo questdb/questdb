@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SuspendException;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.Authenticator;
@@ -38,10 +39,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult.MEASUREMENT_COMPLETE;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -67,8 +71,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected SecurityContext securityContext = DenyAllSecurityContext.INSTANCE;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
+    private boolean measurementPending;
     private long nextCheckIdleTime;
     private long nextCommitTime;
+    private SuspendEvent suspendEvent;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         this.configuration = configuration;
@@ -107,6 +113,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         authenticator.clear();
         recvBufPos = recvBufStart;
         peerDisconnected = false;
+        measurementPending = false;
+        clearSuspendEvent();
         resetParser();
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
         for (int n = keys.size() - 1; n >= 0; --n) {
@@ -115,6 +123,11 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             tud.close();
             tableUpdateDetailsUtf8.remove(tableNameUtf8);
         }
+    }
+
+    @Override
+    public void clearSuspendEvent() {
+        suspendEvent = Misc.free(suspendEvent);
     }
 
     @Override
@@ -170,6 +183,11 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
+    @Override
+    public SuspendEvent getSuspendEvent() {
+        return suspendEvent;
+    }
+
     public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
         return tableUpdateDetailsUtf8.get(tableName);
     }
@@ -178,9 +196,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated()) {
             read();
             try {
-                IOContextResult parasResult = parseMeasurements(netIoJob);
+                IOContextResult parseResult = parseMeasurements(netIoJob);
                 doMaintenance(milliClock.getTicks());
-                return parasResult;
+                return parseResult;
             } finally {
                 netIoJob.releaseWalTableDetails();
             }
@@ -317,7 +335,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
-                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
+                final ParseResult rc;
+                if (measurementPending) {
+                    measurementPending = false;
+                    rc = MEASUREMENT_COMPLETE;
+                } else {
+                    rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
+                }
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
@@ -332,9 +356,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             logParseError();
                             goodMeasurement = true;
                         }
-
                         startNewMeasurement();
-
                         continue;
                     }
 
@@ -352,13 +374,16 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             doHandleDisconnectEvent();
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
-
                         if (peerDisconnected) {
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
                         return IOContextResult.NEEDS_READ;
                     }
                 }
+            } catch (SuspendException ex) {
+                measurementPending = true;
+                suspendEvent = ex.getEvent();
+                return IOContextResult.NEEDS_READ;
             } catch (CairoException ex) {
                 LOG.error()
                         .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())

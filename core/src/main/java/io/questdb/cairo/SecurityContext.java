@@ -127,9 +127,12 @@ public interface SecurityContext {
 
     void authorizeUnassignServiceAccount();
 
+    void awaitForTxn(long txn) throws SuspendException;
+
     void exitServiceAccount(CharSequence serviceAccountName);
 
     void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
 
-    void onTableCreated(TableToken tableToken);
+    // returns txn number to await for
+    long onTableCreated(TableToken tableToken);
 }

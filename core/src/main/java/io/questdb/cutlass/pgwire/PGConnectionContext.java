@@ -2481,7 +2481,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     throw e;
                 }
             }
-        } catch (DataUnavailableException e) {
+        } catch (SuspendException e) {
             isPausedQuery = true;
             responseAsciiSink.resetToBookmark();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());

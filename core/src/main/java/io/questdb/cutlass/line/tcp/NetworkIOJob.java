@@ -40,6 +40,4 @@ public interface NetworkIOJob extends Job, QuietCloseable {
     int getWorkerId();
 
     void releaseWalTableDetails();
-
-    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
 }
