@@ -77,7 +77,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
                                             && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
                                         throw e;
                                     }
@@ -121,7 +121,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (SqlException | CairoException e) {
                                     // Should never fail on drop table.
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
                                             && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
                                         throw e;
                                     }

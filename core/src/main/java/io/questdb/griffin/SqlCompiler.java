@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
-import io.questdb.PropServerConfiguration;
-import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
+import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -87,6 +84,7 @@ public class SqlCompiler implements Closeable {
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
     private final SqlCodeGenerator codeGenerator;
+    private final DropStatementCompiler dropStmtCompiler = new DropStatementCompiler();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
@@ -199,8 +197,9 @@ public class SqlCompiler implements Closeable {
 
     @Override
     public void close() {
-        backupAgent.close();
-        vacuumColumnVersions.close();
+        Misc.free(backupAgent);
+        Misc.free(dropStmtCompiler);
+        Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -1730,46 +1729,6 @@ public class SqlCompiler implements Closeable {
         return executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
     }
 
-    private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
-        // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !SqlKeywords.isTableKeyword(tok)) {
-            return unknownDropStatement(executionContext, tok);
-        }
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected [if exists] table-name");
-        }
-        boolean hasIfExists = false;
-        if (SqlKeywords.isIfKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isExistsKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected exists");
-            }
-            hasIfExists = true;
-        } else {
-            lexer.unparseLast(); // tok has table name
-        }
-        final int tableNamePosition = lexer.getPosition();
-        final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
-            return unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
-        }
-        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-            if (hasIfExists) {
-                return compiledQuery.ofDrop();
-            }
-            throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
-        }
-        executionContext.getSecurityContext().authorizeTableDrop(tableToken);
-        engine.drop(path, tableToken);
-        return compiledQuery.ofDrop();
-    }
-
     private CompiledQuery executeWithRetries(
             ExecutableMethod method,
             ExecutionModel executionModel,
@@ -2451,11 +2410,11 @@ public class SqlCompiler implements Closeable {
         tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'table' expected");
+            throw SqlException.$(lexer.getPosition(), "TABLE expected");
         }
 
         if (!isTableKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+            throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -2482,7 +2441,7 @@ public class SqlCompiler implements Closeable {
                 try {
                     tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
                 } catch (CairoException e) {
-                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
+                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
                     throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                 }
                 tok = SqlUtil.fetchNext(lexer);
@@ -2503,18 +2462,18 @@ public class SqlCompiler implements Closeable {
             if (tok != null && isKeepKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || !isSymbolKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'symbol' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "SYMBOL expected");
                 }
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || !isMapsKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'maps' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "MAPS expected");
                 }
                 keepSymbolTables = true;
                 tok = SqlUtil.fetchNext(lexer);
             }
 
             if (tok != null && !Chars.equals(tok, ';')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected [token='").put(tok).put("']");
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2701,7 +2660,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor truncateTables = this::truncateTables;
         final KeywordBasedExecutor alterTable = this::alterTable;
         final KeywordBasedExecutor reindexTable = this::reindexTable;
-        final KeywordBasedExecutor dropTable = this::dropTable;
+        final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
@@ -2730,8 +2689,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("UNLISTEN", compileSet);  //no-op
         keywordBasedExecutors.put("reset", compileSet);  //no-op
         keywordBasedExecutors.put("RESET", compileSet);  //no-op
-        keywordBasedExecutors.put("drop", dropTable);
-        keywordBasedExecutors.put("DROP", dropTable);
+        keywordBasedExecutors.put("drop", dropStatement);
+        keywordBasedExecutors.put("DROP", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
         keywordBasedExecutors.put("BACKUP", sqlBackup);
         keywordBasedExecutors.put("show", sqlShow);
@@ -3225,6 +3184,134 @@ public class SqlCompiler implements Closeable {
             } finally {
                 tableTokens.clear();
             }
+        }
+    }
+
+    private class DropStatementCompiler implements Closeable {
+        private final CharSequenceObjHashMap<String> dropTablesFailedList = new CharSequenceObjHashMap<>();
+        private final ObjHashSet<TableToken> dropTablesList = new ObjHashSet<>();
+
+        @Override
+        public void close() {
+            dropTablesList.clear();
+            dropTablesFailedList.clear();
+        }
+
+        private CompiledQuery dropAllTables(SqlExecutionContext executionContext) {
+            // collect table names
+            dropTablesFailedList.clear();
+            dropTablesList.clear();
+            engine.getTableTokens(dropTablesList, false);
+            SecurityContext securityContext = executionContext.getSecurityContext();
+            TableToken tableToken;
+            for (int i = 0, n = dropTablesList.size(); i < n; i++) {
+                tableToken = dropTablesList.get(i);
+                if (!isSystemTable(tableToken)) {
+                    securityContext.authorizeTableDrop(tableToken);
+                    try {
+                        engine.drop(path, tableToken);
+                    } catch (CairoException report) {
+                        // it will fail when there are readers/writers and lock cannot be acquired
+                        dropTablesFailedList.put(tableToken.getTableName(), report.getMessage());
+                    }
+                }
+            }
+            if (dropTablesFailedList.size() > 0) {
+                CairoException ex = CairoException.nonCritical().put("failed to drop tables [");
+                CharSequence tableName;
+                String reason;
+                ObjList<CharSequence> keys = dropTablesFailedList.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    tableName = keys.get(i);
+                    reason = dropTablesFailedList.get(tableName);
+                    ex.put('\'').put(tableName).put("': ").put(reason);
+                    if (i + 1 < n) {
+                        ex.put(", ");
+                    }
+                }
+                throw ex.put(']');
+            }
+            return compiledQuery.ofDrop();
+        }
+
+        private CompiledQuery dropTable(
+                SqlExecutionContext executionContext,
+                CharSequence tableName,
+                int tableNamePosition,
+                boolean hasIfExists
+        ) throws SqlException {
+            TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+            if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                if (hasIfExists) {
+                    return compiledQuery.ofDrop();
+                }
+                throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
+            }
+            executionContext.getSecurityContext().authorizeTableDrop(tableToken);
+            engine.drop(path, tableToken);
+            return compiledQuery.ofDrop();
+        }
+
+        private CompiledQuery executorSelector(SqlExecutionContext executionContext) throws SqlException {
+            // the selected method depends on the second token, we have already seen DROP
+            CharSequence tok = SqlUtil.fetchNext(lexer);
+            if (tok != null) {
+
+                // DROP TABLE [ IF EXISTS ] name [;]
+                if (SqlKeywords.isTableKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null) {
+                        throw parseErrorExpected("IF EXISTS table-name");
+                    }
+                    boolean hasIfExists = false;
+                    if (SqlKeywords.isIfKeyword(tok)) {
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || !SqlKeywords.isExistsKeyword(tok)) {
+                            throw parseErrorExpected("EXISTS table-name");
+                        }
+                        hasIfExists = true;
+                    } else {
+                        lexer.unparseLast(); // tok has table name
+                    }
+                    final int tableNamePosition = lexer.getPosition();
+                    final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table-name"));
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || Chars.equals(tok, ';')) {
+                        return dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
+                    }
+                    throw parseErrorUnexpected("[;]", tok);
+                }
+
+                // DROP ALL TABLES [;]
+                if (SqlKeywords.isAllKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && SqlKeywords.isTablesKeyword(tok)) {
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ';')) {
+                            return dropAllTables(executionContext);
+                        }
+                        throw parseErrorUnexpected("[;]", tok);
+                    }
+                }
+            }
+            throw parseErrorUnexpected("TABLE table-name or ALL TABLES", tok);
+        }
+
+        private boolean isSystemTable(TableToken tableToken) {
+            return Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix()) ||
+                    Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
+        }
+
+        private SqlException parseErrorExpected(CharSequence expected) {
+            return SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
+        }
+
+        private SqlException parseErrorUnexpected(CharSequence expected, CharSequence tok) {
+            SqlException exception = SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
+            if (tok != null) {
+                exception.put(", found unexpected [token='").put(tok).put("']");
+            }
+            return exception;
         }
     }
 

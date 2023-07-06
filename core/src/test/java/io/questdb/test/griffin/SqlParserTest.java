@@ -36,12 +36,12 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -2544,6 +2544,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 12,
                 "'when' expected",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDropTablesMissingComma() throws Exception {
+        assertSyntaxError(
+                "drop tables tab1 tab2",
+                5,
+                "expected TABLE table-name or ALL TABLES, found unexpected [token='tables']",
+                modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDropTablesMissingName() throws Exception {
+        assertSyntaxError(
+                "drop tables tab1, ",
+                5,
+                "expected TABLE table-name or ALL TABLES, found unexpected [token='tables']",
+                modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDropTablesTableIsSingular() throws Exception {
+        assertSyntaxError(
+                "drop table tab1, tab2",
+                15,
+                "expected [;], found unexpected [token=',']",
+                modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
     }
 
