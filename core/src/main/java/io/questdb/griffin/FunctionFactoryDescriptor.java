@@ -167,6 +167,9 @@ public class FunctionFactoryDescriptor {
             case 'z':
                 sigArgType = ColumnType.UUID;
                 break;
+            case 'x':
+                sigArgType = ColumnType.IPv4;
+                break;
             default:
                 sigArgType = -1;
                 break;

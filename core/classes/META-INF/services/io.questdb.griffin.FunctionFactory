@@ -298,6 +298,9 @@ io.questdb.griffin.engine.functions.cast.CastIntToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToBooleanFunctionFactory
 
+# cast ipv4 to...
+io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory
+
 # cast long to ...
 io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToByteFunctionFactory

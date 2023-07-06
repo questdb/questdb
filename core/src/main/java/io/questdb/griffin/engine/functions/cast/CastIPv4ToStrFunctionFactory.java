@@ -37,7 +37,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(IPs)";
+        return "cast(XS)";
     }
 
     @Override
@@ -65,8 +65,9 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
             if (value == Numbers.INT_NaN) {
                 return null;
             }
+
             sinkA.clear();
-            sinkA.put(value);
+            Numbers.intToIPv4Sink(sinkA, value);
             return sinkA;
         }
 
@@ -76,7 +77,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
             if (value == Numbers.INT_NaN) {
                 return;
             }
-            sink.put(value);
+            Numbers.intToIPv4Sink(sink, value);
         }
 
         @Override
@@ -86,7 +87,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value);
+            Numbers.intToIPv4Sink(sinkB, value);
             return sinkB;
         }
     }

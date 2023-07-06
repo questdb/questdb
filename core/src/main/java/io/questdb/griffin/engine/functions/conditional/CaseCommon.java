@@ -123,6 +123,7 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.SYMBOL), new CastShortToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.LONG256), new CastIntToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.STRING), new CastIntToStrFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.IPv4, ColumnType.STRING), new CastIPv4ToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.SYMBOL), new CastIntToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.LONG256), new CastLongToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.STRING), new CastLongToStrFunctionFactory());

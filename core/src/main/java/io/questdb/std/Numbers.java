@@ -927,6 +927,22 @@ public final class Numbers {
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
+    public static void intToIPv4Sink(CharSink sink, int value) {
+        final int i = value;
+
+        if (i == Integer.MIN_VALUE) {
+            sink.put("null");
+        } else {
+            append(sink, (i >> 24) & 0xff);
+            sink.put('.');
+            append(sink, (i >> 16) & 0xff);
+            sink.put('.');
+            append(sink, (i >> 8) & 0xff);
+            sink.put('.');
+            append(sink, i & 0xff);
+        }
+    }
+
     public static long parseLong(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;

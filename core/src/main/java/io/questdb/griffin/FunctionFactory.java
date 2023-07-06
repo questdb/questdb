@@ -63,6 +63,8 @@ public interface FunctionFactory {
      * <li>q = REGPROCEDURE - this type is used in cast()</li>
      * <li>J = long128</li>
      * <li>Z = uuid</li>
+     * <li>w = string array</li>
+     * <li> x = ipv4</li>
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and

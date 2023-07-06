@@ -75,95 +75,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntToIpv4_NO_WAL() throws Exception {
-
-            compiler.compile("create table x as (select x::int from long_sequence(10))", sqlExecutionContext);
-            compiler.compile("create table y (a ipv4)", sqlExecutionContext);
-
-            engine.releaseInactive();
-
-            assertQuery("a\n" +
-                            "0.0.0.1" + '\n' +
-                            "0.0.0.2" + '\n' +
-                            "0.0.0.3" + '\n' +
-                            "0.0.0.4" + '\n' +
-                            "0.0.0.5" + '\n' +
-                            "0.0.0.6" + '\n' +
-                            "0.0.0.7" + '\n' +
-                            "0.0.0.8" + '\n' +
-                            "0.0.0.9" + '\n' +
-                            "0.0.0.10" + '\n',
-                    "select * from y",
-                    "insert into y select * from x",
-                    null,
-                    true,
-                    true
-            );
-    }
-
-    @Test
-    public void testCreateAsSelectCastIntToIPv4() throws Exception {
-
-        compiler.compile("create table x as (select x::int col from long_sequence(10))", sqlExecutionContext);
-
-        engine.releaseInactive();
-
-        assertQuery("col\n" +
-                        "0.0.0.1" + '\n' +
-                        "0.0.0.2" + '\n' +
-                        "0.0.0.3" + '\n' +
-                        "0.0.0.4" + '\n' +
-                        "0.0.0.5" + '\n' +
-                        "0.0.0.6" + '\n' +
-                        "0.0.0.7" + '\n' +
-                        "0.0.0.8" + '\n' +
-                        "0.0.0.9" + '\n' +
-                        "0.0.0.10" + '\n',
-                "select * from y",
-                "create table y as (x), cast(col as ipv4)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testCreateAsSelectCastIPv4ToInt() throws Exception {
-
-        compiler.compile("create table x (col ipv4)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into x values('0.0.0.7')");
-        executeInsert("insert into x values('0.0.0.8')");
-        executeInsert("insert into x values('0.0.0.9')");
-        executeInsert("insert into x values('0.0.0.10')");
-
-        engine.releaseInactive();
-
-        assertQuery("col\n" +
-                        "1" + '\n' +
-                        "2" + '\n' +
-                        "3" + '\n' +
-                        "4" + '\n' +
-                        "5" + '\n' +
-                        "6" + '\n' +
-                        "7" + '\n' +
-                        "8" + '\n' +
-                        "9" + '\n' +
-                        "10" + '\n',
-                "select * from y",
-                "create table y as (x), cast(col as int)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testCreateAsSelectCastStrToIPv4() throws Exception {
 
         compiler.compile("create table x as (select x::string col from long_sequence(0))", sqlExecutionContext);
@@ -199,10 +110,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
-
+    @Test
+    public void testCreateAsSelectCastIPv4ToStr() throws Exception {
+        assertSql("select rnd_ipv4()::string from long_sequence(10)","cast\n" +
+                "187.139.150.80\n" +
+                "18.206.96.238\n" +
+                "92.80.211.65\n" +
+                "212.159.205.29\n" +
+                "4.98.173.21\n" +
+                "199.122.166.85\n" +
+                "79.15.250.138\n" +
+                "35.86.82.23\n" +
+                "111.98.117.250\n" +
+                "205.123.179.216\n" );
+    }
 
     @Test
-    public void testStringToIpv4() throws Exception {
+    public void testImplicitCastStrToIpv4() throws Exception {
 
         compiler.compile("create table x (b string)", sqlExecutionContext);
         executeInsert("insert into x values('0.0.0.1')");
@@ -239,39 +163,282 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ToInt() throws Exception {
+    public void testImplicitCastIntToIPv4() throws Exception {
 
-        compiler.compile("create table x (b IPv4)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into x values('0.0.0.7')");
-        executeInsert("insert into x values('0.0.0.8')");
-        executeInsert("insert into x values('0.0.0.9')");
-        executeInsert("insert into x values('0.0.0.10')");
-        compiler.compile("create table y (a int)", sqlExecutionContext);
+        assertFailure("insert into y select rnd_int() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: INT -> IPv4 [from=col, to=col]"
+        );
+    }
 
-        engine.releaseInactive();
+    @Test
+    public void testImplicitCastIPv4ToInt() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col int)",
+                21,
+                "inconvertible types: IPv4 -> INT [from=col, to=col]"
+        );
+    }
 
-        assertQuery("a\n" +
-                        "1" + '\n' +
-                        "2" + '\n' +
-                        "3" + '\n' +
-                        "4" + '\n' +
-                        "5" + '\n' +
-                        "6" + '\n' +
-                        "7" + '\n' +
-                        "8" + '\n' +
-                        "9" + '\n' +
-                        "10" + '\n',
-                "select * from y",
-                "insert into y select * from x",
-                null,
-                true,
-                true
+    @Test
+    public void testImplicitCastIPv4ToStr() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col string)",
+                21,
+                "inconvertible types: IPv4 -> STRING [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastLongToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_long() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: LONG -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToLong() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col long)",
+                21,
+                "inconvertible types: IPv4 -> LONG [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastDateToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_date() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: DATE -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToDate() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col date)",
+                21,
+                "inconvertible types: IPv4 -> DATE [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastTimestampToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_timestamp(10,100000,356) col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: TIMESTAMP -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToTimestamp() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col timestamp)",
+                21,
+                "inconvertible types: IPv4 -> TIMESTAMP [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastByteToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_byte() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: BYTE -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToByte() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col byte)",
+                21,
+                "inconvertible types: IPv4 -> BYTE [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastShortToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_short() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: SHORT -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToShort() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col short)",
+                21,
+                "inconvertible types: IPv4 -> SHORT [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToBool() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col boolean)",
+                21,
+                "inconvertible types: IPv4 -> BOOLEAN [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastBoolToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_boolean() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: BOOLEAN -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToFloat() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col float)",
+                21,
+                "inconvertible types: IPv4 -> FLOAT [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastFloatToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_float() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: FLOAT -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToDouble() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col double)",
+                21,
+                "inconvertible types: IPv4 -> DOUBLE [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastDoubleToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_double() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: DOUBLE -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToChar() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col char)",
+                21,
+                "inconvertible types: IPv4 -> CHAR [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastCharToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_char() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: CHAR -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToSymbol() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col symbol)",
+                21,
+                "inconvertible types: IPv4 -> SYMBOL [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastSymbolToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_symbol(4,4,4,2) col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: SYMBOL -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToBinary() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col binary)",
+                21,
+                "inconvertible types: IPv4 -> BINARY [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastBinaryToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_bin() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: BINARY -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToLong256() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col long256)",
+                21,
+                "inconvertible types: IPv4 -> LONG256 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastLong256ToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_long256() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: LONG256 -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToLong128() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col long128)",
+                21,
+                "inconvertible types: IPv4 -> LONG128 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToUUID() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col uuid)",
+                21,
+                "inconvertible types: IPv4 -> UUID [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastUUIDToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_uuid4() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: UUID -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIntToStr() throws Exception {
+        assertFailure("insert into y select rnd_int() col from long_sequence(10)",
+                "create table y (col string)",
+                21,
+                "inconvertible types: INT -> STRING [from=col, to=col]"
         );
     }
 

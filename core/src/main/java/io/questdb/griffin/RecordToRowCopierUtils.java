@@ -206,7 +206,6 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.INT:
-                        case ColumnType.IPv4:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
@@ -238,7 +237,6 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetInt);
                     switch(toColumnTypeTag) {
                         case ColumnType.IPv4:
-                        case ColumnType.INT:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         default:
@@ -369,7 +367,6 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.INT:
-                        case ColumnType.IPv4:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
@@ -408,7 +405,6 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.INT:
-                        case ColumnType.IPv4:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
