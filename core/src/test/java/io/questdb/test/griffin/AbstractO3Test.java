@@ -70,7 +70,6 @@ public class AbstractO3Test extends AbstractTest {
             .build();
     private RecordToRowCopier copier;
 
-
     @Before
     public void clearRecordToRowCopier() {
         copier = null;

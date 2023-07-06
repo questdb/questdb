@@ -71,7 +71,6 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
-
         @Override
         public boolean close(int fd) {
             if (fd > 0 && fd == this.fd) {
@@ -951,6 +950,7 @@ public class O3FailureTest extends AbstractO3Test {
                     long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
+                    LOG.info().$(">>> isWriterMixedIOEnabled=").$(engine.getConfiguration().isWriterMixedIOEnabled()).$();
                     try {
                         TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
                         Assert.fail();
