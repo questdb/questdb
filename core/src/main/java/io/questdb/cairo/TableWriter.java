@@ -1606,7 +1606,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 long o3Lo = rowLo;
                 long commitRowCount = rowHi - rowLo;
-                boolean copiedToMemory = false;
+                boolean copiedToMemory;
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 boolean copyToLagOnly = commitToTimestamp < newMinLagTs
@@ -1744,25 +1744,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     assert walLagRowCount > 0 && walLagRowCount <= o3Hi - o3Lo;
 
                     o3Hi -= walLagRowCount;
-                    commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
-                    commitMinTimestamp = txWriter.getLagMinTimestamp();
 
-                    // Assert that LAG row count is calculated correctly.
-                    // If lag is not trimmed, timestamp at o3Hi must be the last point <= commitToTimestamp
-                    assert lagTrimmedToMax ||
-                            (commitMaxTimestamp <= commitToTimestamp
-                                    && commitToTimestamp < getTimestampIndexValue(timestampAddr, o3Hi))
-                            : "commit lag calculation error";
+                    if (o3Hi > o3Lo) {
+                        commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
+                        commitMinTimestamp = txWriter.getLagMinTimestamp();
 
-                    // If lag is trimmed, timestamp at o3Hi must > commitToTimestamp
-                    assert !lagTrimmedToMax || commitMaxTimestamp > commitToTimestamp : "commit lag calculation error 2";
+                        // Assert that LAG row count is calculated correctly.
+                        // If lag is not trimmed, timestamp at o3Hi must be the last point <= commitToTimestamp
+                        assert lagTrimmedToMax ||
+                                (commitMaxTimestamp <= commitToTimestamp
+                                        && commitToTimestamp < getTimestampIndexValue(timestampAddr, o3Hi))
+                                : "commit lag calculation error";
 
-                    txWriter.setLagMinTimestamp(getTimestampIndexValue(timestampAddr, o3Hi));
+                        // If lag is trimmed, timestamp at o3Hi must > commitToTimestamp
+                        assert !lagTrimmedToMax || commitMaxTimestamp > commitToTimestamp : "commit lag calculation error 2";
 
-                    LOG.debug().$("committing WAL with LAG [table=").$(tableToken)
-                            .$(", lagRowCount=").$(walLagRowCount)
-                            .$(", rowLo=").$(o3Lo)
-                            .$(", rowHi=").$(o3Hi).I$();
+                        txWriter.setLagMinTimestamp(getTimestampIndexValue(timestampAddr, o3Hi));
+
+                        LOG.debug().$("committing WAL with LAG [table=").$(tableToken)
+                                .$(", lagRowCount=").$(walLagRowCount)
+                                .$(", rowLo=").$(o3Lo)
+                                .$(", rowHi=").$(o3Hi).I$();
+                    } else {
+                        // Sometimes deduplication can reduce number of rows in the log
+                        // to the point that they don't exceed maxLagRows anymore and there is nothing to commit
+                        commitMinTimestamp = commitMaxTimestamp = 0;
+                    }
 
                     // walLagMaxTimestamp is already set to the max of all WAL segments
                 } else {

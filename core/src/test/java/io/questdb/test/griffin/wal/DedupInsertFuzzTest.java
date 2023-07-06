@@ -100,7 +100,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandom(LOG, 24539110263291L, 1688668398191L);
 
             String tableName = testName.getMethodName();
             compile(
@@ -135,6 +135,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
 
+            int transactionCount = 1 + rnd.nextInt(3);
+            splitTransactionInserts(transactions, transactionCount, rnd);
             applyWal(transactions, tableName, 1, rnd);
 
             transactions.clear();
@@ -155,7 +157,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
 
+            transactionCount = 1 + rnd.nextInt(3);
+            splitTransactionInserts(transactions, transactionCount, rnd);
             applyWal(transactions, tableName, 1, rnd);
+
             validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
         });
     }
@@ -230,6 +235,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
             String[] symbols = generateSymbols(rnd, 20, 4, tableName);
+
             applyWal(transactions, tableName, 1, rnd);
             transactions.clear();
 
@@ -433,6 +439,29 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void shuffle(ObjList<FuzzTransactionOperation> operationList, Rnd rnd) {
         for (int i = operationList.size(); i > 1; i--) {
             swap(operationList, i - 1, rnd.nextInt(i));
+        }
+    }
+
+    private void splitTransactionInserts(ObjList<FuzzTransaction> transactions, int count, Rnd rnd) {
+        if (count > 1) {
+            var operationList = transactions.get(0).operationList;
+
+            if (operationList.size() > 0) {
+                int[] sizes = new int[count];
+                for (int i = 0; i < count - 1; i++) {
+                    sizes[i] = rnd.nextInt(1 + rnd.nextInt(operationList.size()));
+                }
+                sizes[count - 1] = operationList.size();
+                Arrays.sort(sizes);
+
+                for (int i = count - 1; i > 0; i--) {
+                    int chunkSize = sizes[i] - sizes[i - 1];
+                    FuzzTransaction transaction = new FuzzTransaction();
+                    transaction.operationList.addAll(operationList, operationList.size() - chunkSize, operationList.size());
+                    operationList.setPos(operationList.size() - chunkSize);
+                    transactions.insert(0, 1, transaction);
+                }
+            }
         }
     }
 

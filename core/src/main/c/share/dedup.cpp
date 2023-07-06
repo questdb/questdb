@@ -184,8 +184,8 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         uint64_t r = merge_result[i].i;
         if (merge_result[i].ts > merge_result[last].ts ||
             diff(
-                keys[l & (1ull << 63)],
-                keys[r & (1ull << 63)],
+                keys[l >> 63],
+                keys[r >> 63],
                 key_count,
                 l & ~(1ull << 63),
                 r & ~(1ull << 63)
@@ -241,8 +241,8 @@ inline void merge_sort_slice(
             uint64_t r = src2[i2].i;
             if (
                     diff(
-                            keys[l & (1ull << 63)],
-                            keys[r & (1ull << 63)],
+                            keys[l >> 63],
+                            keys[r >> 63],
                             key_count,
                             l & ~(1ull << 63),
                             r & ~(1ull << 63)
