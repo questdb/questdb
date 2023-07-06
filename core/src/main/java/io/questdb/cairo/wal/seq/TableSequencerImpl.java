@@ -288,6 +288,23 @@ public class TableSequencerImpl implements TableSequencer {
         return txn;
     }
 
+    @Override
+    public TableToken reload() {
+        tableTransactionLog.reload(path);
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
+            boolean updated = false;
+            while (metaChangeCursor.hasNext()) {
+                TableMetadataChange change = metaChangeCursor.next();
+                change.apply(metadataSvc, true);
+                updated = true;
+            }
+            if (updated) {
+                metadata.syncToMetaFile();
+            }
+        }
+        return tableToken = metadata.getTableToken();
+    }
+
     public void open(TableToken tableToken) {
         try {
             walIdGenerator.open(path);
@@ -318,23 +335,6 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw th;
         }
-    }
-
-    @Override
-    public TableToken reload() {
-        tableTransactionLog.reload(path);
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
-            boolean updated = false;
-            while (metaChangeCursor.hasNext()) {
-                TableMetadataChange change = metaChangeCursor.next();
-                change.apply(metadataSvc, true);
-                updated = true;
-            }
-            if (updated) {
-                metadata.syncToMetaFile();
-            }
-        }
-        return tableToken = metadata.getTableToken();
     }
 
     @Override

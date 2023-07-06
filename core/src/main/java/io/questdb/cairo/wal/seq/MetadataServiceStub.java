@@ -54,8 +54,16 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void disableDeduplication() {
+    }
+
+    @Override
     default void dropIndex(@NotNull CharSequence columnName) {
         throw CairoException.critical(0).put("drop index does not update sequencer metadata");
+    }
+
+    @Override
+    default void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
     }
 
     @Override
@@ -76,10 +84,6 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean removePartition(long partitionTimestamp) {
         throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
-    }
-
-    @Override
-    default void setDeduplicationStatus(boolean status, LongList columnsIndexes, int startIndex, long count) {
     }
 
     @Override

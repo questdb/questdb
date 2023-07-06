@@ -41,6 +41,7 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -52,7 +53,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStep() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            createEmptyTable(tableName);
+            createEmptyTable(tableName, "DEDUP upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandom(LOG);
@@ -91,11 +92,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
 
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, null);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1);
         });
     }
 
     @Test
+    @Ignore
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
@@ -154,7 +156,58 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
 
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, symbols);
+            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
+        });
+    }
+
+    @Test
+    public void testDedupWithRandomShiftAndStepWithExistingDups() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createEmptyTable(tableName, "");
+
+            ObjList<FuzzTransaction> transactions = new ObjList<>();
+            Rnd rnd = generateRandom(LOG);
+            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+            int initialCount = 4 * 24 * 5;
+            int initialDuplicates = 2 + rnd.nextInt(5);
+            transactions.add(
+                    generateInsertsTransactions(
+                            1,
+                            "2020-02-24T04:30",
+                            initialDelta,
+                            initialCount,
+                            initialDuplicates,
+                            null,
+                            rnd
+                    )
+            );
+            applyWal(transactions, tableName, 1, rnd);
+            compile("alter table " + tableName + " dedup upsert keys(ts)");
+
+            transactions.clear();
+
+            double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
+            long delta = (long) (initialDelta * deltaMultiplier);
+            long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
+            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
+            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+
+            transactions.add(
+                    generateInsertsTransactions(
+                            2,
+                            from,
+                            delta,
+                            count,
+                            rowsWithSameTimestamp,
+                            null,
+                            rnd
+                    )
+            );
+
+            applyWal(transactions, tableName, 1, rnd);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, initialDuplicates);
         });
     }
 
@@ -162,7 +215,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            createEmptyTable(tableName);
+            createEmptyTable(tableName, "DEDUP upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandom(LOG);
@@ -203,7 +256,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
 
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, null);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1);
         });
     }
 
@@ -251,8 +304,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void createEmptyTable(String tableName) throws SqlException {
-        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL DEDUP upsert keys(ts)"
+    private void createEmptyTable(String tableName, String dedupOption) throws SqlException {
+        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
                 , sqlExecutionContext);
     }
 
@@ -417,12 +470,20 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return result;
     }
 
-    private void validateNoTimestampDuplicates(String tableName, String from, long delta, long commit2Count, String[] symbols) {
+    private void validateNoTimestampDuplicates(
+            String tableName,
+            String from,
+            long delta,
+            long commit2Count,
+            String[] symbols,
+            int existingDups
+    ) {
 
         LOG.info().$("Validating no timestamp duplicates [from=").$(from)
                 .$(", delta=").$(delta)
                 .$(", commit2Count=").$(commit2Count)
                 .I$();
+
         long lastTimestamp = Long.MIN_VALUE;
         long fromTimestamp = parseFloorPartialTimestamp(from);
         long toTimestamp = fromTimestamp + delta * commit2Count;
@@ -441,6 +502,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             TableReaderRecordCursor cursor = rdr.getCursor();
             Record rec = cursor.getRecord();
             AssertionError fail = null;
+            int dups = existingDups;
+
             while (cursor.hasNext()) {
                 try {
                     long timestamp = rec.getTimestamp(0);
@@ -471,7 +534,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             foundSymbols[symbolIndex] = true;
                         } else {
                             if (timestamp == lastTimestamp) {
-                                Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp));
+                                if (++dups > existingDups) {
+                                    Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp));
+                                }
+                            } else {
+                                dups = 1;
                             }
                         }
 

@@ -46,8 +46,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential,
-            boolean isDedupKey
+            boolean isSequential
     ) {
         metadata.addColumn(name, type);
     }

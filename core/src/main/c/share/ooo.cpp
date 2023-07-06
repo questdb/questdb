@@ -26,7 +26,6 @@
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
-#include <algorithm>
 
 #ifdef OOO_CPP_PROFILE_TIMING
 #include <atomic>

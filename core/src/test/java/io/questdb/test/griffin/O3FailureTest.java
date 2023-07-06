@@ -589,7 +589,6 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFixedColumnCopyPrefixFails() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         int storageLength = 8;
         long records = 500;
@@ -598,6 +597,9 @@ public class O3FailureTest extends AbstractO3Test {
                 (CairoEngine engine,
                  SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
+
+                    Assume.assumeFalse(Os.isWindows());
+                    Assert.assertTrue("mixed IO should be enabled non-windows", engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
                     compiler.compile("create table " + tableName + " as ( " +
@@ -648,7 +650,7 @@ public class O3FailureTest extends AbstractO3Test {
                 new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {
-                        if (offset == 0 && len == storageLength * (records - 2)) {
+                        if (offset == 0 && len == storageLength * (records - 1)) {
                             return -1;
                         }
                         return super.write(fd, address, len, offset);
@@ -927,7 +929,6 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testVarColumnCopyPrefixFails() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         String strColVal = "[srcDataMax=165250000]";
         int storageLength = getStorageLength(strColVal);
@@ -937,6 +938,9 @@ public class O3FailureTest extends AbstractO3Test {
                 (CairoEngine engine,
                  SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
+
+                    Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
+
                     String tableName = "testVarColumnCopyPrefixFails";
                     compiler.compile(
                             "create table " + tableName + " as ( " +
@@ -987,7 +991,7 @@ public class O3FailureTest extends AbstractO3Test {
                 new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {
-                        if (offset == 0 && len == storageLength * (records - 2)) {
+                        if (offset == 0 && len == storageLength * (records - 1)) {
                             return -1;
                         }
                         return super.write(fd, address, len, offset);

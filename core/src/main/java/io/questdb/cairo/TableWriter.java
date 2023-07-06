@@ -1144,6 +1144,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void disableDeduplication() {
+        assert txWriter.getLagRowCount() == 0;
+        checkDistressed();
+        LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
+        updateMetadataWithDeduplicationUpsertKeys(false, null);
+    }
+
+    @Override
     public void dropIndex(@NotNull CharSequence columnName) {
         checkDistressed();
 
@@ -1203,6 +1211,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", column=").put(columnName)
                     .put("]: ").put(e.getMessage());
         }
+    }
+
+    @Override
+    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        assert txWriter.getLagRowCount() == 0;
+        checkDistressed();
+        LOG.info().$("enabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
+
+        int upsertKeyColumn = columnsIndexes.size();
+        for (int i = 0; i < upsertKeyColumn; i++) {
+            int dedupColIndex = (int) columnsIndexes.getQuick(i);
+            if (dedupColIndex < 0 || dedupColIndex >= metadata.getColumnCount()) {
+                throw CairoException.critical(0).put("Invalid column index to make a dedup key [table=")
+                        .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
+            }
+
+            int columnType = metadata.getColumnType(dedupColIndex);
+            if (dedupColIndex != metadata.getTimestampIndex() && !ColumnType.isSymbol(columnType)) {
+                if (columnType < 0) {
+                    throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
+                            .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
+                }
+
+                throw CairoException.critical(0).put("Unsupported column type used as deduplicate key [table=")
+                        .put(tableToken.getTableName())
+                        .put(", column=").put(metadata.getColumnName(dedupColIndex))
+                        .put(", columnType=").put(ColumnType.nameOf(columnType));
+            }
+        }
+
+        updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
     }
 
     public long getAppliedSeqTxn() {
@@ -2050,85 +2089,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @SuppressWarnings("unused")
     public void setCommitListener(CommitListener commitListener) {
         this.commitListener = commitListener;
-    }
-
-    @Override
-    public void setDeduplicationStatus(boolean status, LongList columnsIndexes, int startIndex, long count) {
-        assert txWriter.getLagRowCount() == 0;
-        checkDistressed();
-
-        LOG.info().$(status ? "enabling row deduplication [table=" : "disabling row deduplication [table=")
-                .utf8(tableToken.getTableName())
-                .$(", rows").I$();
-
-        if (status) {
-            for (int i = startIndex; i < startIndex + count; i++) {
-                int dedupColIndex = (int) columnsIndexes.getQuick(i);
-                if (dedupColIndex < 0 || dedupColIndex >= metadata.getColumnCount()) {
-                    throw CairoException.critical(0).put("Invalid column index to make a dedup key [table=")
-                            .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
-                }
-
-                int columnType = metadata.getColumnType(dedupColIndex);
-                if (dedupColIndex != metadata.getTimestampIndex() && !ColumnType.isSymbol(columnType)) {
-                    if (columnType < 0) {
-                        throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
-                                .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
-                    }
-
-                    throw CairoException.critical(0).put("Unsupported column type used as deduplicate key [table=")
-                            .put(tableToken.getTableName())
-                            .put(", column=").put(metadata.getColumnName(dedupColIndex))
-                            .put(", columnType=").put(ColumnType.nameOf(columnType));
-                }
-            }
-        }
-
-        commit();
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false, status && columnsIndexes.indexOf(startIndex, i) >= 0);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            this.metaSwapIndex = index;
-        } finally {
-            ddlMem.close();
-        }
-
-        finishMetaSwapUpdate();
-        clearTodoLog();
-
-        for (int i = 0; i < columnCount; i++) {
-            metadata.getColumnMetadata(i).setDedupKeyFlag(status && columnsIndexes.indexOf(startIndex, i) >= 0);
-        }
-
-        if (status) {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
-            } else {
-                dedupColumnCommitAddresses.clear();
-            }
-            dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
-        } else {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses.clear();
-                dedupColumnCommitAddresses.setDedupColumnCount(0);
-            }
-        }
     }
 
     public void setExtensionListener(ExtensionListener listener) {
@@ -3513,7 +3473,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
-        Misc.free(dedupColumnCommitAddresses);
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;
@@ -7529,6 +7488,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void updateMetadataWithDeduplicationUpsertKeys(boolean status, LongList columnsIndexes) {
+        try {
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+
+            ddlMem.putInt(columnCount);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            copyVersionAndLagValues();
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                writeColumnEntry(i, false, status && columnsIndexes.indexOf(i) >= 0);
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+            this.metaSwapIndex = index;
+        } finally {
+            ddlMem.close();
+        }
+
+        finishMetaSwapUpdate();
+        clearTodoLog();
+
+        for (int i = 0; i < columnCount; i++) {
+            metadata.getColumnMetadata(i).setDedupKeyFlag(status && columnsIndexes.indexOf(i) >= 0);
+        }
+
+        if (status) {
+            if (dedupColumnCommitAddresses == null) {
+                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
+            } else {
+                dedupColumnCommitAddresses.clear();
+            }
+            dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
+        } else {
+            if (dedupColumnCommitAddresses == null) {
+                dedupColumnCommitAddresses.clear();
+                dedupColumnCommitAddresses.setDedupColumnCount(0);
+            }
+        }
+    }
+
     private void updateO3ColumnTops() {
         int columnCount = metadata.getColumnCount();
         long blockIndex = -1;
@@ -7841,9 +7847,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putChar(int columnIndex, char value);
 
-        default void putDate(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
+        void putDate(int columnIndex, long value);
 
         void putDouble(int columnIndex, double value);
 
@@ -7851,7 +7855,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putGeoHash(int columnIndex, long value);
 
-        void putGeoHashDeg(int index, double lat, double lon);
+        void putGeoHashDeg(int columnIndex, double lat, double lon);
 
         void putGeoStr(int columnIndex, CharSequence value);
 
@@ -7893,17 +7897,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putSym(int columnIndex, char value);
 
-        default void putSymIndex(int columnIndex, int key) {
-            putInt(columnIndex, key);
-        }
+        void putSymIndex(int columnIndex, int key);
 
-        default void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-            throw new UnsupportedOperationException();
-        }
+        void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars);
 
-        default void putTimestamp(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
+        void putTimestamp(int columnIndex, long value);
 
         void putUuid(int columnIndex, CharSequence uuid);
     }
@@ -7971,7 +7969,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putGeoStr(int columnIndex, CharSequence value) {
-
+            // no-op
         }
 
         @Override
@@ -8061,7 +8059,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putUuid(int columnIndex, CharSequence uuid) {
-
+            // no-op
         }
     }
 
@@ -8107,6 +8105,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -8119,21 +8122,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
         }
 
         @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
         }
 
         @Override
@@ -8220,6 +8223,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putSym(int columnIndex, char value) {
             getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            putInt(columnIndex, key);
+        }
+
+        @Override
+        public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
         @Override

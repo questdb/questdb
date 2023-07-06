@@ -147,6 +147,22 @@ public class AlterOperationBuilder {
         return this;
     }
 
+    public AlterOperationBuilder ofDedupDisable(int tableNamePosition, TableToken tableToken) {
+        this.command = SET_DEDUP_DISABLE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableToken.getTableId();
+        return this;
+    }
+
+    public AlterOperationBuilder ofDedupEnable(int tableNamePosition, TableToken tableToken, boolean status) {
+        this.command = SET_DEDUP_ENABLE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableToken.getTableId();
+        return this;
+    }
+
     public AlterOperationBuilder ofDetachPartition(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = DETACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
@@ -208,15 +224,6 @@ public class AlterOperationBuilder {
     public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
         extraStrInfo.add(columnName);
         extraStrInfo.add(newName);
-    }
-
-    public AlterOperationBuilder ofSetDedup(int tableNamePosition, TableToken tableToken, boolean status) {
-        this.command = SET_DEDUP;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.tableId = tableToken.getTableId();
-        this.extraInfo.add(status ? 1 : -1);
-        return this;
     }
 
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
