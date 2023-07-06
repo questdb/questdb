@@ -120,6 +120,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
         this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
         // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
@@ -156,7 +158,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             } else {
                 circuitBreaker.resetMaxTimeToDefault();
             }
-            state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         }
 
         try {
@@ -167,6 +168,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
             final RecordCursorFactory factory = QueryCache.getThreadLocalInstance().poll(state.getQuery());
             if (factory != null) {
+                // queries with sensitive info aren't cached
+                state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
                     executeCachedSelect(
@@ -332,26 +335,26 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
                 state.info().$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
-                        .$("`, q=`").utf8(state.getQuery())
+                        .$("`, q=`").utf8(state.getQueryOrHidden())
                         .$("`]").$();
             } else if (ce.isCritical()) {
                 state.critical().$("error [msg=`").$(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$(", q=`").utf8(state.getQuery())
+                        .$(", q=`").utf8(state.getQueryOrHidden())
                         .$("`]").$();
             } else {
                 state.error().$("error [msg=`").$(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$(", q=`").utf8(state.getQuery())
+                        .$(", q=`").utf8(state.getQueryOrHidden())
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
             state.error().$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
-                    .$("`, q=`").utf8(state.getQuery())
+                    .$("`, q=`").utf8(state.getQueryOrHidden())
                     .$("`]").$();
         } else {
             state.critical().$("internal error [ex=").$(e)
-                    .$(", q=`").utf8(state.getQuery())
+                    .$(", q=`").utf8(state.getQueryOrHidden())
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
             metrics.health().incrementUnhandledErrors();
@@ -434,6 +437,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 // will recompile
+            } finally {
+                state.setContainsSecret(sqlExecutionContext.containsSecret());
             }
         }
     }
