@@ -3473,6 +3473,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
+        Misc.free(dedupColumnCommitAddresses);
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;

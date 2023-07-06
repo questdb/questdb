@@ -182,18 +182,17 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     for (int64_t i = dup_start + 1; i < dup_end; i++) {
         uint64_t l = merge_result[last].i;
         uint64_t r = merge_result[i].i;
-        if (merge_result[i].ts > merge_result[last].ts) {
-            if (diff(
-                    keys[l & (1ull << 63)],
-                    keys[r & (1ull << 63)],
-                    key_count,
-                    l & ~(1ull << 63),
-                    r & ~(1ull << 63)
-                ) == 0l
-            ) {
-                index_dest[copy_to++] = merge_result[i - 1];
-                last = i;
-            }
+        if (merge_result[i].ts > merge_result[last].ts ||
+            diff(
+                keys[l & (1ull << 63)],
+                keys[r & (1ull << 63)],
+                key_count,
+                l & ~(1ull << 63),
+                r & ~(1ull << 63)
+            ) != 0l
+        ) {
+            index_dest[copy_to++] = merge_result[i - 1];
+            last = i;
         } else {
             assert(merge_result[i].ts == merge_result[last].ts && "sorting failed, timestamp is not sorted");
         }
