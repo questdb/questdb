@@ -66,7 +66,9 @@ public class DedupColumnCommitAddresses implements Closeable {
     }
 
     public void clear() {
-        addresses.clear();
+        if (addresses != null) {
+            addresses.clear();
+        }
     }
 
     @Override

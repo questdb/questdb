@@ -58,16 +58,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandom(LOG);
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
-            transactions.add(
-                    generateInsertsTransactions(
-                            1,
-                            "2020-02-24T04:30",
-                            initialDelta,
-                            initialCount,
-                            1 + rnd.nextInt(1),
-                            null,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    "2020-02-24T04:30",
+                    initialDelta,
+                    initialCount,
+                    1 + rnd.nextInt(1),
+                    null,
+                    rnd
             );
             applyWal(transactions, tableName, 1, rnd);
 
@@ -80,16 +79,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
-            transactions.add(
-                    generateInsertsTransactions(
-                            2,
-                            from,
-                            delta,
-                            count,
-                            rowsWithSameTimestamp,
-                            null,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    2,
+                    from,
+                    delta,
+                    count,
+                    rowsWithSameTimestamp,
+                    null,
+                    rnd
             );
 
             applyWal(transactions, tableName, 1, rnd);
@@ -124,16 +122,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     ? symbols
                     : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
 
-            transactions.add(
-                    generateInsertsTransactions(
-                            1,
-                            "2020-02-24T04:30",
-                            initialDelta,
-                            4 * 24 * 5,
-                            1 + rnd.nextInt(1),
-                            initialSymbols,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    "2020-02-24T04:30",
+                    initialDelta,
+                    4 * 24 * 5,
+                    1 + rnd.nextInt(1),
+                    initialSymbols,
+                    rnd
             );
 
             applyWal(transactions, tableName, 1, rnd);
@@ -145,16 +142,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long delta = Timestamps.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
-            transactions.add(
-                    generateInsertsTransactions(
-                            2,
-                            from,
-                            delta,
-                            count,
-                            rowsWithSameTimestamp,
-                            symbols,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    2,
+                    from,
+                    delta,
+                    count,
+                    rowsWithSameTimestamp,
+                    symbols,
+                    rnd
             );
 
             applyWal(transactions, tableName, 1, rnd);
@@ -172,16 +168,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandom(LOG);
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
-            transactions.add(
-                    generateInsertsTransactions(
-                            1,
-                            "2020-02-24T04:30",
-                            initialDelta,
-                            initialCount,
-                            1 + rnd.nextInt(1),
-                            null,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    "2020-02-24T04:30",
+                    initialDelta,
+                    initialCount,
+                    1 + rnd.nextInt(1),
+                    null,
+                    rnd
             );
             String[] symbols = generateSymbols(rnd, 20, 4, tableName);
             applyWal(transactions, tableName, 1, rnd);
@@ -196,16 +191,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
-            transactions.add(
-                    generateInsertsTransactions(
-                            2,
-                            from,
-                            delta,
-                            count,
-                            rowsWithSameTimestamp,
-                            symbols,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    2,
+                    from,
+                    delta,
+                    count,
+                    rowsWithSameTimestamp,
+                    symbols,
+                    rnd
             );
 
             applyWal(transactions, tableName, 1, rnd);
@@ -307,7 +301,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return result;
     }
 
-    private FuzzTransaction generateInsertsTransactions(
+    private void generateInsertsTransactions(
+            ObjList<FuzzTransaction> transactions,
             int commit,
             String from,
             long delta,
@@ -317,6 +312,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
+        transactions.add(transaction);
         long timestamp = parseFloorPartialTimestamp(from);
         for (int i = 0; i < count; i++) {
             for (int j = 0; j < rowsWithSameTimestamp; j++) {
@@ -333,7 +329,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         if (rnd.nextBoolean()) {
             shuffle(transaction.operationList, rnd);
         }
-        return transaction;
     }
 
     private long parseFloorPartialTimestamp(String from) {

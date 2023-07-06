@@ -2115,6 +2115,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             metadata.getColumnMetadata(i).setDedupKeyFlag(status && columnsIndexes.indexOf(startIndex, i) >= 0);
         }
+
+        if (status) {
+            if (dedupColumnCommitAddresses == null) {
+                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
+            } else {
+                dedupColumnCommitAddresses.clear();
+            }
+            dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
+        } else {
+            if (dedupColumnCommitAddresses == null) {
+                dedupColumnCommitAddresses.clear();
+                dedupColumnCommitAddresses.setDedupColumnCount(0);
+            }
+        }
     }
 
     public void setExtensionListener(ExtensionListener listener) {
@@ -3217,9 +3231,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         if (isDeduplicationEnabled()) {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
-            }
+            dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
             dedupColumnCommitAddresses.setDedupColumnCount(dedupColCount);
         }
         final int timestampIndex = metadata.getTimestampIndex();
@@ -3420,7 +3432,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
         try {
-            if (dedupColumnCommitAddresses != null) {
+            if (dedupColumnCommitAddresses.getColumnCount() > 0) {
                 dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
@@ -3458,23 +3470,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexDstAddr,
                     tempIndexAddr,
                     dedupKeyIndex,
-                    dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 0) : 0L,
-                    dedupColumnCommitAddresses != null && lagRows > 0 ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 1) : 0L
+                    dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 0),
+                    lagRows > 0 ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 1) : 0L
             );
         } finally {
-            if (dedupColumnCommitAddresses != null) {
-                if (lagRows > 0) {
-                    // Release mapped column buffers for lag rows
-                    for (int i = 0; i < dedupKeyIndex; i++) {
-                        long lagAddr = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 2, i);
-                        long lagMemOffset = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 3, i);
-                        long mapSize = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 4, i);
+            if (dedupColumnCommitAddresses.getColumnCount() > 0 && lagRows > 0) {
+                // Release mapped column buffers for lag rows
+                for (int i = 0; i < dedupKeyIndex; i++) {
+                    long lagAddr = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 2, i);
+                    long lagMemOffset = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 3, i);
+                    long mapSize = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 4, i);
 
-                        mapAppendColumnBufferRelease(lagAddr, lagMemOffset, mapSize);
-                    }
+                    mapAppendColumnBufferRelease(lagAddr, lagMemOffset, mapSize);
                 }
-                dedupColumnCommitAddresses.clear();
             }
+            dedupColumnCommitAddresses.clear();
         }
     }
 

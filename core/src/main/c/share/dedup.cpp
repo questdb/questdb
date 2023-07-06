@@ -99,12 +99,6 @@ int64_t merge_dedup_long_index_int_keys(
     if (index_pos <= index_hi_incl) {
         __MEMCPY(dest, &index[index_pos], index_hi_incl - index_pos + 1);
     }
-//    while (index_pos <= index_hi_incl) {
-//        dest[0].ts = index[index_pos].ts;
-//        dest[0].i = (index_pos - 1);
-//        dest++;
-//        index_pos++;
-//    }
 
     while (src_pos <= src_hi_incl) {
         dest[0].ts = src[src_pos];
@@ -184,21 +178,22 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     int64_t copy_to = dup_start;
     int64_t last = dup_start;
 
-    const int32_t ** keys[] = {key_values1, key_values2};
+    const int32_t **keys[] = {key_values1, key_values2};
     for (int64_t i = dup_start + 1; i < dup_end; i++) {
         uint64_t l = merge_result[last].i;
         uint64_t r = merge_result[i].i;
-        if (merge_result[i].ts > merge_result[last].ts ||
-            !diff(
+        if (merge_result[i].ts > merge_result[last].ts) {
+            if (diff(
                     keys[l & (1ull << 63)],
                     keys[r & (1ull << 63)],
                     key_count,
                     l & ~(1ull << 63),
                     r & ~(1ull << 63)
-                    ) == 0l
-        ) {
-            index_dest[copy_to++] = merge_result[i - 1];
-            last = i;
+                ) == 0l
+            ) {
+                index_dest[copy_to++] = merge_result[i - 1];
+                last = i;
+            }
         } else {
             assert(merge_result[i].ts == merge_result[last].ts && "sorting failed, timestamp is not sorted");
         }
@@ -253,7 +248,7 @@ inline void merge_sort_slice(
                             l & ~(1ull << 63),
                             r & ~(1ull << 63)
                     ) > 0
-            ) {
+                    ) {
                 *dest++ = src2[i2++];
             } else {
                 *dest++ = src1[i1++];
@@ -321,6 +316,7 @@ inline index_t *merge_sort(
     return dest;
 }
 
+extern "C" {
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
         JAVA_STATIC,
@@ -332,56 +328,60 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
         jlong indexHiInclusive,
         jlong pDestIndex
 ) {
-    auto srcPos = __JLONG_REINTERPRET_CAST__(int64_t, srcLo);
-    auto indexPos = __JLONG_REINTERPRET_CAST__(int64_t, indexLo);
+    const uint64_t *src = reinterpret_cast<uint64_t *> (pSrc);
+    const index_t *index = reinterpret_cast<index_t *> (pIndex);
+
+    auto src_pos = __JLONG_REINTERPRET_CAST__(int64_t, srcLo);
+    auto index_pos = __JLONG_REINTERPRET_CAST__(int64_t, indexLo);
     auto *dest = reinterpret_cast<index_t *> (pDestIndex);
 
-    while (srcPos <= __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive) &&
-           indexPos <= __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive)) {
-        if ((reinterpret_cast<uint64_t *> (pSrc))[srcPos] < (reinterpret_cast<index_t *> (pIndex))[indexPos].ts) {
-            dest[0].ts = (reinterpret_cast<uint64_t *> (pSrc))[srcPos];
-            dest[0].i = srcPos | (1ull << 63);
+    const auto src_hi_incl = __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive);
+    const auto index_hi_inc = __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive);
+
+    while (src_pos <= src_hi_incl &&
+           index_pos <= index_hi_inc) {
+        if (src[src_pos] < index[index_pos].ts) {
+            dest[0].ts = src[src_pos];
+            dest[0].i = src_pos | (1ull << 63);
             dest++;
-            srcPos++;
-        } else if ((reinterpret_cast<uint64_t *> (pSrc))[srcPos] >
-                   (reinterpret_cast<index_t *> (pIndex))[indexPos].ts) {
-            dest[0] = (reinterpret_cast<index_t *> (pIndex))[indexPos];
+            src_pos++;
+        } else if (src[src_pos] >
+                   index[index_pos].ts) {
+            dest[0] = index[index_pos];
             dest++;
-            indexPos++;
+            index_pos++;
         } else {
             // index_ts == src_ts
-            const uint64_t conflictTs = (reinterpret_cast<uint64_t *> (pSrc))[srcPos];
-            while (indexPos <= __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive) &&
-                   (reinterpret_cast<index_t *> (pIndex))[indexPos].ts == conflictTs) {
-                indexPos++;
+            const uint64_t conflictTs = src[src_pos];
+            while (index_pos <= index_hi_inc &&
+                   index[index_pos].ts == conflictTs) {
+                index_pos++;
             }
 
             // replace all records with same timestamp with last version from index
-            while ((reinterpret_cast<uint64_t *> (pSrc))[srcPos] == conflictTs) {
-                dest[0] = (reinterpret_cast<index_t *> (pIndex))[indexPos - 1];
+            while (src[src_pos] == conflictTs) {
+                dest[0] = index[index_pos - 1];
                 dest++;
-                srcPos++;
+                src_pos++;
             }
         }
     }
 
-    while (indexPos <= __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive)) {
-        dest[0] = (reinterpret_cast<index_t *> (pIndex))[indexPos];
+    while (index_pos <= index_hi_inc) {
+        dest[0] = index[index_pos];
         dest++;
-        indexPos++;
+        index_pos++;
     }
 
-    while (srcPos <= __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive)) {
-        dest[0].ts = (reinterpret_cast<uint64_t *> (pSrc))[srcPos];
-        dest[0].i = srcPos | (1ull << 63);
+    while (src_pos <= src_hi_incl) {
+        dest[0].ts = src[src_pos];
+        dest[0].i = src_pos | (1ull << 63);
         dest++;
-        srcPos++;
+        src_pos++;
     }
-    int64_t merge_count = dest - reinterpret_cast<index_t *> (pDestIndex);
-    return merge_count;
+    return dest - reinterpret_cast<index_t *> (pDestIndex);
 }
 
-extern "C" {
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
         JAVA_STATIC,
