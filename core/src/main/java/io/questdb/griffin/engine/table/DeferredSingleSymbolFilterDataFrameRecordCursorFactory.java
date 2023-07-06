@@ -82,9 +82,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     }
 
     public SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
-        if (!convertedToFrame) {
-            convertedToFrame = true;
-        }
+        convertedToFrame = true;
         return symbolFilter;
     }
 
@@ -107,6 +105,11 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             }
         }
         return fwdPageFrameCursor;
+    }
+
+    @Override
+    public void revertFromSampleByIndexDataFrameCursorFactory() {
+        convertedToFrame = false;
     }
 
     @Override

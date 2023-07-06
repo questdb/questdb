@@ -1907,11 +1907,10 @@ public class TableReaderTest extends AbstractCairoTest {
             try (Path temp = new Path()) {
                 temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
                 ff = new TestFilesFacadeImpl() {
-                    int metaFd = -1;
 
                     @Override
                     public long length(int fd) {
-                        if (fd == metaFd) {
+                        if (fd == this.fd) {
                             return Files.length(temp);
                         }
                         return Files.length(fd);
@@ -1928,7 +1927,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     @Override
                     public int openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
-                            return metaFd = TestFilesFacadeImpl.INSTANCE.openRO(name);
+                            return this.fd = TestFilesFacadeImpl.INSTANCE.openRO(name);
                         }
                         return TestFilesFacadeImpl.INSTANCE.openRO(name);
                     }

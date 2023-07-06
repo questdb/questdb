@@ -118,6 +118,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 HTTP_MIN_PORT + pgPortDelta,
                 pgPort,
                 ILP_PORT + pgPortDelta,
+                root,
                 PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
                 PropertyKey.CAIRO_SQL_BACKUP_ROOT.getPropertyPath() + '=' + backupRoot));
     }

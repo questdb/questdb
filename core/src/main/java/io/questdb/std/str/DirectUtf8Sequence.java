@@ -22,30 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.std.str;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
+import io.questdb.std.Unsafe;
 
-public class DefaultPgWireAuthenticationFactory implements PgWireAuthenticationFactory {
-    public static final PgWireAuthenticationFactory INSTANCE = new DefaultPgWireAuthenticationFactory();
-
-    @Override
-    public Authenticator getPgWireAuthenticator(
-            NetworkFacade nf,
-            PGWireConfiguration configuration,
-            NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            CircuitBreakerRegistry registry,
-            OptionsListener optionsListener
-    ) {
-        return new CleartextPasswordPgWireAuthenticator(
-                nf,
-                configuration,
-                circuitBreaker,
-                registry,
-                optionsListener,
-                new StaticUserDatabase(configuration)
-        );
+/**
+ * Read-only interface for a UTF-8 string with native ptr access.
+ */
+public interface DirectUtf8Sequence extends Utf8Sequence {
+    /**
+     * Returns byte at index.
+     * Note: Unchecked bounds.
+     *
+     * @param index byte index
+     * @return byte at index
+     */
+    default byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(ptr() + index);
     }
+
+    /**
+     * Address one past the last character.
+     */
+    default long hi() {
+        return ptr() + size();
+    }
+
+    /**
+     * Address of the first character (alias of `.ptr()`).
+     */
+    default long lo() {
+        return ptr();
+    }
+
+    /**
+     * Address of the first character.
+     */
+    long ptr();
 }

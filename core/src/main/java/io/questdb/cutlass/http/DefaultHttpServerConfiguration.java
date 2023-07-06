@@ -40,11 +40,11 @@ import java.io.IOException;
 import java.io.InputStream;
 
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
+
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-
         @Override
         public MillisecondClock getClock() {
             return httpContextConfiguration.getClock();
@@ -109,6 +109,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public CharSequence getPublicDirectory() {
             return ".";
+        }
+
+        @Override
+        public boolean isAuthenticationRequired() {
+            return true;
         }
     };
 
@@ -201,6 +206,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getWorkerCount() {
         return 2;
+    }
+
+    @Override
+    public boolean isHealthCheckAuthenticationRequired() {
+        return true;
     }
 
     @Override

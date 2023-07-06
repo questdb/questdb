@@ -302,6 +302,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             break;
 
                         case DROP_TABLE_WALID:
+                            engine.notifyDropped(tableToken);
                             return tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
 
                         case 0:
@@ -543,6 +544,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
         } catch (CairoException ex) {
             if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
+                engine.notifyDropped(tableToken);
                 // Table is dropped, and we received cairo exception in the middle of apply
                 return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : WAL_APPLY_IGNORE_ERROR;
             }

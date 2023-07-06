@@ -384,7 +384,7 @@ public class TxnTest extends AbstractCairoTest {
                             symbolCounts.setPos(symbolCount);
                             zeroSymbolCounts.setPos(symbolCount);
                         }
-                        txWriter.bumpColumnStructureVersion(symbolCounts);
+                        txWriter.bumpMetadataAndColumnStructureVersion(symbolCounts);
 
                         // Set random number of partitions
                         int partitionCount = rnd.nextInt(maxPartitionCount);

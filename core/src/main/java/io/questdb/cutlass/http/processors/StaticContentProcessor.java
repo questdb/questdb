@@ -47,6 +47,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final MimeTypesCache mimeTypes;
     private final PrefixedPath prefixedPath;
     private final HttpRangeParser rangeParser = new HttpRangeParser();
+    private final boolean requiresAuthentication;
 
     public StaticContentProcessor(HttpServerConfiguration configuration) {
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
@@ -55,6 +56,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
+        this.requiresAuthentication = configuration.getStaticContentProcessorConfiguration().isAuthenticationRequired();
     }
 
     @Override
@@ -92,6 +94,11 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 sendStatusWithDefaultMessage(context, 404);
             }
         }
+    }
+
+    @Override
+    public boolean requiresAuthentication() {
+        return requiresAuthentication;
     }
 
     @Override
@@ -168,9 +175,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             CharSequence range,
             LPSZ path,
             CharSequence contentType,
-            boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            boolean asAttachment
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (rangeParser.of(range)) {
-
             StaticContentProcessorState state = LV.get(context);
             if (state == null) {
                 LV.set(context, state = new StaticContentProcessorState());
@@ -243,5 +250,4 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             resumeSend(context);
         }
     }
-
 }

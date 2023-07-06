@@ -81,6 +81,24 @@ public class HttpAlterTableTest extends AbstractTest {
     }
 
     @Test
+    public void testAlterTableSquashPartition() throws Exception {
+        Metrics metrics = Metrics.enabled();
+        testJsonQuery(2, metrics, engine -> {
+            // create table
+            sendAndReceiveDdl("CREATE TABLE test\n" +
+                    "AS(\n" +
+                    "    SELECT\n" +
+                    "        x id,\n" +
+                    "        timestamp_sequence(0L, 100000L) ts\n" +
+                    "    FROM long_sequence(1000) x)\n" +
+                    "TIMESTAMP(ts)\n" +
+                    "PARTITION BY DAY");
+
+            sendAndReceiveDdl("ALTER TABLE test SQUASH PARTITIONS");
+        });
+    }
+
+    @Test
     public void testAlterTableResume() throws Exception {
         Metrics metrics = Metrics.enabled();
         testJsonQuery(2, metrics, engine -> {
@@ -120,7 +138,7 @@ public class HttpAlterTableTest extends AbstractTest {
         }
     }
 
-    private static void sendAndReceive(String request, CharSequence response) throws InterruptedException {
+    private static void sendAndReceive(String request, CharSequence response) {
         new SendAndReceiveRequestBuilder()
                 .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
                 .execute(request, response);

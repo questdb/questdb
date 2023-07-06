@@ -26,8 +26,8 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.str.LowerFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class LowerFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -45,7 +45,6 @@ public class LowerFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testWithAllUppercase() throws SqlException {
         call("ABCDEFGHIJKLMNOPQRSTUVXZ").andAssert("abcdefghijklmnopqrstuvxz");
     }
-
 
     @Test
     public void testWithMixedCases() throws SqlException {

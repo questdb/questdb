@@ -165,6 +165,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_NOT_INDEXED = 0;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
+    static final int META_FLAG_BIT_SYMBOL_CACHE = META_FLAG_BIT_SEQUENTIAL << 1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -342,6 +343,62 @@ public final class TableUtils {
         }
     }
 
+    public static void createTableFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
+        try (MemoryMARW mem = memory) {
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            mem.jumpTo(0);
+            final int count = structure.getColumnCount();
+            path.trimTo(rootLen);
+            writeMetadata(structure, tableVersion, tableId, mem);
+            mem.sync(false);
+
+            // create symbol maps
+            int symbolMapCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (ColumnType.isSymbol(structure.getColumnType(i))) {
+                    createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            structure.getColumnName(i),
+                            COLUMN_NAME_TXN_NONE,
+                            structure.getSymbolCapacity(i),
+                            structure.getSymbolCacheFlag(i)
+                    );
+                    symbolMapCount++;
+                }
+            }
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
+            mem.sync(false);
+            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            createColumnVersionFile(mem);
+            mem.sync(false);
+            mem.close();
+
+            resetTodoLog(ff, path, rootLen, mem);
+            // allocate txn scoreboard
+            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
+            createTableNameFile(mem, getTableNameFromDirName(tableDir));
+        } finally {
+            if (dirFd > 0) {
+                ff.fsyncAndClose(dirFd);
+            }
+        }
+    }
+
     public static void createTableInVolume(
             FilesFacade ff,
             CharSequence root,
@@ -381,7 +438,7 @@ public final class TableUtils {
         }
     }
 
-    public static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
+    public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
         mem.sync(false);
@@ -563,16 +620,16 @@ public final class TableUtils {
         return type;
     }
 
-    public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
-        return getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolWriterCount), index);
-    }
-
     public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
         return partitionTableOffset + 4 + index * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
         return getSymbolWriterIndexOffset(symbolWriterCount);
+    }
+
+    public static int getSymbolCapacity(MemoryMR metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4);
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
@@ -638,6 +695,10 @@ public final class TableUtils {
 
     public static LPSZ iFile(Path path, CharSequence columnName) {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
     public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
@@ -766,7 +827,7 @@ public final class TableUtils {
         }
 
         if (verbose) {
-            LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+            LOG.debug().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
         }
         return fd;
     }
@@ -780,6 +841,8 @@ public final class TableUtils {
     }
 
     public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
+        assert !Vm.PARANOIA_MODE || ff.length(fd) >= offset + size : "mmap ro buffer is beyond EOF";
+
         // Linux requires the mmap offset to be page aligned
         long alignedOffset = Files.floorPageSize(offset);
         long alignedExtraLen = offset - alignedOffset;
@@ -976,14 +1039,14 @@ public final class TableUtils {
         }
     }
 
-    public static void overwriteTableNameFile(Path tablePath, MemoryMARW memory, FilesFacade ff, TableToken newTableToken) {
+    public static void overwriteTableNameFile(Path tablePath, MemoryMAR memory, FilesFacade ff, @NotNull CharSequence tableName) {
         // Update name in _name file.
         // This is potentially racy but the file only read on startup when the tables.d file is missing
         // so very limited circumstances.
         Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();
         memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);
         memory.jumpTo(0);
-        createTableNameFile(memory, newTableToken.getTableName());
+        createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
@@ -1406,94 +1469,48 @@ public final class TableUtils {
         }
     }
 
-    private static void createTableFiles(
-            FilesFacade ff,
-            MemoryMARW memory,
-            Path path,
-            int rootLen,
-            CharSequence tableDir,
-            TableStructure structure,
-            int tableVersion,
-            int tableId
-    ) {
-        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
-        try (MemoryMARW mem = memory) {
-            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            mem.jumpTo(0);
-            final int count = structure.getColumnCount();
-            path.trimTo(rootLen);
-            mem.putInt(count);
-            mem.putInt(structure.getPartitionBy());
-            int timestampIndex = structure.getTimestampIndex();
-            assert timestampIndex == -1 ||
-                    (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
-            mem.putInt(timestampIndex);
-            mem.putInt(tableVersion);
-            mem.putInt(tableId);
-            mem.putInt(structure.getMaxUncommittedRows());
-            mem.putLong(structure.getO3MaxLag());
-            mem.putLong(0); // Structure version.
-            mem.putInt(structure.isWalEnabled() ? 1 : 0);
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+    public static void writeMetadata(TableStructure tableStruct, int tableVersion, int tableId, MemoryA mem) {
+        int count = tableStruct.getColumnCount();
+        mem.putInt(count);
+        mem.putInt(tableStruct.getPartitionBy());
+        int timestampIndex = tableStruct.getTimestampIndex();
+        assert timestampIndex == -1 ||
+                (timestampIndex >= 0 && timestampIndex < count && tableStruct.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
+        mem.putInt(timestampIndex);
+        mem.putInt(tableVersion);
+        mem.putInt(tableId);
+        mem.putInt(tableStruct.getMaxUncommittedRows());
+        mem.putLong(tableStruct.getO3MaxLag());
+        mem.putLong(0); // Structure version.
+        mem.putInt(tableStruct.isWalEnabled() ? 1 : 0);
+        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
-            assert count > 0;
+        assert count > 0;
 
-            for (int i = 0; i < count; i++) {
-                mem.putInt(structure.getColumnType(i));
-                long flags = 0;
-                if (structure.isIndexed(i)) {
-                    flags |= META_FLAG_BIT_INDEXED;
-                }
-
-                if (structure.isSequential(i)) {
-                    flags |= META_FLAG_BIT_SEQUENTIAL;
-                }
-
-                mem.putLong(flags);
-                mem.putInt(structure.getIndexBlockCapacity(i));
-                // reserved
-                mem.skip(16);
+        for (int i = 0; i < count; i++) {
+            mem.putInt(tableStruct.getColumnType(i));
+            long flags = 0;
+            if (tableStruct.isIndexed(i)) {
+                flags |= META_FLAG_BIT_INDEXED;
             }
 
-            for (int i = 0; i < count; i++) {
-                mem.putStr(structure.getColumnName(i));
+            if (tableStruct.isSequential(i)) {
+                flags |= META_FLAG_BIT_SEQUENTIAL;
             }
-            mem.sync(false);
 
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-                if (ColumnType.isSymbol(structure.getColumnType(i))) {
-                    createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            structure.getColumnName(i),
-                            COLUMN_NAME_TXN_NONE,
-                            structure.getSymbolCapacity(i),
-                            structure.getSymbolCacheFlag(i)
-                    );
-                    symbolMapCount++;
-                }
+            if (tableStruct.getSymbolCacheFlag(i)) {
+                flags |= META_FLAG_BIT_SYMBOL_CACHE;
             }
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
-            mem.sync(false);
-            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            createColumnVersionFile(mem);
-            mem.sync(false);
-            mem.close();
 
-            resetTodoLog(ff, path, rootLen, mem);
-            // allocate txn scoreboard
-            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+            mem.putLong(flags);
+            mem.putInt(tableStruct.getIndexBlockCapacity(i));
+            mem.putInt(tableStruct.getSymbolCapacity(i));
+            // reserved
+            mem.skip(12);
+        }
 
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
-            createTableNameFile(mem, getTableNameFromDirName(tableDir));
-        } finally {
-            if (dirFd > 0) {
-                ff.fsyncAndClose(dirFd);
-            }
+        for (int i = 0; i < count; i++) {
+            mem.putStr(tableStruct.getColumnName(i));
         }
     }
 

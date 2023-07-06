@@ -27,8 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -91,7 +91,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (
-                    SqlCompiler compiler = new SqlCompiler(engine, null, null);
+                    SqlCompiler compiler = new SqlCompiler(engine, null);
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 createTablesToJoin(compiler, sqlExecutionContext);

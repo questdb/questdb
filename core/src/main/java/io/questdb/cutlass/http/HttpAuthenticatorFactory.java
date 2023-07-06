@@ -22,13 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.http;
 
-public class AuthenticationException extends Exception {
-
-    public static final AuthenticationException INSTANCE = new AuthenticationException("invalid username/password");
-
-    public AuthenticationException(String message) {
-        super(message);
-    }
+public interface HttpAuthenticatorFactory {
+    HttpAuthenticator getHttpAuthenticator();
 }

@@ -46,7 +46,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private static final int INIT_GSS_REQUEST = 80877104;
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
-    private final static Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticator.class);
+    private static final Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticator.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -56,12 +56,12 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final UsernamePasswordMatcher matcher;
     private final NetworkFacade nf;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
-    private final PgWireUserDatabase userDatabase;
     private int fd;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -80,9 +80,9 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener,
-            PgWireUserDatabase userDatabase
+            UsernamePasswordMatcher matcher
     ) {
-        this.userDatabase = userDatabase;
+        this.matcher = matcher;
 
         this.nf = nf;
         this.characterStore = new CharacterStore(
@@ -139,8 +139,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case EXPECT_PASSWORD_MESSAGE: {
-                        readFromSocket();
-                        int r = processPasswordMessage();
+                        int r = readFromSocket();
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        r = processPasswordMessage();
                         if (r != Authenticator.OK) {
                             return r;
                         }
@@ -168,7 +171,10 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case WRITE_AND_AUTH_FAILURE: {
-                        writeToSocketAndAdvance(State.AUTH_FAILED);
+                        int r = writeToSocketAndAdvance(State.AUTH_FAILED);
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
                         break;
                     }
                     case AUTH_SUCCESS:
@@ -377,13 +383,13 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
         dbcs.of(recvBufReadPos, hi);
-        if (userDatabase.match(username, dbcs)) {
+        if (matcher.verifyPassword(username, dbcs)) {
             recvBufReadPos = msgLimit;
             compactRecvBuf();
             prepareLoginOk();
             state = State.WRITE_AND_AUTH_SUCCESS;
         } else {
-            LOG.error().$("bad password for user [user=").$(username).$(']').$();
+            LOG.info().$("bad password for user [user=").$(username).$(']').$();
             prepareWrongUsernamePasswordResponse();
             state = State.WRITE_AND_AUTH_FAILURE;
         }
@@ -446,8 +452,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     private int writeToSocketAndAdvance(State nextState) {
         int toWrite = (int) (sendBufWritePos - sendBufReadPos);
-        int bytesWritten = nf.send(fd, sendBufReadPos, toWrite);
-        sendBufReadPos += bytesWritten;
+        int n = nf.send(fd, sendBufReadPos, toWrite);
+        if (n < 0) {
+            return Authenticator.NEEDS_DISCONNECT;
+        }
+        sendBufReadPos += n;
         compactSendBuf();
         if (sendBufReadPos == sendBufWritePos) {
             state = nextState;

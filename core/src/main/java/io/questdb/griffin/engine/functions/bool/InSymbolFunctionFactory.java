@@ -54,13 +54,12 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        CharSequenceHashSet set = new CharSequenceHashSet();
         int n = args.size();
-
         if (n == 1) {
             return BooleanConstant.FALSE;
         }
 
+        final CharSequenceHashSet set = new CharSequenceHashSet();
         ObjList<Function> deferredValues = null;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
@@ -91,6 +90,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
             }
         }
+
         SymbolFunction var = (SymbolFunction) args.getQuick(0);
         if (var.isConstant() && deferredValues == null) {
             // Fast path for all constants case.

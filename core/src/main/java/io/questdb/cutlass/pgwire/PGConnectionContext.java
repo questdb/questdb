@@ -64,13 +64,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
-    public static final String TAG_COPY = "COPY";
     // create as select tag
     public static final String TAG_CTAS = "CTAS";
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
     public static final String TAG_EXPLAIN = "EXPLAIN";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_OK = "OK";
+    public static final String TAG_PSEUDO_SELECT = "PSEUDO_SELECT";
     public static final String TAG_ROLLBACK = "ROLLBACK";
     public static final String TAG_SELECT = "SELECT";
     public static final String TAG_SET = "SET";
@@ -1230,9 +1230,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
-            // COPY 'id' CANCEL; queries shouldn't be compiled multiple times, but it's fine to compile
-            // COPY 'x' FROM ...; queries multiple times since the import is executed lazily
-            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_COPY && typesAndSelect == null));
+            // it's fine to compile pseudo-SELECT queries multiple times since they must be executed lazily
+            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_PSEUDO_SELECT && typesAndSelect == null));
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -1549,7 +1548,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker);
         sendRNQ = true;
 
-        // authenticator may have some non-auth data left in the buffer - make we don't overwrite it
+        // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
         recvBufferWriteOffset = authenticator.getRecvBufPos() - recvBuffer;
         recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
         return true;
@@ -2042,16 +2041,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryTag = TAG_INSERT;
                 rowCount = cq.getAffectedRowsCount();
                 break;
-            case CompiledQuery.COPY_LOCAL:
+            case CompiledQuery.PSEUDO_SELECT:
                 final RecordCursorFactory factory = cq.getRecordCursorFactory();
-                // factory is null in the COPY 'id' CANCEL; case
                 if (factory != null) {
                     // this query is non-cacheable
                     typesAndSelectIsCached = false;
                     typesAndSelect = typesAndSelectPool.pop();
                     typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 }
-                queryTag = TAG_COPY;
+                queryTag = TAG_PSEUDO_SELECT;
                 break;
             case CompiledQuery.SET:
                 queryTag = TAG_SET;

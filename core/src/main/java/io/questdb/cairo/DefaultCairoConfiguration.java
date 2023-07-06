@@ -38,18 +38,19 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import java.util.function.LongSupplier;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
-    private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final BuildInformation buildInformation = new BuildInformationHolder();
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
+    private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final String root;
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean writerMixedIOEnabled;
+
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
@@ -59,11 +60,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
         this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
-    }
-
-    @Override
-    public LongSupplier getCopyIDSupplier() {
-        return importIDSupplier;
     }
 
     @Override
@@ -174,6 +170,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getConfRoot() {
         return confRoot;
+    }
+
+    @Override
+    public LongSupplier getCopyIDSupplier() {
+        return importIDSupplier;
     }
 
     @Override
@@ -332,11 +333,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LastPartitionMaxSplits() {
-        return 15;
-    }
-
-    @Override
     public int getMaxSwapFileCount() {
         return 30;
     }
@@ -384,6 +380,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3LagCalculationWindowsSize() {
         return 4;
+    }
+
+    @Override
+    public int getO3LastPartitionMaxSplits() {
+        return 15;
     }
 
     @Override

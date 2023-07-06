@@ -40,6 +40,7 @@ import static io.questdb.network.IODispatcher.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
+    private final HttpAuthenticator authenticator;
     private final HttpContextConfiguration configuration;
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final boolean dumpNetworkTraffic;
@@ -58,12 +59,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
         throw RetryOperationException.INSTANCE;
     };
-    private SecurityContext securityContext;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
     private long recvBuffer;
     private HttpRequestProcessor resumeProcessor = null;
+    private SecurityContext securityContext;
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
@@ -81,6 +82,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         // this is default behaviour until the security context is overridden with correct principal
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
+        this.authenticator = configuration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
     }
 
     @Override
@@ -104,6 +106,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.lastRunTimestamp = 0;
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.authenticator.clear();
         clearSuspendEvent();
     }
 
@@ -135,6 +139,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.responseSink.close();
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.authenticator.close();
         clearSuspendEvent();
         LOG.debug().$("closed").$();
     }
@@ -149,10 +154,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public RetryAttemptAttributes getAttemptDetails() {
         return retryAttemptAttributes;
-    }
-
-    public SecurityContext getSecurityContext() {
-        return securityContext;
     }
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {
@@ -186,6 +187,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public HttpResponseHeader getResponseHeader() {
         return responseSink.getHeader();
+    }
+
+    public SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     @Override
@@ -343,13 +348,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
-    private void configureSecurityContext() {
+    private boolean configureSecurityContext() {
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
+            if (!authenticator.authenticate(headerParser)) {
+                return false;
+            }
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    headerParser.getHeader("Authorization"),
+                    authenticator.getPrincipal(),
                     SecurityContextFactory.HTTP
             );
         }
+        return true;
     }
 
     private boolean consumeMultipart(
@@ -573,7 +582,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     dumpBuffer(recvBuffer, read);
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
                 }
-                configureSecurityContext();
             }
 
             final CharSequence url = headerParser.getUrl();
@@ -590,16 +598,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             try {
+                if (newRequest && processor.requiresAuthentication() && !configureSecurityContext()) {
+                    return rejectUnauthenticatedRequest();
+                }
+
                 if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
-                    busyRecv = rejectRequest("Bad request. non-multipart GET expected.");
+                    busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
                 } else if (!multipartRequest && multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
                     busyRecv = rejectRequest("Bad request. Multipart POST expected.");
                 } else if (multipartProcessor) {
                     busyRecv = consumeMultipart(fd, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else {
-
                     // Do not expect any more bytes to be sent to us before
                     // we respond back to client. We will disconnect the client when
                     // they abuse protocol. In addition, we will not call processor
@@ -713,6 +724,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         clear();
         LOG.error().$(userMessage).$();
         simpleResponse().sendStatus(404, userMessage);
+        dispatcher.registerChannel(this, IOOperation.READ);
+        return false;
+    }
+
+    private boolean rejectUnauthenticatedRequest() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clear();
+        LOG.error().$("rejecting unauthenticated request [fd=").$(fd).I$();
+        simpleResponse().sendStatusWithHeader(401, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
         dispatcher.registerChannel(this, IOOperation.READ);
         return false;
     }

@@ -66,24 +66,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAliasInImplicitGroupByFormula() throws SqlException {
-        // table alias in group-by formula should be replaced to align with "choose" model
-        assertQuery(
-                "select-group-by column, count(event1) count from (select-virtual [event1 + event column, event1] event1 + event column, event1 from (select-choose [b.event event, a.event event1] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a) a",
-                "select \n" +
-                        "  a.event + b.event,\n" +
-                        "  count(a.event)\n" +
-                        "from\n" +
-                        "  telemetry as a\n" +
-                        "  inner join telemetry as b on a.created = b.created\n" +
-                        "where\n" +
-                        "  a.event > 0\n" +
-                        "  and b.event < 1\n",
-                modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
-        );
-    }
-
-    @Test
     public void testAliasInExplicitGroupByFormula() throws SqlException {
         // table alias in group-by formula should be replaced to align with "choose" model
         assertQuery(
@@ -98,6 +80,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    and b.event < 1\n" +
                         "    group by\n" +
                         "    a.event + b.event",
+                modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
+        );
+    }
+
+    @Test
+    public void testAliasInImplicitGroupByFormula() throws SqlException {
+        // table alias in group-by formula should be replaced to align with "choose" model
+        assertQuery(
+                "select-group-by column, count(event1) count from (select-virtual [event1 + event column, event1] event1 + event column, event1 from (select-choose [b.event event, a.event event1] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a) a",
+                "select \n" +
+                        "  a.event + b.event,\n" +
+                        "  count(a.event)\n" +
+                        "from\n" +
+                        "  telemetry as a\n" +
+                        "  inner join telemetry as b on a.created = b.created\n" +
+                        "where\n" +
+                        "  a.event > 0\n" +
+                        "  and b.event < 1\n",
                 modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
         );
     }
@@ -156,16 +156,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual cast(a,long) a1, a, b from (select [a, b] from x)",
                 "select a::long as a1, * from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testDuplicateColumnErrorPos() throws Exception {
-        assertFailure(
-                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
-                null,
-                79,
-                "Duplicate column [name=col4]"
         );
     }
 
@@ -604,16 +594,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCaseAndLimit() throws SqlException {
-        assertQuery("select-virtual 'table' kind from (tab) limit 10",
-                "    select case a \n" +
-                        "    else 'table'\n" +
-                        "    end kind from tab limit 10\n",
-                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
@@ -640,28 +620,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual case(a = 1,'A',2 = b,'B') + 1 column, b from (select [a, b] from tab)",
                 "select case when a = 1 then 'A' when 2 = b then 'B' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testCaseNoWhen() throws SqlException {
-        assertQuery(
-                "select-virtual 'table' kind from (tab)",
-                "    select case a \n" +
-                        "    else 'table'\n" +
-                        "    end kind from tab\n",
-                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testCaseNoWhenBinary() throws SqlException {
-        assertQuery(
-                "select-virtual 2 + 5 kind from (tab)",
-                "    select case a \n" +
-                        "    else 2 + 5\n" +
-                        "    end kind from tab\n",
-                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
         );
     }
 
@@ -2595,6 +2553,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " cross join orders a", 30, "Duplicate table or alias: a",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnErrorPos() throws Exception {
+        assertFailure(
+                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
+                null,
+                79,
+                "Duplicate column [name=col4]"
         );
     }
 

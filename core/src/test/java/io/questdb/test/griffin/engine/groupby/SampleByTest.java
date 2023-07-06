@@ -28,13 +28,11 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
-import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
-import io.questdb.test.cutlass.text.SqlExecutionContextStub;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
+import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
@@ -42,8 +40,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
-import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -2782,6 +2782,34 @@ public class SampleByTest extends AbstractGriffinTest {
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev)) where ts > '2022-12-01T01:10:00.000000Z' ",
                     "ts", false);
         });
+    }
+
+    @Test
+    public void testSampleByFilteredByIndex() throws Exception {
+        assertQuery("time\ts1\tdd\n" +
+                        "2023-05-16T00:04:00.000000Z\ta\tNaN\n" +
+                        "2023-05-16T00:05:00.000000Z\ta\t0.5243722859289777\n" +
+                        "2023-05-16T00:08:00.000000Z\tc\t0.1985581797355932\n" +
+                        "2023-05-16T00:07:00.000000Z\tb\t0.6778564558839208\n" +
+                        "2023-05-16T00:10:00.000000Z\tb\t0.21583224269349388\n",
+                "SELECT last(ts) as time, s1, last(d1) as dd " +
+                        "FROM x " +
+                        "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
+                        "AND s2 = ('foo') " +
+                        "SAMPLE BY 5m " +
+                        "GROUP BY s1;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_symbol('a','b','c') s1," +
+                        "   rnd_symbol('foo','bar') s2," +
+                        "   rnd_double(1) d1," +
+                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
+                        "   from long_sequence(100)" +
+                        "), index(s1), index(s2) timestamp(ts) partition by DAY",
+                null,
+                false
+        );
     }
 
     @Test

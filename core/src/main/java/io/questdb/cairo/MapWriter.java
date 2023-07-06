@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.charFileName;
@@ -45,13 +44,13 @@ public interface MapWriter extends SymbolCountProvider {
     ) {
         int plen = path.length();
         try {
-            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
+            mem.smallFile(ff, offsetFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             mem.jumpTo(0);
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
             mem.sync(false);
-            mem.close();
+            mem.close(false);
 
             if (!ff.touch(charFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 throw CairoException.critical(ff.errno()).put("Cannot create ").put(path);
@@ -62,7 +61,7 @@ public interface MapWriter extends SymbolCountProvider {
             mem.sync(false);
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         } finally {
-            Misc.free(mem);
+            mem.close(false);
             path.trimTo(plen);
         }
     }

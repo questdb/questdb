@@ -148,10 +148,96 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(type, null, null);
     }
 
+    public CompiledQuery of(RecordCursorFactory recordCursorFactory) {
+        return of(SELECT, recordCursorFactory, null);
+    }
+
     public CompiledQuery ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
         return this;
+    }
+
+    public CompiledQuery ofBackupTable() {
+        return of(BACKUP_TABLE);
+    }
+
+    public CompiledQuery ofBegin() {
+        return of(BEGIN);
+    }
+
+    public CompiledQuery ofCommit() {
+        return of(COMMIT);
+    }
+
+    public CompiledQuery ofCopyRemote(TextLoader textLoader) {
+        this.textLoader = textLoader;
+        return of(COPY_REMOTE);
+    }
+
+    public CompiledQuery ofCreateTable(TableToken tableToken) {
+        return of(CREATE_TABLE, null, tableToken);
+    }
+
+    public CompiledQuery ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
+        of(CREATE_TABLE_AS_SELECT, null, tableToken);
+        this.affectedRowsCount = affectedRowsCount;
+        return this;
+    }
+
+    public CompiledQuery ofDeallocate(CharSequence statementName) {
+        this.statementName = Chars.toString(statementName);
+        return of(DEALLOCATE);
+    }
+
+    public CompiledQuery ofDrop() {
+        return of(DROP);
+    }
+
+    public CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
+        return of(EXPLAIN, recordCursorFactory, null);
+    }
+
+    public CompiledQuery ofInsert(InsertOperation insertOperation) {
+        this.insertOp = insertOperation;
+        return of(INSERT);
+    }
+
+    public CompiledQuery ofInsertAsSelect(long affectedRowsCount) {
+        of(INSERT_AS_SELECT);
+        this.affectedRowsCount = affectedRowsCount;
+        return this;
+    }
+
+    public CompiledQuery ofPseudoSelect(@Nullable RecordCursorFactory factory) {
+        this.type = PSEUDO_SELECT;
+        this.recordCursorFactory = factory;
+        this.affectedRowsCount = -1;
+        return this;
+    }
+
+    public CompiledQuery ofRenameTable() {
+        return of(RENAME_TABLE);
+    }
+
+    public CompiledQuery ofRepair() {
+        return of(REPAIR);
+    }
+
+    public CompiledQuery ofRollback() {
+        return of(ROLLBACK);
+    }
+
+    public CompiledQuery ofSet() {
+        return of(SET);
+    }
+
+    public CompiledQuery ofSnapshotComplete() {
+        return of(SNAPSHOT_DB_COMPLETE);
+    }
+
+    public CompiledQuery ofSnapshotPrepare() {
+        return of(SNAPSHOT_DB_PREPARE);
     }
 
     public CompiledQuery ofTableResume() {
@@ -164,10 +250,18 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public CompiledQuery ofTruncate() {
+        return of(TRUNCATE);
+    }
+
     public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
         this.updateOp = updateOperation;
         this.type = UPDATE;
         return this;
+    }
+
+    public CompiledQuery ofVacuum() {
+        return of(VACUUM);
     }
 
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
@@ -185,99 +279,5 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.tableToken = tableToken;
         this.affectedRowsCount = -1;
         return this;
-    }
-
-    CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory, null);
-    }
-
-    CompiledQuery ofBackupTable() {
-        return of(BACKUP_TABLE);
-    }
-
-    CompiledQuery ofBegin() {
-        return of(BEGIN);
-    }
-
-    CompiledQuery ofCommit() {
-        return of(COMMIT);
-    }
-
-    CompiledQuery ofCopyLocal(@Nullable RecordCursorFactory factory) {
-        this.type = COPY_LOCAL;
-        this.recordCursorFactory = factory;
-        this.affectedRowsCount = -1;
-        return this;
-    }
-
-    CompiledQuery ofCopyRemote(TextLoader textLoader) {
-        this.textLoader = textLoader;
-        return of(COPY_REMOTE);
-    }
-
-    CompiledQuery ofCreateTable(TableToken tableToken) {
-        return of(CREATE_TABLE, null, tableToken);
-    }
-
-    CompiledQuery ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
-        of(CREATE_TABLE_AS_SELECT, null, tableToken);
-        this.affectedRowsCount = affectedRowsCount;
-        return this;
-    }
-
-    CompiledQuery ofDeallocate(CharSequence statementName) {
-        this.statementName = Chars.toString(statementName);
-        return of(DEALLOCATE);
-    }
-
-    CompiledQuery ofDrop() {
-        return of(DROP);
-    }
-
-    CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
-        return of(EXPLAIN, recordCursorFactory, null);
-    }
-
-    CompiledQuery ofInsert(InsertOperation insertOperation) {
-        this.insertOp = insertOperation;
-        return of(INSERT);
-    }
-
-    CompiledQuery ofInsertAsSelect(long affectedRowsCount) {
-        of(INSERT_AS_SELECT);
-        this.affectedRowsCount = affectedRowsCount;
-        return this;
-    }
-
-    CompiledQuery ofRenameTable() {
-        return of(RENAME_TABLE);
-    }
-
-    CompiledQuery ofRepair() {
-        return of(REPAIR);
-    }
-
-    CompiledQuery ofRollback() {
-        return of(ROLLBACK);
-    }
-
-    public CompiledQuery ofSet() {
-        return of(SET);
-    }
-
-    CompiledQuery ofSnapshotComplete() {
-        return of(SNAPSHOT_DB_COMPLETE);
-    }
-
-    CompiledQuery ofSnapshotPrepare() {
-        return of(SNAPSHOT_DB_PREPARE);
-    }
-
-    CompiledQuery ofTruncate() {
-        return of(TRUNCATE);
-    }
-
-    CompiledQuery ofVacuum() {
-        return of(VACUUM);
     }
 }

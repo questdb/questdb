@@ -50,7 +50,6 @@ public class AnonymousAuthenticator implements Authenticator {
 
     @Override
     public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
-
     }
 
     @Override

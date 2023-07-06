@@ -119,27 +119,6 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
-    public void testAttachPartitionsWithExtraCharsInPartitionNameByDay() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src3a", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst3a", PartitionBy.DAY)) {
-                createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2020-01-01",
-                        12);
-                CreateTableTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
-                attachFromSrcIntoDst(src, dst, "2020-01-09.10", "2020-01-10T19", "2020-01-01T20:22:24.262829Z");
-            }
-        });
-    }
-
-    @Test
     public void testAttachActiveWrittenPartition() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src4", PartitionBy.DAY);
@@ -732,6 +711,27 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachPartitionsWithExtraCharsInPartitionNameByDay() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src3a", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst3a", PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        src.timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG),
+                        10000,
+                        "2020-01-01",
+                        12);
+                CreateTableTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+                attachFromSrcIntoDst(src, dst, "2020-01-09.10", "2020-01-10T19", "2020-01-01T20:22:24.262829Z");
+            }
+        });
+    }
+
+    @Test
     public void testAttachPartitionsWithIndexedSymbolsValueMatch() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src37", PartitionBy.DAY);
@@ -952,14 +952,13 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     public void testCannotMapTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
-            private int tsdFd;
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (tsdFd != fd) {
+                if (this.fd != fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
-                tsdFd = 0;
+                this.fd = -1;
                 return -1;
             }
 
@@ -967,7 +966,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             public int openRO(LPSZ name) {
                 int fd = super.openRO(name);
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
-                    this.tsdFd = fd;
+                    this.fd = fd;
                 }
                 return fd;
             }

@@ -87,7 +87,10 @@ public class FunctionFactoryCache {
                         runtimeConstantFunctionNames.add(name);
                     }
                 } catch (SqlException e) {
-                    LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
+                    LOG.error().$((Sinkable) e)
+                            .$(" [signature=").$(factory.getSignature())
+                            .$(", class=").$(factory.getClass().getName())
+                            .I$();
                 }
             }
         }

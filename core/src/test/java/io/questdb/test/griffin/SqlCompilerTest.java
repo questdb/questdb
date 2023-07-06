@@ -43,6 +43,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -99,6 +100,50 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "), cast(a as SYMBOL)";
 
         assertCast(expectedData, expectedMeta, sql);
+    }
+
+    @Test
+    public void tesFailOnNonBooleanJoinCondition() throws Exception {
+        assertCompile("create table a ( ts timestamp, i int) timestamp(ts) ");
+        assertCompile("create table b ( ts timestamp, i int) timestamp(ts) ");
+
+        String booleanError = "boolean expression expected";
+
+        assertFailure(30, booleanError,
+                "select * from a " +
+                        "join b on a.i - b.i");
+
+        assertFailure(35, booleanError,
+                "select * from a " +
+                        "left join b on a.i - b.i");
+
+        assertFailure(46, booleanError,
+                "select * from a " +
+                        "join b on a.ts = b.ts and a.i - b.i");
+
+        assertFailure(51, booleanError,
+                "select * from a " +
+                        "left join b on a.ts = b.ts and a.i - b.i");
+
+        for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
+            assertFailure(37, "unsupported " + join.trim() + " join expression",
+                    "select * " +
+                            "from a " +
+                            "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join));
+        }
+
+        String unexpectedError = "unexpected argument for function: and. expected args: (BOOLEAN,BOOLEAN). actual args: (INT,INT)";
+        assertFailure(44, unexpectedError,
+                "select * from a " +
+                        "join b on a.i + b.i and a.i - b.i");
+
+        assertFailure(49, unexpectedError,
+                "select * from a " +
+                        "left join b on a.i + b.i and a.i - b.i");
+
+        assertFailure(60, unexpectedError,
+                "select * from a " +
+                        "join b on a.ts = b.ts and a.i - b.i and b.i - a.i");
     }
 
     @Test
@@ -4075,6 +4120,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByDouble() throws Exception {
+        assertQuery("d\n" +
+                        "NaN\n" +
+                        "5.0\n" +
+                        "4.0\n" +
+                        "3.0\n" +
+                        "2.0\n" +
+                        "1.0\n",
+                "select * from x order by d desc",
+                "create table x as (select (6-x)::double d from long_sequence(5) union all select null)",
+                null, true, true
+        );
+    }
+
+    @Test
+    public void testOrderByFloat() throws Exception {
+        assertQuery("f\n" +
+                        "NaN\n" +
+                        "5.0\n" +
+                        "4.0\n" +
+                        "3.0\n" +
+                        "2.0\n" +
+                        "1.0\n",
+                "select * from x order by f desc",
+                "create table x as (select (6-x)::float f from long_sequence(5) union all select null::float)",
+                null, true, true
+        );
+    }
+
+    @Test
     public void testOrderGroupByTokensCanBeQuoted1() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE trigonometry AS " +
@@ -4404,12 +4479,295 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectCharInListContainingNull() throws Exception {
+        assertQuery("c\n1\n\n",
+                "select * from xCHAR where c in ('1', null)",
+                "create table xCHAR as (select '1'::char c union all select null::char );",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectCharInNull() throws Exception {
+        assertQuery("c\n\n",
+                "select * from xCHAR where c in null",
+                "create table xCHAR as (select '1'::char c union all select null::char )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectDateInListContainingNull() throws Exception {
+        assertQuery("c\n1970-01-01T00:00:00.001Z\n\n",
+                "select * from x where c in (cast(1 as date), cast(null as date))",
+                "create table x as (select cast(1 as date) c union all select null::date )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectDateInNullString() throws Exception {
+        assertQuery("c\n\n",
+                "select * from x where c in null::string",
+                "create table x as (select cast(1 as date) c union all select null::date )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectDoubleInListContainingNull() throws Exception {
+        assertQuery("c\n1.0\nNaN\n",
+                "select * from x where c in (1.0, null, 1::byte, 1::short, 1::int, 1::long)",
+                "create table x as (select 1d c union all select null::double )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectDoubleInListWithBindVariable() throws Exception {
+        assertCompile("create table x as (select 1D c union all select null::double )");
+
+        bindVariableService.clear();
+        bindVariableService.setStr("val", "1");
+        selectDoubleInListWithBindVariable();
+
+        bindVariableService.setLong("val", 1L);
+        selectDoubleInListWithBindVariable();
+
+        bindVariableService.setInt("val", 1);
+        selectDoubleInListWithBindVariable();
+
+        bindVariableService.setShort("val", (short) 1);
+        selectDoubleInListWithBindVariable();
+
+        bindVariableService.setByte("val", (byte) 1);
+        selectDoubleInListWithBindVariable();
+
+        bindVariableService.setFloat("val", 1f);
+        selectDoubleInListWithBindVariable();
+
+        bindVariableService.setDouble("val", 1d);
+        selectDoubleInListWithBindVariable();
+    }
+
+    @Test
+    public void testSelectDoubleInNull() throws Exception {
+        assertQuery("c\nNaN\n",
+                "select * from x where c in null",
+                "create table x as (select 1.0 c union all select null::double )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectDoubleNotInListContainingNull() throws Exception {
+        assertQuery("c\n1.0\n",
+                "select * from x where c not in (2.0,null)",
+                "create table x as (select 1.0d c union all select null::double )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectFloatInListContainingNull() throws Exception {
+        assertQuery("c\n1.0\nNaN\n",
+                "select * from x where c in (1.0f, null, 1::byte, 1::short, 1::int, 1::long)",
+                "create table x as (select 1f c union all select null::float )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectFloatInNull() throws Exception {
+        assertQuery("c\nNaN\n",
+                "select * from x where c in null",
+                "create table x as (select 1.0f c union all select null::float )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectFloatNotInListContainingNull() throws Exception {
+        assertQuery("c\n1.0\n",
+                "select * from x where c not in (2.0f,null)",
+                "create table x as (select 1.0f c union all select null::float )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectInListWithBadCastClosesFactories() throws Exception {
+        String query = "select * from ( select x, '1' from long_sequence(1000000) order by 2 desc limit 999999 ) #SETOP#  " +
+                "select * from ( select x, '2' from long_sequence(1000000) order by 2 desc limit 999999 ) #SETOP# " +
+                "select * from ( select x, x::float from long_sequence(1000000) order by 2 desc limit 999999 ) ";
+
+        assertFailure(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION"));
+        assertFailure(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION ALL"));
+        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
+        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+    }
+
+    @Test
+    public void testSelectIntInListContainingNull() throws Exception {
+        assertQuery("c\n1\nNaN\n",
+                "select * from x where c in (1,null)",
+                "create table x as (select 1 c union all select null::int )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectIntInNull() throws Exception {
+        assertQuery("c\nNaN\n",
+                "select * from x where c in null",
+                "create table x as (select 1 c union all select null::int )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectIntNotInListContainingNull() throws Exception {
+        assertQuery("c\n1\n",
+                "select * from x where c not in (2,null)",
+                "create table x as (select 1 c union all select null::int )",
+                null, true, false
+        );
+    }
+
+    @Test
     public void testSelectInvalidGeoHashLiteralBits() throws Exception {
         assertFailure(
                 "select ##k from long_sequence(10)",
                 null,
                 7,
                 "invalid constant: ##k"
+        );
+    }
+
+    @Test
+    public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
+        assertFailure("select 1 from tab where (\"\")",
+                "create table tab (i int)",
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where (\"a\")",
+                null,
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where ('')", null,
+                25, "boolean expression expected");
+
+        assertFailure("select 1 from tab where ('a')", null,
+                25, "boolean expression expected");
+    }
+
+    @Test
+    public void testSelectLongInListContainingNull() throws Exception {
+        assertQuery("c\n1\nNaN\n",
+                "select * from x where c in (1,null, 1::byte, 1::short, 1::int, 1::long)",
+                "create table x as (select 1L c union all select null::long )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectLongInListWithBindVariable() throws Exception {
+        assertCompile("create table x as (select 1L c union all select null::long )");
+
+        bindVariableService.clear();
+        bindVariableService.setStr("val", "1");
+        selectLongInListWithBindVariable();
+
+        bindVariableService.setLong("val", 1L);
+        selectLongInListWithBindVariable();
+
+        bindVariableService.setInt("val", 1);
+        selectLongInListWithBindVariable();
+
+        bindVariableService.setShort("val", (short) 1);
+        selectLongInListWithBindVariable();
+
+        bindVariableService.setByte("val", (byte) 1);
+        selectLongInListWithBindVariable();
+    }
+
+    @Test
+    public void testSelectLongInNull() throws Exception {
+        assertQuery("c\nNaN\n",
+                "select * from x where c in null",
+                "create table x as (select 1L c union all select null::long )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectLongNotInListContainingNull() throws Exception {
+        assertQuery("c\n1\n",
+                "select * from x where c not in (2,null)",
+                "create table x as (select 1L c union all select null::long )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectStrInListContainingNull() throws Exception {
+        assertQuery("l\tstr\n" +
+                        "2\t2\n" +
+                        "3\t\n",
+                "select * from x where str in (null, '2', '2'::symbol)",
+                "create table x as " +
+                        "(" +
+                        "select 1L as l, '1' as str  union all " +
+                        "select 2L, '2' union all " +
+                        "select 3L,  null " +
+                        ")",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSelectStrInNull() throws Exception {
+        assertQuery("l\tstr\n" +
+                        "3\t\n",
+                "select * from x where str in null",
+                "create table x as " +
+                        "(" +
+                        "select 1L as l, '1' as str  union all " +
+                        "select 2L, '2' union all " +
+                        "select 3L, null " +
+                        ")",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSelectTimestampInListContainingNull() throws Exception {
+        assertQuery("c\n1970-01-01T00:00:00.000001Z\n\n",
+                "select * from x where c in (1,null)",
+                "create table x as (select 1::timestamp c union all select null::timestamp )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectTimestampInNull() throws Exception {
+        assertQuery("c\n\n",
+                "select * from x where c in null",
+                "create table x as (select 1::timestamp c union all select null::timestamp )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testSelectTimestampInNullString() throws Exception {
+        assertQuery("c\n\n",
+                "select * from x where c in null::string",
+                "create table x as (select 1::timestamp c union all select null::timestamp )",
+                null, true, false
         );
     }
 
@@ -4437,7 +4795,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
     }
 
     @Test
@@ -4811,6 +5168,24 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     }
                 }
         );
+    }
+
+    private void selectDoubleInListWithBindVariable() throws Exception {
+        assertQuery("c\n1.0\n",
+                "select * from x where c in (:val)",
+                null, true, false
+        );
+
+        bindVariableService.clear();
+    }
+
+    private void selectLongInListWithBindVariable() throws Exception {
+        assertQuery("c\n1\n",
+                "select * from x where c in (:val)",
+                null, true, false
+        );
+
+        bindVariableService.clear();
     }
 
     private void testGeoHashWithBits(String columnSize, String geoHash, String expected) throws Exception {

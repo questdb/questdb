@@ -300,7 +300,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                appendToWal(securityContext, netIoJob, parser, tud);
+                while (true) {
+                    try {
+                        appendToWal(securityContext, netIoJob, parser, tud);
+                        break;
+                    } catch (MetadataChangedException e) {
+                        // do another retry, metadata has changed while processing the line
+                        // and all the resolved column indexes have been invalidated
+                    }
+                }
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -332,7 +340,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
-    private void appendToWal(SecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+    private void appendToWal(SecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
@@ -342,6 +350,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         WalWriter ww = (WalWriter) tud.getWriter();
         TableRecordMetadata metadata = ww.getMetadata();
+        long initialMetadataVersion = ld.getMetadataVersion();
 
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
@@ -373,6 +382,11 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             }
                             // all good, someone added the column concurrently
                         }
+                    }
+                    if (ld.getMetadataVersion() != initialMetadataVersion) {
+                        // Restart the whole line,
+                        // some columns can be deleted or renamed in tud.commit and ww.addColumn calls
+                        throw MetadataChangedException.INSTANCE;
                     }
                     columnType = metadata.getColumnType(columnIndex);
                 } else if (!autoCreateNewColumns) {
@@ -632,6 +646,11 @@ public class LineTcpMeasurementScheduler implements Closeable {
             tud.commitIfMaxUncommittedRowsCountReached();
         } catch (CommitFailedException commitFailedException) {
             throw commitFailedException;
+        } catch (CairoException th) {
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
+            if (r != null) {
+                r.cancel();
+            }
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
             if (r != null) {

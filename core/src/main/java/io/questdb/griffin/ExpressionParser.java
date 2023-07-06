@@ -51,6 +51,9 @@ public class ExpressionParser {
     private static final int BRANCH_RIGHT_BRACKET = 16;
     private static final int BRANCH_RIGHT_PARENTHESIS = 3;
     private static final int BRANCH_TIMESTAMP_ZONE = 19;
+    private static final int IDX_ELSE = 2;
+    private static final int IDX_THEN = 1;
+    private static final int IDX_WHEN = 0;
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
@@ -516,7 +519,7 @@ public class ExpressionParser {
                         // Pop the left parenthesis from the stack, but not onto the output queue.
                         //        If the token at the top of the stack is a function token, pop it onto the output queue.
                         //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                        while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
+                        while ((node = opStack.pop()) != null && (node.token.length() == 0 || node.token.charAt(0) != '(')) {
                             // special case - (*) expression
                             if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
                                 argStackDepth = onNode(listener, node, 2);
@@ -1040,6 +1043,10 @@ public class ExpressionParser {
                                             throw SqlException.$(lastPos, "'when' expected");
                                         }
 
+                                        if (paramCount <= 2) {
+                                            throw SqlException.$(lastPos, "'then' expected");
+                                        }
+
                                         // If the token is a right parenthesis:
                                         // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
                                         // Pop the left parenthesis from the stack, but not onto the output queue.
@@ -1081,6 +1088,9 @@ public class ExpressionParser {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
                                             throw missingArgs(lastPos);
                                         }
+                                        if (keywordIndex == IDX_ELSE && paramCount == 0) {
+                                            throw SqlException.$(lastPos, "'when' expected");
+                                        }
 
                                         // we need to track argument consumption so that operators and functions
                                         // do no steal parameters outside of local 'case' scope
@@ -1092,16 +1102,15 @@ public class ExpressionParser {
 
                                         if (paramCount == 0) {
                                             if (argCount == 0) {
-                                                // this is 'case when', we will
-                                                // indicate that this is regular 'case' to the rewrite logic
+                                                // this is 'case when', we will indicate that this is regular 'case' to the rewrite logic
                                                 onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL, null, Integer.MIN_VALUE, -1), argStackDepth);
                                             }
                                             paramCount++;
                                         }
 
                                         switch (keywordIndex) {
-                                            case 0: // when
-                                            case 2: // else
+                                            case IDX_WHEN:
+                                            case IDX_ELSE:
                                                 if ((paramCount % 2) == 0) {
                                                     throw SqlException.$(lastPos, "'then' expected");
                                                 }
@@ -1286,9 +1295,9 @@ public class ExpressionParser {
         nonLiteralBranches.add(BRANCH_LITERAL);
         nonLiteralBranches.add(BRANCH_LAMBDA);
 
-        caseKeywords.put("when", 0);
-        caseKeywords.put("then", 1);
-        caseKeywords.put("else", 2);
+        caseKeywords.put("when", IDX_WHEN);
+        caseKeywords.put("then", IDX_THEN);
+        caseKeywords.put("else", IDX_ELSE);
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");

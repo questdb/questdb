@@ -22,14 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 
-public interface PgWireAuthenticationFactory {
-    Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                         NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
-                                         OptionsListener optionsListener);
+import java.io.Closeable;
+
+public class FreeOnExit implements QuietCloseable {
+
+    private final ObjList<Closeable> list = new ObjList<>();
+
+    public <T extends Closeable> T register(T closeable) {
+        if (closeable != null) {
+            list.add(closeable);
+        }
+        return closeable;
+    }
+
+    @Override
+    public void close() {
+        // free instances in reverse order to which we allocated them
+        for (int i = list.size() - 1; i >= 0; i--) {
+            Misc.free(list.getQuick(i));
+        }
+        list.clear();
+    }
 }

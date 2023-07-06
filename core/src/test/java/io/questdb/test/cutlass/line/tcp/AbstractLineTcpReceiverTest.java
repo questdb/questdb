@@ -30,12 +30,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
+import io.questdb.cutlass.auth.LineAuthenticatorFactory;
+import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -54,6 +51,7 @@ import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.security.PublicKey;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
@@ -104,13 +102,14 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
         @Override
-        public AuthenticatorFactory getAuthenticatorFactory() {
+        public LineAuthenticatorFactory getLineAuthenticatorFactory() {
             if (authKeyId == null) {
-                return super.getAuthenticatorFactory();
+                return super.getLineAuthenticatorFactory();
             }
             URL u = getClass().getResource("authDb.txt");
             assert u != null;
-            return new EllipticCurveAuthenticatorFactory(nf, u.getFile());
+            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
+            return new EllipticCurveAuthenticatorFactory(nf, new StaticChallengeResponseMatcher(authDb));
         }
     };
     protected int partitionByDefault = PartitionBy.DAY;

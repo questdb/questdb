@@ -40,7 +40,6 @@ public interface CompiledQuery {
     short BACKUP_TABLE = 13;
     short BEGIN = 18;
     short COMMIT = 19;
-    short COPY_LOCAL = 8;
     short COPY_REMOTE = 11;
     short CREATE_TABLE = 9;
     short CREATE_TABLE_AS_SELECT = 21;
@@ -49,6 +48,7 @@ public interface CompiledQuery {
     short EXPLAIN = 25;
     short INSERT = 2;
     short INSERT_AS_SELECT = 10;
+    short PSEUDO_SELECT = 8; // used for pseudo-SELECT statements such as COPY
     short RENAME_TABLE = 12;
     short REPAIR = 5;
     short ROLLBACK = 20;
@@ -89,8 +89,6 @@ public interface CompiledQuery {
 
     RecordCursorFactory getRecordCursorFactory();
 
-    TableToken getTableToken();
-
     String getSqlStatement();
 
     /**
@@ -99,6 +97,8 @@ public interface CompiledQuery {
      * @return statement name
      */
     CharSequence getStatementName();
+
+    TableToken getTableToken();
 
     TextLoader getTextLoader();
 
