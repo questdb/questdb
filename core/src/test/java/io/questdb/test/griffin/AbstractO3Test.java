@@ -70,7 +70,6 @@ public class AbstractO3Test extends AbstractTest {
             .build();
     private RecordToRowCopier copier;
 
-
     @Before
     public void clearRecordToRowCopier() {
         copier = null;
@@ -87,8 +86,10 @@ public class AbstractO3Test extends AbstractTest {
 
     @After
     public void tearDown() throws Exception {
+        commitMode = CommitMode.NOSYNC;
         dataAppendPageSize = -1;
         o3MemMaxPages = -1;
+        partitionO3SplitThreshold = -1;
         super.tearDown();
     }
 

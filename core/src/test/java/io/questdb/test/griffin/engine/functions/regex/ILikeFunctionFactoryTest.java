@@ -26,14 +26,46 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testBindVariableConcatIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+
+            bindVariableService.setStr(0, "H");
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%' || $1 || '%'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableConcatNamed() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+
+            bindVariableService.setStr("str", "H");
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%' || :str || '%'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
+                }
+            }
+        });
+    }
 
     @Test
     public void testEmptyLikeString() throws Exception {
