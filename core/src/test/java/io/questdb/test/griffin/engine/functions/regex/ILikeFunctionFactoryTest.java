@@ -36,7 +36,23 @@ import org.junit.Test;
 public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testBindVariableConcat() throws Exception {
+    public void testBindVariableConcatIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+
+            bindVariableService.setStr(0, "H");
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%' || $1 || '%'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableConcatNamed() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
 
