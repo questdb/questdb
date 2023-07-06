@@ -34,7 +34,10 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -589,7 +592,6 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFixedColumnCopyPrefixFails() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         int storageLength = 8;
         long records = 500;
@@ -598,6 +600,8 @@ public class O3FailureTest extends AbstractO3Test {
                 (CairoEngine engine,
                  SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
+
+                    Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
                     compiler.compile("create table " + tableName + " as ( " +
@@ -927,7 +931,6 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testVarColumnCopyPrefixFails() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         String strColVal = "[srcDataMax=165250000]";
         int storageLength = getStorageLength(strColVal);
@@ -937,6 +940,9 @@ public class O3FailureTest extends AbstractO3Test {
                 (CairoEngine engine,
                  SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
+
+                    Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
+
                     String tableName = "testVarColumnCopyPrefixFails";
                     compiler.compile(
                             "create table " + tableName + " as ( " +
