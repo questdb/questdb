@@ -96,8 +96,10 @@ public class SqlOptimiser {
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final WeakSelfReturningObjectPool<QueryModel.QueryPermissions> queryPermissionsPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
+    private final WeakSelfReturningObjectPool<QueryModel.TablePermissions> tablePermissionsPool;
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
@@ -106,7 +108,7 @@ public class SqlOptimiser {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
-    private LongObjHashMap<QueryModel.TablePerms> permissions;
+    private LongObjHashMap<QueryModel.TablePermissions> permissions;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
@@ -128,6 +130,8 @@ public class SqlOptimiser {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+        this.queryPermissionsPool = new WeakSelfReturningObjectPool<>(QueryModel.QueryPermissions::new, configuration.getQueryPermissionsPoolCapacity());
+        this.tablePermissionsPool = new WeakSelfReturningObjectPool<>(QueryModel.TablePermissions::new, configuration.getTablePermissionsPoolCapacity());
     }
 
     public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
@@ -804,9 +808,9 @@ public class SqlOptimiser {
                                     literalCollectorANames
                             );
 
-                            QueryModel.TablePerms tablePerms = permissions.get(tableToken.getTableId());
+                            QueryModel.TablePermissions tablePerms = permissions.get(tableToken.getTableId());
                             if (tablePerms == null) {
-                                tablePerms = new QueryModel.TablePerms(tableToken);
+                                tablePerms = tablePermissionsPool.pop().of(tableToken);
                                 permissions.put(tableToken.getTableId(), tablePerms);
                             }
 
@@ -4765,7 +4769,7 @@ public class SqlOptimiser {
         try {
             // only set permissions on the outermost model
             QueryModel rewrittenModel = optimiseInner(model, sqlExecutionContext);
-            rewrittenModel.setPermissions(new QueryModel.QueryPermissions(permissions, sqlExecutionContext.getSecurityContext()));
+            rewrittenModel.setPermissions(queryPermissionsPool.pop().of(permissions, sqlExecutionContext.getSecurityContext()));
             return rewrittenModel;
         } finally {
             permissions = null;
@@ -4836,7 +4840,7 @@ public class SqlOptimiser {
             updateQueryModel.setUpdateTableToken(tableToken);
 
             QueryModel.QueryPermissions permissions = updateQueryModel.getNestedModel().getPermissions();
-            permissions.addUpdatePermissions(tableToken, literalCollectorANames);
+            permissions.setUpdatePermissions(tablePermissionsPool.pop().of(tableToken, literalCollectorANames));
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

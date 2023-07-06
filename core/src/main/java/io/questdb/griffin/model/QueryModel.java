@@ -1539,24 +1539,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public static class QueryPermissions {
-        final LongObjHashMap<QueryModel.TablePerms> permissions;
+    public static class QueryPermissions extends AbstractSelfReturningObject<QueryPermissions> {
         boolean checked;
+        LongObjHashMap<TablePermissions> permissions;
         CharSequence principal;
-        QueryModel.TablePerms updatePermissions;
+        TablePermissions updatePermissions;
         long version;
 
-        public QueryPermissions(LongObjHashMap<TablePerms> permissions, SecurityContext context) {
-            this.permissions = permissions;
-            this.checked = true;
-            this.principal = context.getEntityName();
-            this.version = context.getVersion();
-        }
-
-        public void addUpdatePermissions(TableToken tableToken, ObjList<CharSequence> columns) {
-            assert updatePermissions == null;
-            updatePermissions = new TablePerms(tableToken);
-            updatePermissions.add(columns);
+        public QueryPermissions(WeakSelfReturningObjectPool<QueryPermissions> parentPool) {
+            super(parentPool);
         }
 
         public void check(SecurityContext context) {
@@ -1574,29 +1565,66 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 context.authorizeTableUpdate(updatePermissions.getToken(), updatePermissions.getColumns());
             }
 
-            permissions.forEach((k, v) -> {
-                context.authorizeSelect(v.getToken(), v.getColumns());
-            });
+            permissions.forEach((k, v) -> context.authorizeSelect(v.getToken(), v.getColumns()));
 
             this.principal = context.getEntityName();
             this.version = context.getVersion();
         }
+
+        @Override
+        public void close() {
+            principal = null;
+            updatePermissions = Misc.free(updatePermissions);
+            version = -1;
+            checked = false;
+            permissions.forEach((key, value) -> value.close());
+            permissions.clear();
+            super.close();
+        }
+
+        public QueryPermissions of(LongObjHashMap<TablePermissions> permissions, SecurityContext context) {
+            this.permissions = permissions;
+            this.checked = true;
+            this.principal = context.getEntityName();
+            this.version = context.getVersion();
+            return this;
+        }
+
+        public void setUpdatePermissions(TablePermissions updatePermissions) {
+            assert this.updatePermissions == null;
+            this.updatePermissions = updatePermissions;
+        }
     }
 
-    public static class TablePerms {
-        final ObjHashSet<CharSequence> columns;
-        final TableToken token;
+    public static class TablePermissions extends AbstractSelfReturningObject<TablePermissions> implements Mutable {
+        private final ObjHashSet<CharSequence> columns;
+        private TableToken token;
 
-        public TablePerms(TableToken token) {
-            this.token = token;
+        public TablePermissions(WeakSelfReturningObjectPool<TablePermissions> parentPool) {
+            super(parentPool);
             columns = new ObjHashSet<>();
         }
 
         public void add(ObjList<CharSequence> newColumns) {
-            // columns must not be mutable 
             for (int i = 0, n = newColumns.size(); i < n; i++) {
-                columns.add(Chars.toString(newColumns.getQuick(i)));
+                CharSequence newColumn = newColumns.getQuick(i);
+                int idx = columns.keyIndex(newColumn);
+                if (idx >= 0) {
+                    columns.addAt(idx, Chars.toString(newColumn));// columns must not be mutable
+                }
             }
+        }
+
+        @Override
+        public void clear() {
+            token = null;
+            columns.clear();
+        }
+
+        @Override
+        public void close() {
+            clear();
+            super.close();
         }
 
         public ObjList<CharSequence> getColumns() {
@@ -1605,6 +1633,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
         public TableToken getToken() {
             return token;
+        }
+
+        public TablePermissions of(TableToken token) {
+            this.token = token;
+            return this;
+        }
+
+        public TablePermissions of(TableToken tableToken, ObjList<CharSequence> columns) {
+            token = tableToken;
+            add(columns);
+            return this;
         }
     }
 

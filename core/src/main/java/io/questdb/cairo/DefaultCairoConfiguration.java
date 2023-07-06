@@ -464,6 +464,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryPermissionsPoolCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return 5;
     }
@@ -788,6 +793,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getSystemTableNamePrefix() {
         return "__sys";
+    }
+
+    @Override
+    public int getTablePermissionsPoolCapacity() {
+        return 32;
     }
 
     @Override

@@ -47,11 +47,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public LongSupplier getCopyIDSupplier() {
-        return conf.getCopyIDSupplier();
-    }
-
-    @Override
     public boolean attachPartitionCopy() {
         return false;
     }
@@ -159,6 +154,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public CharSequence getConfRoot() {
         return conf.getConfRoot();
+    }
+
+    @Override
+    public LongSupplier getCopyIDSupplier() {
+        return conf.getCopyIDSupplier();
     }
 
     @Override
@@ -317,11 +317,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LastPartitionMaxSplits() {
-        return conf.getO3LastPartitionMaxSplits();
-    }
-
-    @Override
     public int getMaxSwapFileCount() {
         return conf.getMaxSwapFileCount();
     }
@@ -379,6 +374,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3LagCalculationWindowsSize() {
         return conf.getO3LagCalculationWindowsSize();
+    }
+
+    @Override
+    public int getO3LastPartitionMaxSplits() {
+        return conf.getO3LastPartitionMaxSplits();
     }
 
     @Override
@@ -454,6 +454,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return conf.getQueryCacheEventQueueCapacity();
+    }
+
+    @Override
+    public int getQueryPermissionsPoolCapacity() {
+        return conf.getQueryPermissionsPoolCapacity();
     }
 
     @Override
@@ -779,6 +784,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public CharSequence getSystemTableNamePrefix() {
         return conf.getSystemTableNamePrefix();
+    }
+
+    @Override
+    public int getTablePermissionsPoolCapacity() {
+        return conf.getTablePermissionsPoolCapacity();
     }
 
     @Override
