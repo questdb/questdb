@@ -1646,20 +1646,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     } else {
                         // Needs deduplication only
-                        timestampAddr = walTimestampColumn.addressOf(0);
+                        timestampAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
                     }
 
                     if (needsDedup) {
                         o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        assert symbolRemapped || walLagRowCount == 0;
-                        long deduplicatedRowCount = deduplicateSortedIndex(totalUncommitted, timestampAddr, o3TimestampMem.getAddress(), o3TimestampMemCpy.addressOf(0), walLagRowCount);
                         o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        needsDedup = deduplicatedRowCount < totalUncommitted;
-                        totalUncommitted = deduplicatedRowCount;
+                        assert symbolRemapped || walLagRowCount == 0;
+                        long dedupTimestampAddr = o3TimestampMem.getAddress();
+                        long deduplicatedRowCount = deduplicateSortedIndex(
+                                totalUncommitted,
+                                timestampAddr,
+                                dedupTimestampAddr,
+                                o3TimestampMemCpy.addressOf(0),
+                                walLagRowCount,
+                                symbolRemapped ? rowLo : 0
+                        );
+                        if (deduplicatedRowCount < totalUncommitted) {
+                            needsOrdering = true;
+                            timestampAddr = dedupTimestampAddr;
+                            totalUncommitted = deduplicatedRowCount;
+                        }
                     }
                 }
 
-                if (needsOrdering || needsDedup) {
+                if (needsOrdering) {
                     if (!symbolRemapped) {
                         o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
                     }
@@ -1673,7 +1684,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Columns = o3MemColumns;
                     copiedToMemory = true;
                 } else {
-                    // There are no duplicates in the incoming data
+                    // There are no duplicates in the incoming data and the data is sorted
+                    assert !symbolRemapped;
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
                     timestampAddr = walTimestampColumn.addressOf(0);
                     copiedToMemory = false;
@@ -3403,7 +3415,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return identical;
     }
 
-    private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows) {
+    private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows, long symbolRemapCorrection) {
         LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
@@ -3418,14 +3430,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long mapSize = lagRows << shl;
 
                         // Map column buffers for lag rows for deduplication
-                        long lagAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, mapSize, false) : 0L;
+                        long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, mapSize, false) : 0L;
+                        MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
+                        long mappedKeyAddr = o3Column.addressOf(0);
+                        if (ColumnType.isSymbol(columnType) && o3Column instanceof MemoryCARW) {
+                            // Symbols are remapped with 0 offset
+                            // while the values are referenced with roLo in the timestamp index
+                            mappedKeyAddr -= symbolRemapCorrection << shl;
+                        }
+                        assert mappedKeyAddr != 0;
 
                         dedupColumnCommitAddresses.setArrayValues(
                                 dedupCommitAddr,
                                 dedupKeyIndex++,
-                                Math.abs(lagAddr),
-                                o3Columns.get(getPrimaryColumnIndex(i)).addressOf(0),
-                                lagAddr,
+                                mappedKeyAddr,
+                                Math.abs(lagKeyAddr),
+                                lagKeyAddr,
                                 lagMemOffset,
                                 mapSize
                         );
@@ -3439,17 +3459,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     tempIndexAddr,
                     dedupKeyIndex,
                     dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 0) : 0L,
-                    dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 1) : 0L
+                    dedupColumnCommitAddresses != null && lagRows > 0 ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 1) : 0L
             );
         } finally {
             if (dedupColumnCommitAddresses != null) {
-                // Release mapped column buffers for lag rows
-                for (int i = 0; i < dedupKeyIndex; i++) {
-                    long lagAddr = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 2, i);
-                    long lagMemOffset = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 3, i);
-                    long mapSize = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 4, i);
+                if (lagRows > 0) {
+                    // Release mapped column buffers for lag rows
+                    for (int i = 0; i < dedupKeyIndex; i++) {
+                        long lagAddr = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 2, i);
+                        long lagMemOffset = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 3, i);
+                        long mapSize = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 4, i);
 
-                    mapAppendColumnBufferRelease(lagAddr, lagMemOffset, mapSize);
+                        mapAppendColumnBufferRelease(lagAddr, lagMemOffset, mapSize);
+                    }
                 }
                 dedupColumnCommitAddresses.clear();
             }
@@ -4451,22 +4473,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
             final MemoryMA lagMem = columns.getQuick(primaryColumnIndex);
             final MemoryCR mappedMem = o3Columns.getQuick(primaryColumnIndex);
-            if (ColumnType.isSymbol(columnType) && mappedMem instanceof MemoryCARW) {
-                // If symbol column is in memory buffer it means that it was re-mapped
-                // and the offset it 0.
-                mappedRowLo = 0;
-            }
             final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
 
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
-            long src1 = mappedMem.addressOf(mappedRowLo << shl);
+            final long srcMapped;
+            if (ColumnType.isSymbol(columnType) && mappedMem instanceof MemoryCARW) {
+                // If symbol column is in memory buffer it means that it was re-mapped
+                // and the offset it 0.
+                srcMapped = mappedMem.addressOf(0) - (mappedRowLo << shl);
+            } else {
+                srcMapped = mappedMem.addressOf(0);
+            }
             long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
-                long src2 = Math.abs(lagAddr);
+                long srcLag = Math.abs(lagAddr);
                 final long dest = destMem.addressOf(0);
-                if (src2 == 0 && lagRows != 0) {
+                if (srcLag == 0 && lagRows != 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, lag rows are missing [table").put(tableToken.getTableName())
                             .put(", columnName=").put(metadata.getColumnName(columnIndex))
@@ -4474,7 +4498,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(", lagRows=").put(lagRows)
                             .put(']');
                 }
-                if (src1 == 0) {
+                if (srcMapped == 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, rows are missing [table").put(tableToken.getTableName())
                             .put(", columnName=").put(metadata.getColumnName(columnIndex))
@@ -4491,22 +4515,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 switch (shl) {
                     case 0:
-                        Vect.mergeShuffle8Bit(src1, src2, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle8Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 1:
-                        Vect.mergeShuffle16Bit(src1, src2, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle16Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 2:
-                        Vect.mergeShuffle32Bit(src1, src2, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle32Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 3:
-                        Vect.mergeShuffle64Bit(src1, src2, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle64Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 4:
-                        Vect.mergeShuffle128Bit(src1, src2, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle128Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 5:
-                        Vect.mergeShuffle256Bit(src1, src2, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle256Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     default:
                         assert false : "col type is unsupported";
@@ -4594,8 +4618,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long src1DataSize = src1DataHi - src1DataLo;
             assert src1Data.size() >= src1DataSize;
 
-            final long src1DataAddr = src1Data.addressOf(src1DataLo) - src1DataLo;
-            final long src1IndxAddr = src1Index.addressOf(mappedRowLo << 3);
+            final long srcMappedDataAddr = src1Data.addressOf(src1DataLo) - src1DataLo;
+            final long srcMappedIndxAddr = src1Index.addressOf(0);
 
             final long lagIndxOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << 3;
             final long lagIndxSize = (lagRows + 1) << 3;
@@ -4623,10 +4647,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         Vect.oooMergeCopyStrColumn(
                                 mergedTimestampAddress,
                                 mergeCount,
-                                src1IndxAddr,
-                                src1DataAddr,
                                 lagIndxAddr,
                                 lagDataAddr,
+                                srcMappedIndxAddr,
+                                srcMappedDataAddr,
                                 destIndxAddr,
                                 destDataAddr,
                                 0L
@@ -4635,10 +4659,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         Vect.oooMergeCopyBinColumn(
                                 mergedTimestampAddress,
                                 mergeCount,
-                                src1IndxAddr,
-                                src1DataAddr,
                                 lagIndxAddr,
                                 lagDataAddr,
+                                srcMappedIndxAddr,
+                                srcMappedDataAddr,
                                 destIndxAddr,
                                 destDataAddr,
                                 0L

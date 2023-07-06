@@ -117,35 +117,6 @@ public class VectTest {
     }
 
     @Test
-    public void testDedupSorted() {
-        int indexLen = 10;
-        try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
-            for (int i = 0; i < indexLen * 2; i += 2) {
-                index.add((i / 4 + 1) * 10L);
-                index.add(0);
-            }
-            index.add(55);
-            index.add(0);
-
-            Assert.assertEquals(
-                    "{10, 0, 10, 0, 20, 0, 20, 0, 30, 0, 30, 0, 40, 0, 40, 0, 50, 0, 50, 0, 55, 0}",
-                    index.toString()
-            );
-
-            long dedupCount = Vect.dedupSortedTimestampIndexRebaseChecked(
-                    index.getAddress(),
-                    indexLen + 1,
-                    index.getAddress()
-            );
-            index.setPos(dedupCount * 2);
-            Assert.assertEquals(
-                    "10 1:s, 20 3:s, 30 5:s, 40 7:s, 50 9:s, 55 10:s",
-                    printMergeIndex(index)
-            );
-        }
-    }
-
-    @Test
     public void testDedupWithKey() {
         Rnd rnd = TestUtils.generateRandom(null);
         int indexLen = rnd.nextInt(100_000);

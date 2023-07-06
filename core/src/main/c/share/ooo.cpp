@@ -62,9 +62,6 @@ struct long_3x {
     }
 };
 
-bool key_equals(const int64_t count, int64_t i, const int32_t **pInt, const int64_t *pInt1, int64_t pos,
-                const int32_t **pInt2);
-
 #define RADIX_SHUFFLE 0
 
 #if RADIX_SHUFFLE == 0
@@ -88,15 +85,14 @@ inline void radix_shuffle_ab(uint64_t *counts, const uint64_t *srcA, const uint6
     for (uint64_t x = 0; x < sizeA; x++) {
         const auto digit = (srcA[x] >> sh) & 0xffu;
         dest[counts[digit]].ts = srcA[x];
-        dest[counts[digit]].i = x;
+        dest[counts[digit]].i = x | (1ull << 63);
         counts[digit]++;
         MM_PREFETCH_T2(srcA + x + 64);
     }
 
     for (uint64_t x = 0; x < sizeB; x++) {
         const auto digit = (srcB[x] >> sh) & 0xffu;
-        dest[counts[digit]].ts = srcB[x].ts;
-        dest[counts[digit]].i = x | (1ull << 63);
+        dest[counts[digit]] = srcB[x];
         counts[digit]++;
         MM_PREFETCH_T2(srcB + x + 64);
     }

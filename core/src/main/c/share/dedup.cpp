@@ -11,10 +11,10 @@
 
 
 inline index_t *
-merge_sort(const index_t *src, index_t *dest1, index_t *dest2, int64_t start, int64_t end, const int32_t **keys,
-           int32_t key_count);
+merge_sort(const index_t *src, index_t *dest1, index_t *dest2, int64_t start, int64_t end, const int32_t **keys1,
+           const int32_t **keys2, int32_t key_count);
 
-inline int diff(const int32_t **pInt, int32_t key_count, uint64_t left, uint64_t right);
+inline int diff(const int32_t **keys1, const int32_t **keys2, int32_t key_count, uint64_t left, uint64_t right);
 
 inline bool key_equals(
         const int64_t count,
@@ -42,41 +42,34 @@ int64_t merge_dedup_long_index_int_keys(
         const index_t *index,
         const int64_t index_lo,
         const int64_t index_hi_incl,
-        index_t *dest_start,
-        const int64_t dedupKeyCount,
-        const int32_t **dedupSrc,
-        const int64_t *dedupSrcTops,
-        const int32_t **dedupIndex
+        index_t *dest_index,
+        const int64_t dedup_key_count,
+        const int32_t **dedup_key_src_data,
+        const int64_t *dedup_key_src_tops,
+        const int32_t **dedup_index_data
 ) {
     int64_t src_pos = src_lo;
     int64_t index_pos = index_lo;
-    index_t *dest = dest_start;
-
-    uint64_t src_ts;
-    uint64_t index_ts;
+    index_t *dest = dest_index;
 
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
-        src_ts = src[src_pos];
-        index_ts = (int64_t) index[index_pos].ts;
-
-        if (src_ts < index_ts) {
-            dest[0].ts = src_ts;
+        if (src[src_pos] < index[index_pos].ts) {
+            dest[0].ts = src[src_pos];
             dest[0].i = src_pos | (1ull << 63);
             dest++;
             src_pos++;
-        } else if (src_ts > index_ts) {
-            dest[0].ts = index_ts;
-            dest[0].i = index_pos;
+        } else if (src[src_pos] > index[index_pos].ts) {
+            *dest = index[index_pos];
             dest++;
             index_pos++;
         } else {
             // index_ts == src_ts
-            const uint64_t conflict_ts = src_ts;
+            const uint64_t conflict_ts = src[src_pos];
             const int64_t conflict_src_pos = src_pos;
             index_t *conflict_dest_start = dest;
 
             // copy all src records with the same ts
-            while (src[src_pos] == conflict_ts) {
+            while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
                 dest[0].ts = conflict_ts;
                 dest[0].i = src_pos | (1ull << 63);
                 dest++;
@@ -84,18 +77,18 @@ int64_t merge_dedup_long_index_int_keys(
             }
 
             // overwrite them with dest if key match
-            while (index[index_pos].ts == conflict_ts) {
+            while (index_pos <= index_hi_incl && index[index_pos].ts == conflict_ts) {
                 bool matched = false;
                 for (int64_t i = conflict_src_pos; i < src_pos; i++) {
-                    if (key_equals(dedupKeyCount, i, dedupSrc, dedupSrcTops, index_pos, dedupIndex)) {
-                        conflict_dest_start[i - conflict_src_pos].i = index_pos;
+                    if (key_equals(dedup_key_count, i, dedup_key_src_data,
+                                   dedup_key_src_tops, index[index_pos].i, dedup_index_data)) {
+                        conflict_dest_start[i - conflict_src_pos].i = index[index_pos].i;
                         matched = true;
                         // keep looking, there can be more than 1 match
                     }
                 }
                 if (!matched) {
-                    dest[0].ts = conflict_ts;
-                    dest[0].i = index_pos;
+                    dest[0] = index[index_pos];
                     dest++;
                 }
                 index_pos++;
@@ -103,12 +96,15 @@ int64_t merge_dedup_long_index_int_keys(
         }
     }
 
-    while (index_pos <= index_hi_incl) {
-        dest[0].ts = index[index_pos].ts;
-        dest[0].i = (index_pos - 1);
-        dest++;
-        index_pos++;
+    if (index_pos <= index_hi_incl) {
+        __MEMCPY(dest, &index[index_pos], index_hi_incl - index_pos + 1);
     }
+//    while (index_pos <= index_hi_incl) {
+//        dest[0].ts = index[index_pos].ts;
+//        dest[0].i = (index_pos - 1);
+//        dest++;
+//        index_pos++;
+//    }
 
     while (src_pos <= src_hi_incl) {
         dest[0].ts = src[src_pos];
@@ -117,7 +113,7 @@ int64_t merge_dedup_long_index_int_keys(
         src_pos++;
     }
 
-    return dest - dest_start;
+    return dest - dest_index;
 }
 
 inline int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
@@ -182,14 +178,25 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
 
     // dedup range from dup_start to dup_end.
     // sort the data first by ts and keys using stable merge sort.
-    const index_t *merge_result = merge_sort(index_src, index_dest, index_tmp, dup_start, dup_end, key_values1, key_count);
+    const index_t *merge_result = merge_sort(index_src, index_dest, index_tmp, dup_start, dup_end, key_values1,
+                                             key_values2, key_count);
 
     int64_t copy_to = dup_start;
     int64_t last = dup_start;
 
+    const int32_t ** keys[] = {key_values1, key_values2};
     for (int64_t i = dup_start + 1; i < dup_end; i++) {
+        uint64_t l = merge_result[last].i;
+        uint64_t r = merge_result[i].i;
         if (merge_result[i].ts > merge_result[last].ts ||
-            !key_equals(key_count, merge_result[last].i, key_values1, nullptr, merge_result[i].i, key_values1)) {
+            !diff(
+                    keys[l & (1ull << 63)],
+                    keys[r & (1ull << 63)],
+                    key_count,
+                    l & ~(1ull << 63),
+                    r & ~(1ull << 63)
+                    ) == 0l
+        ) {
             index_dest[copy_to++] = merge_result[i - 1];
             last = i;
         } else {
@@ -217,7 +224,7 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
 }
 
 inline void merge_sort_slice(
-        const int32_t **keys,
+        const int32_t **keys[],
         const int32_t &key_count,
         const index_t *src1,
         const index_t *src2,
@@ -236,7 +243,17 @@ inline void merge_sort_slice(
             *dest++ = src1[i1++];
         } else {
             // same timestamp
-            if (diff(keys, key_count, src1[i1].i, src2[i2].i) > 0) {
+            uint64_t l = src1[i1].i;
+            uint64_t r = src2[i2].i;
+            if (
+                    diff(
+                            keys[l & (1ull << 63)],
+                            keys[r & (1ull << 63)],
+                            key_count,
+                            l & ~(1ull << 63),
+                            r & ~(1ull << 63)
+                    ) > 0
+            ) {
                 *dest++ = src2[i2++];
             } else {
                 *dest++ = src1[i1++];
@@ -253,9 +270,10 @@ inline void merge_sort_slice(
     }
 }
 
-int32_t diff(const int32_t **keys, const int32_t key_count, uint64_t left, uint64_t right) {
+inline int32_t
+diff(const int32_t **keys1, const int32_t **keys2, const int32_t key_count, uint64_t left, uint64_t right) {
     for (int k = 0; k < key_count; k++) {
-        int32_t diff = keys[k][left] - keys[k][right];
+        int32_t diff = keys1[k][left] - keys2[k][right];
         if (diff != 0) {
             return diff;
         }
@@ -269,10 +287,12 @@ inline index_t *merge_sort(
         index_t *index_dest2,
         int64_t start,
         int64_t end,
-        const int32_t **keys,
+        const int32_t **keys1,
+        const int32_t **keys2,
         const int32_t key_count
 ) {
-    index_t * const dest_arr[] = {index_dest2, index_dest1};
+    index_t *const dest_arr[] = {index_dest2, index_dest1};
+    const int32_t **keys[] = {keys1, keys2};
     const index_t *source = index_src;
     index_t *dest;
     const int64_t len = end - start;
@@ -294,7 +314,7 @@ inline index_t *merge_sort(
                     &dest[end]
             );
         }
-        source = dest_arr[cycle++ % 2];
+        source = dest_arr[cycle++ % 2]; // rotate source and destination
         slice_len = twice_slice;
     } while (slice_len < len);
 
@@ -365,25 +385,25 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
         JAVA_STATIC,
-        jlong pSrc,
-        jlong srcLo,
-        jlong srcHiInclusive,
-        jlong pIndex,
-        jlong indexLo,
-        jlong indexHiInclusive,
-        jlong pDestIndex,
+        jlong srcTimestampAddr,
+        jlong mergeDataLo,
+        jlong mergeDataHi,
+        jlong sortedTimestampsAddr,
+        jlong mergeOOOLo,
+        jlong mergeOOOHi,
+        jlong tempIndexAddr,
         jint dedupKeyCount,
         jlong dedupColBuffs,
         jlong dedupColTops,
         jlong dedupO3Buffs) {
     int64_t merge_count = merge_dedup_long_index_int_keys(
-            reinterpret_cast<uint64_t *> (pSrc),
-            __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive),
-            reinterpret_cast<index_t *> (pIndex),
-            __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive),
-            reinterpret_cast<index_t *> (pDestIndex),
+            reinterpret_cast<uint64_t *> (srcTimestampAddr),
+            __JLONG_REINTERPRET_CAST__(int64_t, mergeDataLo),
+            __JLONG_REINTERPRET_CAST__(int64_t, mergeDataHi),
+            reinterpret_cast<index_t *> (sortedTimestampsAddr),
+            __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOLo),
+            __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOHi),
+            reinterpret_cast<index_t *> (tempIndexAddr),
             dedupKeyCount,
             reinterpret_cast<const int32_t **> (dedupColBuffs),
             reinterpret_cast<const int64_t *> (dedupColTops),
@@ -420,37 +440,6 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                 reinterpret_cast<const int32_t **> (dedupColBuffs2)
         );
     }
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_dedupSortedTimestampIndexRebase(
-        JAVA_STATIC,
-        jlong pIndexIn,
-        jlong jcount,
-        jlong pIndexOut
-) {
-    auto index_in = reinterpret_cast<const index_t *> (pIndexIn);
-    auto count = __JLONG_REINTERPRET_CAST__(int64_t, jcount);
-    auto index_out = reinterpret_cast<index_t *> (pIndexOut);
-
-    if (count > 0) {
-        int64_t copyTo = 0;
-        uint64_t lastTimestamp = index_in[0].ts;
-        for (int64_t i = 1; i < count; i++) {
-            if (index_in[i].ts > lastTimestamp) {
-                index_out[copyTo].ts = index_in[i - 1].ts;
-                index_out[copyTo].i = (i - 1) | (1ull << 63);
-                copyTo++;
-                lastTimestamp = index_in[i].ts;
-            } else if (index_in[i].ts < lastTimestamp) {
-                return -i - 1;
-            }
-        }
-        index_out[copyTo].ts = index_in[count - 1].ts;
-        index_out[copyTo].i = (count - 1) | (1ull << 63);
-        return copyTo + 1;
-    }
-    return 0;
 }
 
 } // extern C

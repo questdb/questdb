@@ -102,14 +102,6 @@ public final class Vect {
         return dedupCount;
     }
 
-    public static native long dedupSortedTimestampIndexRebase(long inIndexAddr, long count, long outIndexAddr);
-
-    public static long dedupSortedTimestampIndexRebaseChecked(long inIndexAddr, long count, long outIndexAddr) {
-        long dedupCount = dedupSortedTimestampIndexRebase(inIndexAddr, count, outIndexAddr);
-        assert dedupCount >= 0 : "unsorted data passed to deduplication";
-        return dedupCount;
-    }
-
     public static native void flattenIndex(long pIndex, long count);
 
     public static native long getPerformanceCounter(int index);

@@ -101,8 +101,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
-
-            Rnd rnd = generateRandom(LOG, 406014657512000L, 1688561036327L);
+            Rnd rnd = generateRandom(LOG);
 
             String tableName = testName.getMethodName();
             compile(
@@ -124,7 +123,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String[] initialSymbols = symbols.length == 1
                     ? symbols
                     : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
-            
+
             transactions.add(
                     generateInsertsTransactions(
                             1,
@@ -145,7 +144,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
             long delta = Timestamps.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
-            int rowsWithSameTimestamp = 1;// 1 + rnd.nextInt(2);
+            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
             transactions.add(
                     generateInsertsTransactions(
                             2,

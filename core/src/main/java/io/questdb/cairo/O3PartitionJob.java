@@ -313,12 +313,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             //          +-----+
 
                             branch = 3;
+                            // When deduplication is enabled, take in to the merge
+                            // all OOO rows that are equal to the last row in the data
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
                                     dataTimestampHi,
                                     srcOooLo,
                                     srcOooHi,
-                                    BinarySearch.SCAN_UP
+                                    tableWriter.isDeduplicationEnabled() ? BinarySearch.SCAN_DOWN : BinarySearch.SCAN_UP
                             );
 
                             mergeDataHi = srcDataMax - 1;
@@ -780,7 +782,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         int fd = TableUtils.openRO(ff, tableRootPath.$(), LOG);
                         dedupCommitAddresses.setOpenFd(dedupColSinkAddr, dedupColumnIndex, fd);
 
-                        long mapSize = mergeDataHi + 1 - columnTop;
+                        long mapSize = (mergeDataHi + 1 - columnTop) * columnSize;
                         long mappedAddress = TableUtils.mapAppendColumnBuffer(
                                 ff,
                                 fd,
@@ -798,7 +800,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         dedupCommitAddresses.setColumnMapAddress(dedupColSinkAddr, dedupColumnIndex, 0);
                         dedupCommitAddresses.setColumnMapSize(dedupColSinkAddr, dedupColumnIndex, 0);
                     }
-                    dedupCommitAddresses.setOooColumnMapAddress(dedupColSinkAddr, dedupColumnIndex, oooColumns.get(getPrimaryColumnIndex(i)).getPageAddress(0));
+                    long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                    dedupCommitAddresses.setOooColumnMapAddress(dedupColSinkAddr, dedupColumnIndex, oooColAddress);
                     dedupColumnIndex++;
                 }
             }
@@ -1154,7 +1157,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 try {
                     final long dedupRows = getDedupRows(
-                            partitionTimestamp,
+                            oldPartitionTimestamp,
                             srcDataTxn,
                             srcTimestampAddr,
                             mergeDataLo,
