@@ -171,16 +171,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
             int initialDuplicates = 2 + rnd.nextInt(5);
-            transactions.add(
-                    generateInsertsTransactions(
-                            1,
-                            "2020-02-24T04:30",
-                            initialDelta,
-                            initialCount,
-                            initialDuplicates,
-                            null,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    "2020-02-24T04:30",
+                    initialDelta,
+                    initialCount,
+                    initialDuplicates,
+                    null,
+                    rnd
             );
             applyWal(transactions, tableName, 1, rnd);
             compile("alter table " + tableName + " dedup upsert keys(ts)");
@@ -194,16 +193,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
-            transactions.add(
-                    generateInsertsTransactions(
-                            2,
-                            from,
-                            delta,
-                            count,
-                            rowsWithSameTimestamp,
-                            null,
-                            rnd
-                    )
+            generateInsertsTransactions(
+                    transactions,
+                    2,
+                    from,
+                    delta,
+                    count,
+                    rowsWithSameTimestamp,
+                    null,
+                    rnd
             );
 
             applyWal(transactions, tableName, 1, rnd);
