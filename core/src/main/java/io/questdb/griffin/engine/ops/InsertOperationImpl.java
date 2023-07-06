@@ -112,7 +112,10 @@ public class InsertOperationImpl implements InsertOperation {
         if (columnNameList.size() == 0) {
             columnNames = EMPTY_COLUMN_LIST;
         } else {
-            columnNames = new ObjList<>(columnNameList);
+            columnNames = new ObjList<>();
+            for (int i = 0, n = columnNameList.size(); i < n; i++) {
+                columnNames.add(Chars.toString(columnNameList.getQuick(i)));
+            }
         }
     }
 
