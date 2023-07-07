@@ -297,9 +297,11 @@ io.questdb.griffin.engine.functions.cast.CastIntToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToBooleanFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastIntToIPv4FunctionFactory
 
 # cast ipv4 to...
 io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastIPv4ToIntFunctionFactory
 
 # cast long to ...
 io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory
@@ -409,6 +411,7 @@ io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory
 
 # cast str to ...
 io.questdb.griffin.engine.functions.cast.CastStrToIntFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastStrToIPv4FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastCharToBooleanFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToBooleanFunctionFactory

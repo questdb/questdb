@@ -22,53 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.rnd;
+package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+public class CastIPv4ToIntFunctionFactory implements FunctionFactory {
 
-public class RndIPv4FunctionFactory implements FunctionFactory {
-    private static final String SIGNATURE = "rnd_ipv4()";
     @Override
-    public String getSignature() {
-        return SIGNATURE;
-    }
+    public String getSignature() { return "cast(Xi)"; }
+
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction();
+        return new CastIPv4ToIntFunction(args.getQuick(0));
     }
 
-    private static class RndFunction extends IPv4Function implements Function {
+    private static class CastIPv4ToIntFunction extends AbstractCastToIntFunction {
 
-        private Rnd rnd;
+        public CastIPv4ToIntFunction(Function arg) { super(arg); }
 
         @Override
         public int getInt(Record rec) {
-            return rnd.nextInt();
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
+            return arg.getInt(rec);
         }
     }
 }

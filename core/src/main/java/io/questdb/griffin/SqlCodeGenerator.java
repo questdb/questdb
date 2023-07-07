@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -932,9 +932,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new IntColumn(i));
                                 break;
-                            case ColumnType.IPv4:
-                                castFunctions.add(new IPv4Column(i));
-                                break;
                             // wider types are not possible here
                             // INT will be cast to wider types, not other way around
                             // Wider types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
@@ -943,21 +940,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     case ColumnType.IPv4:
                         switch (fromTag) {
-                            case ColumnType.BYTE:
-                                castFunctions.add(new ByteColumn(i));
-                                break;
-                            case ColumnType.SHORT:
-                                castFunctions.add(new ShortColumn(i));
-                                break;
-                            case ColumnType.INT:
-                                castFunctions.add(new IntColumn(i));
-                                break;
                             case ColumnType.IPv4:
                                 castFunctions.add(new IPv4Column(i));
                                 break;
                             case ColumnType.STRING:
                                 castFunctions.add(new StrColumn(i));
-                                break;
                         }
                         break;
                     case ColumnType.LONG:

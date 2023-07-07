@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -123,6 +123,66 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "35.86.82.23\n" +
                 "111.98.117.250\n" +
                 "205.123.179.216\n" );
+    }
+
+    @Test
+    public void testExplicitCastStrToIPv4Null() throws Exception {
+        assertSql("select rnd_str()::ipv4 from long_sequence(10)","cast\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" +
+                "0.0.0.0\n" );
+    }
+
+    @Test
+    public void testExplicitCastStrToIPv4() throws Exception {
+        assertSql("select rnd_ipv4()::string::ipv4 from long_sequence(10)","cast\n" +
+                "187.139.150.80\n" +
+                "18.206.96.238\n" +
+                "92.80.211.65\n" +
+                "212.159.205.29\n" +
+                "4.98.173.21\n" +
+                "199.122.166.85\n" +
+                "79.15.250.138\n" +
+                "35.86.82.23\n" +
+                "111.98.117.250\n" +
+                "205.123.179.216\n" );
+    }
+
+    @Test
+    public void testExplicitCastIntToIPv4() throws Exception {
+        assertSql("select rnd_int()::ipv4 from long_sequence(10)","cast\n" +
+                "187.139.150.80\n" +
+                "18.206.96.238\n" +
+                "92.80.211.65\n" +
+                "212.159.205.29\n" +
+                "4.98.173.21\n" +
+                "199.122.166.85\n" +
+                "79.15.250.138\n" +
+                "35.86.82.23\n" +
+                "111.98.117.250\n" +
+                "205.123.179.216\n" );
+    }
+
+    @Test
+    public void testExplicitCastIPv4ToInt() throws Exception {
+        assertSql("select rnd_ipv4()::int from long_sequence(10)","cast\n" +
+                "-1148479920\n" +
+                "315515118\n" +
+                "1548800833\n" +
+                "-727724771\n" +
+                "73575701\n" +
+                "-948263339\n" +
+                "1326447242\n" +
+                "592859671\n" +
+                "1868723706\n" +
+                "-847531048\n" );
     }
 
     @Test

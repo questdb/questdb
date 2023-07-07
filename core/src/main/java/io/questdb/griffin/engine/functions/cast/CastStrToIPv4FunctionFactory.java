@@ -22,53 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.rnd;
+package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+public class CastStrToIPv4FunctionFactory implements FunctionFactory {
 
-public class RndIPv4FunctionFactory implements FunctionFactory {
-    private static final String SIGNATURE = "rnd_ipv4()";
     @Override
-    public String getSignature() {
-        return SIGNATURE;
-    }
+    public String getSignature() { return "cast(Sx)"; }
+
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction();
+        return new CastStrToIPv4Function(args.getQuick(0));
     }
 
-    private static class RndFunction extends IPv4Function implements Function {
-
-        private Rnd rnd;
-
-        @Override
-        public int getInt(Record rec) {
-            return rnd.nextInt();
-        }
+    private static class CastStrToIPv4Function extends AbstractCastToIPv4Function {
+        public CastStrToIPv4Function(Function arg) { super(arg); }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
-        }
+        public int getInt(Record rec) { return Numbers.parseIPv4Quiet(arg.getStr(rec)); }
     }
 }

@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,7 +26,7 @@ package io.questdb.std;
 
 // @formatter:off
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
@@ -920,27 +920,43 @@ public final class Numbers {
     }
 
     public static int parseIPv4(CharSequence sequence) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
-    public static void intToIPv4Sink(CharSink sink, int value) {
-        final int i = value;
-
-        if (i == Integer.MIN_VALUE) {
-            sink.put("null");
-        } else {
-            append(sink, (i >> 24) & 0xff);
-            sink.put('.');
-            append(sink, (i >> 16) & 0xff);
-            sink.put('.');
-            append(sink, (i >> 8) & 0xff);
-            sink.put('.');
-            append(sink, i & 0xff);
+    public static int parseIPv4Quiet(CharSequence sequence)
+    {
+        try {
+            if (sequence == null || Chars.equals("NaN", sequence)) {
+                return 0;
+            }
+            return parseIPv4(sequence);
+        } catch (NumericException e) {
+            return 0;
         }
+    }
+
+    public static void intToIPv4Sink(CharSink sink, int value) {
+        if(sink instanceof HttpChunkedResponseSocket){
+            sink.put('"');
+            append(sink, (value >> 24) & 0xff);
+            sink.put('.');
+            append(sink, (value >> 16) & 0xff);
+            sink.put('.');
+            append(sink, (value >> 8) & 0xff);
+            sink.put('.');
+            append(sink, value & 0xff);
+            sink.put('"');
+            }
+
+        else {
+            append(sink, (value >> 24) & 0xff);
+            sink.put('.');
+            append(sink, (value >> 16) & 0xff);
+            sink.put('.');
+            append(sink, (value >> 8) & 0xff);
+            sink.put('.');
+            append(sink, value & 0xff);
+    }
     }
 
     public static long parseLong(CharSequence sequence) throws NumericException {
