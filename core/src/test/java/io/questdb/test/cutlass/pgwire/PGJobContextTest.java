@@ -1768,7 +1768,7 @@ if __name__ == "__main__":
                         connection.prepareStatement("drop table xyz").execute();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
+                        TestUtils.assertContains(e.getMessage(), "could not lock 'xyz'");
                         Assert.assertEquals("00000", e.getSQLState());
                     }
                 }
@@ -2380,13 +2380,17 @@ if __name__ == "__main__":
         skipOnWalRun(); // table not created
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
-                {"drop table", "ERROR: expected [if exists] table-name"},
-                {"drop doesnt", "ERROR: 'table' expected"},
-                {"drop", "ERROR: 'table' expected"},
-                {"drop table if doesnt", "ERROR: expected exists"},
-                {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
-                {"drop table if exists", "ERROR: table name expected"},
-                {"drop table if exists;", "ERROR: table name expected"},
+                {"drop table", "ERROR: expected IF EXISTS table-name"},
+                {"drop doesnt", "ERROR: expected TABLE table-name or ALL TABLES, found unexpected [token='doesnt']"},
+                {"drop", "ERROR: expected TABLE"},
+                {"drop table if doesnt", "ERROR: expected EXISTS"},
+                {"drop table exists doesnt", "ERROR: expected [;], found unexpected [token='doesnt']"},
+                {"drop table if exists", "ERROR: table-name expected"},
+                {"drop table if exists;", "ERROR: table-name expected"},
+                {"drop all table if exists;", "ERROR: expected TABLE table-name or ALL TABLES, found unexpected [token='table']"},
+                {"drop all tables if exists;", "ERROR: expected [;], found unexpected [token='if']"},
+                {"drop all ;", "ERROR: expected TABLE table-name or ALL TABLES"},
+                {"drop database ;", "ERROR: expected TABLE table-name or ALL TABLES"},
         };
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {

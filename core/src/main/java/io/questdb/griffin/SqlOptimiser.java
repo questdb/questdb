@@ -3375,7 +3375,8 @@ public class SqlOptimiser {
 
         ExpressionNode op = agg.rhs;
 
-        if (agg.type == FUNCTION &&
+        if (op != null &&
+                agg.type == FUNCTION &&
                 functionParser.getFunctionFactoryCache().isGroupBy(agg.token) &&
                 Chars.equalsIgnoreCase("sum", agg.token) &&
                 op.type == OPERATION) {
