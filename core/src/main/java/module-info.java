@@ -131,6 +131,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,

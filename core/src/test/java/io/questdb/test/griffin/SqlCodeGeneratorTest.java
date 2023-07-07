@@ -503,6 +503,117 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAggregateByIPv4() throws Exception {
+        assertQuery("ip\tsum\n" +
+                        "0.0.0.4\t11278\n" +
+                        "0.0.0.5\t10516\n" +
+                        "0.0.0.3\t12688\n" +
+                        "0.0.0.1\t9172\n" +
+                        "0.0.0.2\t6221\n",
+                "select ip, sum (bytes) from test",
+                "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1,5,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000) time" +
+                "  from long_sequence(100)" +
+                ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testLatestByIPv4() throws Exception {
+        assertQuery("ip\tbytes\ttime\n" +
+                        "0.0.0.2\t277\t1970-01-01T00:00:08.700000Z\n" +
+                        "0.0.0.4\t326\t1970-01-01T00:00:09.500000Z\n" +
+                        "0.0.0.5\t958\t1970-01-01T00:00:09.700000Z\n" +
+                        "0.0.0.3\t569\t1970-01-01T00:00:09.800000Z\n" +
+                        "0.0.0.1\t873\t1970-01-01T00:00:09.900000Z\n",
+                "select * from test latest by ip",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000) time" +
+                        "  from long_sequence(100)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testSampleByIPv4() throws Exception {
+        assertQuery("ip\tts\tsum\n" +
+                        "0.0.0.1\t1970-01-01T00:00:00.000000Z\t1142\n" +
+                        "0.0.0.2\t1970-01-01T00:00:00.000000Z\t1996\n" +
+                        "0.0.0.3\t1970-01-01T00:00:00.000000Z\t3868\n" +
+                        "0.0.0.4\t1970-01-01T00:00:00.000000Z\t7005\n" +
+                        "0.0.0.5\t1970-01-01T00:00:00.000000Z\t4619\n" +
+                        "0.0.0.1\t1970-01-01T01:00:00.000000Z\t6108\n" +
+                        "0.0.0.2\t1970-01-01T01:00:00.000000Z\t1342\n" +
+                        "0.0.0.3\t1970-01-01T01:00:00.000000Z\t6424\n" +
+                        "0.0.0.4\t1970-01-01T01:00:00.000000Z\t1234\n" +
+                        "0.0.0.5\t1970-01-01T01:00:00.000000Z\t2748\n" +
+                        "0.0.0.1\t1970-01-01T02:00:00.000000Z\t1922\n" +
+                        "0.0.0.2\t1970-01-01T02:00:00.000000Z\t2883\n" +
+                        "0.0.0.3\t1970-01-01T02:00:00.000000Z\t2396\n" +
+                        "0.0.0.4\t1970-01-01T02:00:00.000000Z\t3039\n" +
+                        "0.0.0.5\t1970-01-01T02:00:00.000000Z\t3149\n",
+                "select ip, ts, sum(bytes) from test sample by 1h order by ts, ip",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(100)" +
+                        ") timestamp(ts)",
+                "ts",
+                true,
+                false);
+    }
+
+    @Test
+    public void testWhereIPv4() throws Exception {
+        assertQuery("ip\tbytes\tk\n" +
+                        "0.0.0.1\t939\t1970-01-01T00:10:00.000000Z\n" +
+                        "0.0.0.1\t203\t1970-01-01T00:55:00.000000Z\n" +
+                        "0.0.0.1\t439\t1970-01-01T01:05:00.000000Z\n" +
+                        "0.0.0.1\t727\t1970-01-01T01:20:00.000000Z\n" +
+                        "0.0.0.1\t680\t1970-01-01T01:21:40.000000Z\n" +
+                        "0.0.0.1\t711\t1970-01-01T01:23:20.000000Z\n" +
+                        "0.0.0.1\t121\t1970-01-01T01:35:00.000000Z\n" +
+                        "0.0.0.1\t430\t1970-01-01T01:41:40.000000Z\n" +
+                        "0.0.0.1\t761\t1970-01-01T01:45:00.000000Z\n" +
+                        "0.0.0.1\t887\t1970-01-01T01:48:20.000000Z\n" +
+                        "0.0.0.1\t428\t1970-01-01T01:53:20.000000Z\n" +
+                        "0.0.0.1\t924\t1970-01-01T01:58:20.000000Z\n" +
+                        "0.0.0.1\t90\t1970-01-01T02:05:00.000000Z\n" +
+                        "0.0.0.1\t114\t1970-01-01T02:10:00.000000Z\n" +
+                        "0.0.0.1\t657\t1970-01-01T02:20:00.000000Z\n" +
+                        "0.0.0.1\t29\t1970-01-01T02:35:00.000000Z\n" +
+                        "0.0.0.1\t159\t1970-01-01T02:36:40.000000Z\n" +
+                        "0.0.0.1\t873\t1970-01-01T02:45:00.000000Z\n",
+                "select * from test where ip = '0.0.0.1'",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(100)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false);
+    }
+
+    @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
         assertQuery("col_k\ta\tk\tcol_k1\n" +
                         "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +
