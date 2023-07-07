@@ -296,7 +296,6 @@ public class SqlCompiler implements Closeable {
         return functionParser.getFunctionFactoryCache();
     }
 
-    @TestOnly
     public QueryBuilder query() {
         queryBuilder.clear();
         return queryBuilder;
@@ -3340,6 +3339,11 @@ public class SqlCompiler implements Closeable {
 
         public CompiledQuery compile(SqlExecutionContext executionContext) throws SqlException {
             return SqlCompiler.this.compile(sink, executionContext);
+        }
+
+        @Override
+        public String toString() {
+            return sink.toString();
         }
     }
 
