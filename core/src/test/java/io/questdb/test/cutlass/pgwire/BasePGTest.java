@@ -45,7 +45,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.mp.TestWorkerPool;
-import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
@@ -464,7 +463,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         };
     }
 
-    enum Mode {
     public enum Mode {
         SIMPLE("simple"),
         EXTENDED("extended"),
