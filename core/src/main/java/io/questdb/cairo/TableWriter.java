@@ -1701,7 +1701,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 walLagRowCount,
                                 symbolRemapped ? rowLo : 0
                         );
-                        if (deduplicatedRowCount < totalUncommitted) {
+                        if (deduplicatedRowCount < totalUncommitted || needsOrdering) {
                             needsOrdering = true;
                             timestampAddr = dedupTimestampAddr;
                             totalUncommitted = deduplicatedRowCount;

@@ -97,14 +97,15 @@ int64_t merge_dedup_long_index_int_keys(
     }
 
     if (index_pos <= index_hi_incl) {
-        __MEMCPY(dest, &index[index_pos], index_hi_incl - index_pos + 1);
-    }
-
-    while (src_pos <= src_hi_incl) {
-        dest[0].ts = src[src_pos];
-        dest[0].i = src_pos | (1ull << 63);
-        dest++;
-        src_pos++;
+        __MEMCPY(dest, &index[index_pos], (index_hi_incl - index_pos + 1) * sizeof(index_t));
+        dest += index_hi_incl - index_pos + 1;
+    } else {
+        while (src_pos <= src_hi_incl) {
+            dest[0].ts = src[src_pos];
+            dest[0].i = src_pos | (1ull << 63);
+            dest++;
+            src_pos++;
+        }
     }
 
     return dest - dest_index;
@@ -213,7 +214,6 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         assert(copy_to + 1 == dup_end && "sorting failed");
         // Duplicates not found
         return count;
-
     }
 }
 

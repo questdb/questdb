@@ -100,7 +100,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
-            Rnd rnd = generateRandom(LOG, 24539110263291L, 1688668398191L);
+            Rnd rnd = generateRandom(LOG);
 
             String tableName = testName.getMethodName();
             compile(
@@ -159,6 +159,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
+//            int index1 = findTimestampAndSymbol("2020-02-27T00:32:00.000000Z", "PO", transactions.get(0).operationList);
+//            int index2 = findTimestampAndSymbol("2020-02-27T00:32:00.000000Z", "PO", transactions.get(1).operationList);
             applyWal(transactions, tableName, 1, rnd);
 
             validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
@@ -356,6 +358,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
         }
         return result;
+    }
+
+    private int findTimestampAndSymbol(String s, String pd, ObjList<FuzzTransactionOperation> operationList) {
+        long ts = parseFloorPartialTimestamp(s);
+        for (int i = 0; i < operationList.size(); i++) {
+            FuzzStableInsertOperation op = (FuzzStableInsertOperation) operationList.getQuick(i);
+            if (op.getTimestamp() == ts && Chars.equals(op.getSymbol(), pd)) {
+                return i;
+            }
+        }
+        return -operationList.size() - 1;
     }
 
     private void generateInsertsTransactions(
