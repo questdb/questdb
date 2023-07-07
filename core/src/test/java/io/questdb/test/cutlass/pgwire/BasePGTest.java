@@ -45,6 +45,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
@@ -58,6 +59,16 @@ import static io.questdb.std.Numbers.hexDigits;
 public abstract class BasePGTest extends AbstractGriffinTest {
 
     protected CopyRequestJob copyRequestJob = null;
+
+    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs);
+    }
+
+    public static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        printToSink(sink, rs);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
