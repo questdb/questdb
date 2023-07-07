@@ -2381,16 +2381,16 @@ if __name__ == "__main__":
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
                 {"drop table", "ERROR: expected IF EXISTS table-name"},
-                {"drop doesnt", "ERROR: expected TABLE table-name or ALL TABLES, found unexpected [token='doesnt']"},
-                {"drop", "ERROR: expected TABLE"},
+                {"drop doesnt", "ERROR: 'table' expected"},
+                {"drop", "ERROR: 'table' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
-                {"drop table exists doesnt", "ERROR: expected [;], found unexpected [token='doesnt']"},
+                {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: expected TABLE table-name or ALL TABLES, found unexpected [token='table']"},
-                {"drop all tables if exists;", "ERROR: expected [;], found unexpected [token='if']"},
-                {"drop all ;", "ERROR: expected TABLE table-name or ALL TABLES"},
-                {"drop database ;", "ERROR: expected TABLE table-name or ALL TABLES"},
+                {"drop all table if exists;", "ERROR: 'table' expected"},
+                {"drop all tables if exists;", "ERROR: expected [;]"},
+                {"drop all ;", "ERROR: 'table' expected"},
+                {"drop database ;", "ERROR: 'table' expected"},
         };
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
