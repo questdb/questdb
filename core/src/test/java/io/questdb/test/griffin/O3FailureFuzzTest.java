@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -58,7 +57,6 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private final static AtomicInteger counter = new AtomicInteger(0);
     private final static AtomicBoolean failNextAllocOrOpen = new AtomicBoolean(false);
     private static final TestFilesFacadeImpl ffAllocateFailure = new TestFilesFacadeImpl() {
-
         @Override
         public boolean allocate(int fd, long size) {
             if (counter.decrementAndGet() == 0) {
@@ -77,7 +75,6 @@ public class O3FailureFuzzTest extends AbstractO3Test {
             return super.length(fd);
         }
     };
-
     private static final FilesFacade ffOpenFailure = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
