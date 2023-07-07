@@ -41,8 +41,7 @@ public class DropStatementTest extends AbstractGriffinTest {
     /* **
      * DROP can be followed by:
      * - TABLE name [;]
-     * - TABLES name(,name)* [;]
-     * - DATABASE [;]
+     * - ALL TABLES [;]
      */
 
     private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
