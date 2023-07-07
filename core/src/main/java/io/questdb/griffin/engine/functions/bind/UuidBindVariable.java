@@ -48,6 +48,11 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
         return value.getLo();
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
     void set(long lo, long hi) {
         value.of(lo, hi);
     }

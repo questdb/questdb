@@ -125,7 +125,7 @@ class LineTcpMeasurementEvent implements Closeable {
     void append() throws CommitFailedException {
         TableWriter.Row row = null;
         try {
-            TableWriterAPI writer = tableUpdateDetails.getWriter();
+            final TableWriterAPI writer = tableUpdateDetails.getWriter();
             long offset = buffer.getAddress();
             final long metadataVersion = buffer.readLong(offset);
             offset += Long.BYTES;
@@ -300,7 +300,8 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
-        this.tableUpdateDetails = tud;
+        tableUpdateDetails = tud;
+        securityContext.authorizeInsert(tud.getTableToken(), TableUpdateDetails.ALL_COLUMNS_AUTHORIZE_LIST);
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
