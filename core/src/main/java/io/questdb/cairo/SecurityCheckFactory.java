@@ -32,6 +32,9 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.str.CharSink;
 
+/**
+ * Factory responsible for re-authorizing user permissions on getCursor() call.
+ */
 public class SecurityCheckFactory implements RecordCursorFactory {
 
     final RecordCursorFactory base;
