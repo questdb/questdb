@@ -2724,9 +2724,9 @@ public class SqlCompiler implements Closeable {
     @SuppressWarnings({"unused"})
     protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
     }
 
     @SuppressWarnings({"unused"})
@@ -3281,8 +3281,9 @@ public class SqlCompiler implements Closeable {
                     }
                     return unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
                 }
+
                 // DROP ALL TABLES [;]
-                else if (SqlKeywords.isAllKeyword(tok)) {
+                if (SqlKeywords.isAllKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && SqlKeywords.isTablesKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer);

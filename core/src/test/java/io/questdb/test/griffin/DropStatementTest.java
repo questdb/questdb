@@ -41,6 +41,7 @@ public class DropStatementTest extends AbstractGriffinTest {
     /* **
      * DROP can be followed by:
      * - TABLE name [;]
+     * - TABLES name(,name)* [;]
      * - ALL TABLES [;]
      */
 
@@ -120,7 +121,7 @@ public class DropStatementTest extends AbstractGriffinTest {
                 compiler.compile("drop i_am_missing", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
             }
         });
     }

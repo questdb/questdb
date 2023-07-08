@@ -2377,22 +2377,20 @@ if __name__ == "__main__":
 
     @Test
     public void testDropTable() throws Exception {
-        skipOnWalRun(); // table not created
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
                 {"drop table", "ERROR: expected IF EXISTS table-name"},
-                {"drop doesnt", "ERROR: 'table' expected"},
-                {"drop", "ERROR: 'table' expected"},
+                {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
+                {"drop", "ERROR: 'table' or 'all tables' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
                 {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: 'table' expected"},
+                {"drop all table if exists;", "ERROR: 'table' or 'all tables' expected"},
                 {"drop all tables if exists;", "ERROR: expected [;]"},
-                {"drop all ;", "ERROR: 'table' expected"},
-                {"drop database ;", "ERROR: 'table' expected"},
+                {"drop all ;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
         };
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
                 String[] testData = sqlExpectedErrMsg[i];
