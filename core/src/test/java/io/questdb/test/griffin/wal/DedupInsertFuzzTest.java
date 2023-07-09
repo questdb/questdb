@@ -168,6 +168,94 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
+            Rnd rnd = generateRandom(LOG);
+
+            String tableName = testName.getMethodName();
+            compile(
+                    "create table " + tableName +
+                            " (ts timestamp, commit int) " +
+                            " timestamp(ts) partition by DAY WAL "
+                            + " DEDUP UPSERT KEYS(ts)"
+            );
+
+            ObjList<FuzzTransaction> transactions = new ObjList<>();
+            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+
+            int initialDuplicates = 1 + rnd.nextInt(1);
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    "2020-02-24T04:30",
+                    initialDelta,
+                    4 * 24 * 5,
+                    initialDuplicates,
+                    null,
+                    rnd
+            );
+
+            int transactionCount = 1 + rnd.nextInt(3);
+            splitTransactionInserts(transactions, transactionCount, rnd);
+            applyWal(transactions, tableName, 1, rnd);
+
+            compile("alter table " + tableName + " add column s symbol");
+            compile("alter table " + tableName + " dedup upsert keys(ts, s)");
+
+            int rndCount = rnd.nextInt(10);
+            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, 4, tableName)).distinct()
+                    .collect(Collectors.toList());
+            distinctSymbols.add(null);
+            String[] symbols = new String[distinctSymbols.size()];
+            distinctSymbols.toArray(symbols);
+            String[] initialSymbols = symbols.length == 1
+                    ? symbols
+                    : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
+
+            String fromTops = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + rnd.nextLong(4 * 24 * 5) * initialDelta);
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    fromTops,
+                    initialDelta,
+                    4 * 24 * 5,
+                    initialDuplicates,
+                    initialSymbols,
+                    rnd
+            );
+
+            transactionCount = 1 + rnd.nextInt(3);
+            splitTransactionInserts(transactions, transactionCount, rnd);
+            applyWal(transactions, tableName, 1, rnd);
+
+            transactions.clear();
+            long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
+                    rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
+            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            long delta = Timestamps.MINUTE_MICROS;
+            int count = rnd.nextInt(48) * 60;
+            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+            generateInsertsTransactions(
+                    transactions,
+                    2,
+                    from,
+                    delta,
+                    count,
+                    rowsWithSameTimestamp,
+                    symbols,
+                    rnd
+            );
+
+            transactionCount = 1 + rnd.nextInt(3);
+            splitTransactionInserts(transactions, transactionCount, rnd);
+            applyWal(transactions, tableName, 1, rnd);
+
+            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
+        });
+    }
+
+    @Test
     public void testDedupWithRandomShiftAndStepWithExistingDups() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -530,10 +618,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         boolean started = false;
         ObjIntHashMap<CharSequence> symbolSet = new ObjIntHashMap<>();
+        String nullSymbolValue = "nullSymbolValue_unlikely_to_be_generated_by_random";
         boolean[] foundSymbols = null;
         if (symbols != null) {
             for (int i = 0; i < symbols.length; i++) {
-                symbolSet.put(symbols[i], i);
+                if (symbols[i] != null) {
+                    symbolSet.put(symbols[i], i);
+                } else {
+                    symbolSet.put(nullSymbolValue, i);
+                }
             }
             foundSymbols = new boolean[symbols.length];
         }
@@ -567,6 +660,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                                 assertAllSymbolsSet(foundSymbols, symbols, lastTimestamp);
                             }
                             CharSequence sym = rec.getSym(2);
+                            if (sym == null) {
+                                sym = nullSymbolValue;
+                            }
                             int symbolIndex = symbolSet.get(sym);
                             if (foundSymbols[symbolIndex]) {
                                 Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp) + " for symbol '" + sym + "'");

@@ -771,19 +771,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final int columnSize = 4;
                     assert ColumnType.sizeOf(columnType) == columnSize;
 
-                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, 0);
-                    if (columnTop < mergeDataLo + 1) {
-                        dedupCommitAddresses.setColumnTop(dedupColSinkAddr, dedupColumnIndex, columnTop);
+                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                    final int fd;
+                    final long mapSize, mappedAddress;
 
+                    if (columnTop < mergeDataLo + 1) {
                         CharSequence columnName = metadata.getColumnName(i);
                         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
                         TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcDataTxn);
                         TableUtils.dFile(tableRootPath, columnName, columnNameTxn);
-                        int fd = TableUtils.openRO(ff, tableRootPath.$(), LOG);
-                        dedupCommitAddresses.setOpenFd(dedupColSinkAddr, dedupColumnIndex, fd);
+                        fd = TableUtils.openRO(ff, tableRootPath.$(), LOG);
 
-                        long mapSize = (mergeDataHi + 1 - columnTop) * columnSize;
-                        long mappedAddress = TableUtils.mapAppendColumnBuffer(
+                        mapSize = (mergeDataHi + 1 - columnTop) * columnSize;
+                        mappedAddress = TableUtils.mapAppendColumnBuffer(
                                 ff,
                                 fd,
                                 0,
@@ -791,17 +791,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 false,
                                 mapMemTag
                         );
-                        dedupCommitAddresses.setColumnMapAddress(dedupColSinkAddr, dedupColumnIndex, mappedAddress);
-                        dedupCommitAddresses.setColumnMapSize(dedupColSinkAddr, dedupColumnIndex, mapSize);
                     } else {
                         // column is all nulls because of column top
-                        dedupCommitAddresses.setColumnTop(dedupColSinkAddr, dedupColumnIndex, columnTop);
-                        dedupCommitAddresses.setOpenFd(dedupColSinkAddr, dedupColumnIndex, -1);
-                        dedupCommitAddresses.setColumnMapAddress(dedupColSinkAddr, dedupColumnIndex, 0);
-                        dedupCommitAddresses.setColumnMapSize(dedupColSinkAddr, dedupColumnIndex, 0);
+                        fd = -1;
+                        mapSize = 0;
+                        mappedAddress = 0;
                     }
+
                     long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                    dedupCommitAddresses.setOooColumnMapAddress(dedupColSinkAddr, dedupColumnIndex, oooColAddress);
+                    dedupCommitAddresses.setArrayValues(
+                            dedupColSinkAddr,
+                            dedupColumnIndex,
+                            columnType,
+                            columnSize,
+                            columnTop,
+                            Math.abs(mappedAddress) - columnTop * columnSize,
+                            oooColAddress,
+                            mappedAddress,
+                            mapSize,
+                            fd
+                    );
                     dedupColumnIndex++;
                 }
             }
@@ -815,18 +824,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     mergeOOOHi,
                     tempIndexAddr,
                     dedupCommitAddresses.getColumnCount(),
-                    dedupCommitAddresses.getColDataAddresses(dedupColSinkAddr),
-                    dedupCommitAddresses.getColDataTops(dedupColSinkAddr),
-                    dedupCommitAddresses.getOooAddresses(dedupColSinkAddr)
+                    dedupCommitAddresses.getAddress(dedupColSinkAddr)
             );
         } finally {
             for (int i = 0, n = dedupCommitAddresses.getColumnCount(); i < n; i++) {
-                final long mappedAddress = dedupCommitAddresses.getColumnMapAddress(dedupColSinkAddr, i);
-                final long mappedAddressSize = dedupCommitAddresses.getColumnMapSize(dedupColSinkAddr, i);
+                final long mappedAddress = dedupCommitAddresses.getColReserved1(dedupColSinkAddr, i);
+                final long mappedAddressSize = dedupCommitAddresses.getColReserved2(dedupColSinkAddr, i);
                 if (mappedAddressSize > 0 && mappedAddress > 0) {
                     TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, 0, mappedAddressSize, mapMemTag);
                 }
-                final int fd = dedupCommitAddresses.getOpenFd(dedupColSinkAddr, i);
+                final int fd = (int) dedupCommitAddresses.getColReserved3(dedupColSinkAddr, i);
                 if (fd > 0) {
                     ff.close(fd);
                 }

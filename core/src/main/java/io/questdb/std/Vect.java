@@ -76,8 +76,7 @@ public final class Vect {
             long outIndexAddr,
             long indexAddrTemp,
             int dedupColumnCount,
-            long dedupColBuffs1,
-            long dedupColBuffs2
+            long dedupColumnData
     );
 
     public static long dedupSortedTimestampIndexIntKeysChecked(
@@ -86,8 +85,7 @@ public final class Vect {
             long outIndexAddr,
             long indexAddrTemp,
             int dedupColumnCount,
-            long dedupColBuffs1,
-            long dedupColBuffs2
+            long dedupColumnData
     ) {
         long dedupCount = dedupSortedTimestampIndex(
                 inIndexAddr,
@@ -95,8 +93,7 @@ public final class Vect {
                 outIndexAddr,
                 indexAddrTemp,
                 dedupColumnCount,
-                dedupColBuffs1,
-                dedupColBuffs2
+                dedupColumnData
         );
         assert dedupCount >= 0 : "unsorted data passed to deduplication";
         return dedupCount;
@@ -188,9 +185,7 @@ public final class Vect {
             long mergeOOOHi,
             long tempIndexAddr,
             int dedupKeyCount,
-            long dedupColBuffs,
-            long dedupColTops,
-            long dedupO3Buffs
+            long dedupColBuffs
     );
 
     public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {

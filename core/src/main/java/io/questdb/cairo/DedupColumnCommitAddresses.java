@@ -29,12 +29,16 @@ import io.questdb.std.*;
 import java.io.Closeable;
 
 public class DedupColumnCommitAddresses implements Closeable {
-    private static final long COL_DATA_ARRAY_INDEX = 0L;
-    private static final long COL_DATA_SIZE_ARRAY_INDEX = COL_DATA_ARRAY_INDEX + 1L;
-    private static final long COL_DATA_TOP_ARRAY_INDEX = COL_DATA_SIZE_ARRAY_INDEX + 1L;
-    private static final long COL_FD_ARRAY_INDEX = COL_DATA_TOP_ARRAY_INDEX + 1L;
-    private static final long COL_OOO_ARRAY_INDEX = COL_FD_ARRAY_INDEX + 1L;
-    private static final int LONG_PER_COL = (int) COL_OOO_ARRAY_INDEX + 1;
+    private static final long COL_TYPE_32 = 0L;
+    private static final long VAL_SIZE_32 = COL_TYPE_32 + 4L;
+    private static final long COL_TOP_64 = VAL_SIZE_32 + 4L;
+    private static final long COL_DATA_64 = COL_TOP_64 + 8L;
+    private static final long O3_DATA_64 = COL_DATA_64 + 8L;
+    private static final long RESERVED1 = O3_DATA_64 + 8L;
+    private static final long RESERVED2 = RESERVED1 + 8L;
+    private static final long RESERVED3 = RESERVED2 + 8L;
+    private static final long NULL_VAL_256 = RESERVED3 + 8L;
+    private static final int RECORD_BYTES = (int) (NULL_VAL_256 + 32L);
     private PagedDirectLongList addresses;
     private int columnCount;
     private int lastSetBlockCount;
@@ -50,19 +54,8 @@ public class DedupColumnCommitAddresses implements Closeable {
         return addresses.allocateBlock();
     }
 
-    public long allocateDoubleBlock() {
-        if (columnCount == 0) {
-            return -1;
-        }
-        if (lastSetBlockCount != columnCount * 2) {
-            setDedupColumnCount(columnCount * 2);
-            lastSetBlockCount = columnCount * 2;
-        }
-        return addresses.allocateBlock();
-    }
-
     public void clear(long dedupColSinkAddr) {
-        Vect.memset(dedupColSinkAddr, 0, lastSetBlockCount * Long.BYTES * LONG_PER_COL);
+        Vect.memset(dedupColSinkAddr, 0, lastSetBlockCount * RECORD_BYTES);
     }
 
     public void clear() {
@@ -76,68 +69,51 @@ public class DedupColumnCommitAddresses implements Closeable {
         addresses = Misc.free(addresses);
     }
 
-    public long getArrayElement(long dedupColSinkAddr, long arrayIndex, long dedupKeyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupColSinkAddr + Long.BYTES * arrayIndex * columnCount + dedupKeyIndex * Long.BYTES);
+    public long getAddress(long dedupCommitAddr) {
+        return dedupCommitAddr;
     }
 
-    public long getArrayPtr(long dedupBlockAddress, long arrayIndex) {
-        return dedupBlockAddress + arrayIndex * Long.BYTES * columnCount;
+    public long getColReserved1(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED1);
     }
 
-    public long getColDataAddresses(long dedupBlockAddress) {
-        return getArrayPtr(dedupBlockAddress, COL_DATA_ARRAY_INDEX);
+    public long getColReserved2(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED2);
     }
 
-    public long getColDataTops(long dedupBlockAddress) {
-        return getArrayPtr(dedupBlockAddress, COL_DATA_TOP_ARRAY_INDEX);
+    public long getColReserved3(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED3);
     }
 
     public int getColumnCount() {
         return columnCount;
     }
 
-    public long getColumnMapAddress(long dedupColSinkAddr, int dedupKeyIndex) {
-        return getArrayElement(dedupColSinkAddr, COL_DATA_ARRAY_INDEX, dedupKeyIndex);
-    }
-
-    public long getColumnMapSize(long dedupColSinkAddr, int dedupKeyIndex) {
-        return getArrayElement(dedupColSinkAddr, COL_DATA_SIZE_ARRAY_INDEX, dedupKeyIndex);
-    }
-
-    public long getOooAddresses(long dedupBlockAddress) {
-        return getArrayPtr(dedupBlockAddress, COL_OOO_ARRAY_INDEX);
-    }
-
-    public int getOpenFd(long dedupColSinkAddr, int dedupKeyIndex) {
-        return (int) getArrayElement(dedupColSinkAddr, COL_FD_ARRAY_INDEX, dedupKeyIndex);
-    }
-
     public void setArrayValues(
             long dedupCommitAddr,
             int dedupKeyIndex,
-            long val0,
-            long val1,
-            long val2,
-            long val3,
-            long val4
+            int columnType,
+            int valueSizeBytes,
+            long columnTop,
+            long columnDataAddress,
+            long o3DataAddress,
+            long reserved1,
+            long reserved2,
+            long reserved3
     ) {
-        setArrayElement(dedupCommitAddr, 0, dedupKeyIndex, val0);
-        setArrayElement(dedupCommitAddr, 1, dedupKeyIndex, val1);
-        setArrayElement(dedupCommitAddr, 2, dedupKeyIndex, val2);
-        setArrayElement(dedupCommitAddr, 3, dedupKeyIndex, val3);
-        setArrayElement(dedupCommitAddr, 4, dedupKeyIndex, val4);
-    }
-
-    public void setColumnMapAddress(long dedupColSinkAddr, int dedupKeyIndex, long mappedAddress) {
-        setArrayElement(dedupColSinkAddr, COL_DATA_ARRAY_INDEX, dedupKeyIndex, mappedAddress);
-    }
-
-    public void setColumnMapSize(long dedupColSinkAddr, int dedupKeyIndex, long size) {
-        setArrayElement(dedupColSinkAddr, COL_DATA_SIZE_ARRAY_INDEX, dedupKeyIndex, size);
-    }
-
-    public void setColumnTop(long dedupColSinkAddr, int dedupKeyIndex, long columnTop) {
-        setArrayElement(dedupColSinkAddr, COL_DATA_TOP_ARRAY_INDEX, dedupKeyIndex, columnTop);
+        long addr = dedupCommitAddr + (long) dedupKeyIndex * RECORD_BYTES;
+        Unsafe.getUnsafe().putInt(addr + COL_TYPE_32, columnType);
+        Unsafe.getUnsafe().putInt(addr + VAL_SIZE_32, valueSizeBytes);
+        Unsafe.getUnsafe().putLong(addr + COL_TOP_64, columnTop);
+        Unsafe.getUnsafe().putLong(addr + COL_DATA_64, columnDataAddress);
+        Unsafe.getUnsafe().putLong(addr + O3_DATA_64, o3DataAddress);
+        Unsafe.getUnsafe().putLong(addr + RESERVED1, reserved1);
+        Unsafe.getUnsafe().putLong(addr + RESERVED2, reserved2);
+        Unsafe.getUnsafe().putLong(addr + RESERVED3, reserved3);
+        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256, TableUtils.getNullLong(columnType, 0));
+        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256 + 8, TableUtils.getNullLong(columnType, 1));
+        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256 + 16, TableUtils.getNullLong(columnType, 2));
+        Unsafe.getUnsafe().putLong(addr + NULL_VAL_256 + 24, TableUtils.getNullLong(columnType, 3));
     }
 
     public void setDedupColumnCount(int dedupColumnCount) {
@@ -147,20 +123,13 @@ public class DedupColumnCommitAddresses implements Closeable {
             } else {
                 addresses.clear();
             }
-            addresses.setBlockSize(dedupColumnCount * LONG_PER_COL);
+            int longsPerBlock = RECORD_BYTES / Long.BYTES;
+            addresses.setBlockSize(dedupColumnCount * longsPerBlock);
             this.columnCount = dedupColumnCount;
         }
     }
 
-    public void setOooColumnMapAddress(long dedupColSinkAddr, int dedupKeyIndex, long pageAddress) {
-        setArrayElement(dedupColSinkAddr, COL_OOO_ARRAY_INDEX, dedupKeyIndex, pageAddress);
-    }
-
-    public void setOpenFd(long dedupColSinkAddr, int dedupKeyIndex, int fd) {
-        setArrayElement(dedupColSinkAddr, COL_FD_ARRAY_INDEX, dedupKeyIndex, fd);
-    }
-
-    private void setArrayElement(long dedupColSinkAddr, long arrayIndex, int dedupKeyIndex, long value) {
-        Unsafe.getUnsafe().putLong(dedupColSinkAddr + Long.BYTES * arrayIndex * columnCount + (long) dedupKeyIndex * Long.BYTES, value);
+    static {
+        assert RECORD_BYTES % Long.BYTES == 0;
     }
 }

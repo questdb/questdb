@@ -3406,27 +3406,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (i != metadata.getTimestampIndex() && columnType > 0 && metadata.isDedupKey(i)) {
                         int shl = ColumnType.pow2SizeOf(columnType);
                         long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(i)) << shl : 0L;
-                        long mapSize = lagRows << shl;
+                        long lagMapSize = lagRows << shl;
 
                         // Map column buffers for lag rows for deduplication
-                        long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, mapSize, false) : 0L;
+                        long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, lagMapSize, false) : 0L;
                         MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
-                        long mappedKeyAddr = o3Column.addressOf(0);
+                        long o3ColumnData = o3Column.addressOf(0);
                         if (ColumnType.isSymbol(columnType) && o3Column instanceof MemoryCARW) {
                             // Symbols are remapped with 0 offset
                             // while the values are referenced with roLo in the timestamp index
-                            mappedKeyAddr -= symbolRemapCorrection << shl;
+                            o3ColumnData -= symbolRemapCorrection << shl;
                         }
-                        assert mappedKeyAddr != 0;
+                        assert o3ColumnData != 0;
 
                         dedupColumnCommitAddresses.setArrayValues(
                                 dedupCommitAddr,
                                 dedupKeyIndex++,
-                                mappedKeyAddr,
+                                columnType,
+                                ColumnType.sizeOf(columnType),
+                                0L,
+                                o3ColumnData,
                                 Math.abs(lagKeyAddr),
                                 lagKeyAddr,
                                 lagMemOffset,
-                                mapSize
+                                lagMapSize
                         );
                     }
                 }
@@ -3437,16 +3440,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexDstAddr,
                     tempIndexAddr,
                     dedupKeyIndex,
-                    dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 0),
-                    lagRows > 0 ? dedupColumnCommitAddresses.getArrayPtr(dedupCommitAddr, 1) : 0L
+                    dedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
         } finally {
             if (dedupColumnCommitAddresses.getColumnCount() > 0 && lagRows > 0) {
                 // Release mapped column buffers for lag rows
                 for (int i = 0; i < dedupKeyIndex; i++) {
-                    long lagAddr = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 2, i);
-                    long lagMemOffset = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 3, i);
-                    long mapSize = dedupColumnCommitAddresses.getArrayElement(dedupCommitAddr, 4, i);
+                    long lagAddr = dedupColumnCommitAddresses.getColReserved1(dedupCommitAddr, i);
+                    long lagMemOffset = dedupColumnCommitAddresses.getColReserved2(dedupCommitAddr, i);
+                    long mapSize = dedupColumnCommitAddresses.getColReserved3(dedupCommitAddr, i);
 
                     mapAppendColumnBufferRelease(lagAddr, lagMemOffset, mapSize);
                 }

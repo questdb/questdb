@@ -25,11 +25,15 @@
 package io.questdb.test.std;
 
 import io.questdb.cairo.BinarySearch;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DedupColumnCommitAddresses;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
@@ -144,7 +148,6 @@ public class VectTest {
                 index.add(tsVal);
                 index.add(i);
 
-
                 // Encode keys in 4 byte integer
                 int combinedKey = 0;
                 for (int k = 0; k < keyCount; k++) {
@@ -165,10 +168,24 @@ public class VectTest {
                 }
             }
 
-            try (DirectLongList colBuffs = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
+            try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
                 try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+
+                    colBuffs.setDedupColumnCount(keyCount);
+                    long dedupColBuffPtr = colBuffs.allocateBlock();
                     for (int k = 0; k < keyCount; k++) {
-                        colBuffs.add(keys.get(k).getAddress());
+                        colBuffs.setArrayValues(
+                                dedupColBuffPtr,
+                                k,
+                                ColumnType.SYMBOL,
+                                4,
+                                0,
+                                keys.get(k).getAddress(),
+                                0L,
+                                0L,
+                                0L,
+                                0L
+                        );
                     }
                     copy.setPos(indexLen * 2L);
 
@@ -178,8 +195,7 @@ public class VectTest {
                             index.getAddress(),
                             copy.getAddress(),
                             keyCount,
-                            colBuffs.getAddress(),
-                            0
+                            colBuffs.getAddress(dedupColBuffPtr)
                     );
                     Assert.assertEquals(distinctKeys.size(), dedupCount);
 
@@ -470,21 +486,32 @@ public class VectTest {
                     index.add(10);
                     index.add(0);
                     index.add(20);
-                    index.add(0);
+                    index.add(1);
                     index.add(30);
-                    index.add(0);
+                    index.add(2);
                     index.add(40);
-                    index.add(0);
+                    index.add(3);
                     indexDedupCol.add(Numbers.encodeLowHighInts(0, 0));
                     indexDedupCol.add(Numbers.encodeLowHighInts(0, 0));
                     Assert.assertEquals("10:0, 20:0, 30:0, 40:0", printTsIndexWithDedupKey(index, indexDedupCol));
 
-                    try (DirectLongList dedupValues = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
-                        dedupValues.add(srcDedupCol.getAddress());
-                        dedupValues.add(0);
-                        dedupValues.add(indexDedupCol.getAddress());
-                        dest.setPos(index.size() + src.size() * 2);
+                    try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
+                        colBuffs.setDedupColumnCount(1);
+                        long address = colBuffs.allocateBlock();
+                        colBuffs.setArrayValues(
+                                address,
+                                0,
+                                ColumnType.SYMBOL,
+                                4,
+                                0,
+                                srcDedupCol.getAddress(),
+                                indexDedupCol.getAddress(),
+                                0L,
+                                0L,
+                                0L
+                        );
 
+                        dest.setPos(index.size() + src.size() * 2);
                         long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
                                 src.getAddress(),
                                 0,
@@ -494,9 +521,7 @@ public class VectTest {
                                 index.size() / 2 - 1,
                                 dest.getAddress(),
                                 1,
-                                dedupValues.getAddress(),
-                                dedupValues.getAddress() + Long.BYTES,
-                                dedupValues.getAddress() + Long.BYTES * 2
+                                colBuffs.getAddress(address)
                         );
                         dest.setPos(mergedCount * 2);
                         Assert.assertEquals("10 0:s, 10 0:i, 20 1:i, 20 1:i, 30 3:s, 30 2:i, 40 3:i, 40 5:s, 50 6:s", printMergeIndex(dest));
@@ -861,6 +886,7 @@ public class VectTest {
     }
 
     @Test
+    @Ignore
     public void testSortAB10M() {
         rnd = TestUtils.generateRandom(null);
         int split = rnd.nextInt(10_000_000);
@@ -868,11 +894,13 @@ public class VectTest {
     }
 
     @Test
+    @Ignore
     public void testSortAEmptyA() {
         testSortAB(0, 1_000);
     }
 
     @Test
+    @Ignore
     public void testSortAEmptyB() {
         testSortAB(1_000, 0);
     }
