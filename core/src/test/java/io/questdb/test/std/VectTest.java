@@ -886,7 +886,6 @@ public class VectTest {
     }
 
     @Test
-    @Ignore
     public void testSortAB10M() {
         rnd = TestUtils.generateRandom(null);
         int split = rnd.nextInt(10_000_000);
@@ -894,13 +893,11 @@ public class VectTest {
     }
 
     @Test
-    @Ignore
     public void testSortAEmptyA() {
         testSortAB(0, 1_000);
     }
 
     @Test
-    @Ignore
     public void testSortAEmptyB() {
         testSortAB(1_000, 0);
     }
@@ -965,10 +962,10 @@ public class VectTest {
             long idx = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES + Long.BYTES);
             Assert.assertTrue(ts >= v);
             if (idx < 0) {
+                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrA + idx * Long.BYTES));
+            } else {
                 idx = (idx << 1) >> 1;
                 Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrB + idx * 2L * Long.BYTES));
-            } else {
-                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrA + idx * Long.BYTES));
             }
 
             v = ts;

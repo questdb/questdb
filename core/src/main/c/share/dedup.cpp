@@ -539,8 +539,8 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
         );
     } else {
         const auto diff_typed = [=]<class T>(const dedup_column<T> *column, const int64_t l, const int64_t r) {
-            const T l_val = l >> 63 == 0 ? column->column_data[l] : column->o3_data[l & ~(1ull << 63)];
-            const T r_val = r >> 63 == 0 ? column->column_data[r] : column->o3_data[r & ~(1ull << 63)];
+            const T l_val = l > 0 ? column->column_data[l] : column->o3_data[l & ~(1ull << 63)];
+            const T r_val = r > 0 ? column->column_data[r] : column->o3_data[r & ~(1ull << 63)];
             // One of the values can be MIN of the type (null value)
             // and subtraction can result in type overflow
             return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
