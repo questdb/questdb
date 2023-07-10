@@ -34,9 +34,7 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WalListener;
-import io.questdb.cairo.wal.WalReader;
-import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -82,6 +80,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryWalTask> telemetryWal;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
+    private final WalTxnSuspendEvents walTxnSuspendEvents;
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull WalListener walListener;
@@ -89,15 +88,16 @@ public class CairoEngine implements Closeable, WriterSource {
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled());
+        this(configuration, NoOpWalTxnSuspendEvents.INSTANCE, Metrics.disabled());
     }
 
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
+    public CairoEngine(CairoConfiguration configuration, WalTxnSuspendEvents walTxnSuspendEvents, Metrics metrics) {
         ffCache = new FunctionFactoryCache(
                 configuration,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
         this.configuration = configuration;
+        this.walTxnSuspendEvents = walTxnSuspendEvents;
         this.copyContext = new CopyContext(configuration);
         this.metrics = metrics;
         this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
@@ -541,6 +541,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
+    }
+
+    public WalTxnSuspendEvents getWalTxnSuspendEvents() {
+        return walTxnSuspendEvents;
     }
 
     @TestOnly

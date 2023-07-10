@@ -33,6 +33,7 @@ import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalTxnSuspendEventsImpl;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
@@ -82,9 +83,11 @@ public class ServerMain implements Closeable {
         this.log = log;
         this.banner = banner;
 
+        final WalTxnSuspendEventsImpl walTxnSuspendEvents = new WalTxnSuspendEventsImpl(config);
+
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit.register(new CairoEngine(cairoConfig, metrics));
+        engine = freeOnExit.register(new CairoEngine(cairoConfig, walTxnSuspendEvents, metrics));
 
         // obtain function factory cache
         FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
@@ -216,6 +219,9 @@ public class ServerMain implements Closeable {
                     workerPoolManager
             ));
         }
+
+        // Suspend events should be cleared after I/O dispatchers and WAL apply job.
+        freeOnExit.register(walTxnSuspendEvents);
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();

@@ -749,7 +749,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 if (tablePermissionsTxn != -1) {
                     // Wait until table permissions are applied to the end table.
                     // This method throws SuspendException on failed check.
-                    securityContext.awaitForTxn(tablePermissionsTxn);
+                    securityContext.suspendUntilTxn(tablePermissionsTxn);
                     tablePermissionsTxn = -1;
                 }
 

@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.TableWriterMetricsRecordCursorFactory;
@@ -66,7 +67,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     public void testDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
+                    CairoEngine localEngine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, Metrics.disabled());
                     SqlCompiler localCompiler = new SqlCompiler(localEngine, snapshotAgent);
                     SqlExecutionContext localSqlExecutionContext = TestUtils.createSqlExecutionCtx(localEngine)
             ) {

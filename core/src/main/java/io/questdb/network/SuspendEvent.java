@@ -51,9 +51,9 @@ public abstract class SuspendEvent implements Closeable {
     public abstract void _close();
 
     /**
-     * Returns true if the event was triggered.
+     * Checks if the event was triggered.
      *
-     * @return true if the event was triggered
+     * @return true if the event was triggered, false - otherwise
      */
     public abstract boolean checkTriggered();
 

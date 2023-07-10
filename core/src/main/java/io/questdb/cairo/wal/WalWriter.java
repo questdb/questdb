@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -88,6 +89,7 @@ public class WalWriter implements TableWriterAPI {
     private final int walId;
     private final WalInitializer walInitializer;
     private final String walName;
+    private final WalTxnSuspendEvents walTxnSuspendEvents;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
@@ -109,10 +111,12 @@ public class WalWriter implements TableWriterAPI {
             CairoConfiguration configuration,
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
+            WalTxnSuspendEvents walTxnSuspendEvents,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
+        this.walTxnSuspendEvents = walTxnSuspendEvents;
         this.configuration = configuration;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
@@ -533,6 +537,14 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public boolean supportsMultipleWriters() {
         return true;
+    }
+
+    @Override
+    public void suspendUntilTxn(long txn) throws SuspendException {
+        final SuspendEvent suspendEvent = walTxnSuspendEvents.register(tableToken, txn);
+        if (suspendEvent != null) {
+            throw SuspendException.instance(suspendEvent);
+        }
     }
 
     @Override

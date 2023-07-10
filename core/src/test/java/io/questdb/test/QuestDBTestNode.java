@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -170,7 +171,7 @@ public class QuestDBTestNode {
 
             configuration = new CairoTestConfiguration(root, telemetryConfiguration, overrides);
             metrics = Metrics.enabled();
-            engine = new CairoEngine(configuration, metrics);
+            engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics);
             snapshotAgent = new DatabaseSnapshotAgent(engine);
             messageBus = engine.getMessageBus();
         }

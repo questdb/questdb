@@ -174,16 +174,16 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
         }
 
         @Override
-        public void awaitForTxn(long txn) throws SuspendException {
+        public long onTableCreated(TableToken tableToken) {
+            return 42;
+        }
+
+        @Override
+        public void suspendUntilTxn(long txn) throws SuspendException {
             if (awaitCounter++ < suspendCount) {
                 final SuspendEvent suspendEvent = factory.newInstance();
                 throw SuspendException.instance(suspendEvent);
             }
-        }
-
-        @Override
-        public long onTableCreated(TableToken tableToken) {
-            return 42;
         }
     }
 

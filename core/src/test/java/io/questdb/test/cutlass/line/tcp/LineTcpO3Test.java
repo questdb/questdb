@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.griffin.FunctionFactory;
@@ -65,8 +66,8 @@ import java.util.zip.GZIPInputStream;
 @RunWith(Parameterized.class)
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
-    private final boolean walEnabled;
     private final FreeOnExit freeOnExit = new FreeOnExit();
+    private final boolean walEnabled;
     private LineTcpReceiverConfiguration lineConfiguration;
     private long resourceAddress;
     private int resourceSize;
@@ -127,7 +128,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
         metrics = Metrics.enabled();
-        engine = new CairoEngine(configuration, metrics);
+        engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics);
         serverConf.init(
                 engine,
                 new FunctionFactoryCache(

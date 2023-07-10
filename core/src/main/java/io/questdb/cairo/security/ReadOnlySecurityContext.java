@@ -256,10 +256,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void awaitForTxn(long txn) throws SuspendException {
-    }
-
-    @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -271,5 +267,9 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public long onTableCreated(TableToken tableToken) {
         return -1;
+    }
+
+    @Override
+    public void suspendUntilTxn(long txn) throws SuspendException {
     }
 }
