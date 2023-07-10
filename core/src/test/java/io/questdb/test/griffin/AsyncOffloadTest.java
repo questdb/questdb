@@ -25,11 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.*;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -39,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
@@ -120,6 +120,19 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         super.setUp();
+    }
+
+    @Test
+    public void testAsyncOffloadNegativeLimitTimeoutWithJitEnabled() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        configOverrideJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        testAsyncOffloadNegativeLimitTimeout();
+    }
+
+    @Test
+    public void testAsyncOffloadNegativeLimitTimeoutWithoutJit() throws Exception {
+        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        testAsyncOffloadNegativeLimitTimeout();
     }
 
     @Test
@@ -378,6 +391,67 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
     }
 
+    private void testAsyncOffloadNegativeLimitTimeout() throws SqlException {
+        SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+        currentMicros = 0;
+        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    @NotNull
+                    public MillisecondClock getClock() {
+                        return () -> Long.MAX_VALUE;
+                    }
+
+                    @Override
+                    public long getTimeout() {
+                        return 1;
+                    }
+                },
+                MemoryTag.NATIVE_DEFAULT
+        );
+
+        compiler.compile("create table x ( " +
+                        "v long, " +
+                        "s symbol capacity 4 cache " +
+                        ")",
+                sqlExecutionContext
+        );
+        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                sqlExecutionContext
+        );
+
+        context.with(
+                context.getSecurityContext(),
+                context.getBindVariableService(),
+                context.getRandom(),
+                context.getRequestFd(),
+                circuitBreaker
+        );
+
+        try {
+            assertSql(
+                    "select s from x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' limit -5",
+                    "s\n" +
+                            "A\n" +
+                            "A\n" +
+                            "A\n" +
+                            "A\n" +
+                            "A\n"
+            );
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+        } finally {
+            context.with(
+                    context.getSecurityContext(),
+                    context.getBindVariableService(),
+                    context.getRandom(),
+                    context.getRequestFd(),
+                    null
+            );
+        }
+    }
+
     private void testAsyncOffloadTimeout() throws SqlException {
         SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
         currentMicros = 0;
@@ -417,9 +491,15 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
         try {
             assertSql(
-                    "x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
+                    "x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' order by v",
                     "v\ts\n" +
-                            "3393210801760647293\tA\n"
+                            "3393210801760647293\tA\n" +
+                            "3433721896286859656\tA\n" +
+                            "3619114107112892010\tA\n" +
+                            "3669882909701240516\tA\n" +
+                            "3820631780839257855\tA\n" +
+                            "4039070554630775695\tA\n" +
+                            "4290477379978201771\tA\n"
             );
             Assert.fail();
         } catch (CairoException ex) {

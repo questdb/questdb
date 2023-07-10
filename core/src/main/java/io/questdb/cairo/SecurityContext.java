@@ -30,6 +30,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@SuppressWarnings("unused")
 public interface SecurityContext {
 
     void assumeServiceAccount(CharSequence serviceAccountName);
@@ -91,6 +92,15 @@ public interface SecurityContext {
 
     // columnNames.size() = 0 means all columns
     void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    // Add column over ILP/TCP.
+    void authorizeLineAlterTableAddColumn(TableToken tableToken);
+
+    // Insert over ILP/TCP.
+    void authorizeLineInsert(TableToken tableToken);
+
+    // Create table over ILP/TCP.
+    void authorizeLineTableCreate();
 
     void authorizeRemovePassword();
 

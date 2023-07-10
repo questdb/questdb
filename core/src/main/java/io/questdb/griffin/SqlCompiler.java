@@ -2728,9 +2728,9 @@ public class SqlCompiler implements Closeable {
     @SuppressWarnings({"unused"})
     protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
     }
 
     @SuppressWarnings({"unused"})
@@ -3283,7 +3283,7 @@ public class SqlCompiler implements Closeable {
                     if (tok == null || Chars.equals(tok, ';')) {
                         return dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
                     }
-                    throw parseErrorUnexpected("[;]", tok);
+                    return unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
                 }
 
                 // DROP ALL TABLES [;]
@@ -3294,11 +3294,11 @@ public class SqlCompiler implements Closeable {
                         if (tok == null || Chars.equals(tok, ';')) {
                             return dropAllTables(executionContext);
                         }
-                        throw parseErrorUnexpected("[;]", tok);
+                        throw parseErrorExpected("[;]");
                     }
                 }
             }
-            throw parseErrorUnexpected("TABLE table-name or ALL TABLES", tok);
+            return unknownDropStatement(executionContext, tok);
         }
 
         private boolean isSystemTable(TableToken tableToken) {
@@ -3308,14 +3308,6 @@ public class SqlCompiler implements Closeable {
 
         private SqlException parseErrorExpected(CharSequence expected) {
             return SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
-        }
-
-        private SqlException parseErrorUnexpected(CharSequence expected, CharSequence tok) {
-            SqlException exception = SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
-            if (tok != null) {
-                exception.put(", found unexpected [token='").put(tok).put("']");
-            }
-            return exception;
         }
     }
 
