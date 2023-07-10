@@ -148,7 +148,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void cancel() {
-        this.valid.compareAndSet(true, false);
+        valid.compareAndSet(true, false);
     }
 
     public void clear() {
