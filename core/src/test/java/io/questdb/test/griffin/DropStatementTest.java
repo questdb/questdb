@@ -42,7 +42,7 @@ public class DropStatementTest extends AbstractGriffinTest {
      * DROP can be followed by:
      * - TABLE name [;]
      * - TABLES name(,name)* [;]
-     * - DATABASE [;]
+     * - ALL TABLES [;]
      */
 
     private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
@@ -121,7 +121,7 @@ public class DropStatementTest extends AbstractGriffinTest {
                 compiler.compile("drop i_am_missing", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "expected TABLE table-name or ALL TABLES");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
             }
         });
     }
@@ -170,7 +170,7 @@ public class DropStatementTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "expected [;], found unexpected [token='.']");
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [.]");
             }
 
             cc = compiler.compile("DROP TABLE \"x.csv\"", sqlExecutionContext);
