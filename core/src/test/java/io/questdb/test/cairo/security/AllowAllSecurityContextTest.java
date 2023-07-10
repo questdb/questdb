@@ -22,24 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.test.cairo.security;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.TableToken;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class DenyAllSecurityContext extends ReadOnlySecurityContext {
-    public static final DenyAllSecurityContext INSTANCE = new DenyAllSecurityContext();
-
-    @Override
-    public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.nonCritical().put("permission denied");
-    }
-
-    @Override
-    public boolean matches(SecurityContext other) {
-        return other == INSTANCE;
+public class AllowAllSecurityContextTest {
+    @Test
+    public void testMatches() {
+        Assert.assertTrue(AllowAllSecurityContext.INSTANCE.matches(AllowAllSecurityContext.INSTANCE));
+        Assert.assertFalse(AllowAllSecurityContext.INSTANCE.matches(DenyAllSecurityContext.INSTANCE));
     }
 }

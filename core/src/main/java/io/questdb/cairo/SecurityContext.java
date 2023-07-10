@@ -129,16 +129,14 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
-    CharSequence getEntityName();
-
-    long getVersion();
+    CharSequence getPrincipal();
 
     /**
-     * @param entityName - name of the user or role
-     * @param version    - security context version number
+     * Checks if both security contexts belong to the same principal and up to date.
+     * @param other - another security context
      * @return true if this context belongs to entityName and has given version, false otherwise .
      */
-    boolean matches(CharSequence entityName, long version);
+    boolean matches(SecurityContext other);
 
     void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
 

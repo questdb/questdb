@@ -61,12 +61,12 @@ public class CurrentUserFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            return context.getEntityName();
+            return context.getPrincipal();
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return context.getEntityName();
+            return context.getPrincipal();
         }
 
         @Override

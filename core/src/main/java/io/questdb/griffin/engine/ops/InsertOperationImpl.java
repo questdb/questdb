@@ -55,16 +55,14 @@ public class InsertOperationImpl implements InsertOperation {
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long metadataVersion;
     private final TableToken tableToken;
-    protected CharSequence entityName;
-    protected long entityVersion;
     private ObjList<CharSequence> columnNames;
+    private SecurityContext securityContext;
 
     public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion, SecurityContext securityContext) {
         this.engine = engine;
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
-        this.entityName = securityContext.getEntityName();
-        this.entityVersion = securityContext.getVersion();
+        this.securityContext = securityContext;
     }
 
     @Override
@@ -75,17 +73,23 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         SecurityContext securityContext = executionContext.getSecurityContext();
-        if (!securityContext.matches(entityName, entityVersion)) {
+        if (!this.securityContext.matches(securityContext)) {
             securityContext.authorizeInsert(tableToken, columnNames);
-            this.entityName = securityContext.getEntityName();
-            this.entityVersion = securityContext.getVersion();
+            this.securityContext = securityContext;
         }
 
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
-            if (writer.getMetadataVersion() != metadataVersion
-                    || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
+            if (
+                    // when metadata changes the compiled insert may no longer be valid, we have to
+                    // recompile SQL text to ensure column indexes are correct
+                    writer.getMetadataVersion() != metadataVersion
+                            // when table names do not match, it means table was renamed (although our table token
+                            // remains valid). We should not allow user to insert into new table name because they
+                            // used "old" table name in SQL text
+                    || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
+            ) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
             }

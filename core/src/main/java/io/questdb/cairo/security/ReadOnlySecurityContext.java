@@ -28,19 +28,15 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class ReadOnlySecurityContext implements SecurityContext {
-    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(Constants.USER_NAME);
+    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
 
-    private final CharSequence principal;
-
-    public ReadOnlySecurityContext(CharSequence principal) {
-        this.principal = Chars.toString(principal);
+    protected ReadOnlySecurityContext() {
     }
 
     @Override
@@ -268,18 +264,13 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public CharSequence getEntityName() {
-        return principal;
+    public CharSequence getPrincipal() {
+        return Constants.USER_NAME;
     }
 
     @Override
-    public long getVersion() {
-        return 0L;
-    }
-
-    @Override
-    public boolean matches(CharSequence entityName, long version) {
-        return true;
+    public boolean matches(SecurityContext other) {
+        return other == INSTANCE;
     }
 
     @Override

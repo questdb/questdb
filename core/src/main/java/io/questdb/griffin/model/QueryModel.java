@@ -1542,9 +1542,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static class QueryPermissions extends AbstractSelfReturningObject<QueryPermissions> {
         final LongObjHashMap<TablePermissions> permissions;
         boolean checked;
-        CharSequence principal;
+        SecurityContext securityContext;
         TablePermissions updatePermissions;
-        long version;
 
         public QueryPermissions(WeakSelfReturningObjectPool<QueryPermissions> parentPool) {
             super(parentPool);
@@ -1555,32 +1554,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             permissions.put(tableToken.getTableId(), newPermissions);
         }
 
-        public void check(SecurityContext context) {
+        public void check(SecurityContext securityContext) {
             if (checked) {
                 // skip first check because it was already done in optimiser 
                 checked = false;
                 return;
             }
 
-            if (context.matches(principal, version)) {
+            if (this.securityContext.matches(securityContext)) {
                 return;
             }
 
             if (updatePermissions != null) {
-                context.authorizeTableUpdate(updatePermissions.getToken(), updatePermissions.getColumns());
+                securityContext.authorizeTableUpdate(updatePermissions.getToken(), updatePermissions.getColumns());
             }
 
-            permissions.forEach((k, v) -> context.authorizeSelect(v.getToken(), v.getColumns()));
+            permissions.forEach((k, v) -> securityContext.authorizeSelect(v.getToken(), v.getColumns()));
 
-            this.principal = context.getEntityName();
-            this.version = context.getVersion();
+            this.securityContext = securityContext;
         }
 
         @Override
         public void close() {
-            principal = null;
             updatePermissions = Misc.free(updatePermissions);
-            version = -1;
+            securityContext = null;
             checked = false;
             permissions.forEach((key, value) -> value.close());
             permissions.clear();
@@ -1591,10 +1588,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             return permissions.get(tableToken.getTableId());
         }
 
-        public QueryPermissions of(SecurityContext context) {
+        public QueryPermissions of(SecurityContext securityContext) {
             this.checked = true;
-            this.principal = context.getEntityName();
-            this.version = context.getVersion();
+            this.securityContext = securityContext;
             return this;
         }
 

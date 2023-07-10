@@ -26,21 +26,17 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.Chars;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import io.questdb.griffin.engine.functions.catalogue.Constants;
 
 public class AllowAllSecurityContext implements SecurityContext {
-    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext(Constants.USER_NAME);
+    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
 
-    private final CharSequence principal;
-
-    public AllowAllSecurityContext(CharSequence principal) {
-        this.principal = Chars.toString(principal);
+    private AllowAllSecurityContext() {
     }
 
     @Override
@@ -224,18 +220,13 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public CharSequence getEntityName() {
-        return principal;
+    public CharSequence getPrincipal() {
+        return Constants.USER_NAME;
     }
 
     @Override
-    public long getVersion() {
-        return 0L;
-    }
-
-    @Override
-    public boolean matches(CharSequence entityName, long version) {
-        return true;
+    public boolean matches(SecurityContext other) {
+        return other == INSTANCE;
     }
 
     @Override
