@@ -1816,7 +1816,7 @@ public class SqlCompiler implements Closeable {
             return new UpdateOperation(
                     updateTableToken,
                     selectQueryModel.getTableId(),
-                    selectQueryModel.getTableVersion(),
+                    selectQueryModel.getMetadataVersion(),
                     lexer.getPosition(),
                     recordCursorFactory
             );
@@ -3025,7 +3025,7 @@ public class SqlCompiler implements Closeable {
                     // copy the data
                     try (TableWriter backupWriter = engine.getBackupWriter(tableToken, cachedBackupTmpRoot)) {
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
-                        srcPath.of(tableName).slash().put(reader.getVersion()).$();
+                        srcPath.of(tableName).slash().put(reader.getMetadataVersion()).$();
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
                         if (null == recordToRowCopier) {
                             entityColumnFilter.of(writerMetadata.getColumnCount());

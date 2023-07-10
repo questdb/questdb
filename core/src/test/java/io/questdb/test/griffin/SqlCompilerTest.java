@@ -3691,9 +3691,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(TableToken tableToken, long version) {
+                public TableReader getReader(TableToken tableToken, long metadataVersion) {
                     fiddler.run(this);
-                    return super.getReader(tableToken, version);
+                    return super.getReader(tableToken, metadataVersion);
                 }
             }) {
                 try (
@@ -5092,9 +5092,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(TableToken tableToken, long tableVersion) {
+            public TableReader getReader(TableToken tableToken, long metadataVersion) {
                 fiddler.run(this);
-                return super.getReader(tableToken, tableVersion);
+                return super.getReader(tableToken, metadataVersion);
             }
         }) {
 

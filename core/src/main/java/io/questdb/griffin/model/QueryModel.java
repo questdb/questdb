@@ -159,7 +159,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private Function tableNameFunction;
-    private long tableVersion = -1;
+    private long metadataVersion = -1;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
     private QueryModel updateTableModel;
@@ -363,7 +363,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNameToAliasMap.clear();
         tableNameFunction = null;
         tableId = -1;
-        tableVersion = -1;
+        metadataVersion = -1;
         bottomUpColumnNames.clear();
         expressionModels.clear();
         distinct = false;
@@ -472,7 +472,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void copyUpdateTableMetadata(QueryModel updateTableModel) {
         this.updateTableModel = updateTableModel;
         this.tableId = updateTableModel.tableId;
-        this.tableVersion = updateTableModel.tableVersion;
+        this.metadataVersion = updateTableModel.metadataVersion;
     }
 
     @Override
@@ -504,7 +504,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         return orderByPosition == that.orderByPosition
                 && latestByType == that.latestByType
-                && tableVersion == that.tableVersion
+                && metadataVersion == that.metadataVersion
                 && joinType == that.joinType
                 && joinKeywordPosition == that.joinKeywordPosition
                 && limitPosition == that.limitPosition
@@ -819,8 +819,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableNameFunction;
     }
 
-    public long getTableVersion() {
-        return tableVersion;
+    public long getMetadataVersion() {
+        return metadataVersion;
     }
 
     public ExpressionNode getTimestamp() {
@@ -888,7 +888,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
                 latestByType, whereClause, backupWhereClause,
                 postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
-                tableNameExpr, tableVersion, tableNameFunction,
+                tableNameExpr, metadataVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
                 sampleByUnit, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
@@ -1163,8 +1163,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.tableNameFunction = function;
     }
 
-    public void setTableVersion(long tableVersion) {
-        this.tableVersion = tableVersion;
+    public void setMetadataVersion(long metadataVersion) {
+        this.metadataVersion = metadataVersion;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {
