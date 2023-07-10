@@ -935,6 +935,10 @@ public final class Numbers {
         }
     }
 
+//    public static int parseIPv4Netmask(CharSequence sequence) throws NumericException {
+//        // parse sequence into a netmask that can be used in bitwise & to check if two ips belong to same subnet
+//    }
+
     public static void intToIPv4Sink(CharSink sink, int value) {
         if(sink instanceof HttpChunkedResponseSocket){
             sink.put('"');

@@ -110,6 +110,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 setChar(index);
                 return type;
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 setInt(index);
                 return type;
             case ColumnType.LONG:

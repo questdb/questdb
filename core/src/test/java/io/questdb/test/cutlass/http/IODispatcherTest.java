@@ -447,6 +447,39 @@ public class IODispatcherTest extends AbstractTest {
         );
     }
 
+//    @Test
+//    public void testIPv4JSON() throws Exception {
+//        testJsonQuery(
+//                1,
+//                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=select%20rnd_int(1%2C5%2C0)%3A%3Aipv4%2C%20rnd_int(0%2C1000%2C0)%2C%20timestamp_sequence(0%2C%20100000000)%20from%20long_sequence(10) HTTP/1.1\r\n" +
+//                        "Accept: */*\r\n" +
+//                        "Accept-Encoding: gzip, deflate, br\r\n" +
+//                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+//                        "Connection: keep-alive\r\n" +
+//                        "Host: 127.0.0.1:9000\r\n" +
+//                        "Referer: http://127.0.0.1:9000/\r\n" +
+//                        "Sec-Fetch-Dest: empty\r\n" +
+//                        "Sec-Fetch-Mode: cors\r\n" +
+//                        "Sec-Fetch-Site: same-origin\r\n" +
+//                        "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36\r\n" +
+//                        "sec-ch-ua: \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"114\", \"Google Chrome\";v=\"114\"\r\n" +
+//                        "sec-ch-ua-mobile: ?0\r\n" +
+//                        "sec-ch-ua-platform: \"macOS\"\r\n" +
+//                        "\r\n",
+//                "HTTP/1.1 200 OK\r\n" +
+//                        "Server: questDB/1.0\r\n" +
+//                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+//                        "Transfer-Encoding: chunked\n" +
+//                        "Content-Type: application/json; charset=utf-8\r\n" +
+//                        "Keep-Alive: timeout=5, max=10000\r\n" +
+//                        "\r\n" +
+//                        "0b\r\n" +
+//                        "{\"query\":\"select rnd_int(1,5,0)::ipv4, rnd_int(0,1000,0), timestamp_sequence(0, 100000000) from long_sequence(10)\",\"columns\":[{\"name\":\"cast\",\"type\":\"IPv4\"},{\"name\":\"rnd_int\",\"type\":\"INT\"},{\"name\":\"timestamp_sequence\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"0.0.0.3\",578,\"1970-01-01T00:00:00.000000Z\"],[\"0.0.0.4\",465,\"1970-01-01T00:01:40.000000Z\"],[\"0.0.0.2\",379,\"1970-01-01T00:03:20.000000Z\"],[\"0.0.0.2\",720,\"1970-01-01T00:05:00.000000Z\"],[\"0.0.0.5\",686,\"1970-01-01T00:06:40.000000Z\"],[\"0.0.0.2\",933,\"1970-01-01T00:08:20.000000Z\"],[\"0.0.0.1\",342,\"1970-01-01T00:10:00.000000Z\"],[\"0.0.0.5\",667,\"1970-01-01T00:11:40.000000Z\"],[\"0.0.0.2\",844,\"1970-01-01T00:13:20.000000Z\"],[\"0.0.0.1\",810,\"1970-01-01T00:15:00.000000Z\"]],\"timestamp\":-1,\"count\":10,\"explain\":{\"jitCompiled\":false}}\r\n" +
+//                        "00\r\n" +
+//                        "\r\n",
+//                1
+//        );
+//    }
     @Test
     public void testEmptyQuotedString() throws Exception {
         testJsonQuery0(1, engine -> sendAndReceive(
