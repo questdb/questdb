@@ -62,7 +62,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             generateInsertsTransactions(
                     transactions,
                     1,
-                    "2020-02-24T04:30",
+                    parseFloorPartialTimestamp("2020-02-24T04:30"),
                     initialDelta,
                     initialCount,
                     1 + rnd.nextInt(1),
@@ -76,7 +76,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
             long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
@@ -127,7 +127,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             generateInsertsTransactions(
                     transactions,
                     1,
-                    "2020-02-24T04:30",
+                    parseFloorPartialTimestamp("2020-02-24T04:30"),
                     initialDelta,
                     4 * 24 * 5,
                     initialDuplicates,
@@ -142,7 +142,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             transactions.clear();
             long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
                     rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
-            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
             long delta = Timestamps.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
@@ -185,21 +185,26 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
 
             int initialDuplicates = 1 + rnd.nextInt(1);
+            var startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
+            int startCount = 4 * 24 * 5;
             generateInsertsTransactions(
                     transactions,
                     1,
-                    "2020-02-24T04:30",
+                    startTimestamp,
                     initialDelta,
-                    4 * 24 * 5,
+                    startCount,
                     initialDuplicates,
                     null,
                     rnd
             );
+            long maxTimestamp = startTimestamp + startCount * initialDelta;
+            LOG.info().$("adding rows with commit = 1 from=").$ts(startTimestamp).$(", to=").$ts(maxTimestamp).$();
 
             int transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
             applyWal(transactions, tableName, 1, rnd);
 
+            LOG.info().$("adding S column after ").$ts(maxTimestamp).$();
             compile("alter table " + tableName + " add column s symbol");
             compile("alter table " + tableName + " dedup upsert keys(ts, s)");
 
@@ -213,26 +218,28 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     ? symbols
                     : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
 
-            String fromTops = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + rnd.nextLong(4 * 24 * 5) * initialDelta);
+            var fromTops = startTimestamp + rnd.nextLong(startCount) * initialDelta;
             generateInsertsTransactions(
                     transactions,
                     1,
                     fromTops,
                     initialDelta,
-                    4 * 24 * 5,
+                    startCount,
                     initialDuplicates,
                     initialSymbols,
                     rnd
             );
+            LOG.info().$("adding more rows with commit = 1 from=").$ts(fromTops).$(", to=")
+                    .$ts(fromTops + initialDelta * startCount).$();
 
             transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
             applyWal(transactions, tableName, 1, rnd);
 
             transactions.clear();
-            long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
+            long shift = rnd.nextLong(startCount) * Timestamps.MINUTE_MICROS * 15 +
                     rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
-            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            var from = startTimestamp + shift;
             long delta = Timestamps.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
@@ -247,10 +254,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
 
+            LOG.info().$("adding rows with commit = 2 from=").$ts(from).$(", to=")
+                    .$ts(from + count * delta).$();
+
             transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
+//            for (int i = 0; i < transactionCount; i++) {
+//                if (findTimestampAndSymbol("2020-02-25T06:28:00.000000Z", "Y", transactions.get(i).operationList) > -1) {
+//                    int iasf = 0;
+//                }
+//            }
+            long ts = parseFloorPartialTimestamp("2020-02-25T10:58:00.000000Z");
+            // adding rows with commit = 2 from=2020-02-25T10:29:00.000000Z, to=2020-02-26T10:29:00.000000Z
             applyWal(transactions, tableName, 1, rnd);
-
             validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
         });
     }
@@ -269,7 +285,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             generateInsertsTransactions(
                     transactions,
                     1,
-                    "2020-02-24T04:30",
+                    parseFloorPartialTimestamp("2020-02-24T04:30"),
                     initialDelta,
                     initialCount,
                     initialDuplicates,
@@ -284,7 +300,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
             long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
@@ -317,7 +333,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             generateInsertsTransactions(
                     transactions,
                     1,
-                    "2020-02-24T04:30",
+                    parseFloorPartialTimestamp("2020-02-24T04:30"),
                     initialDelta,
                     initialCount,
                     1 + rnd.nextInt(1),
@@ -334,7 +350,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
             long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            String from = Timestamps.toUSecString(parseFloorPartialTimestamp("2020-02-24") + shift);
+            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
@@ -462,7 +478,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void generateInsertsTransactions(
             ObjList<FuzzTransaction> transactions,
             int commit,
-            String from,
+            long fromTimestamp,
             long delta,
             int count,
             int rowsWithSameTimestamp,
@@ -471,18 +487,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         transactions.add(transaction);
-        long timestamp = parseFloorPartialTimestamp(from);
         for (int i = 0; i < count; i++) {
             for (int j = 0; j < rowsWithSameTimestamp; j++) {
                 if (symbols != null && symbols.length > 0) {
                     for (int s = 0; s < symbols.length; s++) {
-                        transaction.operationList.add(new FuzzStableInsertOperation(timestamp, commit, symbols[s]));
+                        transaction.operationList.add(new FuzzStableInsertOperation(fromTimestamp, commit, symbols[s]));
                     }
                 } else {
-                    transaction.operationList.add(new FuzzStableInsertOperation(timestamp, commit));
+                    transaction.operationList.add(new FuzzStableInsertOperation(fromTimestamp, commit));
                 }
             }
-            timestamp += delta;
+            fromTimestamp += delta;
         }
         if (rnd.nextBoolean()) {
             shuffle(transaction.operationList, rnd);
@@ -600,20 +615,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private void validateNoTimestampDuplicates(
             String tableName,
-            String from,
+            long fromTimestamp,
             long delta,
             long commit2Count,
             String[] symbols,
             int existingDups
     ) {
 
-        LOG.info().$("Validating no timestamp duplicates [from=").$(from)
+        LOG.info().$("Validating no timestamp duplicates [from=").$ts(fromTimestamp)
                 .$(", delta=").$(delta)
                 .$(", commit2Count=").$(commit2Count)
                 .I$();
 
         long lastTimestamp = Long.MIN_VALUE;
-        long fromTimestamp = parseFloorPartialTimestamp(from);
         long toTimestamp = fromTimestamp + delta * commit2Count;
         StringSink sink = new StringSink();
         boolean started = false;

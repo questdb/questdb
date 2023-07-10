@@ -200,7 +200,7 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
 
     int64_t copy_to = dup_start;
     int64_t last = dup_start;
-
+    
     for (int64_t i = dup_start + 1; i < dup_end; i++) {
         uint64_t l = merge_result[last].i;
         uint64_t r = merge_result[i].i;
@@ -541,8 +541,9 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
         const auto diff_typed = [=]<class T>(const dedup_column<T> *column, const int64_t l, const int64_t r) {
             const T l_val = l >> 63 == 0 ? column->column_data[l] : column->o3_data[l & ~(1ull << 63)];
             const T r_val = r >> 63 == 0 ? column->column_data[r] : column->o3_data[r & ~(1ull << 63)];
-            const int diff = l_val - r_val;
-            return diff > 0 ? 1 : (diff < 0 ? -1 : 0);
+            // One of the values can be MIN of the type (null value)
+            // and subtraction can result in type overflow
+            return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
         };
 
         const auto diff_l = [&](const int64_t l, const int64_t r) {
