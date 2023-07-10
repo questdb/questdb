@@ -93,14 +93,22 @@ public interface SecurityContext {
     // columnNames.size() = 0 means all columns
     void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    //    !!!!!!!!!!
     // Add column over ILP/TCP.
-    void authorizeLineAlterTableAddColumn(TableToken tableToken);
+    // TODO: remove default methods after https://github.com/questdb/questdb-enterprise/pull/57 is merged!!!!!!
+    default void authorizeLineAlterTableAddColumn(TableToken tableToken) {
+
+    }
 
     // Insert over ILP/TCP.
-    void authorizeLineInsert(TableToken tableToken);
+    default void authorizeLineInsert(TableToken tableToken) {
+
+    }
 
     // Create table over ILP/TCP.
-    void authorizeLineTableCreate();
+    default void authorizeLineTableCreate() {
+
+    }
 
     void authorizeRemovePassword();
 
