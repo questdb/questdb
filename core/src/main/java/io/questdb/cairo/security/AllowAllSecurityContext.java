@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class AllowAllSecurityContext implements SecurityContext {
@@ -51,11 +52,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
-    public void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -67,11 +68,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
-    public void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -79,7 +80,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -143,11 +144,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeGrant(LongList permissions, CharSequence tableName, ObjList<CharSequence> columns) {
+    public void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns) {
     }
 
     @Override
-    public void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -159,7 +160,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -187,7 +188,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -200,5 +201,13 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
+    }
+
+    @Override
+    public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void onTableCreated(TableToken tableToken) {
     }
 }
