@@ -99,7 +99,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
             Rnd rnd = generateRandom(LOG);
 
             String tableName = testName.getMethodName();
@@ -159,8 +158,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
-//            int index1 = findTimestampAndSymbol("2020-02-27T00:32:00.000000Z", "PO", transactions.get(0).operationList);
-//            int index2 = findTimestampAndSymbol("2020-02-27T00:32:00.000000Z", "PO", transactions.get(1).operationList);
             applyWal(transactions, tableName, 1, rnd);
 
             validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
@@ -170,7 +167,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(configuration.isMultiKeyDedupEnabled());
             Rnd rnd = generateRandom(LOG);
 
             String tableName = testName.getMethodName();

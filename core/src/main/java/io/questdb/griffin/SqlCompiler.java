@@ -885,11 +885,6 @@ public class SqlCompiler implements Closeable {
             if (!tsIncludedInDedupColumns) {
                 throw SqlException.position(lexer.getPosition()).put("deduplicate key list must include dedicated timestamp column");
             }
-
-            if (dedupColumns > 0 && !configuration.isMultiKeyDedupEnabled()) {
-                throw SqlException.position(lexer.getPosition()).put("multiple key deduplication is not supported");
-            }
-
         } else {
             throw SqlException.$(lexer.getPosition(), "deduplication column list expected");
         }

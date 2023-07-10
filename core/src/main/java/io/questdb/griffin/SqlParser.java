@@ -649,10 +649,6 @@ public class SqlParser {
                     throw SqlException.position(columnListPos).put("deduplicate key list must include dedicated timestamp column");
                 }
 
-                if (dedupColumns > 1 && !configuration.isMultiKeyDedupEnabled()) {
-                    throw SqlException.position(columnListPos).put("deduplication on multiple columns is not supported");
-                }
-
                 tok = optTok(lexer);
             } else {
                 throw SqlException.position(lexer.getPosition()).put("column list expected");

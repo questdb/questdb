@@ -349,11 +349,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public boolean isMultiKeyDedupEnabled() {
-        return true;
-    }
-
-    @Override
     public boolean isO3QuickSortEnabled() {
         return overrides.isO3QuickSortEnabled();
     }

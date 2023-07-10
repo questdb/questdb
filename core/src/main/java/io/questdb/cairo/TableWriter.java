@@ -3395,7 +3395,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows, long symbolRemapCorrection) {
-        LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
+        LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken).$(", totalRows=").$(longIndexLength).$(", lagRows=").$(lagRows).$(", symbolMapCorrection=").$(symbolRemapCorrection).I$();
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
         try {

@@ -920,11 +920,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isMultiKeyDedupEnabled() {
-        return false;
-    }
-
-    @Override
     public boolean isO3QuickSortEnabled() {
         return false;
     }
