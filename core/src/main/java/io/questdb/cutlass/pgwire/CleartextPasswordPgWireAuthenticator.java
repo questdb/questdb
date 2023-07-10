@@ -383,7 +383,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
         dbcs.of(recvBufReadPos, hi);
-        if (matcher.verifyPassword(username, dbcs)) {
+        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
             recvBufReadPos = msgLimit;
             compactRecvBuf();
             prepareLoginOk();

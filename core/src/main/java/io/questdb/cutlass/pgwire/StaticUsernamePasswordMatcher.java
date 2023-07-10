@@ -25,28 +25,65 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+
+import java.nio.charset.StandardCharsets;
 
 public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
-    private final String defaultPassword;
+    private final int defaultPasswordLen;
     private final String defaultUsername;
-    private final String roPassword;
     private final String roUsername;
+    private long defaultPasswordPtr;
+    private int roPasswordLen;
+    private long roPasswordPtr;
 
     public StaticUsernamePasswordMatcher(PGWireConfiguration configuration) {
+        // todo: test empty password
         this.defaultUsername = configuration.getDefaultUsername();
-        this.defaultPassword = configuration.getDefaultPassword();
+        byte[] defaultPasswordBytes = configuration.getDefaultPassword().getBytes(StandardCharsets.UTF_8);
+        int defaultPasswordUtfLength = defaultPasswordBytes.length;
+        defaultPasswordPtr = Unsafe.malloc(defaultPasswordUtfLength, MemoryTag.NATIVE_DEFAULT);
+        defaultPasswordLen = defaultPasswordUtfLength;
+        for (int i = 0; i < defaultPasswordUtfLength; i++) {
+            Unsafe.getUnsafe().putByte(defaultPasswordPtr + i, defaultPasswordBytes[i]);
+        }
         if (configuration.isReadOnlyUserEnabled()) {
+            byte[] roPasswordBytes = configuration.getReadOnlyPassword().getBytes(StandardCharsets.UTF_8);
+            int roPasswordUtfLength = roPasswordBytes.length;
+            roPasswordPtr = Unsafe.malloc(roPasswordUtfLength, MemoryTag.NATIVE_DEFAULT);
+            roPasswordLen = roPasswordUtfLength;
+            for (int i = 0; i < roPasswordUtfLength; i++) {
+                Unsafe.getUnsafe().putByte(roPasswordPtr + i, roPasswordBytes[i]);
+            }
             this.roUsername = configuration.getReadOnlyUsername();
-            this.roPassword = configuration.getReadOnlyPassword();
         } else {
             this.roUsername = null;
-            this.roPassword = null;
+            this.roPasswordPtr = 0;
+            this.roPasswordLen = -1;
         }
     }
 
     @Override
-    public boolean verifyPassword(CharSequence username, CharSequence password) {
-        boolean matchRo = roUsername != null && roPassword != null && Chars.equals(roUsername, username) && Chars.equals(roPassword, password);
-        return matchRo || Chars.equals(defaultUsername, username) && Chars.equals(defaultPassword, password);
+    public void close() {
+        defaultPasswordPtr = Unsafe.free(defaultPasswordPtr, defaultPasswordLen, MemoryTag.NATIVE_DEFAULT);
+        if (roPasswordLen != -1) {
+            roPasswordPtr = Unsafe.free(roPasswordPtr, roPasswordLen, MemoryTag.NATIVE_DEFAULT);
+            roPasswordLen = -1;
+        }
+    }
+
+    @Override
+    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+        boolean matchRo = roUsername != null
+                && passwordLen == roPasswordLen
+                && Chars.equals(roUsername, username)
+                && Vect.memeq(roPasswordPtr, passwordPtr, passwordLen);
+
+        return matchRo
+                || (Chars.equals(defaultUsername, username)
+                && passwordLen == defaultPasswordLen
+                && Vect.memeq(defaultPasswordPtr, passwordPtr, passwordLen));
     }
 }

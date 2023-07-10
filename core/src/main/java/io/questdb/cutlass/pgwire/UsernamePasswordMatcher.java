@@ -24,6 +24,13 @@
 
 package io.questdb.cutlass.pgwire;
 
-public interface UsernamePasswordMatcher {
-    boolean verifyPassword(CharSequence username, CharSequence password);
+import io.questdb.std.QuietCloseable;
+
+public interface UsernamePasswordMatcher extends QuietCloseable {
+    @Override
+    default void close() {
+
+    }
+
+    boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen);
 }

@@ -1046,6 +1046,29 @@ public final class Chars {
         return true;
     }
 
+    public static int utf8toUtf16(ByteSequence seq, CharSinkBase sink, byte terminator) {
+        int i = 0;
+        int len = seq.length();
+        while (i < len) {
+            byte b = seq.byteAt(i);
+            if (b == terminator) {
+                return i;
+            }
+            if (b < 0) {
+                int n = utf8DecodeMultiByte(seq, i, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    return -1;
+                }
+                i += n;
+            } else {
+                sink.put((char) b);
+                ++i;
+            }
+        }
+        return i;
+    }
+
     private static int[] base64CreateInvertedAlphabet(char[] alphabet) {
         int[] inverted = new int[128]; // ASCII only
         Arrays.fill(inverted, (byte) -1);
