@@ -301,7 +301,7 @@ class LineTcpMeasurementEvent implements Closeable {
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
         tableUpdateDetails = tud;
-        securityContext.authorizeInsert(tud.getTableToken(), TableUpdateDetails.ALL_COLUMNS_AUTHORIZE_LIST);
+        securityContext.authorizeLineInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -329,7 +329,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 // send column by name
                 final String colNameUtf16 = localDetails.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
-                    securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
+                    securityContext.authorizeLineAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16);
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
                 } else if (!autoCreateNewColumns) {
