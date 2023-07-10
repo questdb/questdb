@@ -39,9 +39,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Rule;
+import org.junit.rules.Timeout;
 
 import java.io.PrintWriter;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final String CHARSET = "UTF8";
@@ -55,6 +58,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -79,6 +87,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             int httpMinPort,
             int pgPort,
             int ilpPort,
+            String root,
             String... extra
     ) throws Exception {
         final String confPath = root + Files.SEPARATOR + "conf";
@@ -86,12 +95,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
 
-            // enable services
+            // enable all services, but UDP; it has to be enabled per test
             writer.println("http.enabled=true");
             writer.println("http.min.enabled=true");
             writer.println("pg.enabled=true");
             writer.println("line.tcp.enabled=true");
-            writer.println("line.udp.enabled=true");
 
             // disable services
             writer.println("http.query.cache.enabled=false");
@@ -144,7 +152,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     protected static void createDummyConfiguration(String... extra) throws Exception {
-        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
+        createDummyConfigurationInRoot(root, extra);
+    }
+
+    protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
+        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
     }
 
     protected static void drainWalQueue(CairoEngine engine) {

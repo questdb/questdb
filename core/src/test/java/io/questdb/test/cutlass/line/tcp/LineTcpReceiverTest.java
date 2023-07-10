@@ -79,6 +79,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import static io.questdb.cutlass.auth.AuthUtils.EC_ALGORITHM;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 @RunWith(Parameterized.class)
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
@@ -185,11 +186,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
             m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
             CreateTableTestUtils.create(m);
+            engine.releaseInactive();
         }
 
         final SOCountDownLatch dataSent = new SOCountDownLatch(1);
         final SOCountDownLatch dataConsumed = new SOCountDownLatch(1);
         final AtomicInteger sendFailureCounter = new AtomicInteger();
+
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
@@ -203,7 +206,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             new Thread(() -> {
                 try (Socket socket = getSocket()) {
                     for (int i = 0; i < numOfRows; i++) {
-                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : "" + i;
+                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : String.valueOf(i);
                         sendToSocket(socket, tableName + ",abcdef=x col=" + value + "\n");
                     }
                 } catch (Exception e) {
@@ -253,7 +256,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
                 m.timestamp("ts").wal();
-                CreateTableTestUtils.create(engine, m);
+                TestUtils.create(m, engine);
             }
 
             // Send non-partitioned table rows before the partitioned table ones.
@@ -641,7 +644,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
             try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
-                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
+                m.timestamp("ts").col("sym", ColumnType.SYMBOL);
+                if (walEnabled) {
+                    m.wal();
+                }
                 createTable(m);
             }
 
@@ -760,22 +766,35 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             sendWaitWalReleaseCount(lineData, 3);
 
-            mayDrainWalQueue();
             // two of the three commits go to the renamed table
-            String expected = "location\ttemperature\ttimestamp\n" +
+            final String expected = "location\ttemperature\ttimestamp\n" +
                     "west1\t10.0\t2016-06-13T17:43:50.100400Z\n" +
                     "west2\t20.0\t2016-06-13T17:43:50.100500Z\n" +
                     "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
                     "west4\t40.0\t2016-06-13T17:43:50.100700Z\n" +
                     "south8\t80.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, meteorology);
+
+            assertEventually(
+                    () -> {
+                        drainWalQueue();
+                        assertTable(expected, meteorology);
+                    },
+                    15
+            );
 
             // last commit goes to the recreated table
-            expected = "location\ttemperature\ttimestamp\n" +
+            final String expected2 = "location\ttemperature\ttimestamp\n" +
                     "west5\t50.0\t2016-06-13T17:43:50.100800Z\n" +
                     "east6\t60.0\t2016-06-13T17:43:50.100900Z\n" +
                     "south7\t70.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, weather);
+
+            assertEventually(
+                    () -> {
+                        drainWalQueue();
+                        assertTable(expected2, weather);
+                    },
+                    15
+            );
 
         }, false, 250);
     }
@@ -1162,7 +1181,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            CreateTableTestUtils.create(engine, m);
+            TestUtils.create(m, engine);
         }
 
         engine.releaseInactive();
@@ -1216,7 +1235,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CreateTableTestUtils.create(engine, m);
+                TestUtils.create(m, engine);
             }
 
             sendLinger(lineData, "table_a");
@@ -1344,7 +1363,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CreateTableTestUtils.create(engine, m);
+                TestUtils.create(m, engine);
             }
 
             send(lineData, "messages");
@@ -1439,7 +1458,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             sendLinger(lineData.toString(), tableName);
             doneLatch.await();
 
-            TestUtils.assertEventually(() -> {
+            assertEventually(() -> {
                 mayDrainWalQueue();
 
                 CharSequenceIntHashMap symbolCounts = new CharSequenceIntHashMap();

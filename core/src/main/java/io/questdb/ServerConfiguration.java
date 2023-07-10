@@ -57,6 +57,9 @@ public interface ServerConfiguration {
 
     FactoryProvider getFactoryProvider();
 
-    default void init(CairoEngine engine, FunctionFactoryCache functionFactoryCache) {
+    default void init(
+            CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache,
+            FreeOnExit freeOnExit) {
     }
 }

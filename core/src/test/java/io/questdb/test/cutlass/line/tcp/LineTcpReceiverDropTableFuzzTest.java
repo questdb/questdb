@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -86,6 +87,8 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
             if (!Chars.contains(ex.getFlyweightMessage(), "table does not exist")) {
                 throw ex;
             }
+        } catch (TableReferenceOutOfDateException e) {
+            // ignore
         }
     }
 

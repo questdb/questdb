@@ -98,8 +98,17 @@ public final class PlainTcpLineChannel implements LineChannel {
 
     @Override
     public void send(long ptr, int len) {
-        if (nf.send(fd, ptr, len) != len) {
-            throw new LineSenderException("send error").errno(nf.errno());
+        if (len > 0) {
+            long o = 0;
+            while (len > 0) {
+                int n = nf.send(fd, ptr + o, len);
+                if (n > 0) {
+                    len -= n;
+                    o += n;
+                } else {
+                    throw new LineSenderException("send error ").errno(nf.errno());
+                }
+            }
         }
     }
 

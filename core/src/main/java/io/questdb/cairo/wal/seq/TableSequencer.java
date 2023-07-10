@@ -60,7 +60,7 @@ public interface TableSequencer extends QuietCloseable {
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn);
 
-    void rename(TableToken newTableToken);
+    TableToken reload();
 
     void resumeTable();
 

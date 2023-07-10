@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
@@ -35,6 +36,24 @@ import static io.questdb.griffin.CompiledQuery.RENAME_TABLE;
 public class RenameTableTest extends AbstractGriffinTest {
 
     @Test
+    public void testApplyRename() throws SqlException {
+        compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i, " +
+                        " timestamp_sequence(1,1) timestamp " +
+                        " from long_sequence(10)" +
+                        ") timestamp (timestamp);"
+        );
+        TableToken from = engine.verifyTableName("x");
+        TableToken to = from.renamed("y");
+        engine.applyTableRename(from, to);
+
+        Assert.assertEquals(from.getDirName(), engine.verifyTableName("y").getDirName());
+        Assert.assertNull(engine.getTableTokenIfExists("x"));
+    }
+
+    @Test
     public void testFunctionDestTableName() throws Exception {
         assertFailure("rename table x to y()", 18);
     }
@@ -42,6 +61,46 @@ public class RenameTableTest extends AbstractGriffinTest {
     @Test
     public void testFunctionSrcTableName() throws Exception {
         assertFailure("rename table x() to y", 13);
+    }
+
+    @Test
+    public void testRenameTableCaseInsensitive() throws Exception {
+        String tableName = testName.getMethodName();
+        String upperCaseName = testName.getMethodName().toUpperCase();
+        String newTableName = testName.getMethodName() + "_new";
+
+        assertMemoryLeak(ff, () -> {
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ")"
+            );
+
+            TableToken table2directoryName = engine.verifyTableName(tableName);
+            compile("rename table " + tableName + " to " + upperCaseName);
+            compile("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
+            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+
+            TableToken newTableDirectoryName = engine.verifyTableName(upperCaseName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
+
+
+            assertSql("select * from " + upperCaseName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+
+            compile("rename table " + upperCaseName + " to " + newTableName);
+
+            assertSql("select * from " + newTableName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+        });
     }
 
     @Test

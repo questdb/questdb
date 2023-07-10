@@ -115,7 +115,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(34, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bla]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected [token='bla']");
             } finally {
                 engine.clear();
             }
@@ -130,7 +130,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(9, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "TABLE expected");
             }
         });
     }
@@ -143,7 +143,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(8, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "TABLE expected");
             }
         });
     }
@@ -377,7 +377,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'symbol' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "SYMBOL expected");
             } finally {
                 engine.clear();
             }
@@ -394,7 +394,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'maps' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "MAPS expected");
             } finally {
                 engine.clear();
             }

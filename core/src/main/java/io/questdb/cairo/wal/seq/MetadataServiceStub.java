@@ -28,11 +28,12 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
+import org.jetbrains.annotations.NotNull;
 
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
-    default void addIndex(CharSequence columnName, int indexValueBlockSize) {
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
 
@@ -52,7 +53,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void dropIndex(CharSequence columnName) {
+    default void dropIndex(@NotNull CharSequence columnName) {
         throw CairoException.critical(0).put("drop index does not update sequencer metadata");
     }
 

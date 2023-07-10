@@ -60,6 +60,15 @@ public abstract class BasePGTest extends AbstractGriffinTest {
 
     protected CopyRequestJob copyRequestJob = null;
 
+    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs);
+    }
+
+    public static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        printToSink(sink, rs);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
@@ -141,13 +150,123 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         }
     }
 
-    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        assertResultSet(null, expected, sink, rs);
-    }
+    protected static long printToSink(StringSink sink, ResultSet rs) throws SQLException, IOException {
+        // dump metadata
+        ResultSetMetaData metaData = rs.getMetaData();
+        final int columnCount = metaData.getColumnCount();
+        for (int i = 0; i < columnCount; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
 
-    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs);
-        TestUtils.assertEquals(message, expected, sink);
+            sink.put(metaData.getColumnName(i + 1));
+            sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+        }
+        sink.put('\n');
+
+        long rows = 0;
+        while (rs.next()) {
+            rows++;
+            for (int i = 1; i <= columnCount; i++) {
+                if (i > 1) {
+                    sink.put(',');
+                }
+                switch (JDBCType.valueOf(metaData.getColumnType(i))) {
+                    case VARCHAR:
+                    case NUMERIC:
+                        String stringValue = rs.getString(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(stringValue);
+                        }
+                        break;
+                    case INTEGER:
+                        int intValue = rs.getInt(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(intValue);
+                        }
+                        break;
+                    case DOUBLE:
+                        double doubleValue = rs.getDouble(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(doubleValue);
+                        }
+                        break;
+                    case TIMESTAMP:
+                        Timestamp timestamp = rs.getTimestamp(i);
+                        if (timestamp == null) {
+                            sink.put("null");
+                        } else {
+                            sink.put(timestamp.toString());
+                        }
+                        break;
+                    case REAL:
+                        float floatValue = rs.getFloat(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(floatValue, 3);
+                        }
+                        break;
+                    case SMALLINT:
+                        sink.put(rs.getShort(i));
+                        break;
+                    case BIGINT:
+                        long longValue = rs.getLong(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(longValue);
+                        }
+                        break;
+                    case CHAR:
+                        String strValue = rs.getString(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(strValue.charAt(0));
+                        }
+                        break;
+                    case BIT:
+                        sink.put(rs.getBoolean(i));
+                        break;
+                    case TIME:
+                    case DATE:
+                        timestamp = rs.getTimestamp(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(timestamp.toString());
+                        }
+                        break;
+                    case BINARY:
+                        InputStream stream = rs.getBinaryStream(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            toSink(stream, sink);
+                        }
+                        break;
+                    case OTHER:
+                        Object object = rs.getObject(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(object.toString());
+                        }
+                        break;
+                    default:
+                        assert false;
+                }
+            }
+            sink.put('\n');
+        }
+        return rows;
     }
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
@@ -269,6 +388,23 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return DriverManager.getConnection(url, properties);
     }
 
+    protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", mode.value);
+        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
+            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
+        }
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
     @NotNull
     protected NetworkFacade getFragmentedSendFacade() {
         return new NetworkFacadeImpl() {
@@ -335,125 +471,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 return new Rnd();
             }
         };
-    }
-
-    protected long printToSink(StringSink sink, ResultSet rs) throws SQLException, IOException {
-        // dump metadata
-        ResultSetMetaData metaData = rs.getMetaData();
-        final int columnCount = metaData.getColumnCount();
-        for (int i = 0; i < columnCount; i++) {
-            if (i > 0) {
-                sink.put(',');
-            }
-
-            sink.put(metaData.getColumnName(i + 1));
-            sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
-        }
-        sink.put('\n');
-
-        long rows = 0;
-        while (rs.next()) {
-            rows++;
-            for (int i = 1; i <= columnCount; i++) {
-                if (i > 1) {
-                    sink.put(',');
-                }
-                switch (JDBCType.valueOf(metaData.getColumnType(i))) {
-                    case VARCHAR:
-                    case NUMERIC:
-                        String stringValue = rs.getString(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(stringValue);
-                        }
-                        break;
-                    case INTEGER:
-                        int intValue = rs.getInt(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(intValue);
-                        }
-                        break;
-                    case DOUBLE:
-                        double doubleValue = rs.getDouble(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(doubleValue);
-                        }
-                        break;
-                    case TIMESTAMP:
-                        Timestamp timestamp = rs.getTimestamp(i);
-                        if (timestamp == null) {
-                            sink.put("null");
-                        } else {
-                            sink.put(timestamp.toString());
-                        }
-                        break;
-                    case REAL:
-                        float floatValue = rs.getFloat(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(floatValue, 3);
-                        }
-                        break;
-                    case SMALLINT:
-                        sink.put(rs.getShort(i));
-                        break;
-                    case BIGINT:
-                        long longValue = rs.getLong(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(longValue);
-                        }
-                        break;
-                    case CHAR:
-                        String strValue = rs.getString(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(strValue.charAt(0));
-                        }
-                        break;
-                    case BIT:
-                        sink.put(rs.getBoolean(i));
-                        break;
-                    case TIME:
-                    case DATE:
-                        timestamp = rs.getTimestamp(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(timestamp.toString());
-                        }
-                        break;
-                    case BINARY:
-                        InputStream stream = rs.getBinaryStream(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            toSink(stream, sink);
-                        }
-                        break;
-                    case OTHER:
-                        Object object = rs.getObject(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(object.toString());
-                        }
-                        break;
-                    default:
-                        assert false;
-                }
-            }
-            sink.put('\n');
-        }
-        return rows;
     }
 
     enum Mode {

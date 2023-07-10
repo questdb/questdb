@@ -139,8 +139,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case EXPECT_PASSWORD_MESSAGE: {
-                        readFromSocket();
-                        int r = processPasswordMessage();
+                        int r = readFromSocket();
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
+                        r = processPasswordMessage();
                         if (r != Authenticator.OK) {
                             return r;
                         }
@@ -168,7 +171,10 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case WRITE_AND_AUTH_FAILURE: {
-                        writeToSocketAndAdvance(State.AUTH_FAILED);
+                        int r = writeToSocketAndAdvance(State.AUTH_FAILED);
+                        if (r != Authenticator.OK) {
+                            return r;
+                        }
                         break;
                     }
                     case AUTH_SUCCESS:
@@ -377,7 +383,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
         dbcs.of(recvBufReadPos, hi);
-        if (matcher.match(username, dbcs)) {
+        if (matcher.verifyPassword(username, dbcs)) {
             recvBufReadPos = msgLimit;
             compactRecvBuf();
             prepareLoginOk();
@@ -446,8 +452,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     private int writeToSocketAndAdvance(State nextState) {
         int toWrite = (int) (sendBufWritePos - sendBufReadPos);
-        int bytesWritten = nf.send(fd, sendBufReadPos, toWrite);
-        sendBufReadPos += bytesWritten;
+        int n = nf.send(fd, sendBufReadPos, toWrite);
+        if (n < 0) {
+            return Authenticator.NEEDS_DISCONNECT;
+        }
+        sendBufReadPos += n;
         compactSendBuf();
         if (sendBufReadPos == sendBufWritePos) {
             state = nextState;

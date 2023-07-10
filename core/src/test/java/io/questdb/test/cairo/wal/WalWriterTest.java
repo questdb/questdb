@@ -2026,10 +2026,11 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             TableToken tableToken;
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.SYMBOL)
                     .col("c", ColumnType.SYMBOL)
+                    .timestamp("ts")
                     .wal()
             ) {
                 tableToken = createTable(model);
@@ -2069,9 +2070,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.SYMBOL)
                     .col("c", ColumnType.SYMBOL)
+                    .timestamp("ts")
             ) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
-                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(1, reader.size());
@@ -2126,9 +2128,10 @@ public class WalWriterTest extends AbstractGriffinTest {
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("c", ColumnType.SYMBOL)
+                    .timestamp("ts")
             ) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 1)) {
-                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(1, reader.size());
@@ -2715,11 +2718,12 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = "testSymTable";
             TableToken tableToken;
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
                     .col("a", ColumnType.BYTE)
                     .col("b", ColumnType.SYMBOL)
                     .col("c", ColumnType.SYMBOL)
                     .col("d", ColumnType.SYMBOL)
+                    .timestamp("ts")
                     .wal()
             ) {
                 tableToken = createTable(model);
@@ -2761,7 +2765,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableReader reader = engine.getReader(tableToken)) {
-                assertEquals(4, reader.getMetadata().getColumnCount());
+                assertEquals(5, reader.getMetadata().getColumnCount());
                 assertEquals(5, reader.getTransientRowCount());
                 RecordCursor cursor = reader.getCursor();
                 Record record = cursor.getRecord();
@@ -2788,7 +2792,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 10L)) {
-                assertEquals(4, reader.getColumnCount());
+                assertEquals(5, reader.getColumnCount());
                 assertEquals(10, reader.size());
                 RecordCursor cursor = reader.getDataCursor();
                 Record record = cursor.getRecord();
@@ -2963,8 +2967,9 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = "testWalSegmentInit";
             TableToken tableToken;
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
                     .col("a", ColumnType.BYTE)
+                    .timestamp("ts")
                     .wal()
             ) {
                 tableToken = createTable(model);

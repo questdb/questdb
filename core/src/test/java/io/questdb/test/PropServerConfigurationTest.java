@@ -327,9 +327,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
 
-        Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getQuestDbVersion());
-        Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
-        Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
+        Assert.assertEquals("[DEVELOPMENT]", configuration.getCairoConfiguration().getBuildInformation().getSwVersion());
+        Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
+        Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
 
@@ -1212,10 +1212,10 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testSetAllInternalProperties() throws Exception {
-        final BuildInformation buildInformation = new BuildInformationHolder("5.0.6", "0fff7d46fd13b4705770f1fb126dd9b889768643", "11.0.9.1");
+        final BuildInformation buildInformation = new BuildInformationHolder("5.0.6", "0fff7d46fd13b4705770f1fb126dd9b889768643", "11.0.9.1", "QuestDB");
         final PropServerConfiguration configuration = new PropServerConfiguration(root, new Properties(), null, LOG, buildInformation);
 
-        Assert.assertEquals("5.0.6", configuration.getCairoConfiguration().getBuildInformation().getQuestDbVersion());
+        Assert.assertEquals("5.0.6", configuration.getCairoConfiguration().getBuildInformation().getSwVersion());
         Assert.assertEquals("11.0.9.1", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
         Assert.assertEquals("0fff7d46fd13b4705770f1fb126dd9b889768643", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
     }

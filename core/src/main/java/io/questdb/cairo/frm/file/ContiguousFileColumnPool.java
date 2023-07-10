@@ -37,13 +37,13 @@ import java.io.Closeable;
 
 public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
+    private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final ListPool<ContiguousFileFixFrameColumn> fixColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
     private final ListPool<ContiguousFileVarFrameColumn> varColumnPool = new ListPool<>();
     private boolean canWrite;
     private boolean isClosed;
-    private final CairoConfiguration configuration;
 
     public ContiguousFileColumnPool(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
@@ -125,7 +125,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             if (varColumnPool.size() > 0) {
                 return varColumnPool.pop();
             }
-            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(ff, configuration.getWriterFileOpenOpts());
+            ContiguousFileVarFrameColumn col = new ContiguousFileVarFrameColumn(configuration);
             col.setPool(varColumnPool);
             return col;
         }

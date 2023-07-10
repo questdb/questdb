@@ -131,10 +131,37 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFaultToleranceImplicitCastException() throws Exception {
+        withPool0((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            compiler.compile("create table x as (" +
+                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                    " from long_sequence(10000)" +
+                    ") timestamp(t) partition by hour", sqlExecutionContext);
+            final String sql = "select * from x where a > '2022-03-08T18:03:57.609765Z'";
+            try {
+                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        } // drain cursor until exception
+                        Assert.fail();
+                    }
+                }
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        }, 4, 4);
+    }
+
+    @Test
     public void testFaultToleranceNPE() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            compiler.compile("create table x as (select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 100000) t from long_sequence(20)) timestamp(t) partition by hour", sqlExecutionContext);
+            compiler.compile("create table x as (" +
+                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                    " from long_sequence(10000)" +
+                    ") timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select * from x where npe()";
             try {
                 try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {

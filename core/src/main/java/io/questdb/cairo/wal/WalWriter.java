@@ -134,6 +134,7 @@ public class WalWriter implements TableWriterAPI {
             metadata = new WalWriterMetadata(ff);
 
             tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -154,7 +155,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void addColumn(CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType) {
         addColumn(
                 columnName,
                 columnType,
@@ -418,6 +419,17 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    public long renameTable(@NotNull CharSequence oldName, String newTableName) {
+        if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
+            throw CairoException.tableDoesNotExist(oldName);
+        }
+        alterOp.clear();
+        alterOp.ofRenameTable(tableToken, newTableName);
+        long txn = apply(alterOp, true);
+        assert Chars.equals(newTableName, tableToken.getTableName());
+        return txn;
+    }
+
     public void rollSegment() {
         try {
             openNewSegment();
@@ -547,8 +559,8 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    public void updateTableToken(TableToken tableToken) {
-        this.tableToken = tableToken;
+    public void updateTableToken(TableToken ignoredTableToken) {
+        // goActive will update table token
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA mem1, MemoryMA mem2) {
@@ -1173,6 +1185,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void releaseSegmentLock(int segmentId, int segmentLockFd) {
         if (ff.close(segmentLockFd)) {
+            sequencer.notifySegmentClosed(tableToken, walId, segmentId);
             LOG.debug().$("released segment lock [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .$(", fd=").$(segmentLockFd)
@@ -1466,7 +1479,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
                 throw CairoException.nonCritical().put("cannot remove column, column does not exists [table=").put(tableToken.getTableName())
@@ -1481,7 +1494,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(CharSequence columnName, CharSequence newName) {
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
                 throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableToken.getTableName())
@@ -1499,6 +1512,15 @@ public class WalWriter implements TableWriterAPI {
             }
             if (!TableUtils.isValidColumnName(newName, newName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(newName);
+            }
+            structureVersion++;
+        }
+
+        @Override
+        public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+            // this check deal with concurrency
+            if (fromNameTable == null || !Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
+                throw CairoException.tableDoesNotExist(fromNameTable);
             }
             structureVersion++;
         }
@@ -1581,7 +1603,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
                 int type = metadata.getColumnType(columnIndex);
@@ -1623,7 +1645,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(CharSequence columnName, CharSequence newColumnName) {
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newColumnName) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
                 int columnType = metadata.getColumnType(columnIndex);
@@ -1663,6 +1685,12 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
             }
+        }
+
+        @Override
+        public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+            tableToken = metadata.getTableToken().renamed(Chars.toString(toTableName));
+            metadata.renameTable(tableToken);
         }
     }
 
@@ -1711,6 +1739,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -1723,21 +1756,21 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
         }
 
         @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
         }
 
         @Override
@@ -1830,6 +1863,11 @@ public class WalWriter implements TableWriterAPI {
             putSym(columnIndex, str);
         }
 
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            putInt(columnIndex, key);
+        }
+
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
             // this method will write column name to the buffer if it has to be utf8 decoded
             // otherwise it will write nothing.
@@ -1851,6 +1889,11 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw new UnsupportedOperationException();
             }
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
         @Override

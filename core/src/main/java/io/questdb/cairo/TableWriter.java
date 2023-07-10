@@ -282,7 +282,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
-            this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
+            this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
@@ -385,7 +385,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addColumn(CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType) {
         addColumn(
                 columnName,
                 columnType,
@@ -537,9 +537,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity);
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -547,7 +547,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addIndex(CharSequence columnName, int indexValueBlockSize) {
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -1140,7 +1140,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void dropIndex(CharSequence columnName) {
+    public void dropIndex(@NotNull CharSequence columnName) {
         checkDistressed();
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
@@ -1577,12 +1577,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
 
                     // Try to fast apply records from LAG to last partition which are before commitToTimestamp
-                    return applyFromWalLagToLastPartition(commitToTimestamp);
+                    return applyFromWalLagToLastPartition(commitToTimestamp, true);
                 }
 
                 // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
                 // This application will not include the current transaction data, only what's already in WAL lag.
-                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp)) != Long.MIN_VALUE) {
+                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), false) != Long.MIN_VALUE) {
                     walLagRowCount = txWriter.getLagRowCount();
                     totalUncommitted = walLagRowCount + commitRowCount;
                 }
@@ -1609,19 +1609,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
                     final long tsLagOffset = txWriter.getTransientRowCount() << 3;
                     final long tsLagSize = walLagRowCount << 3;
-                    final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                     final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
-
                     timestampAddr = o3TimestampMem.getAddress();
-                    Vect.radixSortABLongIndexAsc(
-                            Math.abs(tsLagBufferAddr),
-                            walLagRowCount,
-                            mappedTimestampIndexAddr,
-                            commitRowCount,
-                            timestampAddr,
-                            o3TimestampMemCpy.addressOf(0)
-                    );
-                    mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+
+                    final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
+                    try {
+                        Vect.radixSortABLongIndexAsc(
+                                Math.abs(tsLagBufferAddr),
+                                walLagRowCount,
+                                mappedTimestampIndexAddr,
+                                commitRowCount,
+                                timestampAddr,
+                                o3TimestampMemCpy.addressOf(0)
+                        );
+                    } finally {
+                        mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+                    }
+
                     o3MergeIntoLag(timestampAddr, walLagRowCount, rowLo, rowHi, timestampIndex);
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
@@ -1794,7 +1798,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void removeColumn(CharSequence name) {
+    public void removeColumn(@NotNull CharSequence name) {
         assert txWriter.getLagRowCount() == 0;
 
         checkDistressed();
@@ -1856,7 +1860,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
         metadata.removeColumn(index);
         if (timestamp) {
@@ -1895,7 +1899,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void renameColumn(CharSequence currentName, CharSequence newName) {
+    public void renameColumn(@NotNull CharSequence currentName, @NotNull CharSequence newName) {
         checkDistressed();
         checkColumnName(newName);
 
@@ -1934,7 +1938,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throwDistressException(e);
         }
 
-        bumpColumnStructureVersion();
+        bumpMetadataAndColumnStructureVersion();
 
         // Call finish purge to remove old column files before renaming them in metadata
         finishColumnPurge();
@@ -1945,6 +1949,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+    }
+
+    @Override
+    public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+        // table writer is not involved in concurrent table rename, the `fromTableName` must
+        // always match tableWriter's table name
+        LOG.debug().$("renaming table [path=").utf8(path).$(", seqTxn=").$(txWriter.getSeqTxn()).I$();
+        try {
+            TableUtils.overwriteTableNameFile(path, ddlMem, ff, toTableName);
+        } finally {
+            path.trimTo(rootLen);
+        }
+        // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
+        bumpColumnStructureVersion();
     }
 
     @Override
@@ -2323,7 +2341,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return index;
     }
 
-    private long applyFromWalLagToLastPartition(long commitToTimestamp) {
+    private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean commitTerminates) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
         if (txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
@@ -2337,7 +2355,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lagMaxTimestamp <= commitToTimestamp) {
                 // Easy case, all lag data can be marked as committed in the last partition
                 LOG.debug().$("fast apply full lag to last partition [table=").$(tableToken).I$();
-                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE);
+                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE, commitTerminates);
                 return lagMaxTimestamp;
             } else if (lagMinTimestamp <= commitToTimestamp) {
                 // Find the max row which can be marked as committed in the last timestamp
@@ -2365,7 +2383,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (applyCount - 1) * Long.BYTES);
                     assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
 
-                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp);
+                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp, commitTerminates);
 
                     LOG.debug().$("partial apply lag to last partition [table=").$(tableToken)
                             .$(" ,lagSize=").$(lagRows)
@@ -2383,7 +2401,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Long.MIN_VALUE;
     }
 
-    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp, boolean commitTerminates) {
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
@@ -2408,7 +2426,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // set append position on columns so that the files are truncated to the correct size
         // if the partition is closed after the commit.
-        setAppendPosition(txWriter.transientRowCount, false);
+        // If wal commit terminates here, column positions should include lag to not truncate the WAL lag data.
+        // Otherwise, lag will be copied out and ok to truncate to the transient row count.
+        long partitionTruncateRowCount = txWriter.getTransientRowCount() + (commitTerminates ? txWriter.getLagRowCount() : 0);
+        setAppendPosition(partitionTruncateRowCount, false);
     }
 
     private boolean assertColumnPositionIncludeWalLag() {
@@ -2774,6 +2795,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             cancelRowAndBump();
         }
+    }
+
+    private void bumpMetadataAndColumnStructureVersion() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.bumpMetadataAndColumnStructureVersion(this.denseSymbolMapWriters);
+        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private void bumpMetadataVersion() {
@@ -3757,7 +3785,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         column.jumpTo(offset + size);
         long address = column.map(offset, size);
 
-
         // column could not provide necessary length of buffer
         // because perhaps its internal buffer is not big enough
         if (address != 0) {
@@ -4517,7 +4544,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                 }
 
-
                 o3DstDataMem.jumpTo(destOffset + size);
                 assert o3SrcDataMem.size() >= size;
                 Vect.memmove(o3DstDataMem.addressOf(destOffset), o3SrcDataMem.addressOf(sourceOffset), size);
@@ -4762,16 +4788,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // the data is copied back to start of the buffer, no need to set size first
                 long destAddr = mapAppendColumnBuffer(o3DstIndexMem, destIndexOffset, destIndexSize, true);
                 assert destAddr != 0;
-
-                O3Utils.shiftCopyFixedSizeColumnData(
-                        sourceOffset - destOffset,
-                        o3SrcIndexMem.addressOf(committedIndexOffset),
-                        0,
-                        copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                        Math.abs(destAddr)
-                );
-
-                mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
+                try {
+                    O3Utils.shiftCopyFixedSizeColumnData(
+                            sourceOffset - destOffset,
+                            o3SrcIndexMem.addressOf(committedIndexOffset),
+                            0,
+                            copyToLagRowCount, // No need to do +1 here, hi is inclusive
+                            Math.abs(destAddr)
+                    );
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
+                }
             }
 
             o3DstDataMem.jumpTo(destOffset + size);
@@ -4783,15 +4810,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         sourceOffset = 0;
                     }
                     MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
-                    long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
-                    if (bytesWritten != size) {
-                        throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                                .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                    if (mixedIOFlag) {
+                        long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
+                        if (bytesWritten != size) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
+                    } else {
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+                        try {
+                            Vect.memcpy(Math.abs(destAddr), o3MemBuff.addressOf(sourceOffset), size);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                        }
                     }
-
                 } else {
-                    MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
-                    ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                    if (mixedIOFlag) {
+                        MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
+                        long bytesWritten = ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                        if (bytesWritten != size) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
+                    } else {
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+                        try {
+                            Vect.memcpy(Math.abs(destAddr), o3SrcDataMem.addressOf(sourceOffset), size);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                        }
+                    }
                 }
             } else {
                 // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
@@ -4800,8 +4848,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long srcLo = o3SrcDataMem.addressOf(sourceOffset);
 
                 long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
-                Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
-                mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                try {
+                    Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                }
             }
         } catch (Throwable th) {
             handleWorkStealingException(
@@ -7563,9 +7614,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putChar(int columnIndex, char value);
 
-        default void putDate(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
+        void putDate(int columnIndex, long value);
 
         void putDouble(int columnIndex, double value);
 
@@ -7573,7 +7622,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putGeoHash(int columnIndex, long value);
 
-        void putGeoHashDeg(int index, double lat, double lon);
+        void putGeoHashDeg(int columnIndex, double lat, double lon);
 
         void putGeoStr(int columnIndex, CharSequence value);
 
@@ -7615,17 +7664,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putSym(int columnIndex, char value);
 
-        default void putSymIndex(int columnIndex, int key) {
-            putInt(columnIndex, key);
-        }
+        void putSymIndex(int columnIndex, int key);
 
-        default void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-            throw new UnsupportedOperationException();
-        }
+        void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars);
 
-        default void putTimestamp(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
+        void putTimestamp(int columnIndex, long value);
 
         void putUuid(int columnIndex, CharSequence uuid);
     }
@@ -7693,7 +7736,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putGeoStr(int columnIndex, CharSequence value) {
-
+            // no-op
         }
 
         @Override
@@ -7783,7 +7826,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putUuid(int columnIndex, CharSequence uuid) {
-
+            // no-op
         }
     }
 
@@ -7829,6 +7872,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -7841,21 +7889,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
         }
 
         @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
         }
 
         @Override
@@ -7942,6 +7990,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putSym(int columnIndex, char value) {
             getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            putInt(columnIndex, key);
+        }
+
+        @Override
+        public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
         @Override

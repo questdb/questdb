@@ -1328,7 +1328,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCannotMapTxFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
-            int count = 2;
+            int count = 1;
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -1379,7 +1379,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenTodo() throws Exception {
         // trick constructor into thinking "_todo" file exists
         testConstructor(new TestFilesFacadeImpl() {
-            int counter = 2;
+            int counter = 1;
 
             @Override
             public int openRW(LPSZ path, long opts) {
@@ -1394,7 +1394,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCannotOpenTxFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
-            int count = 2;
+            int count = 1;
 
             @Override
             public int openRW(LPSZ name, long opts) {
@@ -1932,7 +1932,6 @@ public class TableWriterTest extends AbstractCairoTest {
                     .timestamp()) {
                 CreateTableTestUtils.create(model);
             }
-
 
             try (TableWriter writer = newTableWriter(configuration, "weather", metrics)) {
                 TableWriter.Row r;

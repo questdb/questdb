@@ -54,7 +54,7 @@ public class TelemetryConfigLogger implements Closeable {
     private TableWriter configWriter;
 
     public TelemetryConfigLogger(CairoEngine engine) {
-        questDBVersion = engine.getConfiguration().getBuildInformation().getQuestDbVersion();
+        questDBVersion = engine.getConfiguration().getBuildInformation().getSwVersion();
         telemetryConfiguration = engine.getConfiguration().getTelemetryConfiguration();
     }
 

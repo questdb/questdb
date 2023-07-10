@@ -77,7 +77,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
                                             && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
                                         throw e;
                                     }
@@ -121,7 +121,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (SqlException | CairoException e) {
                                     // Should never fail on drop table.
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
                                             && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
                                         throw e;
                                     }
@@ -314,7 +314,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWALTableRename() throws Exception {
         assertMemoryLeak(() -> {
-            int threadCount = 3;
+            int threadCount = 2;
             int tableCount = 100;
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier barrier = new CyclicBarrier(threadCount);
@@ -325,8 +325,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 for (int j = 0; j < tableCount; j++) {
+                    String tableName = "tab" + j;
+                    if (j % 2 == 0) {
+                        tableName = "Tab" + j;
+                    }
                     compiler.compile(
-                            "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
+                            "create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
                             executionContext
                     );
                 }
@@ -375,13 +379,15 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
 
             for (int i = 0; i < tableCount; i++) {
-                int nameCount = 0;
+                ObjList<String> names = new ObjList<>();
                 for (int j = 0; j < threadCount; j++) {
-                    if (engine.getTableTokenIfExists("renamed_" + j + "_" + i) != null) {
-                        nameCount++;
+                    String tableName = "renamed_" + j + "_" + i;
+                    TableToken tableTokenIfExists = engine.getTableTokenIfExists(tableName);
+                    if (tableTokenIfExists != null) {
+                        names.add(tableName + " -> " + tableTokenIfExists.getDirName());
                     }
                 }
-                Assert.assertEquals("table named tab" + i + " tokens", 1, nameCount);
+                Assert.assertEquals("table named tab" + i + " tokens: " + names, 1, names.size());
             }
         });
     }
