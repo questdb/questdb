@@ -1228,16 +1228,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             int columnType = metadata.getColumnType(dedupColIndex);
-            if (dedupColIndex != metadata.getTimestampIndex() && !ColumnType.isSymbol(columnType)) {
-                if (columnType < 0) {
-                    throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
-                            .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
-                }
-
+            if (ColumnType.isVariableLength(columnType)) {
                 throw CairoException.critical(0).put("Unsupported column type used as deduplicate key [table=")
                         .put(tableToken.getTableName())
                         .put(", column=").put(metadata.getColumnName(dedupColIndex))
                         .put(", columnType=").put(ColumnType.nameOf(columnType));
+            } else if (columnType < 0) {
+                throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
+                        .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
             }
         }
 
@@ -1648,12 +1646,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long timestampAddr = 0;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
 
-                boolean symbolRemapped = false;
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
                         o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
-                        symbolRemapped = true;
-
                         LOG.info().$("sorting WAL [table=").$(tableToken)
                                 .$(", ordered=").$(ordered)
                                 .$(", lagRowCount=").$(walLagRowCount)
@@ -1684,6 +1679,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                         }
                     } else {
+                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
                         // Needs deduplication only
                         timestampAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
                     }
@@ -1691,7 +1687,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (needsDedup) {
                         o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
                         o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        assert symbolRemapped || walLagRowCount == 0;
                         long dedupTimestampAddr = o3TimestampMem.getAddress();
                         long deduplicatedRowCount = deduplicateSortedIndex(
                                 totalUncommitted,
@@ -1699,20 +1694,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 dedupTimestampAddr,
                                 o3TimestampMemCpy.addressOf(0),
                                 walLagRowCount,
-                                symbolRemapped ? rowLo : 0
+                                rowLo
                         );
-                        if (deduplicatedRowCount < totalUncommitted || needsOrdering) {
-                            needsOrdering = true;
-                            timestampAddr = dedupTimestampAddr;
-                            totalUncommitted = deduplicatedRowCount;
-                        }
+                        needsOrdering = true;
+                        timestampAddr = dedupTimestampAddr;
+                        totalUncommitted = deduplicatedRowCount;
                     }
                 }
 
                 if (needsOrdering) {
-                    if (!symbolRemapped) {
-                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
-                    }
                     o3MergeIntoLag(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, timestampIndex);
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
@@ -1723,8 +1713,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Columns = o3MemColumns;
                     copiedToMemory = true;
                 } else {
-                    // There are no duplicates in the incoming data and the data is sorted
-                    assert !symbolRemapped;
+                    // Data is sorted and table does not deduplication
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
                     timestampAddr = walTimestampColumn.addressOf(0);
                     copiedToMemory = false;

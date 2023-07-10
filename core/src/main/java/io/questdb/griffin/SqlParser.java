@@ -631,8 +631,8 @@ public class SqlParser {
                         timestampColumnFound = true;
                     } else {
                         int columnType = model.getColumnType(colIndex);
-                        if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
-                            throw SqlException.position(lexer.getPosition() - tok.length()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                        if (ColumnType.isVariableLength(columnType)) {
+                            throw SqlException.position(lexer.getPosition() - tok.length()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                     .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                         }
                     }

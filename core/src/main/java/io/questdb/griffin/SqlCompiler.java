@@ -864,8 +864,8 @@ public class SqlCompiler implements Closeable {
                     tsIncludedInDedupColumns = true;
                 } else {
                     int columnType = tableMetadata.getColumnType(colIndex);
-                    if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
-                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                    if (ColumnType.isVariableLength(columnType) || columnType < 0) {
+                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                 .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                     }
                 }

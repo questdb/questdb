@@ -758,6 +758,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Path tableRootPath,
             long tempIndexAddr
     ) {
+        LOG.info().$("merge dedup with additional keys [table=").$(tableWriter.getTableToken())
+                .$(", columnRowCount=").$(mergeDataHi - mergeDataLo + 1)
+                .$(", o3RowCount=").$(mergeOOOHi - mergeOOOLo + 1)
+                .I$();
         TableRecordMetadata metadata = tableWriter.getMetadata();
         int dedupColumnIndex = 0;
         int tableRootPathLen = tableRootPath.length();
