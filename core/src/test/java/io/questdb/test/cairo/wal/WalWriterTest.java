@@ -2718,7 +2718,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSuspendUntilTxnDoesNotThrowWhenTableDirIsDeleted() throws Exception {
+    public void testSuspendUntilTxnDoesNotThrowWhenTableIsDropped() throws Exception {
         final FilesFacade cleanFf = new FilesFacadeImpl();
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();

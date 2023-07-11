@@ -185,7 +185,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
-    private CommitListener commitListener;
     private long committedMasterRef;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
@@ -950,9 +949,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             shrinkO3Mem();
 
-            if (commitListener != null) {
-                commitListener.onCommit(txWriter.getTxn(), rowsAdded);
-            }
             return rowsAdded;
         }
 
@@ -1997,11 +1993,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    @SuppressWarnings("unused")
-    public void setCommitListener(CommitListener commitListener) {
-        this.commitListener = commitListener;
-    }
-
     public void setExtensionListener(ExtensionListener listener) {
         txWriter.setExtensionListener(listener);
     }
@@ -2987,9 +2978,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             noOpRowCount = 0L;
             final long txn = getTxn();
 
-            if (commitListener != null) {
-                commitListener.onCommit(txn, rowsAdded);
-            }
             return txn;
         }
         return TableSequencer.NO_TXN;
@@ -3316,7 +3304,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(partitionFrameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
-        commitListener = Misc.free(commitListener);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {

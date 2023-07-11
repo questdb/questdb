@@ -22,10 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
+
+import io.questdb.cairo.TableToken;
 
 import java.io.Closeable;
 
-public interface CommitListener extends Closeable {
-    void onCommit(long txn, long rowsAdded);
+public interface ApplyWalListener extends Closeable {
+    void onCommit(TableToken tableToken, long seqTxn, long rowsAdded);
 }
