@@ -403,7 +403,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             suspendEvent.trigger();
             suspendEvent.close();
         }
-        listener.onCommit(writer.getTableToken(), writer.getSeqTxn(), rowsAdded);
+        if (listener != null) {
+            listener.onCommit(writer.getTableToken(), writer.getSeqTxn(), rowsAdded);
+        }
     }
 
     private long processWalCommit(
