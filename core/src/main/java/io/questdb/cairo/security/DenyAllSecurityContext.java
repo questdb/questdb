@@ -25,18 +25,12 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     public static final DenyAllSecurityContext INSTANCE = new DenyAllSecurityContext();
-
-    @Override
-    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-        throw CairoException.nonCritical().put("permission denied");
-    }
 
     @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {

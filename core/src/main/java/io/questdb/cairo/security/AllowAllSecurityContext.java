@@ -156,6 +156,18 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeLineAlterTableAddColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeLineInsert(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeLineTableCreate() {
+    }
+
+    @Override
     public void authorizeRemovePassword() {
     }
 

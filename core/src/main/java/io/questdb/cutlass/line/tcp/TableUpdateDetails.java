@@ -47,7 +47,6 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
-    static final ObjList<CharSequence> ALL_COLUMNS_AUTHORIZE_LIST = new ObjList<>();
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
@@ -266,7 +265,7 @@ public class TableUpdateDetails implements Closeable {
 
     private void authorizeWalCommit() {
         if (ownSecurityContext != null) {
-            ownSecurityContext.authorizeInsert(tableToken, ALL_COLUMNS_AUTHORIZE_LIST);
+            ownSecurityContext.authorizeLineInsert(tableToken);
         }
     }
 
