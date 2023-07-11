@@ -33,7 +33,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink implements Mutable, ByteSequence, Closeable {
+public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable {
     private final long initialCapacity;
     private long capacity;
     private long hi;
@@ -98,6 +98,12 @@ public class DirectByteCharSink implements Mutable, ByteSequence, Closeable {
             resize(this.capacity * 2);
         }
         Unsafe.getUnsafe().putByte(lo++, b);
+        return this;
+    }
+
+    @Override
+    public CharSink put(char c) {
+        this.put((byte) c);
         return this;
     }
 

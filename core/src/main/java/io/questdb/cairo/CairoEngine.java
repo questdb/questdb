@@ -542,7 +542,6 @@ public class CairoEngine implements Closeable, WriterSource {
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
     }
 
-    @TestOnly
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
         verifyTableToken(tableToken);
         return walWriterPool.get(tableToken);
