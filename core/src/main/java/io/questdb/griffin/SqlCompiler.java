@@ -107,6 +107,10 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
+    protected CharSequence query;
+    protected boolean queryContainsSecret;
+    protected long queryLogfd;
+    protected boolean queryLogged;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
@@ -216,7 +220,7 @@ public class SqlCompiler implements Closeable {
         lexer.of(query);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, query);
+        compileInner(executionContext, query, true);
         return compiledQuery;
     }
 
@@ -245,9 +249,6 @@ public class SqlCompiler implements Closeable {
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
-
-        LOG.info().$("batch [text=").$(query).I$();
-
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
@@ -270,10 +271,19 @@ public class SqlCompiler implements Closeable {
                 try {
                     batchCallback.preCompile(this);
                     clear(); // we don't use normal compile here because we can't reset existing lexer
-                    CompiledQuery current = compileInner(executionContext, query);
+
+                    CompiledQuery current;
+                    CharSequence currentQuery;
+
+                    try {
+                        current = compileInner(executionContext, query, false);
+                    } finally {
+                        currentQuery = query.subSequence(position, goToQueryEnd());
+                        // try to log query even if exception is thrown 
+                        logQuery(currentQuery);
+                    }
                     // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
                     // some code in postCompile might need full text of current query
-                    CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
                     batchCallback.postCompile(this, current, currentQuery);
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {
@@ -309,6 +319,10 @@ public class SqlCompiler implements Closeable {
     @TestOnly
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
+    }
+
+    public boolean shouldLog(KeywordBasedExecutor executor) {
+        return true;
     }
 
     @TestOnly
@@ -354,7 +368,7 @@ public class SqlCompiler implements Closeable {
         if (tok == null || !SqlKeywords.isTableKeyword(tok)) {
             return unknownAlterStatement(executionContext, tok);
         }
-
+        logQuery();
         final int tableNamePosition = lexer.getPosition();
         tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
@@ -1211,7 +1225,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext, CharSequence query) throws SqlException {
+    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext, CharSequence query, boolean doLog) throws SqlException {
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
@@ -1223,11 +1237,23 @@ public class SqlCompiler implements Closeable {
 
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         CompiledQuery cq = null;
+        this.queryLogged = !doLog;
+        this.queryContainsSecret = false;
+        executionContext.containsSecret(false);
+        if (doLog) {
+            this.query = query;
+            this.queryLogfd = executionContext.getRequestFd();
+        }
+
         if (executor != null) {
+            if (shouldLog(executor)) {
+                logQuery();
+            }
             // an executor can return null as a fallback to execution model
             cq = executor.execute(executionContext);
         }
         if (cq == null) {
+            logQuery();
             cq = compileUsingModel(executionContext);
         }
         final short type = cq.getType();
@@ -2644,10 +2670,28 @@ public class SqlCompiler implements Closeable {
         alterOperationBuilder.clear();
         backupAgent.clear();
         functionParser.clear();
+        query = null;
+        queryLogged = false;
+        queryLogfd = -1;
+        queryContainsSecret = false;
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
+    }
+
+    protected void logQuery(CharSequence currentQuery) {
+        if (!queryContainsSecret) {
+            queryLogged = true;
+            LOG.info().$("parse [fd=").$(queryLogfd).$(", q=").utf8(currentQuery).I$();
+        }
+    }
+
+    protected void logQuery() {
+        if (!queryLogged && !queryContainsSecret) {
+            queryLogged = true;
+            LOG.info().$("parse [fd=").$(queryLogfd).$(", q=").utf8(query).I$();
+        }
     }
 
     protected void registerKeywordBasedExecutors() {
