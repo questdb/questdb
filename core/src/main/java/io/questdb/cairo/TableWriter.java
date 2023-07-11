@@ -1620,12 +1620,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
                 if (copyToLagOnly && totalUncommitted <= maxLagRows) {
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
 
                     // Don't commit anything, move everything to memory instead.
                     // This usually happens when WAL transactions are very small, so it's faster
                     // to squash several of them together before writing anything to disk.
                     LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
+
+                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
                     // This will copy data from mmap files to memory.
                     // Symbols are already mapped to the correct destination.
                     o3ShiftLagRowsUp(timestampIndex, o3Hi - o3Lo, o3Lo, walLagRowCount, true, this.o3MoveWalFromFilesToLastPartitionRef);
@@ -1654,10 +1655,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long timestampAddr = 0;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
 
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
-                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
                         LOG.info().$("sorting WAL [table=").$(tableToken)
                                 .$(", ordered=").$(ordered)
                                 .$(", lagRowCount=").$(walLagRowCount)
@@ -1688,7 +1689,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                         }
                     } else {
-                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
                         // Needs deduplication only
                         timestampAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
                     }
@@ -1702,8 +1702,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 timestampAddr,
                                 dedupTimestampAddr,
                                 o3TimestampMemCpy.addressOf(0),
-                                walLagRowCount,
-                                rowLo
+                                walLagRowCount
                         );
                         if (deduplicatedRowCount > 0) {
                             // There are timestamp duplicates, resufle the records
@@ -1725,8 +1724,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Columns = o3MemColumns;
                     copiedToMemory = true;
                 } else {
-                    // Data is sorted and table does not deduplication
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
                     timestampAddr = walTimestampColumn.addressOf(0);
                     copiedToMemory = false;
                 }
@@ -3393,8 +3390,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return identical;
     }
 
-    private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows, long symbolRemapCorrection) {
-        LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken).$(", totalRows=").$(longIndexLength).$(", lagRows=").$(lagRows).$(", symbolMapCorrection=").$(symbolRemapCorrection).I$();
+    private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows) {
+        LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken).$(", totalRows=").$(longIndexLength).$(", lagRows=").$(lagRows).I$();
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
         try {
@@ -3411,11 +3408,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, lagMapSize, false) : 0L;
                         MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
                         long o3ColumnData = o3Column.addressOf(0);
-                        if (ColumnType.isSymbol(columnType) && o3Column instanceof MemoryCARW) {
-                            // Symbols are remapped with 0 offset
-                            // while the values are referenced with roLo in the timestamp index
-                            o3ColumnData -= symbolRemapCorrection << shl;
-                        }
                         assert o3ColumnData != 0;
 
                         dedupColumnCommitAddresses.setArrayValues(
@@ -4467,18 +4459,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
-            final long srcMapped;
-            if (ColumnType.isSymbol(columnType) && mappedMem instanceof MemoryCARW) {
-                // If symbol column is in memory buffer it means that it was re-mapped
-                // and the offset it 0.
-                srcMapped = mappedMem.addressOf(0) - (mappedRowLo << shl);
-            } else {
-                srcMapped = mappedMem.addressOf(0);
-            }
+            final long srcMapped = mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
             long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
                 long srcLag = Math.abs(lagAddr);
+                destMem.shiftAddressRight(0);
                 final long dest = destMem.addressOf(0);
                 if (srcLag == 0 && lagRows != 0) {
                     throw CairoException.critical(0)
@@ -4998,10 +4984,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (!isDesignatedTimestamp) {
                 if (o3SrcDataMem instanceof MemoryCARW) {
-                    if (symbolsFlags > 0 && ColumnType.isSymbol(columnType)) {
-                        // Symbol is re-mapped to memory with 0 source offset.
-                        sourceOffset = 0;
-                    }
                     MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
                     if (mixedIOFlag) {
                         long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
@@ -6351,8 +6333,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolMapDiffCursor symbolMapDiffCursor,
             long rowLo,
             long rowHi,
-            Path walPath,
-            long destRowLo
+            Path walPath
     ) {
         o3ColumnOverrides.clear();
         if (symbolMapDiffCursor != null) {
@@ -6384,14 +6365,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     symbolColumnDest = o3MemColumns.get(primaryColumnIndex);
-                    long destOffset = (destRowLo - rowLo) << 2;
-                    symbolColumnDest.jumpTo(destOffset + (rowHi << 2));
+                    // If rowLo != 0 then we
+                    symbolColumnDest.shiftAddressRight(0);
+                    symbolColumnDest.jumpTo((rowHi - rowLo) << 2);
+
                     o3ColumnOverrides.setQuick(primaryColumnIndex, symbolColumnDest);
                     final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
                     for (long rowId = rowLo; rowId < rowHi; rowId++) {
 
-                        final long valueOffset = rowId << 2;
-                        int symKey = o3SymbolColumn.getInt(valueOffset);
+                        int symKey = o3SymbolColumn.getInt(rowId << 2);
                         assert (symKey >= 0 || symKey == SymbolTable.VALUE_IS_NULL);
                         if (symKey >= cleanSymbolCount) {
                             int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
@@ -6406,8 +6388,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                             symKey = newKey;
                         }
-                        symbolColumnDest.putInt(destOffset + valueOffset, symKey);
+                        symbolColumnDest.putInt((rowId - rowLo) << 2, symKey);
                     }
+                    symbolColumnDest.shiftAddressRight(rowLo << 2);
                 }
             }
         }

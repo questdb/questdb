@@ -327,6 +327,10 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void shiftAddressRight(long shiftRightOffset) {
+    }
+
+    @Override
     public long size() {
         throw new UnsupportedOperationException();
     }
