@@ -80,10 +80,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryWalTask> telemetryWal;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
-    private final WalTxnSuspendEvents walTxnSuspendEvents;
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull WalListener walListener;
+    private WalTxnSuspendEvents walTxnSuspendEvents;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -543,7 +543,7 @@ public class CairoEngine implements Closeable, WriterSource {
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
     }
 
-    public WalTxnSuspendEvents getWalTxnSuspendEvents() {
+    public @NotNull WalTxnSuspendEvents getWalTxnSuspendEvents() {
         return walTxnSuspendEvents;
     }
 
@@ -811,6 +811,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalListener(@NotNull WalListener walListener) {
         this.walListener = walListener;
+    }
+
+    @TestOnly
+    public void setWalTxnSuspendEvents(WalTxnSuspendEvents walTxnSuspendEvents) {
+        this.walTxnSuspendEvents = walTxnSuspendEvents;
     }
 
     public void unlock(

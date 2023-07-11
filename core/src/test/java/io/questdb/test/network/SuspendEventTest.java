@@ -27,6 +27,7 @@ package io.questdb.test.network;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.SuspendEventFactoryImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -35,9 +36,22 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class SuspendEventTest {
 
     @Test
+    public void testExtraCloseCalls() throws Exception {
+        assertMemoryLeak(() -> {
+            final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration());
+            SuspendEvent event = suspendEventFactory.newInstance();
+            // We simply expect no fd leaks and no exceptions as a result of extra close() calls.
+            for (int i = 0; i < 100; i++) {
+                event.close();
+            }
+        });
+    }
+
+    @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            SuspendEvent event = SuspendEventFactory.newInstance(new DefaultIODispatcherConfiguration());
+            final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration());
+            SuspendEvent event = suspendEventFactory.newInstance();
             Assert.assertFalse(event.checkTriggered());
             event.trigger();
             Assert.assertTrue(event.checkTriggered());

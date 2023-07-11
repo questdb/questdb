@@ -225,6 +225,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatInterval;
                 }
             };
+            SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfig);
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -232,7 +233,7 @@ public class IODispatcherHeartbeatTest {
                         return new TestContext(fd, d, heartbeatInterval);
                     }
             )) {
-                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent suspendEvent = suspendEventFactory.newInstance();
                 suspendEvent.setDeadline(suspendEventDeadline);
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
@@ -295,6 +296,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatInterval;
                 }
             };
+            SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfig);
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -302,7 +304,7 @@ public class IODispatcherHeartbeatTest {
                         return new TestContext(fd, d, heartbeatInterval);
                     }
             )) {
-                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent suspendEvent = suspendEventFactory.newInstance();
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
@@ -376,6 +378,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatToIdleRatio * heartbeatInterval;
                 }
             };
+            SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfig);
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -383,7 +386,7 @@ public class IODispatcherHeartbeatTest {
                         return new TestContext(fd, d, heartbeatInterval);
                     }
             )) {
-                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent suspendEvent = suspendEventFactory.newInstance();
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 

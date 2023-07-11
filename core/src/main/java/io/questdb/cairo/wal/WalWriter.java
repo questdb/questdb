@@ -108,26 +108,23 @@ public class WalWriter implements TableWriterAPI {
     private int walLockFd = -1;
 
     public WalWriter(
-            CairoConfiguration configuration,
-            TableToken tableToken,
-            TableSequencerAPI tableSequencerAPI,
-            WalTxnSuspendEvents walTxnSuspendEvents,
-            Metrics metrics
+            CairoEngine engine,
+            TableToken tableToken
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
-        this.sequencer = tableSequencerAPI;
-        this.walTxnSuspendEvents = walTxnSuspendEvents;
-        this.configuration = configuration;
+        this.sequencer = engine.getTableSequencerAPI();
+        this.walTxnSuspendEvents = engine.getWalTxnSuspendEvents();
+        this.configuration = engine.getConfiguration();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
         this.tableToken = tableToken;
-        final int walId = tableSequencerAPI.getNextWalId(tableToken);
+        final int walId = sequencer.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(tableToken).concat(walName);
         this.rootLen = path.length();
-        this.metrics = metrics;
+        this.metrics = engine.getMetrics();
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
 
@@ -137,7 +134,7 @@ public class WalWriter implements TableWriterAPI {
 
             metadata = new WalWriterMetadata(ff);
 
-            tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            sequencer.getTableMetadata(tableToken, metadata);
             this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();

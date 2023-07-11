@@ -24,13 +24,10 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.wal.WalTxnSuspendEvents;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
 public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
 
@@ -53,9 +50,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 entry,
                 index,
                 tableToken,
-                engine.getTableSequencerAPI(),
-                engine.getWalTxnSuspendEvents(),
-                engine.getMetrics()
+                engine
         );
     }
 
@@ -69,11 +64,9 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 Entry<WalWriterTenant> entry,
                 int index,
                 TableToken tableToken,
-                TableSequencerAPI tableSequencerAPI,
-                WalTxnSuspendEvents walTxnSuspendEvents,
-                Metrics metrics
+                CairoEngine engine
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, walTxnSuspendEvents, metrics);
+            super(engine, tableToken);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

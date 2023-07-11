@@ -48,8 +48,6 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    private int o3PartitionSplitMaxCount = -1;
-    private long partitionO3SplitThreshold;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
@@ -68,12 +66,14 @@ public class Overrides implements ConfigurationOverrides {
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
     private long o3MinLag = -1;
+    private int o3PartitionSplitMaxCount = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
     private int pageFrameReduceShardCount = -1;
     private Boolean parallelFilterEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
+    private long partitionO3SplitThreshold;
     private int queryCacheEventQueueCapacity = -1;
     private int recreateDistressedSequencerAttempts = 3;
     private int repeatMigrationsFromVersion = -1;

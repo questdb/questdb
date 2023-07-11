@@ -24,7 +24,28 @@
 
 package io.questdb.network;
 
-@FunctionalInterface
-public interface SuspendEventFactory {
-    SuspendEvent newInstance();
+import io.questdb.std.Os;
+
+public class SuspendEventFactoryImpl implements SuspendEventFactory {
+    private final IODispatcherConfiguration configuration;
+
+    public SuspendEventFactoryImpl(IODispatcherConfiguration configuration) {
+        this.configuration = configuration;
+    }
+
+    public SuspendEvent newInstance() {
+        switch (Os.type) {
+            case Os.LINUX_AMD64:
+            case Os.LINUX_ARM64:
+                return new EventFdSuspendEvent(configuration.getEpollFacade());
+            case Os.OSX_AMD64:
+            case Os.OSX_ARM64:
+            case Os.FREEBSD:
+                return new PipeSuspendEvent(configuration.getKqueueFacade());
+            case Os.WINDOWS:
+                return new AtomicSuspendEvent();
+            default:
+                throw new RuntimeException();
+        }
+    }
 }

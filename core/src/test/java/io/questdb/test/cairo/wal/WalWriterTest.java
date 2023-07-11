@@ -32,6 +32,10 @@ import io.questdb.cairo.wal.*;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.SuspendEvent;
+import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.SuspendEventFactoryImpl;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2456,7 +2460,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testSameWalAfterEngineCleared() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            TableToken tableToken = createTable(testName.getMethodName());
+            TableToken tableToken = createTable(tableName);
 
             String wal1Name;
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -2708,6 +2712,79 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertFalse(eventCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSuspendUntilTxnDoesNotThrowWhenTableDirIsDeleted() throws Exception {
+        final FilesFacade cleanFf = new FilesFacadeImpl();
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(tableName);
+
+            try (Path rmPath = new Path()) {
+                final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration()) {
+                    @Override
+                    public SuspendEvent newInstance() {
+                        Assert.assertTrue(cleanFf.remove(rmPath.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
+                        return super.newInstance();
+                    }
+                };
+                try (WalTxnSuspendEvents walTxnSuspendEvents = new WalTxnSuspendEventsImpl(configuration, suspendEventFactory)) {
+                    engine.setWalTxnSuspendEvents(walTxnSuspendEvents);
+
+                    try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                        final TableWriter.Row row = walWriter.newRow();
+                        row.putInt(0, 42);
+                        row.append();
+                        long txn = walWriter.commit();
+
+                        try {
+                            walWriter.suspendUntilTxn(txn);
+                        } catch (SuspendException e) {
+                            e.getEvent().close();
+                            Assert.fail("No SuspendException expected");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSuspendUntilTxnWaitsForTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration());
+            try (WalTxnSuspendEvents walTxnSuspendEvents = new WalTxnSuspendEventsImpl(configuration, suspendEventFactory)) {
+                engine.setWalTxnSuspendEvents(walTxnSuspendEvents);
+
+                final String tableName = testName.getMethodName();
+                TableToken tableToken = createTable(tableName);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    final TableWriter.Row row = walWriter.newRow();
+                    row.putInt(0, 42);
+                    row.append();
+                    long txn = walWriter.commit();
+
+                    try {
+                        walWriter.suspendUntilTxn(txn);
+                        Assert.fail("SuspendException expected before txn is applied");
+                    } catch (SuspendException e) {
+                        e.getEvent().close();
+                    }
+
+                    // Apply the transaction.
+                    drainWalQueue();
+
+                    try {
+                        walWriter.suspendUntilTxn(txn);
+                    } catch (SuspendException e) {
+                        e.getEvent().close();
+                        Assert.fail("No SuspendException expected once txn is applied");
+                    }
                 }
             }
         });

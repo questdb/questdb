@@ -483,7 +483,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return newNode(root, true, nodeId, new Overrides());
     }
 
-    protected static QuestDBTestNode newNode(String root, boolean ownRoot, int nodeId, ConfigurationOverrides overrides) {
+    protected static QuestDBTestNode newNode(
+            String root,
+            boolean ownRoot,
+            int nodeId,
+            ConfigurationOverrides overrides
+    ) {
         final QuestDBTestNode node = new QuestDBTestNode(nodeId);
         node.initCairo(root, ownRoot, overrides);
         nodes.add(node);

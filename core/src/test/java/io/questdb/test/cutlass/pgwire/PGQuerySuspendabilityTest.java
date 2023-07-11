@@ -31,21 +31,17 @@ import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.*;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -406,12 +402,13 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
      * This listener varies DataUnavailableException and successful execution of TableReader#openPartition()
      * in the following sequence: exception, success, exception, success, etc.
      */
-    private static class SuspendingReaderListener implements ReaderPool.ReaderListener, Closeable {
+    private static class SuspendingReaderListener implements ReaderPool.ReaderListener, QuietCloseable {
 
+        private final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfig);
         private final ConcurrentHashMap<SuspendEvent> suspendedPartitions = new ConcurrentHashMap<>();
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             suspendedPartitions.forEach((charSequence, suspendEvent) -> suspendEvent.close());
         }
 
@@ -425,7 +422,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                     return null;
                 }
                 // Exception case.
-                SuspendEvent nextEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent nextEvent = suspendEventFactory.newInstance();
                 // Mark the event as immediately fulfilled.
                 nextEvent.trigger();
                 return nextEvent;

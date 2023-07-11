@@ -33,9 +33,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.SuspendEventFactoryImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -68,8 +68,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
     private static class DataUnavailableRecordCursor implements NoRandomAccessRecordCursor {
 
-        private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
-
+        private static final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration());
         private final long backoffCount;
         private final SqlExecutionCircuitBreaker circuitBreaker;
         private final LongConstRecord record = new LongConstRecord();
@@ -99,7 +98,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
                 return false;
             }
             if (attempts++ < backoffCount) {
-                SuspendEvent event = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent event = suspendEventFactory.newInstance();
                 if (eventCallback != null) {
                     eventCallback.onSuspendEvent(event);
                 }

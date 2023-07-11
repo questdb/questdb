@@ -24,12 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.ServerConfiguration;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TxReader;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.SuspendEventFactory;
 import io.questdb.std.FilesFacade;
@@ -47,18 +42,18 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
     private final CharSequence dbRoot;
     private final ConcurrentHashMap<TableToken, ObjList<SuspendEvent>> events = new ConcurrentHashMap<>();
     private final FilesFacade ff;
-    private final IODispatcherConfiguration ioDispatcherConfiguration;
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
+    private final SuspendEventFactory suspendEventFactory;
     private final TxReader txReader;
 
-    public WalTxnSuspendEventsImpl(ServerConfiguration configuration) {
-        this.dbRoot = configuration.getCairoConfiguration().getRoot();
-        this.ff = configuration.getCairoConfiguration().getFilesFacade();
+    public WalTxnSuspendEventsImpl(CairoConfiguration cairoConfiguration, SuspendEventFactory suspendEventFactory) {
+        this.dbRoot = cairoConfiguration.getRoot();
+        this.ff = cairoConfiguration.getFilesFacade();
         this.txReader = new TxReader(ff);
-        this.millisecondClock = configuration.getCairoConfiguration().getMillisecondClock();
-        this.spinLockTimeout = configuration.getCairoConfiguration().getSpinLockTimeout();
-        this.ioDispatcherConfiguration = configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration();
+        this.millisecondClock = cairoConfiguration.getMillisecondClock();
+        this.spinLockTimeout = cairoConfiguration.getSpinLockTimeout();
+        this.suspendEventFactory = suspendEventFactory;
     }
 
     @Override
@@ -74,15 +69,13 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
         Path tlPath = Path.PATH.get().of(dbRoot);
         tlPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
         if (ff.exists(tlPath)) {
-            // TODO error handling (table dropped, reader timeout)
             long currentTxn = readSeqTxn(tableToken, tlPath);
-            if (currentTxn >= txn) {
-                // The txn is already visible.
+            if (currentTxn == -1 || currentTxn >= txn) {
+                // The txn is already visible or the table is dropped.
                 return null;
             }
 
-            // TODO think of happens-before edge here
-            final SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfiguration);
+            final SuspendEvent suspendEvent = suspendEventFactory.newInstance();
             events.compute(tableToken, (t, list) -> {
                 if (list == null) {
                     list = new ObjList<>();
@@ -91,14 +84,22 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
                 return list;
             });
 
-            currentTxn = readSeqTxn(tableToken, tlPath);
-            if (currentTxn >= txn) {
-                // The txn is already visible, so we close the event and pretend it never existed.
-                // The event will be triggered and closed one more time later either after
-                // takeRegisteredEvents() or by close().
+            // Read the txn once again to make sure ApplyWal2TableJob sees our changes.
+            try {
+                currentTxn = readSeqTxn(tableToken, tlPath);
+            } catch (CairoException e) {
+                suspendEvent.close();
+                throw e;
+            }
+
+            if (currentTxn == -1 || currentTxn >= txn) {
+                // The txn is already visible or the table is dropped, so we close the event
+                // and pretend it never existed. The event will be triggered and closed one
+                // more time later either after takeRegisteredEvents() or by close().
                 suspendEvent.close();
                 return null;
             }
+            return suspendEvent;
         }
         // The table is dropped.
         return null;
@@ -116,9 +117,18 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
 
     private long readSeqTxn(TableToken tableToken, Path path) {
         path.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-        try (TxReader txReader2 = txReader.ofRO(path, PartitionBy.NONE)) {
-            TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-            return txReader2.getSeqTxn();
+        try {
+            try (TxReader txReader2 = txReader.ofRO(path, PartitionBy.NONE)) {
+                TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                return txReader2.getSeqTxn();
+            }
+        } catch (CairoException e) {
+            if (e.getErrno() == 0) {
+                // This must be read timeout, so there is not so much we can do.
+                throw e;
+            }
+            // The table must have been dropped, so we have nothing to wait for.
+            return -1;
         }
     }
 }

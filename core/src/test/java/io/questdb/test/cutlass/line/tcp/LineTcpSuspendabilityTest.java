@@ -33,6 +33,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.SuspendEventFactoryImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import org.junit.Before;
@@ -71,8 +72,9 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testSuspendEventImmediatelyTriggered() throws Exception {
+        final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfiguration);
         final TestSecurityContext securityContext = new TestSecurityContext(() -> {
-            final SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfiguration);
+            final SuspendEvent suspendEvent = suspendEventFactory.newInstance();
             suspendEvent.trigger();
             suspendEvent.close();
             return suspendEvent;
@@ -107,7 +109,8 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testSuspendEventTriggeredAfterDelay() throws Exception {
-        final SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfiguration);
+        final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfiguration);
+        final SuspendEvent suspendEvent = suspendEventFactory.newInstance();
         final TestSecurityContext securityContext = new TestSecurityContext(() -> suspendEvent, 1);
         securityContextFactory = new TestSecurityContextFactory(securityContext);
 

@@ -34,7 +34,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     public TableNameRegistryRW(CairoConfiguration configuration) {
         super(configuration);
-        if (!this.nameStore.lock()) {
+        if (!nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
             }

@@ -52,6 +52,8 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.SuspendEventFactoryImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import org.jetbrains.annotations.Nullable;
 
@@ -83,10 +85,10 @@ public class ServerMain implements Closeable {
         this.log = log;
         this.banner = banner;
 
-        final WalTxnSuspendEventsImpl walTxnSuspendEvents = new WalTxnSuspendEventsImpl(config);
-
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+        final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(config.getLineTcpReceiverConfiguration().getDispatcherConfiguration());
+        final WalTxnSuspendEventsImpl walTxnSuspendEvents = new WalTxnSuspendEventsImpl(cairoConfig, suspendEventFactory);
         engine = freeOnExit.register(new CairoEngine(cairoConfig, walTxnSuspendEvents, metrics));
 
         // obtain function factory cache

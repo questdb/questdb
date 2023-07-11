@@ -39,6 +39,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -70,12 +71,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationCompiler operationCompiler;
+    private final ObjList<SuspendEvent> suspendEvents = new ObjList<>();
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    private final WalTxnSuspendEvents walTxnSuspendEvents;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -91,6 +94,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().getWalMetrics();
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
+        walTxnSuspendEvents = engine.getWalTxnSuspendEvents();
     }
 
     @Override
@@ -234,7 +238,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             TableMetadataChangeLog structuralChangeCursor = null;
 
             try {
-
                 int iTransaction = 0;
                 int totalTransactionCount = 0;
                 long rowsAdded = 0;
@@ -330,7 +333,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 }
                             }
 
-
                             isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
                                     writer,
@@ -361,6 +363,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (totalTransactionCount > 0) {
+                    notifySuspendedWaiters(writer.getTableToken());
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
                             .$(" [table=").$(writer.getTableToken().getDirName())
@@ -385,6 +388,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     private void doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
+    }
+
+    /**
+     * Notifies I/O contexts suspended until a WAL transaction becomes visible for readers.
+     */
+    private void notifySuspendedWaiters(TableToken tableToken) {
+        suspendEvents.clear();
+        walTxnSuspendEvents.takeRegisteredEvents(tableToken, suspendEvents);
+        for (int i = 0, n = suspendEvents.size(); i < n; i++) {
+            final SuspendEvent suspendEvent = suspendEvents.getQuick(i);
+            suspendEvent.trigger();
+            suspendEvent.close();
+        }
     }
 
     private long processWalCommit(
