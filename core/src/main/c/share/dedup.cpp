@@ -173,7 +173,8 @@ inline int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t cou
                 copyTo++;
                 lastTimestamp = pIndexIn[i].ts;
             } else if (pIndexIn[i].ts < lastTimestamp) {
-                return -i - 1;
+                assert(false || "data is not sorted");
+                return -1;
             }
         }
         pIndexOut[copyTo] = pIndexIn[count - 1];
@@ -191,7 +192,7 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         const diff_lambda diff_l
 ) {
     if (count < 2) {
-        return count;
+        return -2;
     }
 
     // find duplicate ranges
@@ -207,7 +208,8 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
             }
             ts_index = i;
         } else if (index_src[i].ts < index_src[ts_index].ts) {
-            return -i - 1;
+            assert(false || "data is not sorted");
+            return -1;
         }
     }
     if (ts_index < count - 1 && index_src[ts_index].ts == index_src[count - 1].ts) {
@@ -216,10 +218,7 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         dup_end = count;
     } else if (dup_start == -1 || dup_end - dup_start <= 0) {
         // no timestamp duplicates
-        if (index_src != index_dest) {
-            __MEMCPY(index_dest, index_src, count * sizeof(index_t));
-        }
-        return count;
+        return -2;
     }
 
     assert(dup_start > -1 && dup_start < count && "dup_start is incorrect");
@@ -238,27 +237,21 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         if (merge_result[i].ts > merge_result[last].ts || diff_l(l, r) != 0) {
             index_dest[copy_to++] = merge_result[i - 1];
             last = i;
-        } else {
-            assert(merge_result[i].ts == merge_result[last].ts && "sorting failed, timestamp is not sorted");
+        } else if (merge_result[i].ts != merge_result[last].ts) {
+            assert(false || "sorting failed, timestamp is not sorted");
+            return -1;
         }
     }
     index_dest[copy_to] = merge_result[dup_end - 1];
 
-    if (copy_to + 1 < dup_end) {
-        // Duplicates found
-        // copy prefix and the tail if necessary
-        if (index_src != index_dest) {
-            __MEMCPY(index_dest, index_src, dup_start * sizeof(index_t));
-        }
-
-        const int64_t tail = count - dup_end;
-        __MEMMOVE(&index_dest[copy_to + 1], &index_src[dup_end], tail * sizeof(index_t));
-        return copy_to + 1 + tail;
-    } else {
-        assert(copy_to + 1 == dup_end && "sorting failed");
-        // Duplicates not found
-        return count;
+    // copy prefix and the tail if necessary
+    if (index_src != index_dest) {
+        __MEMCPY(index_dest, index_src, dup_start * sizeof(index_t));
     }
+
+    const int64_t tail = count - dup_end;
+    __MEMMOVE(&index_dest[copy_to + 1], &index_src[dup_end], tail * sizeof(index_t));
+    return copy_to + 1 + tail;
 }
 
 template<typename diff_lambda>

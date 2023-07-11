@@ -95,7 +95,7 @@ public final class Vect {
                 dedupColumnCount,
                 dedupColumnData
         );
-        assert dedupCount >= 0 : "unsorted data passed to deduplication";
+        assert dedupCount != -1 : "unsorted data passed to deduplication";
         return dedupCount;
     }
 

@@ -117,7 +117,6 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testDeduplicationEnabledIntAndSymbol() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -262,7 +261,11 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                             .ofDropColumn("sym");
 
                     tw1.apply(dropColumnAlterBuilder.build(), true);
-                    tw2.apply(ao, true);
+                    try {
+                        tw2.apply(ao, true);
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "cannot use dropped column for deduplication [column=sym]");
+                    }
                 }
             }
 

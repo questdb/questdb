@@ -41,21 +41,16 @@ public class DedupColumnCommitAddresses implements Closeable {
     private static final int RECORD_BYTES = (int) (NULL_VAL_256 + 32L);
     private PagedDirectLongList addresses;
     private int columnCount;
-    private int lastSetBlockCount;
 
     public long allocateBlock() {
         if (columnCount == 0) {
             return -1;
         }
-        if (lastSetBlockCount != columnCount) {
-            setDedupColumnCount(columnCount);
-            lastSetBlockCount = columnCount;
-        }
         return addresses.allocateBlock();
     }
 
     public void clear(long dedupColSinkAddr) {
-        Vect.memset(dedupColSinkAddr, 0, lastSetBlockCount * RECORD_BYTES);
+        Vect.memset(dedupColSinkAddr, (long) columnCount * RECORD_BYTES, 0);
     }
 
     public void clear() {

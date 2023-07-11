@@ -769,11 +769,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         int mapMemTag = MemoryTag.MMAP_O3;
         try {
+            dedupCommitAddresses.clear(dedupColSinkAddr);
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
                 if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
-                    final int columnSize = 4;
-                    assert ColumnType.sizeOf(columnType) == columnSize;
+                    final int columnSize = ColumnType.sizeOf(columnType);
 
                     final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
                     final int fd;
@@ -802,7 +802,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         mappedAddress = 0;
                     }
 
-                    long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                    final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
                     dedupCommitAddresses.setArrayValues(
                             dedupColSinkAddr,
                             dedupColumnIndex,
@@ -834,7 +834,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             for (int i = 0, n = dedupCommitAddresses.getColumnCount(); i < n; i++) {
                 final long mappedAddress = dedupCommitAddresses.getColReserved1(dedupColSinkAddr, i);
                 final long mappedAddressSize = dedupCommitAddresses.getColReserved2(dedupColSinkAddr, i);
-                if (mappedAddressSize > 0 && mappedAddress > 0) {
+                if (mappedAddressSize > 0) {
                     TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, 0, mappedAddressSize, mapMemTag);
                 }
                 final int fd = (int) dedupCommitAddresses.getColReserved3(dedupColSinkAddr, i);
@@ -842,7 +842,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ff.close(fd);
                 }
             }
-            dedupCommitAddresses.clear(dedupColSinkAddr);
         }
     }
 

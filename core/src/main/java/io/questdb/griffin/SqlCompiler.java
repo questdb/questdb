@@ -836,8 +836,6 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         boolean tsIncludedInDedupColumns = false;
-        int dedupColumns = 0;
-
         if (tok == null || !isUpsertKeyword(tok)) {
             throw SqlException.position(lexer.getPosition()).put("expected 'upsert'");
         }
@@ -869,9 +867,8 @@ public class SqlCompiler implements Closeable {
                                 .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                     }
                 }
-                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
-                dedupColumns++;
 
+                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && Chars.equals(tok, ',')) {
                     tok = SqlUtil.fetchNext(lexer);

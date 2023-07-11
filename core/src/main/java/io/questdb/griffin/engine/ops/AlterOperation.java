@@ -241,6 +241,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case RENAME_COLUMN:
             case DROP_COLUMN:
             case RENAME_TABLE:
+            case SET_DEDUP_DISABLE:
+            case SET_DEDUP_ENABLE:
                 return true;
             default:
                 return false;
