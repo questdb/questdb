@@ -314,7 +314,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public @Nullable ApplyWalListener getApplyWalListener() {
+    public ApplyWalListener getApplyWalListener() {
         return applyWalListener;
     }
 
