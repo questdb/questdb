@@ -441,6 +441,62 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLongsToUuid_constant() throws Exception {
+        assertQuery(
+                "uuid\n" +
+                        "00000000-0000-0001-0000-000000000001\n",
+                "select to_uuid(1, 1) as uuid from long_sequence(1)",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLongsToUuid_fromTable() throws Exception {
+        assertCompile("create table x (lo long, hi long)");
+        assertCompile("insert into x values (1, 1)");
+        assertQuery(
+                "uuid\n" +
+                        "00000000-0000-0001-0000-000000000001\n",
+                "select to_uuid(lo, hi) as uuid from x",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLongsToUuid_nullConstant() throws Exception {
+        assertQuery(
+                "uuid\n" +
+                        "\n",
+                "select to_uuid(null, null) as uuid from long_sequence(1)",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLongsToUuid_nullFromTable() throws Exception {
+        assertCompile("create table x (lo long, hi long)");
+        assertCompile("insert into x values (null, null)");
+        assertQuery(
+                "uuid\n" +
+                        "\n",
+                "select to_uuid(lo, hi) as uuid from x",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testNegatedEqualityComparisonExplicitCast() throws Exception {
         Uuid uuid = new Uuid();
         uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
