@@ -935,9 +935,136 @@ public final class Numbers {
         }
     }
 
-//    public static int parseIPv4Netmask(CharSequence sequence) throws NumericException {
-//        // parse sequence into a netmask that can be used in bitwise & to check if two ips belong to same subnet
-//    }
+    public static int parseSubnet(CharSequence sequence) {
+        int delim = Chars.indexOf(sequence, 0, '/');
+        int subnet = -2, netmask = -2;
+
+        if(delim == -1) { //if just the subnet is passed, netmask must be included - if delim == -1 then no netmask has been included + the argument is therefore invalid
+            return -2; //catch triggered by invalid arg - calling func will throw sql exception (-2 used as sentinel because 0xffffffff (which is valid) is -1)
+        }
+
+        try {
+            netmask = parseInt0(sequence, delim + 1, sequence.length()); //get netmask to test pass to parseSubnet0 - used to test whether the subnet matches the netmask (according to postgres rules)
+            subnet = parseSubnet0(sequence, 0, delim, netmask); //if sequence is not a valid subnet OR the subnet doesn't match the netmask, throws NumericException
+        } catch (NumericException e) {
+            return -2; //catch triggered by invalid arg - calling func will throw sql exception (-2 used as sentinel because 0xffffffff (which is valid) is -1)
+        }
+        return subnet;
+    }
+
+    public static int parseSubnet0(CharSequence sequence, final int p, int lim, int subnet) throws NumericException {
+        int hi;
+        int lo = p;
+        int num;
+        int ipv4 = 0;
+        int count = 0;
+
+        if(lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        final char sign = sequence.charAt(0);
+
+        if(notDigit(sign)){
+            throw NumericException.INSTANCE;
+        }
+
+        while((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+            num = parseInt(sequence, lo, hi);
+
+            if(num > 255) {
+                throw NumericException.INSTANCE;
+            }
+
+            ipv4 = (ipv4 << 8) | num;
+            count++;
+            lo = hi + 1;
+        }
+
+        if(count > 3) {
+            throw NumericException.INSTANCE;
+        }
+
+        num = parseInt(sequence, lo, lim);
+
+        if(num > 255) {
+            throw NumericException.INSTANCE;
+        }
+
+        if(count == 0) { //if netmask is full byte longer than subnet
+            if(subnet >= 16) {
+                throw NumericException.INSTANCE;
+            }
+            return num;
+        }
+        else if(count == 1 && subnet >= 24) { //if netmask is a full byte longer than subnet
+            throw NumericException.INSTANCE;
+        }
+        else if(count == 2 && subnet >= 32) { //if netmask is a full byte longer than subnet
+            throw NumericException.INSTANCE;
+        }
+        else if(count == 3 && subnet > 32) { //if netmask is a full byte longer than subnet
+            throw NumericException.INSTANCE;
+        }
+
+        return (ipv4 << 8) | num;
+    }
+
+    public static int getIPv4Netmask(CharSequence sequence) {
+        int netmask = 0xffffffff;
+        int mid = Chars.indexOf(sequence, 0, '/') + 1;
+        int bits;
+
+        if(mid == 0) { //if no netmask provided, default to netmask of 255.255.255.255 (0xffffffff)
+            return netmask;
+        }
+
+        try{
+            bits = parseInt0(sequence, mid, sequence.length());
+
+            if(bits == 0) { //if netmask 0 provided, return 0 (calling func will evaluate to true)
+                return 0;
+            }
+            if(bits < 0 || bits > 32) {
+                throw NumericException.INSTANCE;
+            }
+
+            bits = 32 - bits;
+            netmask = (netmask << bits);
+
+        } catch (NumericException e) {
+            return -2; //catch triggered by invalid int following '/' - calling func will throw sql exception (-2 used as sentinel bc 0xffffffff (which is valid) is -1)
+        }
+
+        return netmask; //all goes to plan + correct netmask is returned
+    }
+
+    public static int getIPv4Subnet(CharSequence sequence)  {
+        int mid = Chars.indexOf(sequence, 0, '/');
+        int subnet = 0;
+        int ipv4, netmask;
+
+        try{
+
+            netmask = getIPv4Netmask(sequence);
+
+            if(netmask == -2) { // true if invalid int follows '/' - calling func will throw sql exception (-2 used as sentinel bc 0xffffffff (which is valid) is -1)
+                return netmask;
+            }
+
+            if(mid == -1) { // true if no netmask provided (i.e. no '/' found in CharSequence) - subnet is therefore same as the parsed argument
+                return parseIPv4(sequence);
+            }
+
+            ipv4 = parseIPv4_0(sequence, 0, mid);
+            subnet = ipv4 & netmask;
+
+        } catch (NumericException e) {
+            return -2; //catch triggered by invalid ipv4 - calling func will throw sql exception (-2 used as sentinel bc 0xffffffff (which is valid) is -1)
+        }
+
+        return subnet; //all goes to plan + correct subnet is returned
+    }
 
     public static void intToIPv4Sink(CharSink sink, int value) {
         if(sink instanceof HttpChunkedResponseSocket){

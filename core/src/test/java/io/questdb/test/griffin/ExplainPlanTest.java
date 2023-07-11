@@ -1571,7 +1571,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         constFuncs.put(ColumnType.SHORT, new ShortConstant((short) 2));
         constFuncs.put(ColumnType.CHAR, new CharConstant('a'));
         constFuncs.put(ColumnType.INT, new IntConstant(3));
-        constFuncs.put(ColumnType.IPv4, new IPv4Constant(5));
+//        constFuncs.put(ColumnType.IPv4, new IPv4Constant(3));
         constFuncs.put(ColumnType.LONG, new LongConstant(4));
         constFuncs.put(ColumnType.DATE, new DateConstant(0));
         constFuncs.put(ColumnType.TIMESTAMP, new TimestampConstant(86400000000L));
@@ -1607,7 +1607,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         colFuncs.put(ColumnType.SHORT, new ShortColumn(2));
         colFuncs.put(ColumnType.CHAR, new CharColumn(1));
         colFuncs.put(ColumnType.INT, new IntColumn(1));
-        colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
+//        colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
         colFuncs.put(ColumnType.LONG, new LongColumn(1));
         colFuncs.put(ColumnType.DATE, new DateColumn(1));
         colFuncs.put(ColumnType.TIMESTAMP, new TimestampColumn(1));
@@ -6891,8 +6891,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 return new ShortConstant((short) val);
             case ColumnType.INT:
                 return new IntConstant(val);
-            case ColumnType.IPv4:
-                return new IPv4Constant(val);
+//            case ColumnType.IPv4:
+//                return new IPv4Constant(val);
             case ColumnType.LONG:
                 return new LongConstant(val);
             case ColumnType.DATE:

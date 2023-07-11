@@ -748,6 +748,220 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIPv4ContainsSubnet() throws Exception {
+        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values('12.67.45.3')");
+        executeInsert("insert into test values('160.5.22.8')");
+        executeInsert("insert into test values('240.110.88.22')");
+        executeInsert("insert into test values('1.6.2.0')");
+        executeInsert("insert into test values('255.255.255.255')");
+        executeInsert("insert into test values('0.0.0.0')");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/20'", sink, "col\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/1'", sink, "col\n" +
+                "12.67.45.3\n" +
+                "1.6.2.0\n" +
+                "0.0.0.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '255.6.8.10/8'", sink, "col\n" +
+                "255.255.255.255\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/0'", sink, "col\n" +
+                "12.67.45.3\n" +
+                "160.5.22.8\n" +
+                "240.110.88.22\n" +
+                "1.6.2.0\n" +
+                "255.255.255.255\n" +
+                "0.0.0.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0/32'", sink, "col\n" +
+                "1.6.2.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0'", sink, "col\n" +
+                "1.6.2.0\n");
+
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetNoMask() throws Exception {
+
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where ip <<= '0.0.0.4'", "ip\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n");
+
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetAndMask() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where ip <<= '0.0.0/24'", "ip\n" +
+                "0.0.0.115\n" +
+                "0.0.0.208\n" +
+                "0.0.0.242\n" +
+                "0.0.0.110\n" +
+                "0.0.0.6\n" +
+                "0.0.0.138\n" +
+                "0.0.0.137\n" +
+                "0.0.0.4\n" +
+                "0.0.0.90\n" +
+                "0.0.0.173\n" +
+                "0.0.0.12\n" +
+                "0.0.0.136\n" +
+                "0.0.0.53\n" +
+                "0.0.0.143\n" +
+                "0.0.0.246\n" +
+                "0.0.0.6\n" +
+                "0.0.0.158\n" +
+                "0.0.0.120\n");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetIncorrectMask() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/32'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/32");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFails() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0.1/hello'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.1/hello");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFails2() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/hello'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/hello");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFails3() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0.0/65'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFails4() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/65'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFails5() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0.0/-1'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFails6() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/-1'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFailsChars() throws Exception {
+        assertFailure("select * from test where ip <<= 'apple'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: apple");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFailsOverflow() throws Exception {
+        assertFailure("select * from test where ip <<= '256.256.256.256'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 256.256.256.256");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnetFailsNums() throws Exception {
+        assertFailure("select * from test where ip <<= '8573674'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 8573674");
+    }
+//    @Test
+//    public void testIPv4ContainsSubnetFailsNetmaskOverflow() throws Exception {
+//        assertFailure("select * from test where ip <<= '85.7.36/74'", "create table test as " +
+//                "(" +
+//                "  select" +
+//                "    rnd_int(1000,2000,0)::ipv4 ip," +
+//                "    rnd_int(0,1000,0) bytes," +
+//                "    timestamp_sequence(0,100000000) k" +
+//                "  from long_sequence(100)" +
+//                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
+//    }
+
+
+    @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
         assertQuery("col_k\ta\tk\tcol_k1\n" +
                         "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +

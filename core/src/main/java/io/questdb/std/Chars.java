@@ -167,6 +167,14 @@ public final class Chars {
         return compare(r, l);
     }
 
+    public static String ipv4ToString(int ip) {
+        StringSink strsink = new StringSink();
+
+        Numbers.intToIPv4Sink(strsink, ip);
+
+        return strsink.toString();
+    }
+
     public static boolean contains(CharSequence sequence, CharSequence term) {
         return indexOf(sequence, 0, sequence.length(), term) != -1;
     }

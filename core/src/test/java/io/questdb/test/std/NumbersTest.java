@@ -904,6 +904,23 @@ public class NumbersTest {
     }
 
     @Test
+    public void testGetIPv4Netmask() throws Exception {
+        Assert.assertEquals("11111111111111111111111100000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/24")));
+        Assert.assertEquals("10000000000000000000000000000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/1")));
+        Assert.assertEquals("11111111111111111111111111111111", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/32")));
+    }
+
+    @Test
+    public void testGetIPv4Subnet() throws Exception {
+        Assert.assertEquals("1100000000100000011000000000", Integer.toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/24")));
+    }
+
+//    @Test
+//    public void testParseSubnet() throws Exception {
+//
+//    }
+
+    @Test
     public void testParseIPv4() throws Exception {
         Assert.assertEquals(84413540, Numbers.parseIPv4("5.8.12.100"));
         Assert.assertEquals(204327201, Numbers.parseIPv4("12.45.201.33"));
