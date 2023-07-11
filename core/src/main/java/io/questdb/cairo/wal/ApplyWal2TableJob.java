@@ -67,7 +67,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final int WAL_APPLY_IGNORE_ERROR = -1;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
-    private final ApplyWalListener listener;
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
@@ -96,7 +95,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
         walTxnSuspendEvents = engine.getWalTxnSuspendEvents();
-        listener = engine.getApplyWalListener();
     }
 
     @Override
@@ -365,7 +363,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (totalTransactionCount > 0) {
-                    notifySuspendedWaiters(writer, rowsAdded);
+                    notifySuspendedWaiters(writer.getTableToken());
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
                             .$(" [table=").$(writer.getTableToken().getDirName())
@@ -395,15 +393,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     /**
      * Notifies I/O contexts suspended until a WAL transaction becomes visible for readers.
      */
-    private void notifySuspendedWaiters(TableWriter writer, long rowsAdded) {
+    private void notifySuspendedWaiters(TableToken tableToken) {
         suspendEvents.clear();
-        walTxnSuspendEvents.takeRegisteredEvents(writer.getTableToken(), suspendEvents);
+        walTxnSuspendEvents.takeRegisteredEvents(tableToken, suspendEvents);
         for (int i = 0, n = suspendEvents.size(); i < n; i++) {
             final SuspendEvent suspendEvent = suspendEvents.getQuick(i);
             suspendEvent.trigger();
             suspendEvent.close();
         }
-        listener.onCommit(writer.getTableToken(), writer.getSeqTxn(), rowsAdded);
     }
 
     private long processWalCommit(

@@ -82,7 +82,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private ApplyWalListener applyWalListener;
     private @NotNull WalListener walListener;
     private WalTxnSuspendEvents walTxnSuspendEvents;
 
@@ -312,10 +311,6 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken).put("' [reason='").put(lockedReason).put("']");
         }
-    }
-
-    public ApplyWalListener getApplyWalListener() {
-        return applyWalListener;
     }
 
     public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
@@ -799,11 +794,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void resetNameRegistryMemory() {
         tableNameRegistry.resetMemory();
-    }
-
-    @SuppressWarnings("unused")
-    public void setApplyWalListener(ApplyWalListener applyWalListener) {
-        this.applyWalListener = applyWalListener;
     }
 
     @TestOnly

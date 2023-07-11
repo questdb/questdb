@@ -66,8 +66,8 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
 
     @Override
     public @Nullable SuspendEvent register(TableToken tableToken, long txn) {
-        Path tlPath = Path.PATH.get();
-        tlPath.of(dbRoot).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+        Path tlPath = Path.PATH.get().of(dbRoot);
+        tlPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
         if (ff.exists(tlPath)) {
             long currentTxn = readSeqTxn(tableToken, tlPath);
             if (currentTxn == -1 || currentTxn >= txn) {
