@@ -913,12 +913,61 @@ public class NumbersTest {
     @Test
     public void testGetIPv4Subnet() throws Exception {
         Assert.assertEquals("1100000000100000011000000000", Integer.toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/24")));
+        Assert.assertEquals("12.2.0.0", Chars.ipv4ToString(Numbers.getIPv4Subnet("12.2.6.8/16")));
     }
 
-//    @Test
-//    public void testParseSubnet() throws Exception {
-//
-//    }
+    @Test
+    public void testParseSubnet() throws Exception {
+        Assert.assertEquals("2.4.8.0", Chars.ipv4ToString(Numbers.parseSubnet("2.4.8/24")));
+        Assert.assertEquals(-2, Numbers.parseSubnet("2.4.6"));
+        Assert.assertEquals(-2, Numbers.parseSubnet("apple"));
+        Assert.assertEquals(-2, Numbers.parseSubnet("apple/24"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet0() throws Exception {
+        Numbers.parseSubnet0("apple", 0, 0, 6);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet01() throws Exception {
+        Numbers.parseSubnet0("apple", 0, 5, 6);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet02() throws Exception {
+        Numbers.parseSubnet0("650.650.650.650", 0, 15, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet03() throws Exception {
+        Numbers.parseSubnet0("650.650.650.650.", 0, 15, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet04() throws Exception {
+        Numbers.parseSubnet0("1.2.3.650.", 0, 15, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet05() throws Exception {
+        Numbers.parseSubnet0("2", 0, 1, 16);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet06() throws Exception {
+        Numbers.parseSubnet0("2.2", 0, 3, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet07() throws Exception {
+        Numbers.parseSubnet0("2.2.2", 0, 5, 32);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet08() throws Exception {
+        Numbers.parseSubnet0("2.2.2.2", 0, 7, 33);
+    }
 
     @Test
     public void testParseIPv4() throws Exception {

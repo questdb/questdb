@@ -937,7 +937,7 @@ public final class Numbers {
 
     public static int parseSubnet(CharSequence sequence) {
         int delim = Chars.indexOf(sequence, 0, '/');
-        int subnet = -2, netmask = -2;
+        int subnet, netmask;
 
         if(delim == -1) { //if just the subnet is passed, netmask must be included - if delim == -1 then no netmask has been included + the argument is therefore invalid
             return -2; //catch triggered by invalid arg - calling func will throw sql exception (-2 used as sentinel because 0xffffffff (which is valid) is -1)
@@ -949,15 +949,18 @@ public final class Numbers {
         } catch (NumericException e) {
             return -2; //catch triggered by invalid arg - calling func will throw sql exception (-2 used as sentinel because 0xffffffff (which is valid) is -1)
         }
+
         return subnet;
     }
 
-    public static int parseSubnet0(CharSequence sequence, final int p, int lim, int subnet) throws NumericException {
+    public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmask) throws NumericException {
         int hi;
         int lo = p;
         int num;
         int ipv4 = 0;
         int count = 0;
+        int checker = 0xffffffff;
+        int bits = 32 - netmask;
 
         if(lim == 0) {
             throw NumericException.INSTANCE;
@@ -992,22 +995,28 @@ public final class Numbers {
         }
 
         if(count == 0) { //if netmask is full byte longer than subnet
-            if(subnet >= 16) {
+            if(netmask >= 16) {
                 throw NumericException.INSTANCE;
             }
+            checker = (checker << bits);
+            num = (num << bits) & checker;
             return num;
         }
-        else if(count == 1 && subnet >= 24) { //if netmask is a full byte longer than subnet
+        else if(count == 1 && netmask >= 24) { //if netmask is a full byte longer than subnet
             throw NumericException.INSTANCE;
         }
-        else if(count == 2 && subnet >= 32) { //if netmask is a full byte longer than subnet
+        else if(count == 2 && netmask >= 32) { //if netmask is a full byte longer than subnet
             throw NumericException.INSTANCE;
         }
-        else if(count == 3 && subnet > 32) { //if netmask is a full byte longer than subnet
+        else if(count == 3 && netmask > 32) { //if netmask is a full byte longer than subnet
             throw NumericException.INSTANCE;
         }
 
-        return (ipv4 << 8) | num;
+        ipv4 = (ipv4 << 8) | num;
+        checker = (checker << bits);
+        ipv4 = (ipv4 << bits) & checker;
+
+        return ipv4;
     }
 
     public static int getIPv4Netmask(CharSequence sequence) {
@@ -1041,7 +1050,7 @@ public final class Numbers {
 
     public static int getIPv4Subnet(CharSequence sequence)  {
         int mid = Chars.indexOf(sequence, 0, '/');
-        int subnet = 0;
+        int subnet;
         int ipv4, netmask;
 
         try{
