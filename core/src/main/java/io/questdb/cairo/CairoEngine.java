@@ -228,7 +228,6 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
-        securityContext.authorizeTableCreate();
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
 

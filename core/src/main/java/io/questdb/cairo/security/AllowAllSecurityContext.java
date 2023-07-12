@@ -230,6 +230,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void onColumnAdded(TableToken tableToken, CharSequence columnName) {
+    }
+
+    @Override
     public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
