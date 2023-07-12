@@ -87,11 +87,15 @@ public class CairoEngine implements Closeable, WriterSource {
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
-    public CairoEngine(CairoConfiguration configuration) {
+    public CairoEngine(@NotNull CairoConfiguration configuration) {
         this(configuration, NoOpWalTxnSuspendEvents.INSTANCE, Metrics.disabled());
     }
 
-    public CairoEngine(CairoConfiguration configuration, WalTxnSuspendEvents walTxnSuspendEvents, Metrics metrics) {
+    public CairoEngine(
+            @NotNull CairoConfiguration configuration,
+            @NotNull WalTxnSuspendEvents walTxnSuspendEvents,
+            @NotNull Metrics metrics
+    ) {
         ffCache = new FunctionFactoryCache(
                 configuration,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
