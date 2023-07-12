@@ -45,6 +45,7 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -3040,6 +3041,8 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testYieldUntilTxnDoesNotThrowWhenTableDirIsDeleted() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+
         final FilesFacade cleanFf = new FilesFacadeImpl();
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -3049,10 +3052,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration()) {
                     @Override
                     public YieldEvent newInstance() {
-                        rmPath.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                        boolean rm = cleanFf.remove(rmPath);
-                        LOG.info().$("rmPath=").$(rmPath).$(", errno=").$(Os.errno()).$();
-                        Assert.assertTrue(rm);
+                        Assert.assertTrue(cleanFf.remove(rmPath.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
                         return super.newInstance();
                     }
                 };
