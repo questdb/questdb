@@ -3049,7 +3049,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                 final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration()) {
                     @Override
                     public YieldEvent newInstance() {
-                        Assert.assertTrue(cleanFf.remove(rmPath.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
+                        rmPath.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                        boolean rm = cleanFf.remove(rmPath);
+                        LOG.info().$("rmPath=").$(rmPath).$(", errno=").$(Os.errno()).$();
+                        Assert.assertTrue(rm);
                         return super.newInstance();
                     }
                 };

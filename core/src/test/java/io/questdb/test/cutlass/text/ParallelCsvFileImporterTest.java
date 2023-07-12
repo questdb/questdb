@@ -1415,7 +1415,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportURingEnqueueFails() throws Exception {
-
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
 
         class TestIOURing extends IOURingImpl {
@@ -1455,7 +1454,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportURingReadFails() throws Exception {
-
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
 
         class TestIOURing extends IOURingImpl {
@@ -1492,7 +1490,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportURingShuffleCqe() throws Exception {
-
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
 
         class TestIOURing extends IOURingImpl {
