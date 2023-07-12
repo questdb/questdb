@@ -32,6 +32,8 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -58,6 +60,8 @@ public final class Unsafe {
     //#if jdk.version!=8
     private static final Method implAddExports;
     //#endif
+
+    public static Map<Long, StackTraceElement[]> ALLOCATED_ADDRESSES = new ConcurrentHashMap<>();
 
     private Unsafe() {
     }
@@ -155,6 +159,10 @@ public final class Unsafe {
             getUnsafe().freeMemory(ptr);
             FREE_COUNT.incrementAndGet();
             recordMemAlloc(-size, memoryTag);
+            if (memoryTag == MemoryTag.NATIVE_DEFAULT) {
+                StackTraceElement[] stacks = ALLOCATED_ADDRESSES.remove(ptr);
+                assert stacks != null;
+            }
         }
         return 0;
     }
@@ -210,10 +218,16 @@ public final class Unsafe {
     //#endif
 
     public static long malloc(long size, int memoryTag) {
+        if (size <= 10) {
+            System.out.println("***********************************gotcha!");
+        }
         try {
             long ptr = getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
-            MALLOC_COUNT.incrementAndGet();
+            if (memoryTag == MemoryTag.NATIVE_DEFAULT) {
+                ALLOCATED_ADDRESSES.put(ptr, Thread.currentThread().getStackTrace());
+                MALLOC_COUNT.incrementAndGet();
+            }
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
@@ -228,6 +242,11 @@ public final class Unsafe {
             long ptr = getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
+            if (memoryTag == MemoryTag.NATIVE_DEFAULT) {
+                StackTraceElement[] removed = ALLOCATED_ADDRESSES.remove(address);
+                assert removed != null;
+                ALLOCATED_ADDRESSES.put(ptr, removed);
+            }
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(

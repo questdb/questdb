@@ -56,13 +56,13 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    private final UsernamePasswordMatcher matcher;
     private final NetworkFacade nf;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
     private int fd;
+    private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
     private long recvBufStart;
@@ -107,6 +107,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     public void close() {
         registry.remove(circuitBreakerId);
         Misc.free(circuitBreaker);
+        matcher = Misc.free(matcher);
     }
 
     public CharSequence getPrincipal() {
