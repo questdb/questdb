@@ -307,7 +307,7 @@ inline index_t *merge_sort(
                     &source[i + slice_len],
                     &dest[i],
                     std::min(slice_len, end - i),
-                    std::max(0ll, std::min(slice_len, end - (i + slice_len))),
+                    std::max((int64_t)0, std::min(slice_len, end - (i + slice_len))),
                     &dest[end],
                     diff_l
             );
