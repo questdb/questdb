@@ -566,6 +566,7 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public void yieldUntilTxn(long txn) throws YieldException {
+        assert txn > -1 : "non-negative txn expected, got: " + txn;
         final YieldEvent yieldEvent = walTxnYieldEvents.register(tableToken, txn);
         if (yieldEvent != null) {
             throw YieldException.instance(yieldEvent);

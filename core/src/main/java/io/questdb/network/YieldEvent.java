@@ -41,7 +41,7 @@ import java.io.Closeable;
 public abstract class YieldEvent implements Closeable {
 
     private static final long REF_COUNT_OFFSET;
-    private boolean checkDisconnectWhileYielded;
+    private boolean checkDisconnectWhileYielded = true;
     private long deadline = Long.MAX_VALUE;
     // set by using Unsafe, see REF_COUNT_OFFSET, close().
     @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})

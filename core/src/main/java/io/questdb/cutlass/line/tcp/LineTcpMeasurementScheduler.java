@@ -743,7 +743,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     securityContext.authorizeLineTableCreate();
                     tableToken = engine.createTableInsecure(ddlMem, path, true, tsa, false, false);
                     final long txn = securityContext.onTableCreated(tableToken);
-                    ctx.startWaitingForPermissions(txn);
+                    if (txn != -1) {
+                        ctx.startWaitingForPermissions(txn);
+                    }
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }
 
