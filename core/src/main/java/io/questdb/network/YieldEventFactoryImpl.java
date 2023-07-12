@@ -45,7 +45,7 @@ public class YieldEventFactoryImpl implements YieldEventFactory {
             case Os.WINDOWS:
                 return new AtomicYieldEvent();
             default:
-                throw new RuntimeException();
+                throw new IllegalStateException("Unexpected OS type: " + Os.type);
         }
     }
 }

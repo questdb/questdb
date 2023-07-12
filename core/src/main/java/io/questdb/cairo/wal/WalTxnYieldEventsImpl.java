@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
@@ -47,7 +48,7 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
     private final TxReader txReader;
     private final YieldEventFactory yieldEventFactory;
 
-    public WalTxnYieldEventsImpl(CairoConfiguration cairoConfiguration, YieldEventFactory yieldEventFactory) {
+    public WalTxnYieldEventsImpl(@NotNull CairoConfiguration cairoConfiguration, @NotNull YieldEventFactory yieldEventFactory) {
         this.dbRoot = cairoConfiguration.getRoot();
         this.ff = cairoConfiguration.getFilesFacade();
         this.txReader = new TxReader(ff);
