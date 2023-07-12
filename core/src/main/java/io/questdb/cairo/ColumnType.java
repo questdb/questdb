@@ -78,7 +78,7 @@ public final class ColumnType {    //@formatter:off
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
     public static final short NULL = PARAMETER + 1;             // = 30;
-    //public static final short IPv4 = NULL + 1;
+
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;

@@ -76,6 +76,7 @@ public class FunctionFactoryCache {
                                 // `b > a` == !(`b <= a`)
                                 addFactoryToList(factories, createNegatingFactory("<=", greaterThan));
                                 break;
+
                         }
                     } else if (factory.isGroupBy()) {
                         groupByFunctionNames.add(name);

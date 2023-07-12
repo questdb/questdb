@@ -41,7 +41,10 @@ public final class OperatorExpression {
         add(new OperatorExpression("%", 3, true, BINARY));
         add(new OperatorExpression("+", 4, true, BINARY));
         add(new OperatorExpression("-", 4, true, BINARY));
+        add(new OperatorExpression("<<", 4, true, BINARY));
+        add(new OperatorExpression(">>", 4, true, BINARY));
         add(new OperatorExpression("<<=", 4, true, BINARY));
+        add(new OperatorExpression(">>=", 4, true, BINARY));
         add(new OperatorExpression("||", 5, true, BINARY));
         add(new OperatorExpression("<", 6, true, BINARY));
         add(new OperatorExpression("<=", 6, true, BINARY));

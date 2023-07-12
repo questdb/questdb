@@ -37,17 +37,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.std.Numbers.*;
-
-public class ContainsIPv4FunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "<<(Xs)";
-    }
+public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
 
     @Override
-    public boolean isBoolean() {
-        return true;
-    }
+    public String getSignature() { return ">>=(sX)"; }
+
+    @Override
+    public boolean isBoolean() { return true; }
 
     @Override
     public Function newInstance(
@@ -57,14 +53,14 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return createHalfConstantFunc(args.getQuick(0), args.getQuick(1));
+        return createHalfConstantFunc(args.getQuick(1), args.getQuick(0));
     }
 
     private Function createHalfConstantFunc(Function varFunc, Function constFunc) throws SqlException {
         CharSequence constValue = constFunc.getStr(null);
 
         if(constValue == null) {
-            return new NullCheckFunc(varFunc);
+            return new NegContainsEqIPv4FunctionFactory.NullCheckFunc(varFunc);
         }
 
         int subnet = getIPv4Subnet(constValue);
@@ -74,24 +70,21 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
             throw SqlException.$(18, "invalid argument: ").put(constValue);
         }
         else if(subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
-
-            subnet = parseSubnet(constValue); // Check is arg is subnet
+            subnet = parseSubnet(constValue); // Check if arg is subnet
 
             if(subnet == -2) { // Is true if arg is not a valid subnet/ip address
                 throw SqlException.$(18, "invalid argument: ").put(constValue);
             } else {
-                return new ConstCheckFunc(varFunc, subnet, netmask);
+                return new NegContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
             }
         }
-
-        return new ConstCheckFunc(varFunc, subnet, netmask);
+        return new NegContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
     }
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final int subnet;
         private final int netmask;
-
         public ConstCheckFunc(Function arg, int subnet, int netmask) {
             this.arg = arg;
             this.subnet = subnet;
@@ -102,17 +95,12 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
         public Function getArg() { return arg; }
 
         @Override
-        public boolean getBool(Record rec) {
-            if(netmask == 32 || netmask == -1) { //if netmask is 32 then IP can't be strictly contained because arg is a single host, if netmask is -1 that means no netmask was provided and the arg is a single host
-                return false;
-            }
-            return (arg.getInt(rec) & netmask) == subnet;
-        }
+        public boolean getBool(Record rec) { return (arg.getInt(rec) & netmask) == subnet; }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg);
-            sink.val("<<").val(subnet).val('\'');
+            sink.val(">>=").val(subnet).val('\'');
         }
     }
 
@@ -124,14 +112,10 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
         public Function getArg() { return arg; }
 
         @Override
-        public boolean getBool(Record rec) { return (arg.getStrLen(rec) == -1L); }
+        public boolean getBool(Record rec) { return arg.getStrLen(rec) == -1L; }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg);
-            sink.val( "is null");
-        }
+        public void toPlan(PlanSink sink) { sink.val(arg).val(" is null"); }
     }
 
 }
-

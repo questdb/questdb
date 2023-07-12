@@ -77,8 +77,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
             case ColumnType.INT:
                 return argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
-//            case ColumnType.IPv4:
-//                return argsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, argsSize);
+            case ColumnType.IPv4:
+                return argsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, argsSize);
             case ColumnType.FLOAT:
                 return argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
             case ColumnType.STRING:
@@ -236,32 +236,32 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-//    private static class IPv4CoalesceFunction extends IPv4Function implements MultiArgCoalesceFunction {
-//        private final ObjList<Function> args;
-//        private final int size;
-//
-//        public IPv4CoalesceFunction(ObjList<Function> args, int size) {
-//            super();
-//            this.args = args;
-//            this.size = size;
-//        }
-//
-//        @Override
-//        public ObjList<Function> getArgs() {
-//            return args;
-//        }
-//
-//        @Override
-//        public int getInt(Record rec) {
-//            for (int i = 0; i < size; i++) {
-//                int value = args.getQuick(i).getInt(rec);
-//                if (value != Numbers.INT_NaN) {
-//                    return value;
-//                }
-//            }
-//            return Numbers.INT_NaN;
-//        }
-//    }
+    private static class IPv4CoalesceFunction extends IPv4Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public IPv4CoalesceFunction(ObjList<Function> args, int size) {
+            super();
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            for (int i = 0; i < size; i++) {
+                int value = args.getQuick(i).getInt(rec);
+                if (value != Numbers.INT_NaN) {
+                    return value;
+                }
+            }
+            return Numbers.INT_NaN;
+        }
+    }
 
     private static class Long256CoalesceFunction extends Long256Function implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
@@ -526,35 +526,35 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-//    private static class TwoIPv4CoalesceFunction extends IPv4Function implements BinaryCoalesceFunction {
-//        private final Function args0;
-//        private final Function args1;
-//
-//        public TwoIPv4CoalesceFunction(ObjList<Function> args) {
-//            assert args.size() == 2;
-//            this.args0 = args.getQuick(0);
-//            this.args1 = args.getQuick(1);
-//        }
-//
-//        @Override
-//        public int getInt(Record rec) {
-//            int value = args0.getInt(rec);
-//            if (value != Numbers.INT_NaN) {
-//                return value;
-//            }
-//            return args1.getInt(rec);
-//        }
-//
-//        @Override
-//        public Function getLeft() {
-//            return args0;
-//        }
-//
-//        @Override
-//        public Function getRight() {
-//            return args1;
-//        }
-//    }
+    private static class TwoIPv4CoalesceFunction extends IPv4Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoIPv4CoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            int value = args0.getInt(rec);
+            if (value != Numbers.INT_NaN) {
+                return value;
+            }
+            return args1.getInt(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
 
     private static class TwoLong256CoalesceFunction extends Long256Function implements BinaryCoalesceFunction {
         private final Function args0;

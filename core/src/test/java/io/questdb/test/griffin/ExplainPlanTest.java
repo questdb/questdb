@@ -48,6 +48,11 @@ import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
+import io.questdb.griffin.engine.functions.eq.ContainsIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.eq.ContainsEqIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.eq.NegContainsIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -1571,7 +1576,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         constFuncs.put(ColumnType.SHORT, new ShortConstant((short) 2));
         constFuncs.put(ColumnType.CHAR, new CharConstant('a'));
         constFuncs.put(ColumnType.INT, new IntConstant(3));
-//        constFuncs.put(ColumnType.IPv4, new IPv4Constant(3));
+        constFuncs.put(ColumnType.IPv4, new IPv4Constant(3));
         constFuncs.put(ColumnType.LONG, new LongConstant(4));
         constFuncs.put(ColumnType.DATE, new DateConstant(0));
         constFuncs.put(ColumnType.TIMESTAMP, new TimestampConstant(86400000000L));
@@ -1607,7 +1612,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         colFuncs.put(ColumnType.SHORT, new ShortColumn(2));
         colFuncs.put(ColumnType.CHAR, new CharColumn(1));
         colFuncs.put(ColumnType.INT, new IntColumn(1));
-//        colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
+        colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
         colFuncs.put(ColumnType.LONG, new LongColumn(1));
         colFuncs.put(ColumnType.DATE, new DateColumn(1));
         colFuncs.put(ColumnType.TIMESTAMP, new TimestampColumn(1));
@@ -1747,6 +1752,16 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 args.add(new CharConstant('s'));
                             } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("1"));
+                            } else if (factory instanceof EqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("10.8.6.5"));
+                            } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("12.6.5.10/24"));
+                            } else if (factory instanceof ContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("12.6.5.10/24"));
+                            } else if(factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("34.56.22.11/12"));
+                            } else if(factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("32.12.22.11/12"));
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
                             } else {
@@ -6891,8 +6906,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 return new ShortConstant((short) val);
             case ColumnType.INT:
                 return new IntConstant(val);
-//            case ColumnType.IPv4:
-//                return new IPv4Constant(val);
+            case ColumnType.IPv4:
+                return new IPv4Constant(val);
             case ColumnType.LONG:
                 return new LongConstant(val);
             case ColumnType.DATE:

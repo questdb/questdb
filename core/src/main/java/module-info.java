@@ -155,6 +155,9 @@ open module io.questdb {
 
             //contains
             io.questdb.griffin.engine.functions.eq.ContainsIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.eq.ContainsEqIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.eq.NegContainsIPv4FunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory,

@@ -749,6 +749,62 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testIPv4ContainsSubnet() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where ip << '0.0.0.1'", "ip\n");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnet2() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where ip << '0.0.0.1/32'", "ip\n");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnet3() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))", sqlExecutionContext);
+        assertSql("select * from test where ip << '0.0.0.1/24'", "ip\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsSubnet() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where '0.0.0.1' >> ip", "ip\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsSubnet2() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where '0.0.0.1/32' >> ip", "ip\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsSubnet3() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))", sqlExecutionContext);
+        assertSql("select * from test where '0.0.0.1/24' >> ip", "ip\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnet() throws Exception {
         compiler.compile("create table test (col ipv4)", sqlExecutionContext);
         executeInsert("insert into test values('12.67.45.3')");
         executeInsert("insert into test values('160.5.22.8')");
@@ -778,7 +834,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetNoMask() throws Exception {
+    public void testIPv4NegContainsEqSubnet() throws Exception {
+        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values('12.67.45.3')");
+        executeInsert("insert into test values('160.5.22.8')");
+        executeInsert("insert into test values('240.110.88.22')");
+        executeInsert("insert into test values('1.6.2.0')");
+        executeInsert("insert into test values('255.255.255.255')");
+        executeInsert("insert into test values('0.0.0.0')");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/20' >>= col", sink, "col\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/1' >>= col", sink, "col\n" +
+                "12.67.45.3\n" +
+                "1.6.2.0\n" +
+                "0.0.0.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '255.6.8.10/8' >>= col", sink, "col\n" +
+                "255.255.255.255\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/0' >>= col", sink, "col\n" +
+                "12.67.45.3\n" +
+                "160.5.22.8\n" +
+                "240.110.88.22\n" +
+                "1.6.2.0\n" +
+                "255.255.255.255\n" +
+                "0.0.0.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0/32' >>= col", sink, "col\n" +
+                "1.6.2.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0' >>= col", sink, "col\n" +
+                "1.6.2.0\n");
+
+    }
+    @Test
+    public void testIPv4ContainsEqSubnetNoMask() throws Exception {
 
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
 
@@ -801,11 +886,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.4\n" +
                 "0.0.0.4\n" +
                 "0.0.0.4\n");
-
     }
 
     @Test
-    public void testIPv4ContainsSubnetAndMask() throws Exception {
+    public void testIPv4NegContainsEqSubnetNoMask() throws Exception {
+
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0.4' >>= ip", "ip\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetAndMask() throws Exception {
         compiler.compile("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
 
         assertSql("select * from test where ip <<= '0.0.0/24'", "ip\n" +
@@ -830,7 +940,88 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetIncorrectMask() throws Exception {
+    public void testIPv4NegContainsEqSubnetAndMask() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0/24' >>= ip", "ip\n" +
+                "0.0.0.115\n" +
+                "0.0.0.208\n" +
+                "0.0.0.242\n" +
+                "0.0.0.110\n" +
+                "0.0.0.6\n" +
+                "0.0.0.138\n" +
+                "0.0.0.137\n" +
+                "0.0.0.4\n" +
+                "0.0.0.90\n" +
+                "0.0.0.173\n" +
+                "0.0.0.12\n" +
+                "0.0.0.136\n" +
+                "0.0.0.53\n" +
+                "0.0.0.143\n" +
+                "0.0.0.246\n" +
+                "0.0.0.6\n" +
+                "0.0.0.158\n" +
+                "0.0.0.120\n");
+    }
+
+    @Test
+    public void testIPv4EqNegated() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
+
+        assertSql("select * from test where ip != '0.0.0.1'", "ip\n" +
+                "0.0.0.0\n" +
+                "0.0.0.5\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.2\n" +
+                "0.0.0.0\n" +
+                "0.0.0.4\n" +
+                "0.0.0.3\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.0\n" +
+                "0.0.0.5\n" +
+                "0.0.0.0\n" +
+                "0.0.0.4\n");
+    }
+
+    @Test
+    public void testIPv4EqNegated2() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0.1' != ip", "ip\n" +
+                "0.0.0.0\n" +
+                "0.0.0.5\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.2\n" +
+                "0.0.0.0\n" +
+                "0.0.0.4\n" +
+                "0.0.0.3\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.0\n" +
+                "0.0.0.5\n" +
+                "0.0.0.0\n" +
+                "0.0.0.4\n");
+    }
+
+    @Test
+    public void testIPv4EqArgsSwapped() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0.1' = ip", "ip\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetIncorrectMask() throws Exception {
         assertFailure("select * from test where ip <<= '0.0.0/32'", "create table test as " +
                 "(" +
                 "  select" +
@@ -842,7 +1033,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFails() throws Exception {
+    public void testIPv4NegContainsEqSubnetIncorrectMask() throws Exception {
+        assertFailure("select * from test where '0.0.0/32' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/32");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails() throws Exception {
         assertFailure("select * from test where ip <<= '0.0.0.1/hello'", "create table test as " +
                 "(" +
                 "  select" +
@@ -854,7 +1057,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFails2() throws Exception {
+    public void testIPv4NegContainsEqSubnetFails() throws Exception {
+        assertFailure("select * from test where '0.0.0.1/hello' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.1/hello");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails2() throws Exception {
         assertFailure("select * from test where ip <<= '0.0.0/hello'", "create table test as " +
                 "(" +
                 "  select" +
@@ -866,7 +1081,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFails3() throws Exception {
+    public void testIPv4NegContainsEqSubnetFails2() throws Exception {
+        assertFailure("select * from test where '0.0.0/hello' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/hello");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails3() throws Exception {
         assertFailure("select * from test where ip <<= '0.0.0.0/65'", "create table test as " +
                 "(" +
                 "  select" +
@@ -878,7 +1105,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFails4() throws Exception {
+    public void testIPv4NegContainsEqSubnetFails3() throws Exception {
+        assertFailure("select * from test where '0.0.0.0/65' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails4() throws Exception {
         assertFailure("select * from test where ip <<= '0.0.0/65'", "create table test as " +
                 "(" +
                 "  select" +
@@ -890,7 +1129,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFails5() throws Exception {
+    public void testIPv4NegContainsEqSubnetFails4() throws Exception {
+        assertFailure("select * from test where '0.0.0/65' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails5() throws Exception {
         assertFailure("select * from test where ip <<= '0.0.0.0/-1'", "create table test as " +
                 "(" +
                 "  select" +
@@ -902,7 +1153,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFails6() throws Exception {
+    public void testIPv4NegContainsEqSubnetFails5() throws Exception {
+        assertFailure("select * from test where '0.0.0.0/-1' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails6() throws Exception {
         assertFailure("select * from test where ip <<= '0.0.0/-1'", "create table test as " +
                 "(" +
                 "  select" +
@@ -914,7 +1177,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFailsChars() throws Exception {
+    public void testIPv4NegContainsEqSubnetFails6() throws Exception {
+        assertFailure("select * from test where '0.0.0/-1' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFailsChars() throws Exception {
         assertFailure("select * from test where ip <<= 'apple'", "create table test as " +
                 "(" +
                 "  select" +
@@ -926,7 +1201,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFailsOverflow() throws Exception {
+    public void testIPv4NegContainsEqSubnetFailsChars() throws Exception {
+        assertFailure("select * from test where 'apple' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: apple");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFailsOverflow() throws Exception {
         assertFailure("select * from test where ip <<= '256.256.256.256'", "create table test as " +
                 "(" +
                 "  select" +
@@ -938,7 +1225,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4ContainsSubnetFailsNums() throws Exception {
+    public void testIPv4NegContainsEqSubnetFailsOverflow() throws Exception {
+        assertFailure("select * from test where '256.256.256.256' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 256.256.256.256");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFailsNums() throws Exception {
         assertFailure("select * from test where ip <<= '8573674'", "create table test as " +
                 "(" +
                 "  select" +
@@ -948,17 +1247,41 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "  from long_sequence(100)" +
                 ") timestamp(k)", 18, "invalid argument: 8573674");
     }
-//    @Test
-//    public void testIPv4ContainsSubnetFailsNetmaskOverflow() throws Exception {
-//        assertFailure("select * from test where ip <<= '85.7.36/74'", "create table test as " +
-//                "(" +
-//                "  select" +
-//                "    rnd_int(1000,2000,0)::ipv4 ip," +
-//                "    rnd_int(0,1000,0) bytes," +
-//                "    timestamp_sequence(0,100000000) k" +
-//                "  from long_sequence(100)" +
-//                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
-//    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFailsNums() throws Exception {
+        assertFailure("select * from test where '8573674' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 8573674");
+    }
+    @Test
+    public void testIPv4ContainsEqSubnetFailsNetmaskOverflow() throws Exception {
+        assertFailure("select * from test where ip <<= '85.7.36/74'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFailsNetmaskOverflow() throws Exception {
+        assertFailure("select * from test where '85.7.36/74' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
+    }
 
 
     @Test

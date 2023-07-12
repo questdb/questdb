@@ -37,11 +37,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.std.Numbers.*;
-
-public class ContainsIPv4FunctionFactory implements FunctionFactory {
+public class NegContainsIPv4FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<<(Xs)";
+        return ">>(sX)";
     }
 
     @Override
@@ -57,14 +56,14 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return createHalfConstantFunc(args.getQuick(0), args.getQuick(1));
+        return createHalfConstantFunc(args.getQuick(1), args.getQuick(0));
     }
 
     private Function createHalfConstantFunc(Function varFunc, Function constFunc) throws SqlException {
         CharSequence constValue = constFunc.getStr(null);
 
         if(constValue == null) {
-            return new NullCheckFunc(varFunc);
+            return new NegContainsIPv4FunctionFactory.NullCheckFunc(varFunc);
         }
 
         int subnet = getIPv4Subnet(constValue);
@@ -80,11 +79,11 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
             if(subnet == -2) { // Is true if arg is not a valid subnet/ip address
                 throw SqlException.$(18, "invalid argument: ").put(constValue);
             } else {
-                return new ConstCheckFunc(varFunc, subnet, netmask);
+                return new NegContainsIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
             }
         }
 
-        return new ConstCheckFunc(varFunc, subnet, netmask);
+        return new NegContainsIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
     }
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
@@ -112,7 +111,7 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg);
-            sink.val("<<").val(subnet).val('\'');
+            sink.val(">>").val(subnet).val('\'');
         }
     }
 
@@ -132,6 +131,4 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
             sink.val( "is null");
         }
     }
-
 }
-
