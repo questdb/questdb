@@ -383,7 +383,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             } catch (SuspendException ex) {
                 measurementPending = true;
                 suspendEvent = ex.getEvent();
-                return IOContextResult.NEEDS_READ;
+                // We request write here while we know that we won't be writing into the socket
+                // to make sure that epoll/kqueue/poll will call us back.
+                return IOContextResult.NEEDS_WRITE;
             } catch (CairoException ex) {
                 LOG.error()
                         .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
