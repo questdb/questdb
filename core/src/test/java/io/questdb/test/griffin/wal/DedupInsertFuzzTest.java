@@ -992,6 +992,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             nextRecCursor.toTop();
             nextRecordKeys.clear();
             currentRecordKeys.clear();
+            skipRecords.clear();
+            recordKeys.clear();
         }
 
         private boolean dispatchRecordsWithOffsets() {
@@ -999,7 +1001,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 int skip = skipRecords.getLast();
                 skipRecords.setPos(skipRecords.size() - 1);
                 for (int i = 0; i < skip; i++) {
-                    Assert.assertTrue(recordCursor.hasNext());
+                    if (!recordCursor.hasNext()) {
+                        Assert.fail("expected to have a record");
+                    }
                 }
                 return true;
             }

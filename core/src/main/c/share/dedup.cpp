@@ -11,7 +11,7 @@
 #include <vector>
 
 #pragma pack (push, 1)
-struct dedup_column_t {
+struct dedup_column {
     int32_t column_type;
     int32_t value_size_bytes;
     int64_t column_top;
@@ -22,45 +22,35 @@ struct dedup_column_t {
     int64_t reserved3;
     char null_value[32];
 };
-
-template<typename T>
-struct dedup_column {
-    int32_t column_type;
-    int32_t value_size_bytes;
-    int64_t column_top;
-    T *column_data;
-    T *o3_data;
-    int64_t reserved1;
-    int64_t reserved2;
-    int64_t reserved3;
-    T null_value;
-};
 #pragma pack(pop)
 
-inline int diff(const int32_t **keys1, const int32_t **keys2, int32_t key_count, uint64_t left, uint64_t right);
 
 template<typename T>
-inline int64_t
-merge_dedupTimestamp_with_long_index_single_key(jlong srcTimestampAddr, jlong mergeDataLo, jlong mergeDataHi,
-                                                jlong sortedTimestampsAddr, jlong mergeOOOLo, jlong mergeOOOHi,
-                                                jlong tempIndexAddr, const dedup_column_t *src_keys) {
-    const dedup_column<T> *col_key = (dedup_column<T> *) (src_keys);
-
-    const auto l_row_equals_single = [&](const int64_t r, const int64_t i) {
-        const T r_val = r >= col_key->column_top ? col_key->column_data[r] : col_key->null_value;
-        return r_val == col_key->o3_data[i];
+struct dedup_column_t : dedup_column {
+    [[nodiscard]] inline const T *get_column_data() const {
+        return (T *) dedup_column::column_data;
     };
 
-    return merge_dedup_long_index_int_keys(
-            reinterpret_cast<uint64_t *> (srcTimestampAddr),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeDataLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeDataHi),
-            reinterpret_cast<index_t *> (sortedTimestampsAddr),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOHi),
-            reinterpret_cast<index_t *> (tempIndexAddr),
-            l_row_equals_single
-    );
+    [[nodiscard]] inline const T *get_o3_data() const {
+        return (T *) dedup_column::o3_data;
+    };
+
+    [[nodiscard]] inline const T &get_null_value() const {
+        return (T &) dedup_column::null_value;
+    };
+};
+
+struct int256 {
+    __int128 lo;
+    __int128 hi;
+};
+
+inline bool operator>(const int256 &a, const int256 &b) {
+    return a.hi > b.hi || a.lo > b.lo;
+}
+
+inline bool operator<(const int256 &a, const int256 &b) {
+    return a.hi < b.hi || a.lo < b.lo;
 }
 
 template<typename lambda_diff>
@@ -163,21 +153,22 @@ int64_t merge_dedup_long_index_int_keys(
     return dest - dest_index;
 }
 
-inline int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
+inline int64_t dedup_sorted_timestamp_index(const index_t *index_in, int64_t count, index_t *index_out) {
+    // std::unique_copy takes first record but here we want last
     if (count > 0) {
         int64_t copyTo = 0;
-        uint64_t lastTimestamp = pIndexIn[0].ts;
+        uint64_t lastTimestamp = index_in[0].ts;
         for (int64_t i = 1; i < count; i++) {
-            if (pIndexIn[i].ts > lastTimestamp) {
-                pIndexOut[copyTo] = pIndexIn[i - 1];
+            if (index_in[i].ts > lastTimestamp) {
+                index_out[copyTo] = index_in[i - 1];
                 copyTo++;
-                lastTimestamp = pIndexIn[i].ts;
-            } else if (pIndexIn[i].ts < lastTimestamp) {
+                lastTimestamp = index_in[i].ts;
+            } else if (index_in[i].ts < lastTimestamp) {
                 assert(false || "data is not sorted");
                 return -1;
             }
         }
-        pIndexOut[copyTo] = pIndexIn[count - 1];
+        index_out[copyTo] = index_in[count - 1];
         return copyTo + 1;
     }
     return 0;
@@ -289,17 +280,6 @@ inline void merge_sort_slice(
         __MEMCPY(dest, &src2[i2], (src2_len - i2) * sizeof(index_t));
         assert(dest + src2_len - i2 <= end && "write beyond allocated boundary");
     }
-}
-
-inline int32_t
-diff(const int32_t **keys1, const int32_t **keys2, const int32_t key_count, uint64_t left, uint64_t right) {
-    for (int k = 0; k < key_count; k++) {
-        int32_t diff = keys1[k][left] - keys2[k][right];
-        if (diff != 0) {
-            return diff;
-        }
-    }
-    return 0;
 }
 
 template<typename diff_lambda>
@@ -418,79 +398,123 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
         jint dedupKeyCount,
         jlong dedupColBuffs
 ) {
+    auto *src = reinterpret_cast<uint64_t *> (srcTimestampAddr);
+    auto data_lo = __JLONG_REINTERPRET_CAST__(int64_t, mergeDataLo);
+    auto data_hi = __JLONG_REINTERPRET_CAST__(int64_t, mergeDataHi);
+    auto *index = reinterpret_cast<index_t *> (sortedTimestampsAddr);
+    auto index_lo = __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOLo);
+    auto index_hi = __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOHi);
+    auto *index_tmp = reinterpret_cast<index_t *> (tempIndexAddr);
 
-    const auto compareIndexes_t = [&]<class T>(const dedup_column<T> *column, const int64_t col_index,
-                                               const int64_t index_index) -> int {
-        // negative index means value is from colum, positive from o3_data
+    const auto compare_by_rowid = [&]<class T>(const dedup_column_t<T> *column, const int64_t &col_index,
+                                               const int64_t &index_index) -> int {
+        // negative index means value is from colum, positive from get_o3_data
         assert((col_index >= mergeDataLo && col_index <= mergeDataHi) || "access of column value out of range");
         assert((index_index >= mergeOOOLo && index_index <= mergeOOOHi) || "access of index value out of range");
 
-        const auto l_val = col_index >= column->column_top ? column->column_data[col_index] : column->null_value;
-        const auto r_val = column->o3_data[index_index];
+        const auto l_val =
+                col_index >= column->column_top ? column->get_column_data()[col_index] : column->get_null_value();
+        const auto r_val = column->get_o3_data()[index_index];
+
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
         return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
     };
 
-    const auto compareIndexes = [&](const int64_t l, const int64_t r) -> int {
+    const auto src_keys = reinterpret_cast<const dedup_column *>(dedupColBuffs);
+    if (dedupKeyCount == 1) {
+        const dedup_column *col_key = &src_keys[0];
+        switch (col_key->value_size_bytes) {
+            // inline comparison of 1 column type without any loops and switches
+            case 1: {
+                auto compare_1 = [&](const int64_t l, const int64_t r) {
+                    return compare_by_rowid((dedup_column_t<int8_t> *) col_key, l, r);
+                };
+                return merge_dedup_long_index_int_keys(src, data_lo, data_hi,
+                                                       index, index_lo, index_hi,
+                                                       index_tmp, compare_1);
+            }
+            case 2: {
+                auto compare_2 = [&](const int64_t l, const int64_t r) {
+                    return compare_by_rowid((dedup_column_t<int16_t> *) col_key, l, r);
+                };
+                return merge_dedup_long_index_int_keys(src, data_lo, data_hi,
+                                                       index, index_lo, index_hi,
+                                                       index_tmp, compare_2);
+            }
+            case 4: {
+                auto compare_4 = [&](const int64_t l, const int64_t r) {
+                    return compare_by_rowid((dedup_column_t<int32_t> *) col_key, l, r);
+                };
+                return merge_dedup_long_index_int_keys(src, data_lo, data_hi,
+                                                       index, index_lo, index_hi,
+                                                       index_tmp, compare_4);
+            }
+            case 8: {
+                auto compare_8 = [&](const int64_t l, const int64_t r) {
+                    return compare_by_rowid((dedup_column_t<int64_t> *) col_key, l, r);
+                };
+                return merge_dedup_long_index_int_keys(src, data_lo, data_hi,
+                                                       index, index_lo, index_hi,
+                                                       index_tmp, compare_8);
+            }
+            case 16: {
+                auto compare_16 = [&](const int64_t l, const int64_t r) {
+                    return compare_by_rowid((dedup_column_t<__int128> *) col_key, l, r);
+                };
+                return merge_dedup_long_index_int_keys(src, data_lo, data_hi,
+                                                       index, index_lo, index_hi,
+                                                       index_tmp, compare_16);
+            }
+            case 32: {
+                auto compare_32 = [&](const int64_t l, const int64_t r) {
+                    return compare_by_rowid((dedup_column_t<int256> *) col_key, l, r);
+                };
+                return merge_dedup_long_index_int_keys(src, data_lo, data_hi,
+                                                       index, index_lo, index_hi,
+                                                       index_tmp, compare_32);
+            }
+            default:
+                assert(false || "unsupported column type");
+                return -1;
+        }
+    }
 
-        const auto src_keys = reinterpret_cast<const dedup_column_t *>(dedupColBuffs);
+    // Multiple column dedup
+    const auto compareIndexes = [&](const int64_t l, const int64_t r) -> int {
         for (int c = 0; c < dedupKeyCount; c++) {
-            const dedup_column_t *col_key = &src_keys[c];
+            const dedup_column *col_key = &src_keys[c];
+            int diff;
             switch (col_key->value_size_bytes) {
-                case 1: {
-                    auto diff = compareIndexes_t((dedup_column<int8_t> *) col_key, l, r);
-                    if (diff != 0) {
-                        return diff;
-                    }
+                case 1:
+                    diff = compare_by_rowid((dedup_column_t<int8_t> *) col_key, l, r);
                     break;
-                }
-                case 2: {
-                    auto diff = compareIndexes_t((dedup_column<int16_t> *) col_key, l, r);
-                    if (diff != 0) {
-                        return diff;
-                    }
+                case 2:
+                    diff = compare_by_rowid((dedup_column_t<int16_t> *) col_key, l, r);
                     break;
-                }
-                case 4: {
-                    auto diff = compareIndexes_t((dedup_column<int32_t> *) col_key, l, r);
-                    if (diff != 0) {
-                        return diff;
-                    }
+                case 4:
+                    diff = compare_by_rowid((dedup_column_t<int32_t> *) col_key, l, r);
                     break;
-                }
-                case 8: {
-                    auto diff = compareIndexes_t((dedup_column<int64_t> *) col_key, l, r);
-                    if (diff != 0) {
-                        return diff;
-                    }
+                case 8:
+                    diff = compare_by_rowid((dedup_column_t<int64_t> *) col_key, l, r);
                     break;
-                }
-                case 16: {
-                    auto diff = compareIndexes_t((dedup_column<__int128> *) col_key, l, r);
-                    if (diff != 0) {
-                        return diff;
-                    }
+                case 16:
+                    diff = compare_by_rowid((dedup_column_t<__int128> *) col_key, l, r);
                     break;
-                }
+                case 32:
+                    diff = compare_by_rowid((dedup_column_t<int256> *) col_key, l, r);
+                    break;
                 default:
                     assert(false || "unsupported column type");
                     return 0;
             }
+            if (diff != 0) {
+                return diff;
+            }
         }
         return 0;
     };
-
-    return merge_dedup_long_index_int_keys(
-            reinterpret_cast<uint64_t *> (srcTimestampAddr),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeDataLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeDataHi),
-            reinterpret_cast<index_t *> (sortedTimestampsAddr),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, mergeOOOHi),
-            reinterpret_cast<index_t *> (tempIndexAddr),
-            compareIndexes
-    );
+    return merge_dedup_long_index_int_keys(src, data_lo, data_hi, index, index_lo, index_hi, index_tmp, compareIndexes);
 }
 
 JNIEXPORT jlong JNICALL
@@ -503,80 +527,112 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
         const jint dedupKeyCount,
         jlong dedupColBuffs
 ) {
+    const auto *index_in = reinterpret_cast<const index_t *> (pIndexIn);
+    const auto index_count = __JLONG_REINTERPRET_CAST__(int64_t, count);
+    auto *index_out = reinterpret_cast<index_t *> (pIndexOut);
+    auto *index_temp = reinterpret_cast<index_t *> (pIndexTemp);
+
     if (dedupKeyCount == 0) {
-        return dedup_sorted_timestamp_index(
-                reinterpret_cast<const index_t *> (pIndexIn),
-                __JLONG_REINTERPRET_CAST__(int64_t, count),
-                reinterpret_cast<index_t *> (pIndexOut)
-        );
+        return dedup_sorted_timestamp_index(index_in, index_count, index_out);
     } else {
-        const auto diff_typed = [=]<class T>(const dedup_column<T> *column, const int64_t l, const int64_t r) {
-            const auto l_val = l > -1 ? column->column_data[l] : column->o3_data[l & ~(1ull << 63)];
-            const auto r_val = r > -1 ? column->column_data[r] : column->o3_data[r & ~(1ull << 63)];
+        const auto compare_by_rowid = [&]<class T>(const dedup_column_t<T> *column, const int64_t l, const int64_t r) {
+            const auto l_val = l > -1 ? column->get_column_data()[l] : column->get_o3_data()[l & ~(1ull << 63)];
+            const auto r_val = r > -1 ? column->get_column_data()[r] : column->get_o3_data()[r & ~(1ull << 63)];
             // One of the values can be MIN of the type (null value)
             // and subtraction can result in type overflow
             return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
         };
+        const auto src_keys = reinterpret_cast<const dedup_column *>(dedupColBuffs);
+
+        if (dedupKeyCount == 1) {
+            const dedup_column *col_key = &src_keys[0];
+            switch (col_key->value_size_bytes) {
+                // inline comparison of 1 column type without any loops and switches
+                case 1: {
+                    auto compare_1 = [&](const int64_t l, const int64_t r) {
+                        return compare_by_rowid((dedup_column_t<int8_t> *) col_key, l, r);
+                    };
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_1);
+                }
+                case 2: {
+                    auto compare_2 = [&](const int64_t l, const int64_t r) {
+                        return compare_by_rowid((dedup_column_t<int16_t> *) col_key, l, r);
+                    };
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_2);
+                }
+                case 4: {
+                    auto compare_4 = [&](const int64_t l, const int64_t r) {
+                        return compare_by_rowid((dedup_column_t<int32_t> *) col_key, l, r);
+                    };
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_4);
+                }
+                case 8: {
+                    auto compare_8 = [&](const int64_t l, const int64_t r) {
+                        return compare_by_rowid((dedup_column_t<int64_t> *) col_key, l, r);
+                    };
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_8);
+                }
+                case 16: {
+                    auto compare_16 = [&](const int64_t l, const int64_t r) {
+                        return compare_by_rowid((dedup_column_t<__int128> *) col_key, l, r);
+                    };
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_16);
+                }
+                case 32: {
+                    auto compare_32 = [&](const int64_t l, const int64_t r) {
+                        return compare_by_rowid((dedup_column_t<int256> *) col_key, l, r);
+                    };
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_32);
+                }
+                default:
+                    assert(false || "unsupported column type");
+                    return -1;
+            }
+        }
 
         const auto diff_l = [&](const int64_t l, const int64_t r) {
-
-            const auto src_keys = reinterpret_cast<const dedup_column_t *>(dedupColBuffs);
             for (int c = 0; c < dedupKeyCount; c++) {
-                const dedup_column_t *col_key = &src_keys[c];
+                const dedup_column *col_key = &src_keys[c];
+                int diff;
                 switch (col_key->value_size_bytes) {
                     case 1: {
-                        auto diff = diff_typed((dedup_column<int8_t> *) col_key, l, r);
-                        if (diff != 0) {
-                            return diff;
-                        }
+                        diff = compare_by_rowid((dedup_column_t<int8_t> *) col_key, l, r);
                         break;
                     }
                     case 2: {
-                        auto diff = diff_typed((dedup_column<int16_t> *) col_key, l, r);
-                        if (diff != 0) {
-                            return diff;
-                        }
+                        diff = compare_by_rowid((dedup_column_t<int16_t> *) col_key, l, r);
                         break;
                     }
                     case 4: {
-                        auto diff = diff_typed((dedup_column<int32_t> *) col_key, l, r);
-                        if (diff != 0) {
-                            return diff;
-                        }
+                        diff = compare_by_rowid((dedup_column_t<int32_t> *) col_key, l, r);
                         break;
                     }
                     case 8: {
-                        auto diff = diff_typed((dedup_column<int64_t> *) col_key, l, r);
-                        if (diff != 0) {
-                            return diff;
-                        }
+                        diff = compare_by_rowid((dedup_column_t<int64_t> *) col_key, l, r);
                         break;
                     }
                     case 16: {
-                        auto diff = diff_typed((dedup_column<__int128> *) col_key, l, r);
-                        if (diff != 0) {
-                            return diff;
-                        }
+                        diff = compare_by_rowid((dedup_column_t<__int128> *) col_key, l, r);
+                        break;
+                    }
+                    case 32: {
+                        diff = compare_by_rowid((dedup_column_t<int256> *) col_key, l, r);
                         break;
                     }
                     default:
                         assert(false || "unsupported column type");
                         return 0;
                 }
+                if (diff != 0) {
+                    return diff;
+                }
             }
             return 0;
         };
 
-        return dedup_sorted_timestamp_index_with_keys(
-                reinterpret_cast<const index_t *> (pIndexIn),
-                __JLONG_REINTERPRET_CAST__(const int64_t, count),
-                reinterpret_cast<index_t *> (pIndexOut),
-                reinterpret_cast<index_t *> (pIndexTemp),
-                diff_l
-        );
+        return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, diff_l);
     }
 }
 }
-
 
 // extern C
