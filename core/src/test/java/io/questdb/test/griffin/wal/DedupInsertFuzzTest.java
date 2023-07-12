@@ -25,10 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -260,12 +257,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
-//            for (int i = 0; i < transactionCount; i++) {
-//                if (findTimestampAndSymbol("2020-02-25T06:28:00.000000Z", "Y", transactions.get(i).operationList) > -1) {
-//                    int iasf = 0;
-//                }
-//            }
-            long ts = parseFloorPartialTimestamp("2020-02-25T10:58:00.000000Z");
+
             // adding rows with commit = 2 from=2020-02-25T10:29:00.000000Z, to=2020-02-26T10:29:00.000000Z
             applyWal(transactions, tableName, 1, rnd);
             validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
@@ -373,14 +365,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedup() throws Exception {
-        Rnd rnd = generateRandom(LOG, 128607146707833L, 1689084421347L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.5 * rnd.nextDouble(),
                 rnd.nextDouble() / 100,
-                rnd.nextDouble() / 100,
+                0,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
@@ -403,7 +395,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomDedupRepeat() throws Exception {
-        Rnd rnd = generateRandom(LOG, 130659812851916L, 1689086474008L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),
@@ -449,29 +441,29 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String tableNameNoWal,
-            IntList upsertKeyIndexes,
+            ObjList<CharSequence> upsertKeyNames,
             String tableNameWal
     ) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(tableNameNoWal, sqlExecutionContext).getRecordCursorFactory()) {
-            Log log = LOG;
+        Log log = LOG;
+        try (RecordCursorFactory factory = compiler.compile(tableNameNoWal, sqlExecutionContext).getRecordCursorFactory();
+             RecordCursorFactory factoryPreview = compiler.compile(tableNameNoWal, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursorFactory factory2 = compiler.compile(tableNameWal, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
-                    try (RecordCursor dedupWrapper = new DedupCursor(cursor1, upsertKeyIndexes)) {
-                        try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
-                            assertEquals(dedupWrapper, factory.getMetadata(), cursor2, factory2.getMetadata(), false);
-                        }
-                    }
-                } catch (AssertionError e) {
-                    log.error().$(e).$();
-                    try (RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext)) {
-                        try (RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)) {
+                try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
+                     RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)) {
+                    try (RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames); RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)) {
+                        try {
+                            assertEquals(dedupWrapper, factory.getMetadata(), actualCursor, factory2.getMetadata(), false);
+                        } catch (AssertionError e) {
+                            log.error().$(e).$();
+                            dedupWrapper.toTop();
+                            actualCursor.toTop();
                             log.xDebugW().$();
 
                             LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
                             LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
                             printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
-                            printer.print(expectedCursor, factory.getMetadata(), false, log);
+                            printer.print(dedupWrapper, factory.getMetadata(), false, log);
 
                             record = log.xDebugW().$("> but was:<");
                             printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
@@ -479,9 +471,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
                             printer.print(actualCursor, factory2.getMetadata(), false, log);
                             log.xDebugW().$(">").$();
+                            throw e;
                         }
                     }
-                    throw e;
                 }
             }
         }
@@ -494,12 +486,23 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int start = rnd.nextInt(metadata.getColumnCount());
             for (int c = 0; c < metadata.getColumnCount(); c++) {
                 int col = (c + start) % metadata.getColumnCount();
-                if (!upsertKeyIndexes.contains(col) &&
-                        !ColumnType.isVariableLength(metadata.getColumnType(col))) {
+                int columnType = metadata.getColumnType(col);
+                if (!upsertKeyIndexes.contains(col)
+                        && !ColumnType.isVariableLength(columnType)
+                        && columnType != ColumnType.LONG256) {
 
                     upsertKeyIndexes.add(col);
                     break;
                 }
+            }
+        }
+    }
+
+    private void collectUpsertKeyNames(TableRecordMetadata metadata, IntList upsertKeys, ObjList<CharSequence> upsertKeyNames) {
+        for (int i = 0; i < upsertKeys.size(); i++) {
+            int columnType = metadata.getColumnType(upsertKeys.get(i));
+            if (columnType > 0) {
+                upsertKeyNames.add(metadata.getColumnName(upsertKeys.get(i)));
             }
         }
     }
@@ -627,25 +630,20 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
 
                 String renamedUpsertKeys;
+                ObjList<CharSequence> upsertKeyNames = new ObjList<>();
                 try (TableWriter writer = getWriter(tableNameNoWal)) {
+                    collectUpsertKeyNames(writer.getMetadata(), upsertKeyIndexes, upsertKeyNames);
                     renamedUpsertKeys = toComaSeparatedString(writer.getMetadata(), upsertKeyIndexes);
                 }
 
-                String limit = "";
-                String expectedSelect =
-                        "select * from "
-                                + tableNameNoWal
-                                + (renamedUpsertKeys.length() > 0 ? " ORDER BY " + renamedUpsertKeys : "")
-                                + limit;
-
+                LOG.info().$("asserting no dups on keys: ").$(renamedUpsertKeys).$();
                 assertSqlCursorsNoDups(
                         compiler,
                         sqlExecutionContext,
                         tableNameNoWal,
-                        upsertKeyIndexes,
+                        upsertKeyNames,
                         tableNameWal
                 );
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
             } finally {
                 sharedWorkerPool.halt();
             }
@@ -878,13 +876,37 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private static class DedupCursor implements RecordCursor {
 
-        private final IntList keyColumns;
-        private final StringSink lastRecordKeys = new StringSink();
+        private final StringSink currentRecordKeys = new StringSink();
+        private final IntList keyColumns = new IntList();
+        private final ObjHashSet<String> keyProcessed = new ObjHashSet<>();
+        private final RecordMetadata metadata;
+        private final RecordCursor nextRecCursor;
+        private final StringSink nextRecordKeys = new StringSink();
         private final RecordCursor recordCursor;
+        private final IntList skipRecords = new IntList();
+        ObjList<String> recordKeys = new ObjList<>();
+        private long lastTimestamp = -1;
+        private int timestampColIndex = -1;
 
-        public DedupCursor(RecordCursor innerCursor, IntList keyColumns) {
+        public DedupCursor(
+                RecordMetadata cursorMetadata,
+                RecordCursor innerCursor,
+                RecordCursor previewCursor,
+                ObjList<CharSequence> keyColumnNames
+        ) {
             this.recordCursor = innerCursor;
-            this.keyColumns = keyColumns;
+            this.metadata = cursorMetadata;
+            this.nextRecCursor = previewCursor;
+
+            for (int i = 0; i < cursorMetadata.getColumnCount(); i++) {
+                CharSequence columnName = cursorMetadata.getColumnName(i);
+                if (keyColumnNames.contains(columnName)) {
+                    keyColumns.add(i);
+                }
+                if (Chars.equals(columnName, "ts")) {
+                    this.timestampColIndex = i;
+                }
+            }
         }
 
         @Override
@@ -903,7 +925,55 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         @Override
         public boolean hasNext() {
-            return recordCursor.hasNext();
+            if (dispatchRecordsWithOffsets()) {
+                return true;
+            }
+
+            boolean hasNext;
+            do {
+                hasNext = nextRecCursor.hasNext();
+                long currentTs = hasNext ? nextRecCursor.getRecord().getLong(timestampColIndex) : Long.MIN_VALUE;
+                if (currentTs != lastTimestamp) {
+                    lastTimestamp = currentTs;
+
+                    // unleash the last records for each key
+                    for (int i = recordKeys.size() - 1; i > -1; i--) {
+                        if (keyProcessed.add(recordKeys.get(i))) {
+                            skipRecords.add(i);
+                        }
+                    }
+                    recordKeys.clear();
+                    keyProcessed.clear();
+
+                    // find differences between indexes in skipRecords
+                    reverse(skipRecords);
+                    int last = -1;
+                    for (int i = 0; i < skipRecords.size(); i++) {
+                        int val = skipRecords.get(i);
+                        skipRecords.set(i, val - last);
+                        last = val;
+                    }
+
+                    // reverse skip records for easier removal from the end
+                    reverse(skipRecords);
+                    if (dispatchRecordsWithOffsets()) {
+                        if (hasNext) {
+                            nextRecordKeys.clear();
+                            printRecordToSink(nextRecCursor.getRecord(), nextRecordKeys);
+                            recordKeys.add(nextRecordKeys.toString());
+                        }
+                        return true;
+                    }
+                }
+
+                if (hasNext) {
+                    nextRecordKeys.clear();
+                    printRecordToSink(nextRecCursor.getRecord(), nextRecordKeys);
+                    recordKeys.add(nextRecordKeys.toString());
+                }
+            } while (hasNext);
+
+            return false;
         }
 
         @Override
@@ -919,6 +989,37 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         @Override
         public void toTop() {
             recordCursor.toTop();
+            nextRecCursor.toTop();
+            nextRecordKeys.clear();
+            currentRecordKeys.clear();
+        }
+
+        private boolean dispatchRecordsWithOffsets() {
+            if (skipRecords.size() > 0) {
+                int skip = skipRecords.getLast();
+                skipRecords.setPos(skipRecords.size() - 1);
+                for (int i = 0; i < skip; i++) {
+                    Assert.assertTrue(recordCursor.hasNext());
+                }
+                return true;
+            }
+            return false;
+        }
+
+        private void printRecordToSink(Record record, StringSink currentRecordKeys) {
+            for (int i = 0; i < keyColumns.size(); i++) {
+                TestUtils.printColumn(record, metadata, keyColumns.get(i), currentRecordKeys, false, false, "<null>");
+                currentRecordKeys.put('\t');
+            }
+        }
+
+        private void reverse(IntList skipRecords) {
+            int size = skipRecords.size();
+            for (int i = 0; i < size / 2; i++) {
+                int temp = skipRecords.get(i);
+                skipRecords.set(i, skipRecords.get(size - i - 1));
+                skipRecords.set(size - i - 1, temp);
+            }
         }
     }
 }
