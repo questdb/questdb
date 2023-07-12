@@ -78,7 +78,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
     private final long writerIdleTimeout;
-    private long tablePermissionsTxn = -1;
 
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -743,15 +742,17 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     }
                     securityContext.authorizeLineTableCreate();
                     tableToken = engine.createTableInsecure(ddlMem, path, true, tsa, false, false);
-                    tablePermissionsTxn = securityContext.onTableCreated(tableToken);
+                    final long txn = securityContext.onTableCreated(tableToken);
+                    ctx.startWaitingForPermissions(txn);
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }
 
+                final long tablePermissionsTxn = ctx.getPermissionsTxn();
                 if (tablePermissionsTxn != -1) {
                     // Wait until table permissions are applied to the end table.
                     // This method throws YieldException on failed check.
                     securityContext.yieldUntilTxn(tablePermissionsTxn);
-                    tablePermissionsTxn = -1;
+                    ctx.stopWaitingForPermissions();
                 }
 
                 // by the time we get here, definitely exists on disk

@@ -305,6 +305,7 @@ public enum PropertyKey implements ConfigProperty {
     LINE_TCP_DEFAULT_PARTITION_BY("line.tcp.default.partition.by"),
     LINE_DEFAULT_PARTITION_BY("line.default.partition.by"),
     LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE("line.tcp.min.idle.ms.before.writer.release"),
+    LINE_TCP_TABLE_PERMISSIONS_TIMEOUT_MS("line.tcp.table.permissions.timeout.ms"),
     LINE_TCP_DISCONNECT_ON_ERROR("line.tcp.disconnect.on.error"),
     LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED("line.tcp.undocumented.string.to.char.cast.allowed"),
     LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED("line.tcp.undocumented.symbol.as.field.supported"),

@@ -121,6 +121,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
     }
@@ -166,13 +171,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public FactoryProvider getFactoryProvider() {
-        return DefaultFactoryProvider.INSTANCE;
+    public long getSymbolCacheWaitUsBeforeReload() {
+        return 500_000;
     }
 
     @Override
-    public long getSymbolCacheWaitUsBeforeReload() {
-        return 500_000;
+    public long getTablePermissionsTimeout() {
+        return 10 * 60 * 1000;
     }
 
     @Override

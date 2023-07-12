@@ -61,6 +61,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
+    private final long permissionsTimeoutMs;
     private final LineTcpMeasurementScheduler scheduler;
     private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
     protected boolean peerDisconnected;
@@ -74,6 +75,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private boolean measurementPending;
     private long nextCheckIdleTime;
     private long nextCommitTime;
+    private long permissionsTxn = -1;
+    private long permissionsTxnDeadlineMs = Long.MAX_VALUE;
     private YieldEvent yieldEvent;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
@@ -94,6 +97,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
+        this.permissionsTimeoutMs = configuration.getTablePermissionsTimeout();
     }
 
     public void checkIdle(long millis) {
@@ -114,6 +118,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         measurementPending = false;
+        permissionsTxn = -1;
+        permissionsTxnDeadlineMs = Long.MAX_VALUE;
         clearYieldEvent();
         resetParser();
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
@@ -183,6 +189,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
+    public long getPermissionsTxn() {
+        return permissionsTxn;
+    }
+
     public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
         return tableUpdateDetailsUtf8.get(tableName);
     }
@@ -217,6 +227,16 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
         }
         return super.of(fd, dispatcher);
+    }
+
+    public void startWaitingForPermissions(long tablePermissionsTxn) {
+        this.permissionsTxn = tablePermissionsTxn;
+        this.permissionsTxnDeadlineMs = milliClock.getTicks() + permissionsTimeoutMs;
+    }
+
+    public void stopWaitingForPermissions() {
+        this.permissionsTxn = -1;
+        this.permissionsTxnDeadlineMs = Long.MAX_VALUE;
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -337,6 +357,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             try {
                 final ParseResult rc;
                 if (measurementPending) {
+                    if (milliClock.getTicks() >= permissionsTxnDeadlineMs) {
+                        LOG.error()
+                                .$('[').$(fd).$("] timed out while waiting for table permissions [table=").$(parser.getMeasurementName())
+                                .I$();
+                        return IOContextResult.NEEDS_DISCONNECT;
+                    }
                     measurementPending = false;
                     rc = MEASUREMENT_COMPLETE;
                 } else {
@@ -387,6 +413,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 // That's to avoid ILP message loss in case if the client sent a row
                 // for a new table and immediately disconnected.
                 yieldEvent.setCheckDisconnectWhileYielded(false);
+                yieldEvent.setDeadline(permissionsTxnDeadlineMs);
                 // We request write here while we know that we won't be writing into the socket
                 // to make sure that epoll/kqueue/poll will call us back.
                 return IOContextResult.NEEDS_WRITE;

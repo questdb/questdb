@@ -83,8 +83,8 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
 
         runInContext((receiver) -> {
             final String tableName = "up";
-            final String lineData = "up out=1.0 631150000000000000\n" +
-                    "up out=2.0 631152000000000000\n";
+            final String lineData = tableName + " out=1.0 631150000000000000\n" +
+                    tableName + " out=2.0 631152000000000000\n";
 
             final CountDownLatch released = new CountDownLatch(1);
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
@@ -94,7 +94,7 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
                     }
                 }
             });
-            send("up", WAIT_NO_WAIT, () -> sendToSocket(lineData));
+            send(tableName, WAIT_NO_WAIT, () -> sendToSocket(lineData));
 
             released.await();
             if (walEnabled) {
@@ -103,8 +103,53 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
             String expected = "out\ttimestamp\n" +
                     "1.0\t1989-12-31T23:26:40.000000Z\n" +
                     "2.0\t1990-01-01T00:00:00.000000Z\n";
-            assertTable(expected, "up");
+            assertTable(expected, tableName);
         });
+    }
+
+    @Test
+    public void testYieldEventNeverTriggered() throws Exception {
+        tablePermissionsTimeout = 10;
+
+        final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfiguration);
+        final YieldEvent yieldEvent = yieldEventFactory.newInstance();
+        final TestSecurityContext securityContext = new TestSecurityContext(() -> yieldEvent, 1);
+        securityContextFactory = new TestSecurityContextFactory(securityContext);
+
+        try {
+            runInContext((receiver) -> {
+                final String tableName = "up";
+                final String lineData = tableName + " out=42.0 631150000000000000\n";
+
+                try (Socket socket = getSocket()) {
+                    sendToSocket(socket, lineData);
+
+                    if (walEnabled) {
+                        mayDrainWalQueue();
+                    }
+                    assertTableExistsEventually(engine, tableName);
+
+                    Os.sleep(5 * tablePermissionsTimeout);
+
+                    // At this point, there should be no data in the table as ILP waits for the yield event.
+                    assertTable("out\ttimestamp\n", tableName);
+
+                    // Trigger the event.
+                    yieldEvent.trigger();
+
+                    Os.sleep(5 * tablePermissionsTimeout);
+                    if (walEnabled) {
+                        mayDrainWalQueue();
+                    }
+
+                    // The data shouldn't be there as the connection should be closed due to the timeout
+                    // with pending data ignored.
+                    assertTable("out\ttimestamp\n", tableName);
+                }
+            });
+        } finally {
+            yieldEvent.close();
+        }
     }
 
     @Test
@@ -117,7 +162,7 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
         try {
             runInContext((receiver) -> {
                 final String tableName = "up";
-                final String lineData = "up out=42.0 631150000000000000\n";
+                final String lineData = tableName + " out=42.0 631150000000000000\n";
 
                 final CountDownLatch released = new CountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
@@ -134,12 +179,12 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
                     if (walEnabled) {
                         mayDrainWalQueue();
                     }
-                    assertTableExistsEventually(engine, "up");
+                    assertTableExistsEventually(engine, tableName);
 
                     Os.sleep(50);
 
                     // At this point, there should be no data in the table as ILP waits for the yield event.
-                    assertTable("out\ttimestamp\n", "up");
+                    assertTable("out\ttimestamp\n", tableName);
 
                     // Trigger the event and check that the data becomes visible.
                     yieldEvent.trigger();
@@ -149,7 +194,7 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     mayDrainWalQueue();
                 }
-                assertTable("out\ttimestamp\n42.0\t1989-12-31T23:26:40.000000Z\n", "up");
+                assertTable("out\ttimestamp\n42.0\t1989-12-31T23:26:40.000000Z\n", tableName);
             });
         } finally {
             yieldEvent.close();
