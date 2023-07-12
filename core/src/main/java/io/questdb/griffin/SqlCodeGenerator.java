@@ -913,7 +913,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // Wider types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                             default:
-
                         }
                         break;
                     case ColumnType.INT:
@@ -936,15 +935,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // INT will be cast to wider types, not other way around
                             // Wider types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
-                        }
-                        break;
-                    case ColumnType.IPv4:
-                        switch (fromTag) {
-                            case ColumnType.IPv4:
-                                castFunctions.add(new IPv4Column(i));
-                                break;
-                            case ColumnType.STRING:
-                                castFunctions.add(new StrColumn(i));
                         }
                         break;
                     case ColumnType.LONG:
@@ -1085,8 +1075,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.INT:
                                 castFunctions.add(new CastIntToStrFunctionFactory.CastIntToStrFunction(new IntColumn(i)));
                                 break;
-                            case ColumnType.IPv4:
-                                castFunctions.add(new CastIPv4ToStrFunctionFactory.CastIPv4ToStrFunction(new IPv4Column(i)));
                             case ColumnType.LONG:
                                 castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
                                 break;

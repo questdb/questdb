@@ -168,11 +168,9 @@ public final class Chars {
     }
 
     public static String ipv4ToString(int ip) {
-        StringSink strsink = new StringSink();
-
-        Numbers.intToIPv4Sink(strsink, ip);
-
-        return strsink.toString();
+        StringSink sink = new StringSink();
+        Numbers.intToIPv4Sink(sink, ip);
+        return sink.toString();
     }
 
     public static boolean contains(CharSequence sequence, CharSequence term) {

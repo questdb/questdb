@@ -75,6 +75,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIPv4Union() throws Exception {
+        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
+        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into y values('0.0.0.1')");
+        executeInsert("insert into y values('0.0.0.2')");
+        executeInsert("insert into y values('0.0.0.3')");
+        executeInsert("insert into y values('0.0.0.4')");
+        executeInsert("insert into y values('0.0.0.5')");
+
+        assertSql("select col1 from x union select col2 from y", "col1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.3\n" +
+                "0.0.0.4\n" +
+                "0.0.0.5\n");
+    }
+
+    @Test
     public void testCreateAsSelectCastStrToIPv4() throws Exception {
 
         compiler.compile("create table x as (select x::string col from long_sequence(0))", sqlExecutionContext);
@@ -1018,6 +1041,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.1\n" +
                 "0.0.0.1\n" +
                 "0.0.0.1\n");
+    }
+
+    @Test
+    public void testIPv4EqNull() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
+        assertSql("select * from test where ip = null", "ip\n"); //FIX THIS - why is it printing null values as 128.0.0.0 - somewhere INTNaN isn't getting switched to 0.0.0.0 (null value for ipv4)
     }
 
     @Test

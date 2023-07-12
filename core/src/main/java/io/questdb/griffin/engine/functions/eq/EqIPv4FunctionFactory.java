@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+import static io.questdb.std.Numbers.INT_NaN;
 import static io.questdb.std.Numbers.parseIPv4Quiet;
 
 public class EqIPv4FunctionFactory implements FunctionFactory {
@@ -149,7 +150,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getStrLen(rec) == -1L);
+            return negated != (arg.getInt(rec) == INT_NaN);
         }
 
         @Override
