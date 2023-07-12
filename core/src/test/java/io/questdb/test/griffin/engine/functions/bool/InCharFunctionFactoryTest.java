@@ -56,6 +56,7 @@ public class InCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testZeroArgs() {
         try {
             call('y').andAssert(false);
+            Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals("[3] too few arguments for 'in'", e.getMessage());
         }

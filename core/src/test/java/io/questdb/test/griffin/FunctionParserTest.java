@@ -1550,6 +1550,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         try {
             parseFunction("a in ()", metadata, functionParser);
+            Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals("[2] too few arguments for 'in'", e.getMessage());
         }
