@@ -31,9 +31,9 @@ import io.questdb.std.ThreadLocal;
 public class QueryPausedException extends Exception {
     private static final ThreadLocal<QueryPausedException> tlException = new ThreadLocal<>(QueryPausedException::new);
 
-    private SuspendEvent event;
+    private YieldEvent event;
 
-    public static QueryPausedException instance(SuspendEvent event, SqlExecutionCircuitBreaker circuitBreaker) {
+    public static QueryPausedException instance(YieldEvent event, SqlExecutionCircuitBreaker circuitBreaker) {
         QueryPausedException ex = tlException.get();
         SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = circuitBreaker.getConfiguration();
         if (circuitBreakerConfiguration != null) {
@@ -47,7 +47,7 @@ public class QueryPausedException extends Exception {
         return ex;
     }
 
-    public SuspendEvent getEvent() {
+    public YieldEvent getEvent() {
         return event;
     }
 }

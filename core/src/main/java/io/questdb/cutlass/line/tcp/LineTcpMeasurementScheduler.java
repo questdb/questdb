@@ -286,7 +286,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     .$("`]")
                     .$();
             return true;
-        } catch (SuspendException ex) {
+        } catch (YieldException ex) {
             // We're waiting for the newly created table permissions.
             throw ex;
         } catch (CairoException ex) {
@@ -748,8 +748,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
                 if (tablePermissionsTxn != -1) {
                     // Wait until table permissions are applied to the end table.
-                    // This method throws SuspendException on failed check.
-                    securityContext.suspendUntilTxn(tablePermissionsTxn);
+                    // This method throws YieldException on failed check.
+                    securityContext.yieldUntilTxn(tablePermissionsTxn);
                     tablePermissionsTxn = -1;
                 }
 

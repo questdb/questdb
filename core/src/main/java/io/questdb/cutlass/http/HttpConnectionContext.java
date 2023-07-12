@@ -65,8 +65,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long recvBuffer;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
-    private SuspendEvent suspendEvent;
     private long totalBytesSent;
+    private YieldEvent yieldEvent;
 
     public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
         this.configuration = configuration;
@@ -108,12 +108,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
-        clearSuspendEvent();
+        clearYieldEvent();
     }
 
     @Override
-    public void clearSuspendEvent() {
-        suspendEvent = Misc.free(suspendEvent);
+    public void clearYieldEvent() {
+        yieldEvent = Misc.free(yieldEvent);
     }
 
     @Override
@@ -140,7 +140,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
-        clearSuspendEvent();
+        clearYieldEvent();
         LOG.debug().$("closed").$();
     }
 
@@ -193,13 +193,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return securityContext;
     }
 
-    @Override
-    public SuspendEvent getSuspendEvent() {
-        return suspendEvent;
-    }
-
     public long getTotalBytesSent() {
         return totalBytesSent;
+    }
+
+    @Override
+    public YieldEvent getYieldEvent() {
+        return yieldEvent;
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
@@ -310,11 +310,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 resumeProcessor = processor;
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (QueryPausedException e) {
-                LOG.info().$("partition is in cold storage, suspending query [fd=").$(fd).$(", thread=")
+                LOG.info().$("partition is in cold storage, pausing query [fd=").$(fd).$(", thread=")
                         .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                suspendEvent = e.getEvent();
+                yieldEvent = e.getEvent();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
@@ -654,7 +654,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 // event off to dispatcher
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                suspendEvent = e.getEvent();
+                yieldEvent = e.getEvent();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
                 busyRecv = false;
             }
@@ -678,7 +678,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (QueryPausedException e) {
                 resumeProcessor.parkRequest(this, true);
-                suspendEvent = e.getEvent();
+                yieldEvent = e.getEvent();
                 LOG.debug().$("partition is in cold storage").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (PeerDisconnectedException ignore) {

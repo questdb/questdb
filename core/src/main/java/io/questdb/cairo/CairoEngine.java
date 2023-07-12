@@ -83,17 +83,17 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull WalListener walListener;
-    private WalTxnSuspendEvents walTxnSuspendEvents;
+    private WalTxnYieldEvents walTxnYieldEvents;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(@NotNull CairoConfiguration configuration) {
-        this(configuration, NoOpWalTxnSuspendEvents.INSTANCE, Metrics.disabled());
+        this(configuration, NoOpWalTxnYieldEvents.INSTANCE, Metrics.disabled());
     }
 
     public CairoEngine(
             @NotNull CairoConfiguration configuration,
-            @NotNull WalTxnSuspendEvents walTxnSuspendEvents,
+            @NotNull WalTxnYieldEvents walTxnYieldEvents,
             @NotNull Metrics metrics
     ) {
         ffCache = new FunctionFactoryCache(
@@ -101,7 +101,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
         this.configuration = configuration;
-        this.walTxnSuspendEvents = walTxnSuspendEvents;
+        this.walTxnYieldEvents = walTxnYieldEvents;
         this.copyContext = new CopyContext(configuration);
         this.metrics = metrics;
         this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
@@ -547,8 +547,8 @@ public class CairoEngine implements Closeable, WriterSource {
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
     }
 
-    public @NotNull WalTxnSuspendEvents getWalTxnSuspendEvents() {
-        return walTxnSuspendEvents;
+    public @NotNull WalTxnYieldEvents getWalTxnYieldEvents() {
+        return walTxnYieldEvents;
     }
 
     @TestOnly
@@ -818,8 +818,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
-    public void setWalTxnSuspendEvents(WalTxnSuspendEvents walTxnSuspendEvents) {
-        this.walTxnSuspendEvents = walTxnSuspendEvents;
+    public void setWalTxnYieldEvents(WalTxnYieldEvents walTxnYieldEvents) {
+        this.walTxnYieldEvents = walTxnYieldEvents;
     }
 
     public void unlock(

@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
+import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpParserSupport;
@@ -281,7 +281,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             Consumer<AbstractLineSender> senderConsumer
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)

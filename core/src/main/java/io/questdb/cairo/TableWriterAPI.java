@@ -134,17 +134,6 @@ public interface TableWriterAPI extends Closeable {
     boolean supportsMultipleWriters();
 
     /**
-     * Suspends execution by throwing {@link SuspendException} if the given transaction
-     * is not yet visible for WAL table readers. Otherwise, returns immediately.
-     *
-     * @param txn transaction number to wait for
-     * @throws SuspendException if transaction is not yet visible for readers
-     */
-    default void suspendUntilTxn(long txn) throws SuspendException {
-        // no-op
-    }
-
-    /**
      * Truncates non-WAL table. This method has to be called when the
      * {@link CairoEngine#lockReaders(TableToken)} lock is held, i.e. when there are no readers reading from the table.
      *
@@ -159,4 +148,15 @@ public interface TableWriterAPI extends Closeable {
      * {@link CairoEngine#lockReaders(TableToken)} lock is held, i.e. when there are no readers reading from the table.
      */
     void truncateSoft();
+
+    /**
+     * Yields execution by throwing {@link YieldException} if the given transaction
+     * is not yet visible for WAL table readers. Otherwise, returns immediately.
+     *
+     * @param txn transaction number to wait for
+     * @throws YieldException if transaction is not yet visible for readers
+     */
+    default void yieldUntilTxn(long txn) throws YieldException {
+        // no-op
+    }
 }

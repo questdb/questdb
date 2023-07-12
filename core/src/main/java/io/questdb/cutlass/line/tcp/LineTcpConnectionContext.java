@@ -28,7 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.SuspendException;
+import io.questdb.cairo.YieldException;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.Authenticator;
@@ -39,7 +39,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
-import io.questdb.network.SuspendEvent;
+import io.questdb.network.YieldEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
@@ -74,7 +74,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private boolean measurementPending;
     private long nextCheckIdleTime;
     private long nextCommitTime;
-    private SuspendEvent suspendEvent;
+    private YieldEvent yieldEvent;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         this.configuration = configuration;
@@ -114,7 +114,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         measurementPending = false;
-        clearSuspendEvent();
+        clearYieldEvent();
         resetParser();
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
         for (int n = keys.size() - 1; n >= 0; --n) {
@@ -126,8 +126,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public void clearSuspendEvent() {
-        suspendEvent = Misc.free(suspendEvent);
+    public void clearYieldEvent() {
+        yieldEvent = Misc.free(yieldEvent);
     }
 
     @Override
@@ -183,13 +183,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
-    @Override
-    public SuspendEvent getSuspendEvent() {
-        return suspendEvent;
-    }
-
     public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
         return tableUpdateDetailsUtf8.get(tableName);
+    }
+
+    @Override
+    public YieldEvent getYieldEvent() {
+        return yieldEvent;
     }
 
     public IOContextResult handleIO(NetworkIOJob netIoJob) {
@@ -380,13 +380,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         return IOContextResult.NEEDS_READ;
                     }
                 }
-            } catch (SuspendException ex) {
+            } catch (YieldException ex) {
                 measurementPending = true;
-                suspendEvent = ex.getEvent();
+                yieldEvent = ex.getEvent();
                 // We don't want client disconnect checks to happen in the I/O dispatcher.
                 // That's to avoid ILP message loss in case if the client sent a row
                 // for a new table and immediately disconnected.
-                suspendEvent.setCheckDisconnectWhileSuspended(false);
+                yieldEvent.setCheckDisconnectWhileYielded(false);
                 // We request write here while we know that we won't be writing into the socket
                 // to make sure that epoll/kqueue/poll will call us back.
                 return IOContextResult.NEEDS_WRITE;

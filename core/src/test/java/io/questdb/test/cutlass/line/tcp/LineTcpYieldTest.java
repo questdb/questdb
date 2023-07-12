@@ -26,14 +26,14 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlWalMode;
-import io.questdb.cairo.SuspendException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.YieldException;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
-import io.questdb.network.SuspendEventFactoryImpl;
+import io.questdb.network.YieldEvent;
+import io.questdb.network.YieldEventFactory;
+import io.questdb.network.YieldEventFactoryImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import org.junit.Before;
@@ -46,13 +46,13 @@ import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 
 /**
- * This test verifies ILP suspendability while waiting for table permissions.
+ * This test verifies yield support in ILP while waiting for table permissions.
  */
 @RunWith(Parameterized.class)
-public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
+public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
     private final boolean walEnabled;
 
-    public LineTcpSuspendabilityTest(WalMode walMode) {
+    public LineTcpYieldTest(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
@@ -71,13 +71,13 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testSuspendEventImmediatelyTriggered() throws Exception {
-        final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfiguration);
+    public void testYieldEventImmediatelyTriggered() throws Exception {
+        final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfiguration);
         final TestSecurityContext securityContext = new TestSecurityContext(() -> {
-            final SuspendEvent suspendEvent = suspendEventFactory.newInstance();
-            suspendEvent.trigger();
-            suspendEvent.close();
-            return suspendEvent;
+            final YieldEvent yieldEvent = yieldEventFactory.newInstance();
+            yieldEvent.trigger();
+            yieldEvent.close();
+            return yieldEvent;
         }, 3);
         securityContextFactory = new TestSecurityContextFactory(securityContext);
 
@@ -108,10 +108,10 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testSuspendEventTriggeredAfterDelay() throws Exception {
-        final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfiguration);
-        final SuspendEvent suspendEvent = suspendEventFactory.newInstance();
-        final TestSecurityContext securityContext = new TestSecurityContext(() -> suspendEvent, 1);
+    public void testYieldEventTriggeredAfterDelay() throws Exception {
+        final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfiguration);
+        final YieldEvent yieldEvent = yieldEventFactory.newInstance();
+        final TestSecurityContext securityContext = new TestSecurityContext(() -> yieldEvent, 1);
         securityContextFactory = new TestSecurityContextFactory(securityContext);
 
         try {
@@ -138,11 +138,11 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
 
                     Os.sleep(50);
 
-                    // At this point, there should be no data in the table as ILP waits for the suspend event.
+                    // At this point, there should be no data in the table as ILP waits for the yield event.
                     assertTable("out\ttimestamp\n", "up");
 
                     // Trigger the event and check that the data becomes visible.
-                    suspendEvent.trigger();
+                    yieldEvent.trigger();
                 }
 
                 released.await();
@@ -152,7 +152,7 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
                 assertTable("out\ttimestamp\n42.0\t1989-12-31T23:26:40.000000Z\n", "up");
             });
         } finally {
-            suspendEvent.close();
+            yieldEvent.close();
         }
     }
 
@@ -162,18 +162,18 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private interface TestSuspendEventFactory {
-        SuspendEvent newInstance();
+    private interface TestYieldEventFactory {
+        YieldEvent newInstance();
     }
 
     private static class TestSecurityContext extends AllowAllSecurityContext {
-        private final TestSuspendEventFactory factory;
-        private final int suspendCount;
+        private final TestYieldEventFactory factory;
+        private final int yieldCount;
         private int awaitCounter;
 
-        public TestSecurityContext(TestSuspendEventFactory factory, int suspendCount) {
+        public TestSecurityContext(TestYieldEventFactory factory, int yieldCount) {
             this.factory = factory;
-            this.suspendCount = suspendCount;
+            this.yieldCount = yieldCount;
         }
 
         @Override
@@ -182,10 +182,10 @@ public class LineTcpSuspendabilityTest extends AbstractLineTcpReceiverTest {
         }
 
         @Override
-        public void suspendUntilTxn(long txn) throws SuspendException {
-            if (awaitCounter++ < suspendCount) {
-                final SuspendEvent suspendEvent = factory.newInstance();
-                throw SuspendException.instance(suspendEvent);
+        public void yieldUntilTxn(long txn) throws YieldException {
+            if (awaitCounter++ < yieldCount) {
+                final YieldEvent yieldEvent = factory.newInstance();
+                throw YieldException.instance(yieldEvent);
             }
         }
     }

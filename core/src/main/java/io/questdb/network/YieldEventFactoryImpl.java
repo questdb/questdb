@@ -26,24 +26,24 @@ package io.questdb.network;
 
 import io.questdb.std.Os;
 
-public class SuspendEventFactoryImpl implements SuspendEventFactory {
+public class YieldEventFactoryImpl implements YieldEventFactory {
     private final IODispatcherConfiguration configuration;
 
-    public SuspendEventFactoryImpl(IODispatcherConfiguration configuration) {
+    public YieldEventFactoryImpl(IODispatcherConfiguration configuration) {
         this.configuration = configuration;
     }
 
-    public SuspendEvent newInstance() {
+    public YieldEvent newInstance() {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-                return new EventFdSuspendEvent(configuration.getEpollFacade());
+                return new EventFdYieldEvent(configuration.getEpollFacade());
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
-                return new PipeSuspendEvent(configuration.getKqueueFacade());
+                return new PipeYieldEvent(configuration.getKqueueFacade());
             case Os.WINDOWS:
-                return new AtomicSuspendEvent();
+                return new AtomicYieldEvent();
             default:
                 throw new RuntimeException();
         }

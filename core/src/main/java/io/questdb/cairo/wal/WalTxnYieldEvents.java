@@ -25,28 +25,32 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.network.SuspendEvent;
+import io.questdb.network.YieldEvent;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
-public interface WalTxnSuspendEvents extends QuietCloseable {
+/**
+ * A registry for {@link YieldEvent} that belong to I/O contexts waiting for
+ * a transaction to be applied by {@link ApplyWal2TableJob} to the specific WAL table.
+ */
+public interface WalTxnYieldEvents extends QuietCloseable {
 
     /**
-     * Returns suspend event in case if the given WAL transaction is still not visible for readers
+     * Returns a yield event in case if the given WAL transaction is still not visible for readers
      * or {@code null} if it's already visible.
      *
      * @param tableToken WAL table token
      * @param txn        transaction number
-     * @return suspend event to be used in {@link io.questdb.network.IODispatcher} or {@code null}.
+     * @return event to be used in {@link io.questdb.network.IODispatcher} or {@code null}.
      */
-    @Nullable SuspendEvent register(TableToken tableToken, long txn);
+    @Nullable YieldEvent register(TableToken tableToken, long txn);
 
     /**
-     * Appends current registered suspend events to the provided list.
+     * Appends current registered yield events to the provided list.
      *
      * @param tableToken WAL table token
      * @param dest       destination list; this method doesn't clear the list
      */
-    void takeRegisteredEvents(TableToken tableToken, ObjList<SuspendEvent> dest);
+    void takeRegisteredEvents(TableToken tableToken, ObjList<YieldEvent> dest);
 }

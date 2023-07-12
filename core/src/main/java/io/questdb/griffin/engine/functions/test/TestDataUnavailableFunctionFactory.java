@@ -33,15 +33,15 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
-import io.questdb.network.SuspendEventFactoryImpl;
+import io.questdb.network.YieldEvent;
+import io.questdb.network.YieldEventFactory;
+import io.questdb.network.YieldEventFactoryImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
-    public static SuspendEventCallback eventCallback;
+    public static YieldEventCallback eventCallback;
 
     @Override
     public String getSignature() {
@@ -62,13 +62,13 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
     }
 
     @FunctionalInterface
-    public interface SuspendEventCallback {
-        void onSuspendEvent(SuspendEvent event);
+    public interface YieldEventCallback {
+        void onYieldEvent(YieldEvent event);
     }
 
     private static class DataUnavailableRecordCursor implements NoRandomAccessRecordCursor {
 
-        private static final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration());
+        private static final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration());
         private final long backoffCount;
         private final SqlExecutionCircuitBreaker circuitBreaker;
         private final LongConstRecord record = new LongConstRecord();
@@ -98,11 +98,11 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
                 return false;
             }
             if (attempts++ < backoffCount) {
-                SuspendEvent event = suspendEventFactory.newInstance();
+                YieldEvent event = yieldEventFactory.newInstance();
                 if (eventCallback != null) {
-                    eventCallback.onSuspendEvent(event);
+                    eventCallback.onYieldEvent(event);
                 }
-                throw SuspendException.instance(new TableToken("foo", "foo", 1, false), "2022-01-01", event);
+                throw YieldException.instance(new TableToken("foo", "foo", 1, false), "2022-01-01", event);
             }
             rows++;
             record.of(rows);

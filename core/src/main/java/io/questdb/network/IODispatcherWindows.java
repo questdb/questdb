@@ -190,12 +190,12 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         for (int i = 0, n = pending.size(); i < n; ) {
             final C context = pending.get(i);
 
-            // check if the context is waiting for a suspend event
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
-            if (suspendEvent != null) {
-                if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {
+            // check if the context is waiting for a yield event
+            final YieldEvent yieldEvent = context.getYieldEvent();
+            if (yieldEvent != null) {
+                if (yieldEvent.checkTriggered() || yieldEvent.isDeadlineMet(timestamp)) {
                     // the event has been triggered or expired already, clear it and proceed
-                    context.clearSuspendEvent();
+                    context.clearYieldEvent();
                 }
             }
 
@@ -238,8 +238,8 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 } else {
                     int operation = (int) pending.get(i, OPM_OPERATION);
                     i++;
-                    if (suspendEvent != null) {
-                        // if the operation was suspended, we request a read to be able to detect a client disconnect
+                    if (yieldEvent != null) {
+                        // if the operation has yielded, we request a read to be able to detect a client disconnect
                         operation = IOOperation.READ;
                     }
 
@@ -253,9 +253,9 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 }
             } else {
                 // select()'ed operation case
-                if (suspendEvent != null) {
+                if (yieldEvent != null) {
                     // the event is still pending, check if we have a client disconnect
-                    if (testConnection(context.getFd())) {
+                    if (yieldEvent.isCheckDisconnectWhileYielded() && testConnection(context.getFd())) {
                         doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
                         pending.deleteRow(i);
                         n--;

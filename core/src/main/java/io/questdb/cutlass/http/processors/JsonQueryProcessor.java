@@ -189,7 +189,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
             throw RetryOperationException.INSTANCE;
-        } catch (SuspendException e) {
+        } catch (YieldException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoError | CairoException e) {
@@ -303,7 +303,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 state.resume(socket);
                 break;
-            } catch (SuspendException e) {
+            } catch (YieldException e) {
                 socket.resetToBookmark();
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {

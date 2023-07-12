@@ -30,7 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
+import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
@@ -889,7 +889,7 @@ public class IODispatcherTest extends AbstractTest {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                CairoEngine cairoEngine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -958,7 +958,7 @@ public class IODispatcherTest extends AbstractTest {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                CairoEngine cairoEngine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -2149,7 +2149,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnYieldEvents.INSTANCE, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -2697,7 +2697,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnYieldEvents.INSTANCE, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -3304,7 +3304,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnYieldEvents.INSTANCE, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -3412,7 +3412,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(60_000) // use a large value for query timeout
                 .run((engine) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final String query = "select * from test_data_unavailable(1, 10)";
@@ -4612,7 +4612,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnYieldEvents.INSTANCE, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4903,7 +4903,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnYieldEvents.INSTANCE, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4979,7 +4979,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), NoOpWalTxnYieldEvents.INSTANCE, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -5074,7 +5074,7 @@ public class IODispatcherTest extends AbstractTest {
                     // this is necessary to sufficiently fragmented paged filter execution
                     return 10_000;
                 }
-            }, NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+            }, NoOpWalTxnYieldEvents.INSTANCE, metrics);
                  HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -5690,12 +5690,12 @@ public class IODispatcherTest extends AbstractTest {
                     int backoffCount = 3;
 
                     final AtomicInteger totalEvents = new AtomicInteger();
-                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
 
                     final Thread delayThread = new Thread(() -> {
                         while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
+                            YieldEvent event = eventRef.getAndSet(null);
                             if (event != null) {
                                 Os.sleep(1);
                                 try {
@@ -6869,12 +6869,12 @@ public class IODispatcherTest extends AbstractTest {
                     int backoffCount = 3;
 
                     final AtomicInteger totalEvents = new AtomicInteger();
-                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
 
                     final Thread delayThread = new Thread(() -> {
                         while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
+                            YieldEvent event = eventRef.getAndSet(null);
                             if (event != null) {
                                 Os.sleep(1);
                                 try {
@@ -8251,7 +8251,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(100)
                 .run((engine) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;

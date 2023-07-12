@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.SuspendException;
+import io.questdb.cairo.YieldException;
 
 import java.io.Closeable;
 
@@ -67,7 +67,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
      * @return true if more records may be accessed, otherwise false
-     * @throws SuspendException when the queried partition is in cold storage
+     * @throws YieldException when the queried partition is in cold storage
      */
     boolean hasNext();
 
@@ -116,7 +116,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      *
      * @param rowCount row count to skip down the cursor
      * @return true if a fast skip is supported by the cursor and was executed, false otherwise
-     * @throws SuspendException when the queried partition is in cold storage
+     * @throws YieldException when the queried partition is in cold storage
      */
     default boolean skipTo(long rowCount) {
         return false;

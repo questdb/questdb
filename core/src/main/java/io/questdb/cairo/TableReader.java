@@ -380,7 +380,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      *
      * @param partitionIndex partition index
      * @return partition size in rows
-     * @throws SuspendException when the queried partition is in cold storage
+     * @throws YieldException when the queried partition is in cold storage
      */
     public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);

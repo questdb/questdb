@@ -39,7 +39,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         dispatcher = null;
     }
 
-    public void clearSuspendEvent() {
+    public void clearYieldEvent() {
         // no-op
     }
 
@@ -57,7 +57,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return fd;
     }
 
-    public SuspendEvent getSuspendEvent() {
+    public YieldEvent getYieldEvent() {
         return null;
     }
 

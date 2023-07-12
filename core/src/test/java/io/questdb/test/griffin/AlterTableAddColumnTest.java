@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
+import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -370,7 +370,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery compile = compiler.compile("alter table x add column meh symbol cache", sqlExecutionContext);
                             Assert.assertEquals(ALTER, compile.getType());
@@ -550,7 +550,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());
@@ -590,7 +590,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());

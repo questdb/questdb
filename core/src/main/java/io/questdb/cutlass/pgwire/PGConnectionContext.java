@@ -167,7 +167,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean sendRNQ = true;/* send ReadyForQuery message */
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
-    private SuspendEvent suspendEvent;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
@@ -188,6 +187,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private NamedStatementWrapper wrapper;
+    private YieldEvent yieldEvent;
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, NetworkSqlExecutionCircuitBreaker circuitBreaker) {
         this.engine = engine;
@@ -306,17 +306,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         authenticator.clear();
         isPausedQuery = false;
         isEmptyQuery = false;
-        clearSuspendEvent();
-    }
-
-    @Override
-    public void clearSuspendEvent() {
-        suspendEvent = Misc.free(suspendEvent);
+        clearYieldEvent();
     }
 
     public void clearWriters() {
         closePendingWriters(false);
         pendingWriters.clear();
+    }
+
+    @Override
+    public void clearYieldEvent() {
+        yieldEvent = Misc.free(yieldEvent);
     }
 
     @Override
@@ -334,11 +334,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public SuspendEvent getSuspendEvent() {
-        return suspendEvent;
-    }
-
-    @Override
     public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
@@ -350,6 +345,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
         return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
+    }
+
+    @Override
+    public YieldEvent getYieldEvent() {
+        return yieldEvent;
     }
 
     public void handleClientOperation(
@@ -532,13 +532,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    public void setSuspendEvent(SuspendEvent suspendEvent) {
-        this.suspendEvent = suspendEvent;
-    }
-
     public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Long.BYTES, valueLen);
         bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+    }
+
+    public void setYieldEvent(YieldEvent yieldEvent) {
+        this.yieldEvent = yieldEvent;
     }
 
     private static void bindParameterFormats(
@@ -2481,7 +2481,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     throw e;
                 }
             }
-        } catch (SuspendException e) {
+        } catch (YieldException e) {
             isPausedQuery = true;
             responseAsciiSink.resetToBookmark();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());

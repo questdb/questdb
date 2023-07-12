@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cairo.SuspendException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.YieldException;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
@@ -49,14 +49,14 @@ import java.sql.ResultSet;
 
 
 /**
- * This test verifies record cursor factory suspendability. To do so, it runs the same query
+ * This test verifies record cursor factory yield support. To do so, it runs the same query
  * with data available immediately and with simulated cold storage scenario and then compares
  * the result set.
  */
 @SuppressWarnings("SqlNoDataSourceInspection")
-public class PGQuerySuspendabilityTest extends BasePGTest {
+public class PGQueryYieldTest extends BasePGTest {
 
-    private static final Log LOG = LogFactory.getLog(PGQuerySuspendabilityTest.class);
+    private static final Log LOG = LogFactory.getLog(PGQueryYieldTest.class);
     private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
     private static final StringSink sinkB = new StringSink();
     private static final ObjList<TestCase> testCases = new ObjList<>();
@@ -313,7 +313,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
     }
 
     @Test
-    public void testQuerySuspendability() throws Exception {
+    public void testQueryYield() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -338,7 +338,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                     stmt = connection.prepareCall("create table y as (select * from x), index(isym) timestamp(ts) partition by hour");
                     stmt.execute();
 
-                    SuspendingReaderListener listener = null;
+                    YieldingReaderListener listener = null;
                     try {
                         for (int i = 0; i < testCases.size(); i++) {
                             TestCase tc = testCases.getQuick(i);
@@ -361,7 +361,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
                             engine.releaseAllReaders();
 
-                            listener = new SuspendingReaderListener();
+                            listener = new YieldingReaderListener();
                             // Yes, this write is racy, but it's not an issue in the test scenario.
                             engine.setReaderListener(listener);
                             try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
@@ -398,41 +398,6 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         testCases.add(new TestCase(query, allowEmptyResultSet, bindVariableValues));
     }
 
-    /**
-     * This listener varies DataUnavailableException and successful execution of TableReader#openPartition()
-     * in the following sequence: exception, success, exception, success, etc.
-     */
-    private static class SuspendingReaderListener implements ReaderPool.ReaderListener, QuietCloseable {
-
-        private final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(ioDispatcherConfig);
-        private final ConcurrentHashMap<SuspendEvent> suspendedPartitions = new ConcurrentHashMap<>();
-
-        @Override
-        public void close() {
-            suspendedPartitions.forEach((charSequence, suspendEvent) -> suspendEvent.close());
-        }
-
-        @Override
-        public void onOpenPartition(TableToken tableToken, int partitionIndex) {
-            final String key = tableToken + "$" + partitionIndex;
-            SuspendEvent computedEvent = suspendedPartitions.compute(key, (charSequence, prevEvent) -> {
-                if (prevEvent != null) {
-                    // Success case.
-                    prevEvent.close();
-                    return null;
-                }
-                // Exception case.
-                SuspendEvent nextEvent = suspendEventFactory.newInstance();
-                // Mark the event as immediately fulfilled.
-                nextEvent.trigger();
-                return nextEvent;
-            });
-            if (computedEvent != null) {
-                throw SuspendException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
-            }
-        }
-    }
-
     private static class TestCase {
         final boolean allowEmptyResultSet;
         final String[] bindVariableValues;
@@ -442,6 +407,41 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
             this.query = query;
             this.allowEmptyResultSet = allowEmptyResultSet;
             this.bindVariableValues = bindVariableValues;
+        }
+    }
+
+    /**
+     * This listener varies DataUnavailableException and successful execution of TableReader#openPartition()
+     * in the following sequence: exception, success, exception, success, etc.
+     */
+    private static class YieldingReaderListener implements ReaderPool.ReaderListener, QuietCloseable {
+
+        private final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfig);
+        private final ConcurrentHashMap<YieldEvent> yieldedPartitions = new ConcurrentHashMap<>();
+
+        @Override
+        public void close() {
+            yieldedPartitions.forEach((charSequence, yieldEvent) -> yieldEvent.close());
+        }
+
+        @Override
+        public void onOpenPartition(TableToken tableToken, int partitionIndex) {
+            final String key = tableToken + "$" + partitionIndex;
+            YieldEvent computedEvent = yieldedPartitions.compute(key, (charSequence, prevEvent) -> {
+                if (prevEvent != null) {
+                    // Success case.
+                    prevEvent.close();
+                    return null;
+                }
+                // Exception case.
+                YieldEvent nextEvent = yieldEventFactory.newInstance();
+                // Mark the event as immediately fulfilled.
+                nextEvent.trigger();
+                return nextEvent;
+            });
+            if (computedEvent != null) {
+                throw YieldException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
+            }
         }
     }
 }

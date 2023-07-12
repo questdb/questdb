@@ -39,7 +39,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
-import io.questdb.network.SuspendEvent;
+import io.questdb.network.YieldEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -71,14 +71,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationCompiler operationCompiler;
-    private final ObjList<SuspendEvent> suspendEvents = new ObjList<>();
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
-    private final WalTxnSuspendEvents walTxnSuspendEvents;
+    private final WalTxnYieldEvents walTxnYieldEvents;
+    private final ObjList<YieldEvent> yieldEvents = new ObjList<>();
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -94,7 +94,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().getWalMetrics();
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
-        walTxnSuspendEvents = engine.getWalTxnSuspendEvents();
+        walTxnYieldEvents = engine.getWalTxnYieldEvents();
     }
 
     @Override
@@ -363,7 +363,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (totalTransactionCount > 0) {
-                    notifySuspendedWaiters(writer.getTableToken());
+                    notifyYieldedWaiters(writer.getTableToken());
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
                             .$(" [table=").$(writer.getTableToken().getDirName())
@@ -391,15 +391,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * Notifies I/O contexts suspended until a WAL transaction becomes visible for readers.
+     * Notifies I/O contexts yielded until a WAL transaction becomes visible for readers.
      */
-    private void notifySuspendedWaiters(TableToken tableToken) {
-        suspendEvents.clear();
-        walTxnSuspendEvents.takeRegisteredEvents(tableToken, suspendEvents);
-        for (int i = 0, n = suspendEvents.size(); i < n; i++) {
-            final SuspendEvent suspendEvent = suspendEvents.getQuick(i);
-            suspendEvent.trigger();
-            suspendEvent.close();
+    private void notifyYieldedWaiters(TableToken tableToken) {
+        yieldEvents.clear();
+        walTxnYieldEvents.takeRegisteredEvents(tableToken, yieldEvents);
+        for (int i = 0, n = yieldEvents.size(); i < n; i++) {
+            final YieldEvent yieldEvent = yieldEvents.getQuick(i);
+            yieldEvent.trigger();
+            yieldEvent.close();
+        }
+        if (yieldEvents.size() > 0) {
+            LOG.info().$("notified yielded waiters [n=").$(yieldEvents.size()).I$();
         }
     }
 

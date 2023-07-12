@@ -160,7 +160,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
             long rowCount;
             try {
                 rowCount = reader.openPartition(partitionLo);
-            } catch (SuspendException e) {
+            } catch (YieldException e) {
                 // The data is in cold storage, close the event and give up on size calculation.
                 Misc.free(e.getEvent());
                 return -1;

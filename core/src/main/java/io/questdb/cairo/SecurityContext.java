@@ -134,6 +134,6 @@ public interface SecurityContext {
     // returns txn number to wait for
     long onTableCreated(TableToken tableToken);
 
-    // throws SuspendException if the txn is not yet visible for table readers
-    void suspendUntilTxn(long txn) throws SuspendException;
+    // throws YieldException if the txn is not yet visible for table readers
+    void yieldUntilTxn(long txn) throws YieldException;
 }

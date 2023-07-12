@@ -28,7 +28,7 @@ import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.SuspendEvent;
+import io.questdb.network.YieldEvent;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -964,7 +964,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup(true, 100)) {
-                AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                 TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                 try {

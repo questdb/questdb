@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SuspendException;
+import io.questdb.cairo.YieldException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
@@ -267,7 +267,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            } catch (SuspendException e) {
+            } catch (YieldException e) {
                 // We're not yet done, so no need to cancel the circuit breaker. 
                 throw e;
             } catch (Throwable e) {

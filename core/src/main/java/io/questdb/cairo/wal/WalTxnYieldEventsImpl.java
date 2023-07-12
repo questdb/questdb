@@ -25,8 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.YieldEvent;
+import io.questdb.network.YieldEventFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -37,35 +37,35 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
+public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
 
     private final CharSequence dbRoot;
-    private final ConcurrentHashMap<TableToken, ObjList<SuspendEvent>> events = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<TableToken, ObjList<YieldEvent>> events = new ConcurrentHashMap<>();
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
-    private final SuspendEventFactory suspendEventFactory;
     private final TxReader txReader;
+    private final YieldEventFactory yieldEventFactory;
 
-    public WalTxnSuspendEventsImpl(CairoConfiguration cairoConfiguration, SuspendEventFactory suspendEventFactory) {
+    public WalTxnYieldEventsImpl(CairoConfiguration cairoConfiguration, YieldEventFactory yieldEventFactory) {
         this.dbRoot = cairoConfiguration.getRoot();
         this.ff = cairoConfiguration.getFilesFacade();
         this.txReader = new TxReader(ff);
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.spinLockTimeout = cairoConfiguration.getSpinLockTimeout();
-        this.suspendEventFactory = suspendEventFactory;
+        this.yieldEventFactory = yieldEventFactory;
     }
 
     @Override
     public void close() {
         // TODO this is not thread-safe
-        for (Map.Entry<TableToken, ObjList<SuspendEvent>> entry : events.entrySet()) {
+        for (Map.Entry<TableToken, ObjList<YieldEvent>> entry : events.entrySet()) {
             Misc.freeObjListAndClear(entry.getValue());
         }
     }
 
     @Override
-    public @Nullable SuspendEvent register(TableToken tableToken, long txn) {
+    public @Nullable YieldEvent register(TableToken tableToken, long txn) {
         Path tlPath = Path.PATH.get().of(dbRoot);
         tlPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
         if (ff.exists(tlPath)) {
@@ -75,12 +75,12 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
                 return null;
             }
 
-            final SuspendEvent suspendEvent = suspendEventFactory.newInstance();
+            final YieldEvent yieldEvent = yieldEventFactory.newInstance();
             events.compute(tableToken, (t, list) -> {
                 if (list == null) {
                     list = new ObjList<>();
                 }
-                list.add(suspendEvent);
+                list.add(yieldEvent);
                 return list;
             });
 
@@ -88,7 +88,7 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
             try {
                 currentTxn = readSeqTxn(tableToken, tlPath);
             } catch (CairoException e) {
-                suspendEvent.close();
+                yieldEvent.close();
                 throw e;
             }
 
@@ -96,17 +96,17 @@ public class WalTxnSuspendEventsImpl implements WalTxnSuspendEvents {
                 // The txn is already visible or the table is dropped, so we close the event
                 // and pretend it never existed. The event will be triggered and closed one
                 // more time later either after takeRegisteredEvents() or by close().
-                suspendEvent.close();
+                yieldEvent.close();
                 return null;
             }
-            return suspendEvent;
+            return yieldEvent;
         }
         // The table is dropped.
         return null;
     }
 
     @Override
-    public void takeRegisteredEvents(TableToken tableToken, ObjList<SuspendEvent> dest) {
+    public void takeRegisteredEvents(TableToken tableToken, ObjList<YieldEvent> dest) {
         // TODO method refs instead of lambdas
         events.computeIfPresent(tableToken, (t, list) -> {
             dest.addAll(list);

@@ -25,19 +25,19 @@
 package io.questdb.network;
 
 /**
- * pipe(2)-based suspend event object. Used on OS X and BSD in combination with kqueue.
+ * pipe(2)-based event object. Used on OS X and BSD in combination with kqueue.
  */
-public class PipeSuspendEvent extends SuspendEvent {
+public class PipeYieldEvent extends YieldEvent {
 
     private final KqueueFacade kqf;
     private final int readEndFd;
     private final int writeEndFd;
 
-    public PipeSuspendEvent(KqueueFacade kqf) {
+    public PipeYieldEvent(KqueueFacade kqf) {
         this.kqf = kqf;
         long fds = kqf.pipe();
         if (fds < 0) {
-            throw NetworkError.instance(kqf.getNetworkFacade().errno(), "could not create PipeSuspendEvent");
+            throw NetworkError.instance(kqf.getNetworkFacade().errno(), "could not create PipeYieldEvent");
         }
         this.readEndFd = (int) (fds >>> 32);
         this.writeEndFd = (int) fds;

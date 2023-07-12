@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
+import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
@@ -80,7 +80,7 @@ public class HttpHealthCheckTestBuilder {
 
             DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, NoOpWalTxnSuspendEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
                     HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)
             ) {
                 workerPool.start(LOG);

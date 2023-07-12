@@ -32,16 +32,16 @@ import java.io.Closeable;
 /**
  * Used for generic single-time events that can be used with
  * {@link IODispatcher}. Such events aren't necessarily network I/O
- * related, but instead provide an efficient way of suspending a task
- * done in the IODispatcher's event loop and resume it later when another
+ * related, but instead provide an efficient way of yielding a task
+ * in the IODispatcher's event loop and resume it later when another
  * thread sends us a notification through the event.
  * <p>
  * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
  */
-public abstract class SuspendEvent implements Closeable {
+public abstract class YieldEvent implements Closeable {
 
     private static final long REF_COUNT_OFFSET;
-    private boolean checkDisconnectWhileSuspended;
+    private boolean checkDisconnectWhileYielded;
     private long deadline = Long.MAX_VALUE;
     // set by using Unsafe, see REF_COUNT_OFFSET, close().
     @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
@@ -86,12 +86,12 @@ public abstract class SuspendEvent implements Closeable {
 
     /**
      * Returns true if I/O dispatcher should check for a client disconnect
-     * while waiting for the suspend event to be triggered.
+     * while waiting for the yield event to be triggered.
      *
      * @return check client disconnect flag
      */
-    public boolean isCheckDisconnectWhileSuspended() {
-        return checkDisconnectWhileSuspended;
+    public boolean isCheckDisconnectWhileYielded() {
+        return checkDisconnectWhileYielded;
     }
 
     @TestOnly
@@ -112,12 +112,12 @@ public abstract class SuspendEvent implements Closeable {
 
     /**
      * Sets a flag telling the I/O dispatcher to check for a client disconnect
-     * while waiting for the suspend event to be triggered.
+     * while waiting for the yield event to be triggered.
      *
-     * @param checkDisconnectWhileSuspended check client disconnect flag value
+     * @param checkDisconnectWhileYielded check client disconnect flag value
      */
-    public void setCheckDisconnectWhileSuspended(boolean checkDisconnectWhileSuspended) {
-        this.checkDisconnectWhileSuspended = checkDisconnectWhileSuspended;
+    public void setCheckDisconnectWhileYielded(boolean checkDisconnectWhileYielded) {
+        this.checkDisconnectWhileYielded = checkDisconnectWhileYielded;
     }
 
     /**
@@ -135,6 +135,6 @@ public abstract class SuspendEvent implements Closeable {
     public abstract void trigger();
 
     static {
-        REF_COUNT_OFFSET = Unsafe.getFieldOffset(SuspendEvent.class, "refCount");
+        REF_COUNT_OFFSET = Unsafe.getFieldOffset(YieldEvent.class, "refCount");
     }
 }

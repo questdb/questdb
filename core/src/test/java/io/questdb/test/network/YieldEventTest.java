@@ -25,21 +25,21 @@
 package io.questdb.test.network;
 
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
-import io.questdb.network.SuspendEventFactoryImpl;
+import io.questdb.network.YieldEvent;
+import io.questdb.network.YieldEventFactory;
+import io.questdb.network.YieldEventFactoryImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class SuspendEventTest {
+public class YieldEventTest {
 
     @Test
     public void testExtraCloseCalls() throws Exception {
         assertMemoryLeak(() -> {
-            final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration());
-            SuspendEvent event = suspendEventFactory.newInstance();
+            final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration());
+            YieldEvent event = yieldEventFactory.newInstance();
             // We simply expect no fd leaks and no exceptions as a result of extra close() calls.
             for (int i = 0; i < 100; i++) {
                 event.close();
@@ -50,8 +50,8 @@ public class SuspendEventTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            final SuspendEventFactory suspendEventFactory = new SuspendEventFactoryImpl(new DefaultIODispatcherConfiguration());
-            SuspendEvent event = suspendEventFactory.newInstance();
+            final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration());
+            YieldEvent event = yieldEventFactory.newInstance();
             Assert.assertFalse(event.checkTriggered());
             event.trigger();
             Assert.assertTrue(event.checkTriggered());

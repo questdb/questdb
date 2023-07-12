@@ -33,7 +33,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final int capacity;
     private final Kqueue kqueue;
-    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1)
+    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and yield events (1)
     private long idSeq = 1;
 
     public IODispatcherOsx(
@@ -59,16 +59,16 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     }
 
     private void doDisconnect(C context, long id, int reason) {
-        final SuspendEvent suspendEvent = context.getSuspendEvent();
-        if (suspendEvent != null) {
+        final YieldEvent yieldEvent = context.getYieldEvent();
+        if (yieldEvent != null) {
             // yes, we can do a binary search over EVM_OPERATION_ID since
             // these ref ids are monotonically growing
             int eventRow = pendingEvents.binarySearch(id, EVM_OPERATION_ID);
             if (eventRow < 0) {
-                LOG.critical().$("internal error: suspend event not found [id=").$(id).I$();
+                LOG.critical().$("internal error: yield event not found [id=").$(id).I$();
             } else {
                 kqueue.setWriteOffset(0);
-                kqueue.removeReadFD(suspendEvent.getFd());
+                kqueue.removeReadFD(yieldEvent.getFd());
                 registerWithKQueue(1);
                 pendingEvents.deleteRow(eventRow);
             }
@@ -112,10 +112,10 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         }
 
         final C context = pending.get(row);
-        final SuspendEvent suspendEvent = context.getSuspendEvent();
-        if (suspendEvent != null) {
-            // the operation is suspended, check if we have a client disconnect
-            if (testConnection(context.getFd())) {
+        final YieldEvent yieldEvent = context.getYieldEvent();
+        if (yieldEvent != null) {
+            // the operation has yielded, check if we have a client disconnect
+            if (yieldEvent.isCheckDisconnectWhileYielded() && testConnection(context.getFd())) {
                 doDisconnect(context, id, DISCONNECT_SRC_PEER_DISCONNECT);
                 pending.deleteRow(row);
                 return true;
@@ -131,7 +131,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         return false;
     }
 
-    private void handleSuspendEvent(long id) {
+    private void handleYieldEvent(long id) {
         final int eventsRow = pendingEvents.binarySearch(id, EVM_ID);
         if (eventsRow < 0) {
             LOG.critical().$("internal error: kqueue returned unexpected event id [eventId=").$(id).I$();
@@ -141,21 +141,20 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         final long opId = pendingEvents.get(eventsRow, EVM_OPERATION_ID);
         final int row = pending.binarySearch(opId, OPM_ID);
         if (row < 0) {
-            LOG.critical().$("internal error: suspended operation not found [id=").$(opId).$(", eventId=").$(id).I$();
+            LOG.critical().$("internal error: yielded operation not found [id=").$(opId).$(", eventId=").$(id).I$();
             return;
         }
 
         final long eventId = pendingEvents.get(eventsRow, EVM_ID);
         final int operation = (int) pending.get(row, OPM_OPERATION);
         final C context = pending.get(row);
-        final SuspendEvent suspendEvent = context.getSuspendEvent();
-        assert suspendEvent != null;
+        assert context.getYieldEvent() != null;
 
-        LOG.debug().$("handling triggered suspend event and resuming original operation [fd=").$(context.getFd())
+        LOG.debug().$("handling triggered yield event and resuming original operation [fd=").$(context.getFd())
                 .$(", opId=").$(opId)
                 .$(", eventId=").$(eventId).I$();
 
-        context.clearSuspendEvent();
+        context.clearYieldEvent();
         kqueue.setWriteOffset(0);
         if (operation == IOOperation.READ) {
             kqueue.readFD(context.getFd(), opId);
@@ -184,7 +183,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             int fd = context.getFd();
             final long opId = pending.get(i, OPM_ID);
             kqueue.setWriteOffset(0);
-            long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(i, OPM_OPERATION);
+            long op = context.getYieldEvent() != null ? IOOperation.READ : pending.get(i, OPM_OPERATION);
             if (op == IOOperation.READ) {
                 kqueue.removeReadFD(fd);
             } else {
@@ -210,12 +209,12 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                         .$(", id=").$(opId).I$();
             }
 
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
-            if (suspendEvent != null) {
-                // Also, de-register suspend event from epoll.
+            final YieldEvent yieldEvent = context.getYieldEvent();
+            if (yieldEvent != null) {
+                // Also, de-register yield event from epoll.
                 int eventRow = pendingEvents.binarySearch(opId, EVM_OPERATION_ID);
                 if (eventRow < 0) {
-                    LOG.critical().$("internal error: suspend event not found on heartbeat [id=").$(opId).I$();
+                    LOG.critical().$("internal error: yield event not found on heartbeat [id=").$(opId).I$();
                 } else {
                     final long eventId = pendingEvents.get(eventRow, EVM_ID);
                     kqueue.setWriteOffset(0);
@@ -254,7 +253,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final int fd = context.getFd();
 
             int operation = requestedOperation;
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            final YieldEvent yieldEvent = context.getYieldEvent();
             if (requestedOperation == IOOperation.HEARTBEAT) {
                 assert srcOpId != -1;
 
@@ -293,24 +292,24 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 pending.set(opRow, context);
             }
 
-            if (suspendEvent != null) {
-                // if the operation was suspended, we request a read to be able to detect a client disconnect
+            if (yieldEvent != null) {
+                // if the operation has yielded, we request a read to be able to detect a client disconnect
                 operation = IOOperation.READ;
-                // ok, the operation was suspended, so we need to track the suspend event
+                // ok, the operation has yielded, so we need to track the yield event
                 final long eventId = nextEventId();
-                LOG.debug().$("registering suspend event [fd=").$(fd)
+                LOG.debug().$("registering yield event [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", eventId=").$(eventId)
-                        .$(", suspendedOpId=").$(opId)
-                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
+                        .$(", yieldedOpId=").$(opId)
+                        .$(", deadline=").$(yieldEvent.getDeadline()).I$();
 
                 int eventRow = pendingEvents.addRow();
                 pendingEvents.set(eventRow, EVM_ID, eventId);
                 pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
-                pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
+                pendingEvents.set(eventRow, EVM_DEADLINE, yieldEvent.getDeadline());
 
                 kqueue.setWriteOffset(offset);
-                kqueue.readFD(suspendEvent.getFd(), eventId);
+                kqueue.readFD(yieldEvent.getFd(), eventId);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 if (++count > capacity - 1) {
                     registerWithKQueue(count);
@@ -338,7 +337,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         return useful;
     }
 
-    private void processSuspendEventDeadlines(long timestamp) {
+    private void processYieldEventDeadlines(long timestamp) {
         int index = 0;
         int offset = 0;
         int count = 0;
@@ -346,17 +345,17 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
             final int pendingRow = pending.binarySearch(opId, OPM_ID);
             if (pendingRow < 0) {
-                LOG.critical().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
+                LOG.critical().$("internal error: failed to find operation for expired yield event [id=").$(opId).I$();
                 continue;
             }
 
-            // First, remove the suspend event from kqueue tracking.
+            // First, remove the yield event from kqueue tracking.
             final C context = pending.get(pendingRow);
             final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
-            assert suspendEvent != null;
+            final YieldEvent yieldEvent = context.getYieldEvent();
+            assert yieldEvent != null;
             kqueue.setWriteOffset(offset);
-            kqueue.removeReadFD(suspendEvent.getFd());
+            kqueue.removeReadFD(yieldEvent.getFd());
             offset += KqueueAccessor.SIZEOF_KEVENT;
             if (++index > capacity - 1) {
                 registerWithKQueue(index);
@@ -364,7 +363,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             }
 
             // Next, close the event and resume the original operation.
-            context.clearSuspendEvent();
+            context.clearYieldEvent();
             kqueue.setWriteOffset(offset);
             if (operation == IOOperation.READ) {
                 kqueue.readFD(context.getFd(), opId);
@@ -426,7 +425,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                     continue;
                 }
                 if (isEventId(id)) {
-                    handleSuspendEvent(id);
+                    handleYieldEvent(id);
                     continue;
                 }
                 if (handleSocketOperation(id)) {
@@ -441,9 +440,9 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             enqueuePending(watermark);
         }
 
-        // process timed out suspend events and resume the original operations
+        // process timed out yield events and resume the original operations
         if (pendingEvents.size() > 0 && pendingEvents.get(0, EVM_DEADLINE) < timestamp) {
-            processSuspendEventDeadlines(timestamp);
+            processYieldEventDeadlines(timestamp);
         }
 
         // process timed out connections

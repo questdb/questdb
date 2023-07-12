@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.table;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.wal.NoOpWalTxnSuspendEvents;
+import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRowCursorFactory;
@@ -90,7 +90,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics)) {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
@@ -234,7 +234,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics)) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -344,7 +344,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnSuspendEvents.INSTANCE, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics)) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());

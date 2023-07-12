@@ -43,7 +43,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.SuspendEvent;
+import io.questdb.network.YieldEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -89,7 +89,7 @@ public class WalWriter implements TableWriterAPI {
     private final int walId;
     private final WalInitializer walInitializer;
     private final String walName;
-    private final WalTxnSuspendEvents walTxnSuspendEvents;
+    private final WalTxnYieldEvents walTxnYieldEvents;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
@@ -113,7 +113,7 @@ public class WalWriter implements TableWriterAPI {
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = engine.getTableSequencerAPI();
-        this.walTxnSuspendEvents = engine.getWalTxnSuspendEvents();
+        this.walTxnYieldEvents = engine.getWalTxnYieldEvents();
         this.configuration = engine.getConfiguration();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
@@ -537,14 +537,6 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void suspendUntilTxn(long txn) throws SuspendException {
-        final SuspendEvent suspendEvent = walTxnSuspendEvents.register(tableToken, txn);
-        if (suspendEvent != null) {
-            throw SuspendException.instance(suspendEvent);
-        }
-    }
-
-    @Override
     public String toString() {
         return "WalWriter{" +
                 "name=" + walName +
@@ -570,6 +562,14 @@ public class WalWriter implements TableWriterAPI {
 
     public void updateTableToken(TableToken ignoredTableToken) {
         // goActive will update table token
+    }
+
+    @Override
+    public void yieldUntilTxn(long txn) throws YieldException {
+        final YieldEvent yieldEvent = walTxnYieldEvents.register(tableToken, txn);
+        if (yieldEvent != null) {
+            throw YieldException.instance(yieldEvent);
+        }
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA mem1, MemoryMA mem2) {

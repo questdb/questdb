@@ -26,7 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SuspendException;
+import io.questdb.cairo.YieldException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -353,7 +353,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * Must be called before subsequence calls to {@link #next()} to count page frames and
      * initialize page frame cache and filter functions.
      *
-     * @throws SuspendException when the queried partition is in cold storage
+     * @throws YieldException when the queried partition is in cold storage
      */
     public void prepareForDispatch() {
         if (!readyToDispatch) {

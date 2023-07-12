@@ -24,45 +24,7 @@
 
 package io.questdb.network;
 
-/**
- * eventfd(2)-based suspend event object. Used on Linux in combination with epoll.
- */
-public class EventFdSuspendEvent extends SuspendEvent {
-
-    private final EpollFacade epf;
-    private final int fd;
-
-    public EventFdSuspendEvent(EpollFacade epf) {
-        this.epf = epf;
-        int fd = epf.eventFd();
-        if (fd < 0) {
-            throw NetworkError.instance(epf.errno(), "could not create EventFdSuspendEvent");
-        }
-        this.fd = fd;
-        epf.getNetworkFacade().bumpFdCount(fd);
-    }
-
-    @Override
-    public void _close() {
-        epf.getNetworkFacade().close(fd);
-    }
-
-    @Override
-    public boolean checkTriggered() {
-        return epf.readEventFd(fd) == 1;
-    }
-
-    @Override
-    public int getFd() {
-        return fd;
-    }
-
-    @Override
-    public void trigger() {
-        if (epf.writeEventFd(fd) < 0) {
-            throw NetworkError.instance(epf.errno())
-                    .put("could not write to eventfd [fd=").put(fd)
-                    .put(']');
-        }
-    }
+@FunctionalInterface
+public interface YieldEventFactory {
+    YieldEvent newInstance();
 }

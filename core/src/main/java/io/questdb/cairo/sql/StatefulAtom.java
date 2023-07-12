@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.SuspendException;
+import io.questdb.cairo.YieldException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -45,7 +45,7 @@ public interface StatefulAtom {
      * Initializes cursor-based data structures used by cursor functions, like 'symbol_col IN (SELECT ...)'.
      * Must be called after {@link #init(SymbolTableSource, SqlExecutionContext)}.
      *
-     * @throws SuspendException when the queried partition is in cold storage
+     * @throws YieldException when the queried partition is in cold storage
      */
     default void initCursor() {
     }

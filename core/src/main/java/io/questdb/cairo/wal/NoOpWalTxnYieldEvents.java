@@ -22,35 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.cairo.wal;
 
-/**
- * Atomic flag-based suspend event object. Used on Windows. Then events are checked
- * by {@link IODispatcherWindows} in a loop, so O(n), but that fine with we already
- * use an O(n) method (select) to check socket statuses.
- */
-public class AtomicSuspendEvent extends SuspendEvent {
+import io.questdb.cairo.TableToken;
+import io.questdb.network.YieldEvent;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
-    private volatile boolean flag;
+public class NoOpWalTxnYieldEvents implements WalTxnYieldEvents {
+    public static final NoOpWalTxnYieldEvents INSTANCE = new NoOpWalTxnYieldEvents();
 
     @Override
-    public void _close() {
-        // no-op
+    public void close() {
     }
 
-    @Override
-    public boolean checkTriggered() {
-        return flag;
+    public @Nullable YieldEvent register(TableToken tableToken, long txn) {
+        return null;
     }
 
-    @Override
-    public int getFd() {
-        // no-op
-        return -1;
-    }
-
-    @Override
-    public void trigger() {
-        flag = true;
+    public void takeRegisteredEvents(TableToken tableToken, ObjList<YieldEvent> dest) {
     }
 }

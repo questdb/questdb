@@ -22,24 +22,47 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.network;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.network.SuspendEvent;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
+/**
+ * eventfd(2)-based event object. Used on Linux in combination with epoll.
+ */
+public class EventFdYieldEvent extends YieldEvent {
 
-public class NoOpWalTxnSuspendEvents implements WalTxnSuspendEvents {
-    public static final NoOpWalTxnSuspendEvents INSTANCE = new NoOpWalTxnSuspendEvents();
+    private final EpollFacade epf;
+    private final int fd;
+
+    public EventFdYieldEvent(EpollFacade epf) {
+        this.epf = epf;
+        int fd = epf.eventFd();
+        if (fd < 0) {
+            throw NetworkError.instance(epf.errno(), "could not create EventFdYieldEvent");
+        }
+        this.fd = fd;
+        epf.getNetworkFacade().bumpFdCount(fd);
+    }
 
     @Override
-    public void close() {
+    public void _close() {
+        epf.getNetworkFacade().close(fd);
     }
 
-    public @Nullable SuspendEvent register(TableToken tableToken, long txn) {
-        return null;
+    @Override
+    public boolean checkTriggered() {
+        return epf.readEventFd(fd) == 1;
     }
 
-    public void takeRegisteredEvents(TableToken tableToken, ObjList<SuspendEvent> dest) {
+    @Override
+    public int getFd() {
+        return fd;
+    }
+
+    @Override
+    public void trigger() {
+        if (epf.writeEventFd(fd) < 0) {
+            throw NetworkError.instance(epf.errno())
+                    .put("could not write to eventfd [fd=").put(fd)
+                    .put(']');
+        }
     }
 }

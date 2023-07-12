@@ -26,8 +26,8 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.SuspendException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.YieldException;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -270,6 +270,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void suspendUntilTxn(long txn) throws SuspendException {
+    public void yieldUntilTxn(long txn) throws YieldException {
     }
 }
