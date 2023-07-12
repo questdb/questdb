@@ -487,10 +487,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             for (int c = 0; c < metadata.getColumnCount(); c++) {
                 int col = (c + start) % metadata.getColumnCount();
                 int columnType = metadata.getColumnType(col);
-                if (!upsertKeyIndexes.contains(col)
-                        && !ColumnType.isVariableLength(columnType)
-                        && columnType != ColumnType.LONG256) {
 
+                if (!upsertKeyIndexes.contains(col) && !ColumnType.isVariableLength(columnType)) {
                     upsertKeyIndexes.add(col);
                     break;
                 }
@@ -602,6 +600,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             createInitialTable(tableNameNoWal, false, initialRowCount);
             createInitialTable(tableNameWal, true, initialRowCount);
+
+            // Add long256 type to have to be a chance of a dedup key
+            compile("alter table " + tableNameWal + " add column col256 long256");
+            compile("alter table " + tableNameNoWal + " add column col256 long256");
 
             ObjList<FuzzTransaction> transactions;
             IntList upsertKeyIndexes = new IntList();
@@ -727,7 +729,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
-            if (columnType > 0 && !ColumnType.isVariableLength(columnType) && columnType != ColumnType.LONG256) {
+            if (columnType > 0 && !ColumnType.isVariableLength(columnType)) {
                 if (i > 0) {
                     sink.put(',');
                 }

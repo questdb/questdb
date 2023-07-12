@@ -475,7 +475,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                                        index_tmp, compare_32);
             }
             default:
-                assert(false || "unsupported column type");
+                static_assert(false || "unsupported column type");
                 return -1;
         }
     }
@@ -585,7 +585,7 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                     return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_32);
                 }
                 default:
-                    assert(false || "unsupported column type");
+                    static_assert(false || "unsupported column type");
                     return -1;
             }
         }
