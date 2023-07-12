@@ -58,7 +58,6 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
 
     @Override
     public void close() {
-        // TODO this is not thread-safe
         for (Map.Entry<TableToken, ObjList<YieldEvent>> entry : events.entrySet()) {
             Misc.freeObjListAndClear(entry.getValue());
         }
@@ -107,7 +106,6 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
 
     @Override
     public void takeRegisteredEvents(TableToken tableToken, ObjList<YieldEvent> dest) {
-        // TODO method refs instead of lambdas
         events.computeIfPresent(tableToken, (t, list) -> {
             dest.addAll(list);
             list.clear();
