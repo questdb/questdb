@@ -104,7 +104,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         final SuspendEvent suspendEvent = context.getSuspendEvent();
         if (suspendEvent != null) {
             // the operation is suspended, check if we have a client disconnect
-            if (testConnection(context.getFd())) {
+            if (suspendEvent.isCheckDisconnectWhileSuspended() && testConnection(context.getFd())) {
                 doDisconnect(context, id, DISCONNECT_SRC_PEER_DISCONNECT);
                 pending.deleteRow(row);
                 return true;

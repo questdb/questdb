@@ -41,9 +41,8 @@ import java.io.Closeable;
 public abstract class SuspendEvent implements Closeable {
 
     private static final long REF_COUNT_OFFSET;
-
+    private boolean checkDisconnectWhileSuspended;
     private long deadline = Long.MAX_VALUE;
-
     // set by using Unsafe, see REF_COUNT_OFFSET, close().
     @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile int refCount = 2;
@@ -85,6 +84,16 @@ public abstract class SuspendEvent implements Closeable {
      */
     public abstract int getFd();
 
+    /**
+     * Returns true if I/O dispatcher should check for a client disconnect
+     * while waiting for the suspend event to be triggered.
+     *
+     * @return check client disconnect flag
+     */
+    public boolean isCheckDisconnectWhileSuspended() {
+        return checkDisconnectWhileSuspended;
+    }
+
     @TestOnly
     public boolean isClosedByAtLeastOneSide() {
         return refCount <= 1;
@@ -99,6 +108,16 @@ public abstract class SuspendEvent implements Closeable {
      */
     public boolean isDeadlineMet(long timestamp) {
         return deadline > 0 && deadline <= timestamp;
+    }
+
+    /**
+     * Sets a flag telling the I/O dispatcher to check for a client disconnect
+     * while waiting for the suspend event to be triggered.
+     *
+     * @param checkDisconnectWhileSuspended check client disconnect flag value
+     */
+    public void setCheckDisconnectWhileSuspended(boolean checkDisconnectWhileSuspended) {
+        this.checkDisconnectWhileSuspended = checkDisconnectWhileSuspended;
     }
 
     /**

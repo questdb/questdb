@@ -383,6 +383,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             } catch (SuspendException ex) {
                 measurementPending = true;
                 suspendEvent = ex.getEvent();
+                // We don't want client disconnect checks to happen in the I/O dispatcher.
+                // That's to avoid ILP message loss in case if the client sent a row
+                // for a new table and immediately disconnected.
+                suspendEvent.setCheckDisconnectWhileSuspended(false);
                 // We request write here while we know that we won't be writing into the socket
                 // to make sure that epoll/kqueue/poll will call us back.
                 return IOContextResult.NEEDS_WRITE;
