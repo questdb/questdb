@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import java.io.Closeable;
-
-public interface CommitListener extends Closeable {
+public interface CommitListener {
     void onCommit(long txn, long rowsAdded);
 }

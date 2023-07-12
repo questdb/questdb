@@ -3316,7 +3316,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(partitionFrameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
-        commitListener = Misc.free(commitListener);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {

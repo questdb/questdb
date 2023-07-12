@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.mp;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
@@ -50,6 +50,24 @@ public class PerWorkerLocks {
         );
         this.workerCount = workerCount;
         locks = new AtomicIntegerArray(workerCount);
+    }
+
+    @SuppressWarnings("unused")
+    public int acquireSlot() {
+        return acquireSlot(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    }
+
+    public int acquireSlot(SqlExecutionCircuitBreaker sqlCircuitBreaker) {
+        final Thread thread = Thread.currentThread();
+        final int workerId;
+        if (thread instanceof Worker) {
+            // it's a worker thread, potentially from the shared pool
+            workerId = ((Worker) thread).getWorkerId() % workerCount;
+        } else {
+            // it's an embedder's thread, so use a random slot
+            workerId = -1;
+        }
+        return acquireSlot(workerId, sqlCircuitBreaker);
     }
 
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
