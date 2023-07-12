@@ -374,10 +374,11 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                     columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                     if (columnIndex < 0) {
-                        securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
+                        securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
                         tud.commit(false);
                         try {
                             writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
+                            securityContext.onColumnAdded(tud.getTableToken(), columnNameUtf16);
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         } catch (CairoException e) {
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
@@ -736,7 +737,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
-                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+                    securityContext.authorizeLineTableCreate();
+                    tableToken = engine.createTableInsecure(securityContext, ddlMem, path, true, tsa, false, false);
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }
 
