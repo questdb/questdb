@@ -7,8 +7,8 @@
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
-#include <algorithm>
 #include <vector>
+#include <cassert>
 
 #pragma pack (push, 1)
 struct dedup_column {
