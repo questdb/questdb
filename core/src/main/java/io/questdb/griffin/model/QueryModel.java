@@ -1588,7 +1588,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             return permissions.get(tableToken.getTableId());
         }
 
-        public QueryPermissions of(SecurityContext securityContext) {
+        public QueryPermissions of(@Transient SecurityContext securityContext) {
             this.checked = true;
             this.securityContext = securityContext;
             return this;

@@ -2346,7 +2346,7 @@ if __name__ == "__main__":
     public void testDisconnectDuringAuth() throws Exception {
         skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
         for (int i = 0; i < 3; i++) {
-            testDisconnectDuringAuth0(i, 10);
+            testDisconnectDuringAuth0(i);
         }
     }
 
@@ -2386,9 +2386,9 @@ if __name__ == "__main__":
                 {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all table if exists;", "ERROR: 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: expected [;]"},
-                {"drop all ;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all ;", "ERROR: 'tables' expected"},
                 {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -2396,7 +2396,7 @@ if __name__ == "__main__":
                 String[] testData = sqlExpectedErrMsg[i];
                 try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
                     statement.execute();
-                    Assert.fail();
+                    Assert.fail(testData[0]);
                 } catch (PSQLException e) {
                     assertContains(e.getMessage(), testData[1]);
                 }
@@ -5984,7 +5984,7 @@ nodejs code:
                     + " WHERE timestamp >= '2023-03-23T00:00:00.000000Z'"
                     + " ORDER BY timestamp ";
 
-            int countStar = getCountStar("SELECT COUNT(*) FROM table", conn);
+            int countStar = getCountStar(conn);
             int ascCount = getRowCount(queryBase + "ASC", conn);
             int ascLimitCount = getRowCount(queryBase + "ASC LIMIT 100000", conn);
             int descCount = getRowCount(queryBase + "DESC", conn);
@@ -7784,18 +7784,19 @@ create table tab as (
 
     @Test
     public void testSquashPartitionsReturnsOk() throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
-            connection.commit();
-            mayDrainWalQueue();
-            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
-                Assert.assertFalse(dropPartition.execute());
-            }
-        };
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+                    connection.commit();
+                    mayDrainWalQueue();
+                    try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
+                        Assert.assertFalse(dropPartition.execute());
+                    }
+                }
+        );
     }
 
     @Test
@@ -8873,9 +8874,9 @@ create table tab as (
         return backendPid;
     }
 
-    private static int getCountStar(String query, Connection conn) throws Exception {
+    private static int getCountStar(Connection conn) throws Exception {
         int count = -1;
-        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM table")) {
             try (ResultSet result = stmt.executeQuery()) {
                 if (result.next()) {
                     count = result.getInt(1);
@@ -9125,11 +9126,6 @@ create table tab as (
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
             @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-
-            @Override
             public int getWorkerCount() {
                 return workerCount;
             }
@@ -9272,11 +9268,6 @@ create table tab as (
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-
             @Override
             public int getWorkerCount() {
                 return workerCount;
@@ -9822,7 +9813,7 @@ create table tab as (
         });
     }
 
-    private void testDisconnectDuringAuth0(int allowedSendCount, int clientCount) throws Exception {
+    private void testDisconnectDuringAuth0(int allowedSendCount) throws Exception {
         DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
@@ -9846,8 +9837,8 @@ create table tab as (
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                for (int i = 0; i < clientCount; i++) {
-                    try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
+                for (int i = 0; i < 10; i++) {
+                    try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
                         fail("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
 
@@ -10660,11 +10651,11 @@ create table tab as (
         private final int initialAllowedSendCalls;
         // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
         // we also *read* it from a test thread -> volatile is needed
-        private volatile int remainingAllowedSendCalls;
+        private final AtomicInteger remainingAllowedSendCalls = new AtomicInteger();
         private volatile boolean socketClosed = false;
 
         private DisconnectOnSendNetworkFacade(int allowedSendCount) {
-            this.remainingAllowedSendCalls = allowedSendCount;
+            this.remainingAllowedSendCalls.set(allowedSendCount);
             this.initialAllowedSendCalls = allowedSendCount;
         }
 
@@ -10676,8 +10667,8 @@ create table tab as (
 
         @Override
         public int recv(int fd, long buffer, int bufferLen) {
-            if (remainingAllowedSendCalls < 0) {
-                remainingAllowedSendCalls--;
+            if (remainingAllowedSendCalls.get() < 0) {
+                remainingAllowedSendCalls.decrementAndGet();
                 return -1;
             }
             return super.recv(fd, buffer, bufferLen);
@@ -10685,18 +10676,17 @@ create table tab as (
 
         @Override
         public int send(int fd, long buffer, int bufferLen) {
-            remainingAllowedSendCalls--;
-            if (remainingAllowedSendCalls < 0) {
+            if (remainingAllowedSendCalls.decrementAndGet() < 0) {
                 return -1;
             }
             return super.send(fd, buffer, bufferLen);
         }
 
         int getAfterDisconnectInteractions() {
-            if (remainingAllowedSendCalls >= 0) {
+            if (remainingAllowedSendCalls.get() >= 0) {
                 return 0;
             }
-            return -(remainingAllowedSendCalls + 1);
+            return -(remainingAllowedSendCalls.incrementAndGet());
         }
 
         boolean isSocketClosed() {
@@ -10704,7 +10694,7 @@ create table tab as (
         }
 
         void reset() {
-            remainingAllowedSendCalls = initialAllowedSendCalls;
+            remainingAllowedSendCalls.set(initialAllowedSendCalls);
             socketClosed = false;
         }
     }
