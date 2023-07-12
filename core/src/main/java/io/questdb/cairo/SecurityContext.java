@@ -129,6 +129,8 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
+    void onColumnAdded(TableToken tableToken, CharSequence columnName);
+
     void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
 
     // returns txn number to wait for

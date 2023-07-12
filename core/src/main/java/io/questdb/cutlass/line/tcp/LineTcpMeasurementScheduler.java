@@ -382,6 +382,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         tud.commit(false);
                         try {
                             writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
+                            securityContext.onColumnAdded(tud.getTableToken(), columnNameUtf16);
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         } catch (CairoException e) {
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
