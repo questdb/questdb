@@ -283,6 +283,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(columnNamePosition);
     }
 
+    public ObjList<CharSequence> getExtraStrInfo() {
+        return extraStrInfo.strings;
+    }
+
     public void ofRenameTable(TableToken fromTableToken, CharSequence toTableName) {
         of(AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
         assert toTableName != null && toTableName.length() > 0;
