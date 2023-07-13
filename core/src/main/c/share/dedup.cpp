@@ -8,7 +8,6 @@
 #include "simd.h"
 #include "ooo_dispatch.h"
 #include <vector>
-#include <cassert>
 
 #pragma pack (push, 1)
 // Should match data structure described in DedupColumnCommitAddresses.java
@@ -165,7 +164,6 @@ inline int64_t dedup_sorted_timestamp_index(const index_t *index_in, int64_t cou
                 copyTo++;
                 lastTimestamp = index_in[i].ts;
             } else if (index_in[i].ts < lastTimestamp) {
-                assert(false || "data is not sorted");
                 return -1;
             }
         }
@@ -200,7 +198,6 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
             }
             ts_index = i;
         } else if (index_src[i].ts < index_src[ts_index].ts) {
-            assert(false || "data is not sorted");
             return -1;
         }
     }
@@ -212,9 +209,6 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         // no timestamp duplicates
         return -2;
     }
-
-    assert(dup_start > -1 && dup_start < count && "dup_start is incorrect");
-    assert(dup_end > 0 && dup_end <= count && "dup_end is beyond count");
 
     // dedup range from dup_start to dup_end.
     // sort the data first by ts and keys using stable merge sort.
@@ -230,7 +224,6 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
             index_dest[copy_to++] = merge_result[i - 1];
             last = i;
         } else if (merge_result[i].ts != merge_result[last].ts) {
-            assert(false || "sorting failed, timestamp is not sorted");
             return -1;
         }
     }
@@ -276,10 +269,8 @@ inline void merge_sort_slice(
 
     if (i1 < src1_len) {
         __MEMCPY(dest, &src1[i1], (src1_len - i1) * sizeof(index_t));
-        assert(dest + src1_len - i1 <= end && "write beyond allocated boundary");
     } else {
         __MEMCPY(dest, &src2[i2], (src2_len - i2) * sizeof(index_t));
-        assert(dest + src2_len - i2 <= end && "write beyond allocated boundary");
     }
 }
 
@@ -410,9 +401,6 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
     const auto compare_by_rowid = [&]<class T>(const dedup_column_t<T> *column, const int64_t &col_index,
                                                const int64_t &index_index) -> int {
         // negative index means value is from colum, positive from get_o3_data
-        assert((col_index >= mergeDataLo && col_index <= mergeDataHi) || "access of column value out of range");
-        assert((index_index >= mergeOOOLo && index_index <= mergeOOOHi) || "access of index value out of range");
-
         const auto l_val =
                 col_index >= column->column_top ? column->get_column_data()[col_index] : column->get_null_value();
         const auto r_val = column->get_o3_data()[index_index];
@@ -476,7 +464,6 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                                        index_tmp, compare_32);
             }
             default:
-                static_assert(false || "unsupported column type");
                 return -1;
         }
     }
@@ -506,7 +493,6 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     diff = compare_by_rowid((dedup_column_t<int256> *) col_key, l, r);
                     break;
                 default:
-                    assert(false || "unsupported column type");
                     return 0;
             }
             if (diff != 0) {
@@ -586,7 +572,6 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                     return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_32);
                 }
                 default:
-                    static_assert(false || "unsupported column type");
                     return -1;
             }
         }
@@ -621,7 +606,6 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         break;
                     }
                     default:
-                        assert(false || "unsupported column type");
                         return 0;
                 }
                 if (diff != 0) {
