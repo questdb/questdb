@@ -26,6 +26,7 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -78,7 +79,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
             long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
+            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
@@ -143,7 +144,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             transactions.clear();
             long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
                     rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
-            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
+            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
             long delta = Timestamps.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
@@ -183,7 +184,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
 
             int initialDuplicates = 1 + rnd.nextInt(1);
-            var startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
+            long startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
             int startCount = 4 * 24 * 5;
             generateInsertsTransactions(
                     transactions,
@@ -216,7 +217,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     ? symbols
                     : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
 
-            var fromTops = startTimestamp + rnd.nextLong(startCount) * initialDelta;
+            long fromTops = startTimestamp + rnd.nextLong(startCount) * initialDelta;
             generateInsertsTransactions(
                     transactions,
                     1,
@@ -237,7 +238,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             transactions.clear();
             long shift = rnd.nextLong(startCount) * Timestamps.MINUTE_MICROS * 15 +
                     rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
-            var from = startTimestamp + shift;
+            long from = startTimestamp + shift;
             long delta = Timestamps.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
@@ -293,7 +294,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
             long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
+            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
@@ -343,7 +344,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
             long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            var from = parseFloorPartialTimestamp("2020-02-24") + shift;
+            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
             int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
 
@@ -698,7 +699,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private void splitTransactionInserts(ObjList<FuzzTransaction> transactions, int count, Rnd rnd) {
         if (count > 1) {
-            var operationList = transactions.get(0).operationList;
+            ObjList<FuzzTransactionOperation> operationList = transactions.get(0).operationList;
 
             if (operationList.size() > 0) {
                 int[] sizes = new int[count];
