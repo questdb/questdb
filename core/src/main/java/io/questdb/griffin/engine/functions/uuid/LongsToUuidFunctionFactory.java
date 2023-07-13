@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public final class LongsToUuidFunctionFactory implements FunctionFactory {
@@ -62,12 +61,6 @@ public final class LongsToUuidFunctionFactory implements FunctionFactory {
         public LongsToUuidFunction(Function loLong, Function hiLong) {
             this.lo = loLong;
             this.hi = hiLong;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(hi);
-            Misc.free(lo);
         }
 
         @Override

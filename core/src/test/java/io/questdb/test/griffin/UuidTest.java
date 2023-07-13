@@ -444,8 +444,8 @@ public class UuidTest extends AbstractGriffinTest {
     public void testLongsToUuid_constant() throws Exception {
         assertQuery(
                 "uuid\n" +
-                        "00000000-0000-0001-0000-000000000001\n",
-                "select to_uuid(1, 1) as uuid from long_sequence(1)",
+                        "00000000-0000-0001-0000-000000000002\n",
+                "select to_uuid(2, 1) as uuid from long_sequence(1)",
                 null,
                 null,
                 true,
@@ -456,10 +456,10 @@ public class UuidTest extends AbstractGriffinTest {
     @Test
     public void testLongsToUuid_fromTable() throws Exception {
         assertCompile("create table x (lo long, hi long)");
-        assertCompile("insert into x values (1, 1)");
+        assertCompile("insert into x values (2, 1)");
         assertQuery(
                 "uuid\n" +
-                        "00000000-0000-0001-0000-000000000001\n",
+                        "00000000-0000-0001-0000-000000000002\n",
                 "select to_uuid(lo, hi) as uuid from x",
                 null,
                 null,
