@@ -55,7 +55,7 @@ public:
                 impl = (bool*)malloc(size * sizeof(bool));
             }
         }
-        __MEMSET(impl, 0, size * sizeof(bool));
+        __MEMSET(impl, 0, length * sizeof(bool));
     }
 
     inline void set(const int64_t& index, const bool & value) {
