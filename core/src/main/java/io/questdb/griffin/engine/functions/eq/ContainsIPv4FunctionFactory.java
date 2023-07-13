@@ -124,7 +124,7 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
         public Function getArg() { return arg; }
 
         @Override
-        public boolean getBool(Record rec) { return (arg.getStrLen(rec) == -1L); }
+        public boolean getBool(Record rec) { return arg.getInt(rec) == IPv4_NULL; }
 
         @Override
         public void toPlan(PlanSink sink) {

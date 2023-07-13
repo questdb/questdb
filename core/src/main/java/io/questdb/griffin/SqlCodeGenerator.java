@@ -937,6 +937,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                         }
                         break;
+                    case ColumnType.IPv4:
+                        switch(fromTag) {
+                            case ColumnType.IPv4:
+                                castFunctions.add(new IPv4Column(i));
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
+                        break;
                     case ColumnType.LONG:
                         switch (fromTag) {
                             // BOOLEAN will not be cast to LONG

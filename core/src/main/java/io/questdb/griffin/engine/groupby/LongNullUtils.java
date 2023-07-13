@@ -45,7 +45,6 @@ public final class LongNullUtils {
                     break;
 
                 case ColumnType.INT:
-                case ColumnType.IPv4:
                 case ColumnType.SYMBOL:
                     LONG_NULLs[i] = Numbers.INT_NaN;
                     break;

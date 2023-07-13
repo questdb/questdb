@@ -2175,9 +2175,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 nullers.add(() -> mem1.putFloat(Float.NaN));
                 break;
             case ColumnType.INT:
-                // fall through
-            case ColumnType.IPv4:
                 nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
+                break;
+            case ColumnType.IPv4:
+                nullers.add(() -> mem1.putInt(Numbers.IPv4_NULL));
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:

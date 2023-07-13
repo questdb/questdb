@@ -265,7 +265,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col){
         final int i = rec.getInt(col);
-        Numbers.intToIPv4Sink(socket, i);
+        if(i == Numbers.IPv4_NULL) {
+            socket.put("null");
+        } else {
+            socket.put('"');
+            Numbers.intToIPv4Sink(socket, i);
+            socket.put('"');
+        }
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {

@@ -42,6 +42,7 @@ import java.util.Arrays;
 
 public final class Numbers {
     public static final int INT_NaN = Integer.MIN_VALUE;
+    public static final int IPv4_NULL = 0;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NaN = Long.MIN_VALUE;
     public static final int MAX_SCALE = 19;
@@ -920,6 +921,9 @@ public final class Numbers {
     }
 
     public static int parseIPv4(CharSequence sequence) throws NumericException {
+        if (sequence == null || Chars.equals("NaN", sequence)) {
+            return IPv4_NULL;
+        }
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
@@ -927,11 +931,11 @@ public final class Numbers {
     {
         try {
             if (sequence == null || Chars.equals("NaN", sequence)) {
-                return 0;
+                return IPv4_NULL;
             }
             return parseIPv4(sequence);
         } catch (NumericException e) {
-            return 0;
+            return IPv4_NULL;
         }
     }
 
@@ -1076,27 +1080,17 @@ public final class Numbers {
     }
 
     public static void intToIPv4Sink(CharSink sink, int value) {
-        if(sink instanceof HttpChunkedResponseSocket){
-            sink.put('"');
-            append(sink, (value >> 24) & 0xff);
-            sink.put('.');
-            append(sink, (value >> 16) & 0xff);
-            sink.put('.');
-            append(sink, (value >> 8) & 0xff);
-            sink.put('.');
-            append(sink, value & 0xff);
-            sink.put('"');
-            }
-
-        else {
-            append(sink, (value >> 24) & 0xff);
-            sink.put('.');
-            append(sink, (value >> 16) & 0xff);
-            sink.put('.');
-            append(sink, (value >> 8) & 0xff);
-            sink.put('.');
-            append(sink, value & 0xff);
-    }
+        if(value == IPv4_NULL) {
+            sink.put("null");
+            return;
+        }
+        append(sink, (value >> 24) & 0xff);
+        sink.put('.');
+        append(sink, (value >> 16) & 0xff);
+        sink.put('.');
+        append(sink, (value >> 8) & 0xff);
+        sink.put('.');
+        append(sink, value & 0xff);
     }
 
     public static long parseLong(CharSequence sequence) throws NumericException {

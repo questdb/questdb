@@ -505,7 +505,7 @@ public class SqlUtil {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.IPv4);
             }
         }
-        return 0;
+        return Numbers.IPv4_NULL;
     }
 
     public static long implicitCastStrAsLong(CharSequence value) {

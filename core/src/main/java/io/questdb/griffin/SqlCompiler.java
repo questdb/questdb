@@ -2252,8 +2252,8 @@ public class SqlCompiler implements Closeable {
                 if (virtualColumnType != tableColumnType) {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         // get column position
-                        ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        //ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                        //throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
                     }
                 }
             }

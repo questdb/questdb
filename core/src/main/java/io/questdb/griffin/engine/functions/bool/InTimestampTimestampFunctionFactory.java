@@ -64,7 +64,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
-                case ColumnType.IPv4:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
                     break;
@@ -105,7 +104,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
-                case ColumnType.IPv4:
                     val = func.getTimestamp(null);
                     break;
                 case ColumnType.STRING:
@@ -174,7 +172,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     case ColumnType.TIMESTAMP:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                    case ColumnType.IPv4:
                         val = func.getTimestamp(rec);
                         break;
                     case ColumnType.STRING:

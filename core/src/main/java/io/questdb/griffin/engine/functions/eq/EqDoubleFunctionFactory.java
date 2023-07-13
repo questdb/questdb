@@ -74,7 +74,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
         switch (ColumnType.tagOf(operandType)) {
             case ColumnType.INT:
-            case ColumnType.IPv4:
                 return new FuncIntIsNaN(operand);
             case ColumnType.LONG:
                 return new FuncLongIsNaN(operand);

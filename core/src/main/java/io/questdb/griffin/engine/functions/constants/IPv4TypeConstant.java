@@ -38,6 +38,6 @@ public class IPv4TypeConstant extends IPv4Function implements TypeConstant {
 
     @Override
     public int getInt(Record rec) {
-        return Numbers.INT_NaN;
+        return Numbers.IPv4_NULL;
     }
 }

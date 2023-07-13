@@ -259,7 +259,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                     return value;
                 }
             }
-            return Numbers.INT_NaN;
+            return Numbers.IPv4_NULL;
         }
     }
 

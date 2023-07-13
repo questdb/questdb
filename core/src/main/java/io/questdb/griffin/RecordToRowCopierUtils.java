@@ -190,7 +190,7 @@ public class RecordToRowCopierUtils {
             asm.iconst(i);
 
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
-            if (fromColumnTypeTag == ColumnType.NULL) {
+            if (fromColumnTypeTag == ColumnType.NULL && toColumnTypeTag != ColumnType.IPv4) { // todo: insert into ipv4(null) should print null
                 fromColumnTypeTag = toColumnTypeTag;
             }
             switch (fromColumnTypeTag) {
