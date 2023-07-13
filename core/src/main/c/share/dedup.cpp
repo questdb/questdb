@@ -11,6 +11,7 @@
 #include <cassert>
 
 #pragma pack (push, 1)
+// Should match data structure described in DedupColumnCommitAddresses.java
 struct dedup_column {
     int32_t column_type;
     int32_t value_size_bytes;
@@ -89,7 +90,7 @@ int64_t merge_dedup_long_index_int_keys(
     int64_t index_pos = index_lo;
     index_t *dest = dest_index;
 
-    std::vector<bool> used_indexes = {};
+    std::vector<bool, Callocator<bool>> used_indexes = {};
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
         if (src[src_pos] < index[index_pos].ts) {
             dest[0].ts = src[src_pos];

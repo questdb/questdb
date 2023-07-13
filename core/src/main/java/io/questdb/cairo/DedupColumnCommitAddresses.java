@@ -28,7 +28,12 @@ import io.questdb.std.*;
 
 import java.io.Closeable;
 
+/**
+ * This class is used to store addresses of columns to pass to C deduplication routines.
+ * The data structure has to match dedup_column struct in dedup.cpp
+ */
 public class DedupColumnCommitAddresses implements Closeable {
+    // The data structure in below offsets has to match dedup_column struct in dedup.cpp
     private static final long COL_TYPE_32 = 0L;
     private static final long VAL_SIZE_32 = COL_TYPE_32 + 4L;
     private static final long COL_TOP_64 = VAL_SIZE_32 + 4L;
@@ -39,6 +44,8 @@ public class DedupColumnCommitAddresses implements Closeable {
     private static final long RESERVED3 = RESERVED2 + 8L;
     private static final long NULL_VAL_256 = RESERVED3 + 8L;
     private static final int RECORD_BYTES = (int) (NULL_VAL_256 + 32L);
+    // The data structure in above offsets has to match dedup_column struct in dedup.cpp
+    
     private PagedDirectLongList addresses;
     private int columnCount;
 
