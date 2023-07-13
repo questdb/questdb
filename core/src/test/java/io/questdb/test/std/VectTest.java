@@ -27,13 +27,11 @@ package io.questdb.test.std;
 import io.questdb.cairo.BinarySearch;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DedupColumnCommitAddresses;
-import io.questdb.cairo.TableUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
@@ -163,8 +161,10 @@ public class VectTest {
             // Squash keys from longs to ints
             for (int k = 0; k < keyCount; k++) {
                 DirectLongList keyList = keys.get(k);
-                for (int i = 0; i < indexLen; i++) {
-                    keyList.set(i, Numbers.encodeLowHighInts((int) keyList.get(2L * i), (int) keyList.get(2L * i + 1)));
+                for (int i = 0; i < indexLen / 2 + 1; i++) {
+                    int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
+                    int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
+                    keyList.set(i, Numbers.encodeLowHighInts(low, high));
                 }
             }
 
@@ -214,20 +214,21 @@ public class VectTest {
                         expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
                         expectedValue = tsAndKey.get(expectedValueIndex);
 
-                        long rowIndex = index.get(i * 2L + 1L);
+                        long rowIndex = getIndexChecked(index, i * 2L + 1L);
                         Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
                         Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
                         indexFound[(int) rowIndex] = true;
 
-                        Assert.assertEquals(Numbers.decodeHighInt(expectedValue), index.get(i * 2L));
+                        Assert.assertEquals(Numbers.decodeHighInt(expectedValue), getIndexChecked(index, i * 2L));
                         int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
 
                         int combinedKey = 0;
                         for (int k = 0; k < keyCount; k++) {
                             DirectLongList keyList = keys.get(k);
                             Assert.assertTrue("key index not in expected range", rowIndex >= 0 && rowIndex / 2L < keyList.size());
-                            long keyLong = keyList.get(rowIndex / 2L);
+                            long keyLong = getIndexChecked(keyList, rowIndex / 2L);
                             int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
+                            Assert.assertTrue(key < 256);
                             combinedKey = combinedKey << 8;
                             combinedKey += key;
                         }
@@ -931,16 +932,21 @@ public class VectTest {
         }
     }
 
+    private static long getIndexChecked(DirectLongList keyList, long p) {
+        Assert.assertTrue("key index not in expected range", p >= 0 && p < keyList.size());
+        return keyList.get(p);
+    }
+
     private static String printMergeIndex(DirectLongList dest) {
         StringSink sink = new StringSink();
         for (int i = 0; i < dest.size(); i += 2) {
-            long bit_index = dest.get(i + 1);
+            long bit_index = getIndexChecked(dest, i + 1);
             char bit = bit_index < 0 ? 's' : 'i';
             long index = bit_index & ~(1L << 63);
             if (i > 0) {
                 sink.put(", ");
             }
-            sink.put(dest.get(i)).put(' ').put(index).put(':').put(bit);
+            sink.put(getIndexChecked(dest, i)).put(' ').put(index).put(':').put(bit);
         }
         return sink.toString();
     }
@@ -992,8 +998,8 @@ public class VectTest {
                 sink.put(", ");
             }
 
-            long tsVal = tsIndex.get(i * 2L);
-            long value = key.get(i / 2);
+            long tsVal = getIndexChecked(tsIndex, i * 2L);
+            long value = getIndexChecked(key, i / 2);
             int keyVal = i % 2 == 1 ? Numbers.decodeHighInt(value) : Numbers.decodeLowInt(value);
             sink.put(tsVal).put(':').put(keyVal);
         }
@@ -1007,8 +1013,8 @@ public class VectTest {
                 sink.put(", ");
             }
 
-            long tsVal = ts.get(i);
-            long value = key.get(i / 2);
+            long tsVal = getIndexChecked(ts, i);
+            long value = getIndexChecked(key, i / 2);
             int keyVal = i % 2 == 1 ? Numbers.decodeHighInt(value) : Numbers.decodeLowInt(value);
             sink.put(tsVal).put(':').put(keyVal);
         }
