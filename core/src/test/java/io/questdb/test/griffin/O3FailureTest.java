@@ -71,7 +71,6 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
-
         @Override
         public boolean close(int fd) {
             if (fd > 0 && fd == this.fd) {

@@ -172,8 +172,9 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         sharedWorkerPool.halt();
+        super.tearDown();
     }
 
     private static void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {

@@ -296,7 +296,6 @@ public class SqlCompiler implements Closeable {
         return functionParser.getFunctionFactoryCache();
     }
 
-    @TestOnly
     public QueryBuilder query() {
         queryBuilder.clear();
         return queryBuilder;
@@ -358,21 +357,24 @@ public class SqlCompiler implements Closeable {
 
         final int tableNamePosition = lexer.getPosition();
         tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-        TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
+        final TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
+        final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
             String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
             tok = expectToken(lexer, expectedTokenDescription);
 
             if (SqlKeywords.isAddKeyword(tok)) {
-                executionContext.getSecurityContext().authorizeAlterTableAddColumn(tableToken);
-                return alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
+                securityContext.authorizeAlterTableAddColumn(tableToken);
+                final CompiledQuery cq = alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
+                securityContext.onColumnsAdded(tableToken, cq.getAlterOperation().getExtraStrInfo());
+                return cq;
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
                     return alterTableDropColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
                 } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                    executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
+                    securityContext.authorizeAlterTableDropPartition(tableToken);
                     return alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
@@ -380,14 +382,14 @@ public class SqlCompiler implements Closeable {
             } else if (SqlKeywords.isRenameKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
-                    return alterTableRenameColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
+                    return alterTableRenameColumn(securityContext, tableNamePosition, tableToken, tableMetadata);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
                 }
             } else if (SqlKeywords.isAttachKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
                 if (SqlKeywords.isPartitionKeyword(tok)) {
-                    executionContext.getSecurityContext().authorizeAlterTableAttachPartition(tableToken);
+                    securityContext.authorizeAlterTableAttachPartition(tableToken);
                     return alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -395,7 +397,7 @@ public class SqlCompiler implements Closeable {
             } else if (SqlKeywords.isDetachKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
                 if (SqlKeywords.isPartitionKeyword(tok)) {
-                    executionContext.getSecurityContext().authorizeAlterTableDetachPartition(tableToken);
+                    securityContext.authorizeAlterTableDetachPartition(tableToken);
                     return alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -429,7 +431,7 @@ public class SqlCompiler implements Closeable {
                         }
 
                         return alterTableColumnAddIndex(
-                                executionContext.getSecurityContext(),
+                                securityContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
@@ -446,7 +448,7 @@ public class SqlCompiler implements Closeable {
                             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
                         }
                         return alterTableColumnDropIndex(
-                                executionContext.getSecurityContext(),
+                                securityContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
@@ -455,7 +457,7 @@ public class SqlCompiler implements Closeable {
                         );
                     } else if (SqlKeywords.isCacheKeyword(tok)) {
                         return alterTableColumnCacheFlag(
-                                executionContext.getSecurityContext(),
+                                securityContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnName,
@@ -464,7 +466,7 @@ public class SqlCompiler implements Closeable {
                         );
                     } else if (SqlKeywords.isNoCacheKeyword(tok)) {
                         return alterTableColumnCacheFlag(
-                                executionContext.getSecurityContext(),
+                                securityContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnName,
@@ -536,7 +538,7 @@ public class SqlCompiler implements Closeable {
                 }
                 return alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
-                executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
+                securityContext.authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
                 if (SqlKeywords.isPartitionsKeyword(tok)) {
                     return compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
@@ -2787,9 +2789,9 @@ public class SqlCompiler implements Closeable {
     @SuppressWarnings({"unused"})
     protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
     }
 
     @SuppressWarnings({"unused"})
@@ -3347,7 +3349,7 @@ public class SqlCompiler implements Closeable {
                     if (tok == null || Chars.equals(tok, ';')) {
                         return dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
                     }
-                    throw parseErrorUnexpected("[;]", tok);
+                    return unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
                 }
 
                 // DROP ALL TABLES [;]
@@ -3358,11 +3360,11 @@ public class SqlCompiler implements Closeable {
                         if (tok == null || Chars.equals(tok, ';')) {
                             return dropAllTables(executionContext);
                         }
-                        throw parseErrorUnexpected("[;]", tok);
+                        throw parseErrorExpected("[;]");
                     }
                 }
             }
-            throw parseErrorUnexpected("TABLE table-name or ALL TABLES", tok);
+            return unknownDropStatement(executionContext, tok);
         }
 
         private boolean isSystemTable(TableToken tableToken) {
@@ -3372,14 +3374,6 @@ public class SqlCompiler implements Closeable {
 
         private SqlException parseErrorExpected(CharSequence expected) {
             return SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
-        }
-
-        private SqlException parseErrorUnexpected(CharSequence expected, CharSequence tok) {
-            SqlException exception = SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
-            if (tok != null) {
-                exception.put(", found unexpected [token='").put(tok).put("']");
-            }
-            return exception;
         }
     }
 
@@ -3403,6 +3397,11 @@ public class SqlCompiler implements Closeable {
 
         public CompiledQuery compile(SqlExecutionContext executionContext) throws SqlException {
             return SqlCompiler.this.compile(sink, executionContext);
+        }
+
+        @Override
+        public String toString() {
+            return sink.toString();
         }
     }
 
