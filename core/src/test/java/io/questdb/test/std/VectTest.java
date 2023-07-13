@@ -197,7 +197,12 @@ public class VectTest {
                             keyCount,
                             colBuffs.getAddress(dedupColBuffPtr)
                     );
-                    Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    if (distinctKeys.size() == indexLen && dedupCount == -2) {
+                        // No duplicates detected and that's correct. Assert that index is not messed up.
+                        dedupCount = indexLen;
+                    } else {
+                        Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    }
 
                     // assert indexes of the rows are distinct and in correct range
                     boolean[] indexFound = new boolean[(int) indexLen];

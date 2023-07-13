@@ -169,8 +169,8 @@ inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_
            scan_down(data, value, low, high + 1);
 }
 
-template<typename T>
-int64_t branch_free_search_lower(const T* array, const int64_t count, T x) {
+template<typename T, typename V>
+int64_t branch_free_search_lower(const T* array, const int64_t count, V x) {
     const T *base = array;
     int64_t n = count;
     while (n > 1) {

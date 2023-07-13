@@ -84,7 +84,7 @@ inline int64_t branch_free_search(int64_t searchIndex, const index_t *array, con
         base = (diff > 0) ? base + half : base;
         n -= half;
     }
-    if (compare(searchIndex, (*base).i) == 0) {
+    if (compare(searchIndex, base[0].i) == 0) {
         return base - array;
     }
     if (base - array + 1 < count && compare(searchIndex, base[1].i) == 0) {
@@ -110,6 +110,7 @@ int64_t merge_dedup_long_index_int_keys(
 
     bit_vector used_indexes = {};
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
+        // Perform normal merge until the timestamp matches.
         if (src[src_pos] < index[index_pos].ts) {
             dest[0].ts = src[src_pos];
             dest[0].i = src_pos | (1ull << 63);
@@ -123,15 +124,17 @@ int64_t merge_dedup_long_index_int_keys(
             // index_ts == src_ts
             const uint64_t conflict_ts = src[src_pos];
             index_t *const conflict_index_start = &index[index_pos];
-            int64_t conflict_end_pos = index_pos;
 
             // Find end of the conflict in index
-            while (conflict_end_pos <= index_hi_incl && index[conflict_end_pos].ts == conflict_ts) {
-                conflict_end_pos++;
-            }
+            const auto conflict_end_pos = index_pos +
+                                          branch_free_search_lower<index_t>(&index[index_pos],
+                                                                            index_hi_incl - index_pos + 1,
+                                                                            conflict_ts + 1);
 
-            // binary search for index for every source record
+            // binary search for matching index record for every source record
             const int64_t binary_search_len = conflict_end_pos - index_pos;
+
+            // track all found index records
             used_indexes.reset(binary_search_len);
             while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
                 dest[0].ts = conflict_ts;
@@ -143,17 +146,15 @@ int64_t merge_dedup_long_index_int_keys(
                 } else {
                     dest[0].i = src_pos | (1ull << 63);
                 }
-                src_pos++;
-                dest++;
+                ++src_pos;
+                ++dest;
             }
 
-            // add all records with no matches
-            for (auto i_pos = index_pos; i_pos < conflict_end_pos; i_pos++) {
-                if (!used_indexes[i_pos - index_pos]) {
-                    // not matched
-                    *dest = index[i_pos];
-                    dest++;
-                }
+            // add all index records with no matches
+            int64_t next = -1;
+            while ((next = used_indexes.next_unset(next + 1)) < binary_search_len) {
+                *dest = index[index_pos + next];
+                ++dest;
             }
             index_pos = conflict_end_pos;
         }
@@ -551,37 +552,43 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                     auto compare_1 = [&](const int64_t l, const int64_t r) {
                         return compare_by_rowid((dedup_column_t<int8_t> *) col_key, l, r);
                     };
-                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_1);
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp,
+                                                                  compare_1);
                 }
                 case 2: {
                     auto compare_2 = [&](const int64_t l, const int64_t r) {
                         return compare_by_rowid((dedup_column_t<int16_t> *) col_key, l, r);
                     };
-                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_2);
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp,
+                                                                  compare_2);
                 }
                 case 4: {
                     auto compare_4 = [&](const int64_t l, const int64_t r) {
                         return compare_by_rowid((dedup_column_t<int32_t> *) col_key, l, r);
                     };
-                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_4);
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp,
+                                                                  compare_4);
                 }
                 case 8: {
                     auto compare_8 = [&](const int64_t l, const int64_t r) {
                         return compare_by_rowid((dedup_column_t<int64_t> *) col_key, l, r);
                     };
-                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_8);
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp,
+                                                                  compare_8);
                 }
                 case 16: {
                     auto compare_16 = [&](const int64_t l, const int64_t r) {
                         return compare_by_rowid((dedup_column_t<__int128> *) col_key, l, r);
                     };
-                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_16);
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp,
+                                                                  compare_16);
                 }
                 case 32: {
                     auto compare_32 = [&](const int64_t l, const int64_t r) {
                         return compare_by_rowid((dedup_column_t<int256> *) col_key, l, r);
                     };
-                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_32);
+                    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp,
+                                                                  compare_32);
                 }
                 default:
                     static_assert(false || "unsupported column type");

@@ -24,6 +24,7 @@
 
 #ifndef QUESTDB_BIT_VECTOR_H
 #define QUESTDB_BIT_VECTOR_H
+
 #include "../share/simd.h"
 
 // Custom implementation of std::vector<bool>
@@ -32,44 +33,63 @@ template<typename T>
 class bit_vector_t {
 public:
     bit_vector_t() {
-        size = 0ll;
-        impl = nullptr;
+        size_elements = 0ll;
+        bit_array = nullptr;
     }
 
     ~bit_vector_t() {
-        if (size > 0 && impl != nullptr) {
-            impl = static_cast<T *>(realloc(impl, 0));
-            size = 0;
+        if (size_elements > 0 && bit_array != nullptr) {
+            bit_array = static_cast<T *>(realloc(bit_array, 0));
+            size_elements = 0;
         }
     }
 
-    void reset(const size_t length) {
-        const auto byte_len = (length + sizeof(T) - 1) / sizeof(T) * sizeof(T);
-        if (size < byte_len) {
-            impl = static_cast<T *>(realloc(impl, byte_len));
-            size = byte_len;
+    void reset(const size_t length_bits) {
+        const auto elements = (length_bits + bits_per_element - 1) / bits_per_element;
+        if (size_elements < elements) {
+            bit_array = static_cast<T *>(realloc(bit_array, elements * sizeof(T)));
+            size_elements = elements;
         }
-        __MEMSET(impl, 0, byte_len);
+        __MEMSET(bit_array, 0, elements * sizeof(T));
     }
 
     inline void set(const int64_t index) {
-        const auto pos = index / sizeof(T);
-        const auto bit = index & (sizeof(T) - 1);
-        impl[pos] |= (1 << bit);
+        const auto pos = index / bits_per_element;
+        const auto bit = index & (bits_per_element - 1);
+        bit_array[pos] |= (1 << bit);
     }
 
     inline bool operator[](const int64_t index) const {
-        const auto pos = index / sizeof(T);
-        const auto bit = index & (sizeof(T) - 1);
-        return impl[pos] & (1 << bit);
+        const auto pos = index / bits_per_element;
+        const auto bit = index & (bits_per_element - 1);
+        return bit_array[pos] & (1 << bit);
+    }
+
+    [[nodiscard]] inline int64_t next_unset(const int64_t from) const {
+        auto pos = from / bits_per_element;
+        auto bit = from & (bits_per_element - 1);
+
+        for (; pos < size_elements; ++pos) {
+            T val = bit_array[pos];
+            val >>= bit;
+            for (; bit < bits_per_element; ++bit) {
+                if ((val & 1) == 0) {
+                    return pos * bits_per_element + bit;
+                }
+                val >>= 1;
+            }
+            bit = 0;
+        }
+        return size_elements * bits_per_element;
     }
 
 private:
-    T *impl;
-    size_t size;
+    constexpr static size_t bits_per_element = sizeof(T) * 8;
+    T *bit_array;
+    size_t size_elements;
 };
 
 // Use 32bit storage for the bits by default.
-typedef bit_vector_t<uint32_t > bit_vector;
+typedef bit_vector_t<uint32_t> bit_vector;
 
 #endif //QUESTDB_BIT_VECTOR_H
