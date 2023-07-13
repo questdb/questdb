@@ -151,11 +151,12 @@ int64_t merge_dedup_long_index_int_keys(
             }
 
             // add all index records with no matches
-            int64_t next = -1;
-            while ((next = used_indexes.next_unset(next + 1)) < binary_search_len) {
-                *dest = index[index_pos + next];
-                ++dest;
-            }
+            used_indexes.foreach_unset(
+                    [&](const int64_t unused_index) {
+                        *dest = conflict_index_start[unused_index];
+                        ++dest;
+                    }
+            );
             index_pos = conflict_end_pos;
         }
     }

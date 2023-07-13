@@ -27,29 +27,38 @@
 
 #include "../share/simd.h"
 
+template<auto Start, auto End, class F>
+constexpr void constexpr_for(F &&f) {
+    if constexpr (Start < End) {
+        f(std::integral_constant<decltype(Start), Start>());
+        constexpr_for<Start + 1, End>(f);
+    }
+}
+
 // Custom implementation of std::vector<bool>
 // which is a problem to link on Windows, and in general std::vector<bool> may be dropped from STL
 template<typename T>
 class bit_vector_t {
 public:
     bit_vector_t() {
-        size_elements = 0ll;
+        size_elements = length_bits = 0ll;
         bit_array = nullptr;
     }
 
     ~bit_vector_t() {
-        if (size_elements > 0 && bit_array != nullptr) {
+        if (length_bits > 0 && bit_array != nullptr) {
             bit_array = static_cast<T *>(realloc(bit_array, 0));
-            size_elements = 0;
+            length_bits = 0;
         }
     }
 
-    void reset(const size_t length_bits) {
-        const auto elements = (length_bits + bits_per_element - 1) / bits_per_element;
+    void reset(const size_t bits) {
+        const auto elements = calc_elements(bits);
         if (size_elements < elements) {
             bit_array = static_cast<T *>(realloc(bit_array, elements * sizeof(T)));
             size_elements = elements;
         }
+        length_bits = bits;
         __MEMSET(bit_array, 0, elements * sizeof(T));
     }
 
@@ -59,34 +68,35 @@ public:
         bit_array[pos] |= (1 << bit);
     }
 
-    inline bool operator[](const int64_t index) const {
-        const auto pos = index / bits_per_element;
-        const auto bit = index & (bits_per_element - 1);
-        return bit_array[pos] & (1 << bit);
-    }
-
-    [[nodiscard]] inline int64_t next_unset(const int64_t from) const {
-        auto pos = from / bits_per_element;
-        auto bit = from & (bits_per_element - 1);
-
-        for (; pos < size_elements; ++pos) {
+    template<typename execute_on_unset>
+    inline void foreach_unset(execute_on_unset on_unset) const {
+        auto size = calc_elements(length_bits);
+        for (size_t pos = 0; pos < size; ++pos) {
             T val = bit_array[pos];
-            val >>= bit;
-            for (; bit < bits_per_element; ++bit) {
-                if ((val & 1) == 0) {
-                    return pos * bits_per_element + bit;
-                }
-                val >>= 1;
-            }
-            bit = 0;
+
+            // Force compiler to unroll the loop for each bit.
+            constexpr_for<0, bits_per_element>(
+                    [&](auto bit) {
+                        constexpr T mask = (1 << bit);
+                        if ((val & mask) == 0) {
+                            auto bit_index = pos * bits_per_element + bit;
+                            if (bit_index < length_bits) {
+                                on_unset(bit_index);
+                            }
+                        }
+                    });
         }
-        return size_elements * bits_per_element;
     }
 
 private:
     constexpr static size_t bits_per_element = sizeof(T) * 8;
     T *bit_array;
+    size_t length_bits;
     size_t size_elements;
+
+    [[nodiscard]] inline size_t calc_elements(const size_t bits) const {
+        return (bits + bits_per_element - 1) / bits_per_element;
+    }
 };
 
 // Use 32bit storage for the bits by default.
