@@ -224,7 +224,9 @@ public class VectTest {
 
                         int combinedKey = 0;
                         for (int k = 0; k < keyCount; k++) {
-                            long keyLong = keys.get(k).get(rowIndex / 2L);
+                            DirectLongList keyList = keys.get(k);
+                            Assert.assertTrue("key index not in expected range", rowIndex >= 0 && rowIndex / 2L < keyList.size());
+                            long keyLong = keyList.get(rowIndex / 2L);
                             int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
                             combinedKey = combinedKey << 8;
                             combinedKey += key;
