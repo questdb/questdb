@@ -211,23 +211,4 @@ int64_t branch_free_search_upper(const T* array, const int64_t count, T x) {
     return (*base <= x) + base - array;
 }
 
-
-template <class T>
-struct Callocator {
-    typedef T value_type;
-
-    Callocator() = default;
-
-    template <class U>
-    constexpr Callocator(const Callocator<U>&) noexcept {}
-
-    [[nodiscard]] T* allocate(std::size_t n) {
-        auto p = static_cast<T*>(malloc(n * sizeof(T)));
-        return p;
-    }
-
-    void deallocate(T* p, std::size_t n) noexcept {
-        free(p);
-    }
-};
 #endif //UTIL_H

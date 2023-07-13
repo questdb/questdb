@@ -1,13 +1,33 @@
-//
-// Created by Alex Pelagenko on 30/06/2023.
-//
-
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2023 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
 #include "jni.h"
 #include <cstring>
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
-#include <vector>
+#include "vector_bool.h"
+#include <algorithm>
 
 #pragma pack (push, 1)
 // Should match data structure described in DedupColumnCommitAddresses.java
@@ -23,7 +43,6 @@ struct dedup_column {
     char null_value[32];
 };
 #pragma pack(pop)
-
 
 template<typename T>
 struct dedup_column_t : dedup_column {
@@ -89,7 +108,7 @@ int64_t merge_dedup_long_index_int_keys(
     int64_t index_pos = index_lo;
     index_t *dest = dest_index;
 
-    std::vector<bool, Callocator<bool>> used_indexes = {};
+    vector_bool used_indexes = {};
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
         if (src[src_pos] < index[index_pos].ts) {
             dest[0].ts = src[src_pos];
@@ -113,13 +132,13 @@ int64_t merge_dedup_long_index_int_keys(
 
             // binary search for index for every source record
             const int64_t binary_search_len = conflict_end_pos - index_pos;
-            used_indexes.assign(binary_search_len, false);
+            used_indexes.reset(binary_search_len);
             while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
                 dest[0].ts = conflict_ts;
                 const int64_t matched_index = branch_free_search(src_pos, conflict_index_start, binary_search_len,
                                                                  compare);
                 if (matched_index > -1) {
-                    used_indexes[matched_index] = true;
+                    used_indexes.set(matched_index, true);
                     dest[0].i = conflict_index_start[matched_index].i;
                 } else {
                     dest[0].i = src_pos | (1ull << 63);
@@ -240,15 +259,8 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
 }
 
 template<typename diff_lambda>
-inline void merge_sort_slice(
-        const index_t *src1,
-        const index_t *src2,
-        index_t *dest,
-        const int64_t &src1_len,
-        const int64_t &src2_len,
-        const index_t *end,
-        const diff_lambda diff_l
-) {
+inline void merge_sort_slice(const index_t *src1, const index_t *src2, index_t *dest, const int64_t &src1_len,
+                             const int64_t &src2_len, const diff_lambda diff_l) {
 
     int64_t i1 = 0, i2 = 0;
 
@@ -299,8 +311,7 @@ inline index_t *merge_sort(
                     &source[i + slice_len],
                     &dest[i],
                     std::min(slice_len, end - i),
-                    std::max((int64_t)0, std::min(slice_len, end - (i + slice_len))),
-                    &dest[end],
+                    std::max((int64_t) 0, std::min(slice_len, end - (i + slice_len))),
                     diff_l
             );
         }
@@ -464,6 +475,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                                        index_tmp, compare_32);
             }
             default:
+                static_assert(false || "unsupported column type");
                 return -1;
         }
     }
@@ -572,6 +584,7 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                     return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, compare_32);
                 }
                 default:
+                    static_assert(false || "unsupported column type");
                     return -1;
             }
         }
