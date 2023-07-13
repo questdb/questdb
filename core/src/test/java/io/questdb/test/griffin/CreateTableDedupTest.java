@@ -72,10 +72,10 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
-            compile("create table a (ts timestamp, i int, s symbol, l long) timestamp(ts) partition by day wal");
+            compile("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
             String alterPrefix = "alter table a ";
 
-            assertCreate(alterPrefix + "deduplicate UPSERT KEYS(l);", "UPSERT KEYS(l)", "deduplicate key column can only be INT or SYMBOL type");
+            assertCreate(alterPrefix + "deduplicate UPSERT KEYS(ts, str);", "UPSERT KEYS(ts, str)", "deduplicate key column can only be fixed size column [column=str, type=STRING]");
             assertCreate(alterPrefix + "deduplicate UPSERT KEYS", "UPSERT KEYS", "deduplication column list expected");
             assertCreate(alterPrefix + "deduplicate UPSERT KEYS (;", "UPSERT KEYS (;", "literal expected");
             assertCreate(alterPrefix + "deduplicate UPSERT KEYS (a)", "UPSERT KEYS (a)", "deduplicate column not found ");
@@ -89,9 +89,9 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
-            String createPrefix = "create table a (ts timestamp, i int, s symbol, l long)";
+            String createPrefix = "create table a (ts timestamp, i int, s symbol, l long, str string)";
             assertCreate(createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);", "deduplicate ", "deduplication is possible only on WAL tables");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (l);", "KEYS (l", "deduplicate key column can only be INT or SYMBOL type [column=l, type=LONG]");
+            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (l, str);", "KEYS (l, s", "deduplicate key column can only be fixed size column [column=str, type=STRING]");
             assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;", "KEYS (;", "literal expected");
             assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);", "KEYS (a", "deduplicate column not found [column=a]");
             assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);", "KEYS (s)", "deduplicate key list must include dedicated timestamp column");

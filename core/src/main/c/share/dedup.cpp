@@ -26,7 +26,7 @@
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
-#include "vector_bool.h"
+#include "bit_vector.h"
 #include <algorithm>
 
 #pragma pack (push, 1)
@@ -108,7 +108,7 @@ int64_t merge_dedup_long_index_int_keys(
     int64_t index_pos = index_lo;
     index_t *dest = dest_index;
 
-    vector_bool used_indexes = {};
+    bit_vector used_indexes = {};
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
         if (src[src_pos] < index[index_pos].ts) {
             dest[0].ts = src[src_pos];
@@ -138,7 +138,7 @@ int64_t merge_dedup_long_index_int_keys(
                 const int64_t matched_index = branch_free_search(src_pos, conflict_index_start, binary_search_len,
                                                                  compare);
                 if (matched_index > -1) {
-                    used_indexes.set(matched_index, true);
+                    used_indexes.set(matched_index);
                     dest[0].i = conflict_index_start[matched_index].i;
                 } else {
                     dest[0].i = src_pos | (1ull << 63);

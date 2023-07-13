@@ -22,73 +22,54 @@
  *
  ******************************************************************************/
 
-#ifndef QUESTDB_VECTOR_BOOL_H
-#define QUESTDB_VECTOR_BOOL_H
-
-#if !defined(_WIN32)
-#include <vector>
-
-class vector_bool {
-public:
-    inline void reset(int64_t length) {
-        impl.assign(length, false);
-    }
-
-    inline void set(const int64_t& index, const bool & value) {
-        impl[index] = value;
-    }
-
-    inline bool operator[](const int64_t& index) const {
-        return impl[index];
-    }
-private:
-    std::vector<bool> impl;
-};
-
-#else
-
-// custom implementation of std::vector<bool>
-// which is a problem to link on Windows
-
+#ifndef QUESTDB_BIT_VECTOR_H
+#define QUESTDB_BIT_VECTOR_H
 #include "../share/simd.h"
-class vector_bool {
+
+// Custom implementation of std::vector<bool>
+// which is a problem to link on Windows, and in general std::vector<bool> may be dropped from STL
+template<typename T>
+class bit_vector_t {
 public:
-    vector_bool() {
+    bit_vector_t() {
         size = 0ll;
         impl = nullptr;
     }
 
-    ~vector_bool() {
+    ~bit_vector_t() {
         if (size > 0 && impl != nullptr) {
-            free(impl);
+            impl = static_cast<T *>(realloc(impl, 0));
             size = 0;
         }
     }
 
-    void reset(int64_t length) {
-        if (size < length) {
-            if (size > 0) {
-                size = length;
-                impl = (bool*)realloc(impl, size * sizeof(bool));
-            } else {
-                size = length;
-                impl = (bool*)malloc(size * sizeof(bool));
-            }
+    void reset(const size_t length) {
+        const auto byte_len = (length + sizeof(T) - 1) / sizeof(T) * sizeof(T);
+        if (size < byte_len) {
+            impl = static_cast<T *>(realloc(impl, byte_len));
+            size = byte_len;
         }
-        __MEMSET(impl, 0, length * sizeof(bool));
+        __MEMSET(impl, 0, byte_len);
     }
 
-    inline void set(const int64_t& index, const bool & value) {
-        impl[index] = value;
+    inline void set(const int64_t index) {
+        const auto pos = index / sizeof(T);
+        const auto bit = index & (sizeof(T) - 1);
+        impl[pos] |= (1 << bit);
     }
 
-    inline bool operator[](const int64_t& index) const {
-        return impl[index];
+    inline bool operator[](const int64_t index) const {
+        const auto pos = index / sizeof(T);
+        const auto bit = index & (sizeof(T) - 1);
+        return impl[pos] & (1 << bit);
     }
+
 private:
-    bool* impl;
+    T *impl;
     size_t size;
 };
-#endif //ifndef WIN32
 
-#endif //QUESTDB_VECTOR_BOOL_H
+// Use 32bit storage for the bits by default.
+typedef bit_vector_t<uint32_t > bit_vector;
+
+#endif //QUESTDB_BIT_VECTOR_H
