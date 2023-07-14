@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 public abstract class IPv4Function implements ScalarFunction{
 
@@ -85,9 +86,6 @@ public abstract class IPv4Function implements ScalarFunction{
         throw new UnsupportedOperationException();
     }
 
-//    @Override
-//    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
-
     @Override
     public long getLong(Record rec) { throw new UnsupportedOperationException(); }
 
@@ -127,13 +125,11 @@ public abstract class IPv4Function implements ScalarFunction{
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    public final CharSequence getStr(Record rec) { throw new UnsupportedOperationException(); }
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
+        Numbers.intToIPv4Sink(sink, getIPv4(rec));
     }
 
     @Override

@@ -95,17 +95,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.1\tnull\n");
     }
 
-//    @Test
-//    public void testUpdateTableIPv4ToString() throws Exception {
-//        compiler.compile("create table test (col1 string, col2 ipv4)", sqlExecutionContext);
-//        executeInsert("insert into test values('0.0.0.1', null)");
-//        executeInsert("insert into test values('0.0.0.2', null)");
-//        executeInsert("insert into test values('0.0.0.3', null)");
-//        executeInsert("insert into test values('0.0.0.4', null)");
-//        executeInsert("insert into test values('0.0.0.5', null)");
-//        //compiler.compile("alter table test add col2 ipv4", sqlExecutionContext);
-//        compiler.compile("update test set col2 = col1", sqlExecutionContext);
-//    }
+    @Test
+    public void testUpdateTableIPv4ToString() throws Exception {
+        compiler.compile("create table test (col1 string)", sqlExecutionContext);
+        executeInsert("insert into test values('0.0.0.1')");
+        executeInsert("insert into test values('0.0.0.2')");
+        executeInsert("insert into test values('0.0.0.3')");
+        executeInsert("insert into test values('0.0.0.4')");
+        executeInsert("insert into test values('0.0.0.5')");
+        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w,true);
+        }
+        try(TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
+            op.withContext(sqlExecutionContext);
+            op.apply(w, true);
+        }
+        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
+                "0.0.0.1\t0.0.0.1\n" +
+                "0.0.0.2\t0.0.0.2\n" +
+                "0.0.0.3\t0.0.0.3\n" +
+                "0.0.0.4\t0.0.0.4\n" +
+                "0.0.0.5\t0.0.0.5\n");
+    }
 
     @Test
     public void testUpdateTableStringToIPv4() throws Exception {
