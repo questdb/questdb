@@ -103,12 +103,11 @@ class WalWriterEvents implements Closeable {
                 eventMem.putChar(function.getChar(null));
                 break;
             case ColumnType.INT:
-            case ColumnType.IPv4:
                 eventMem.putInt(function.getInt(null));
                 break;
-//            case ColumnType.IPv4:
-//                eventMem.putInt(function.getIPv4(null));
-//                break;
+            case ColumnType.IPv4:
+                eventMem.putInt(function.getIPv4(null));
+                break;
             case ColumnType.GEOINT:
                 eventMem.putInt(function.getGeoInt(null));
                 break;
