@@ -766,10 +766,10 @@ public class CairoEngine implements Closeable, WriterSource {
                                 configuration.getFilesFacade(),
                                 toTableToken.getTableName()
                         );
-                        securityContext.onTableRenamed(fromTableName, toTableName);
                     } finally {
                         unlock(securityContext, fromTableToken, null, false);
                     }
+                    securityContext.onTableRenamed(fromTableName, toTableName);
                     tableNameRegistry.dropTable(fromTableToken);
                 } else {
                     LOG.error()
