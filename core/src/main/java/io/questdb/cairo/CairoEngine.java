@@ -737,6 +737,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                 memory, configuration.getFilesFacade(),
                                 toTableToken.getTableName()
                         );
+                        securityContext.onTableRenamed(fromTableName, toTableName);
                     } finally {
                         if (renamed) {
                             tableNameRegistry.replaceAlias(fromTableToken, toTableToken);
@@ -754,7 +755,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             .put(", toTableName=").put(toTableName)
                             .put(']');
                 }
-            } else {
+            } else { // non-wal table
                 String lockedReason = lock(fromTableToken, "renameTable");
                 if (lockedReason == null) {
                     try {
@@ -765,6 +766,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                 configuration.getFilesFacade(),
                                 toTableToken.getTableName()
                         );
+                        securityContext.onTableRenamed(fromTableName, toTableName);
                     } finally {
                         unlock(securityContext, fromTableToken, null, false);
                     }

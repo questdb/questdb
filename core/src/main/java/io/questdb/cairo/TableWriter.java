@@ -661,7 +661,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        return alterOp.apply(this, contextAllowsAnyStructureChanges);
+        long result = alterOp.apply(this, contextAllowsAnyStructureChanges);
+        alterOp.notifySecurityContext();
+        return result;
     }
 
     @Override

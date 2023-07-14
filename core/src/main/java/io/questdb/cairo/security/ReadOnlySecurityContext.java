@@ -264,10 +264,20 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void onColumnRenamed(CharSequence tableName, CharSequence fromColumnName, CharSequence toColumnName) {
+
+    }
+
+    @Override
     public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     @Override
     public void onTableCreated(TableToken tableToken) {
+    }
+
+    @Override
+    public void onTableRenamed(CharSequence fromTableName, CharSequence toTableName) {
+
     }
 }

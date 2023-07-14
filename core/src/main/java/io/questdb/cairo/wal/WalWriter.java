@@ -736,6 +736,10 @@ public class WalWriter implements TableWriterAPI {
             LOG.error().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
         }
+
+        // if applicable - trigger security context action to update permissions 
+        alterOp.notifySecurityContext();
+
         return txn;
     }
 

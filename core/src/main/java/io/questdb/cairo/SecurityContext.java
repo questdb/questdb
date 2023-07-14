@@ -131,7 +131,11 @@ public interface SecurityContext {
 
     void onColumnAdded(TableToken tableToken, CharSequence columnName);
 
+    void onColumnRenamed(CharSequence tableName, CharSequence fromColumnName, CharSequence toColumnName);
+
     void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
 
     void onTableCreated(TableToken tableToken);
+
+    void onTableRenamed(CharSequence fromTableName, CharSequence toTableName);
 }
