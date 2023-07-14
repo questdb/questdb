@@ -1632,7 +1632,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3ShiftLagRowsUp(timestampIndex, o3Hi - o3Lo, o3Lo, walLagRowCount, true, this.o3MoveWalFromFilesToLastPartitionRef);
                     walLagRowCount += commitRowCount;
                     txWriter.setLagRowCount((int) walLagRowCount);
-                    txWriter.setLagOrdered(txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin);
+                    txWriter.setLagOrdered(!isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin);
                     txWriter.setLagMinTimestamp(newMinLagTs);
                     txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
 
@@ -2440,8 +2440,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean commitTerminates) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
-        if (!isDeduplicationEnabled()
-                && txWriter.getLagRowCount() > 0
+        if (txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
                 && txWriter.getMaxTimestamp() <= lagMinTimestamp
                 && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp) {

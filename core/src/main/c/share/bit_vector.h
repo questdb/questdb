@@ -26,14 +26,7 @@
 #define QUESTDB_BIT_VECTOR_H
 
 #include "../share/simd.h"
-
-template<auto Start, auto End, class F>
-constexpr void constexpr_for(F &&f) {
-    if constexpr (Start < End) {
-        f(std::integral_constant<decltype(Start), Start>());
-        constexpr_for<Start + 1, End>(f);
-    }
-}
+#include <algorithm>
 
 // Custom implementation of std::vector<bool>
 // which is a problem to link on Windows, and in general std::vector<bool> may be dropped from STL
@@ -70,26 +63,25 @@ public:
 
     template<typename execute_on_unset>
     inline void foreach_unset(execute_on_unset on_unset) const {
-        auto size = calc_elements(length_bits);
-        for (size_t pos = 0; pos < size; ++pos) {
-            T val = bit_array[pos];
+        const auto size = calc_elements(length_bits);
+        for (size_t el = 0; el < size; ++el) {
+            T val = bit_array[el];
 
-            // Force compiler to unroll the loop for each bit.
-            constexpr_for<0, bits_per_element>(
-                    [&](auto bit) {
-                        constexpr T mask = (1 << bit);
-                        if ((val & mask) == 0) {
-                            auto bit_index = pos * bits_per_element + bit;
-                            if (bit_index < length_bits) {
-                                on_unset(bit_index);
-                            }
-                        }
-                    });
+            if (val != all_set) {
+                const auto bits_remaining = std::min(bits_per_element, length_bits - el * bits_per_element);
+                for (size_t bit = 0; bit < bits_remaining; bit++) {
+                    if ((val & 1) == 0) {
+                        on_unset(el * bits_per_element + bit);
+                    }
+                    val >>= 1;
+                }
+            }
         }
     }
 
 private:
     constexpr static size_t bits_per_element = sizeof(T) * 8;
+    constexpr static T all_set = ~((T) 0);
     T *bit_array;
     size_t length_bits;
     size_t size_elements;
