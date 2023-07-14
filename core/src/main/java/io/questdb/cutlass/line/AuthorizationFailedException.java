@@ -24,24 +24,23 @@
 
 package io.questdb.cutlass.line;
 
-import org.jetbrains.annotations.TestOnly;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.StringSink;
 
-import java.io.Closeable;
+public class AuthorizationFailedException extends Exception {
+    private static final ThreadLocal<AuthorizationFailedException> tlException = new ThreadLocal<>(AuthorizationFailedException::new);
+    protected final StringSink message = new StringSink();
 
-public interface LineChannel extends Closeable {
-    void close();
+    public static AuthorizationFailedException instance(Throwable reason) {
+        AuthorizationFailedException ex = tlException.get();
+        assert (ex = new AuthorizationFailedException()) != null;
+        ex.message.clear();
+        ex.message.put(reason);
+        return ex;
+    }
 
-    int errno();
-
-    int receive(long ptr, int len);
-
-    void send(long ptr, int len);
-
-    /**
-     * Returns true if a disconnect happened, false otherwise. Implemented only for plain TCP channel.
-     */
-    @TestOnly
-    default boolean testConnection(long ptr, int len) {
-        return false;
+    @Override
+    public String getMessage() {
+        return message.toString();
     }
 }

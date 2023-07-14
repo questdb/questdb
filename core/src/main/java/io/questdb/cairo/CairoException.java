@@ -57,15 +57,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException critical(int errno) {
-        CairoException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
-        ex.message.clear();
-        ex.errno = errno;
-        ex.cacheable = false;
-        ex.interruption = false;
-        ex.authorizationError = false;
-        return ex;
+        return instance(errno);
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
@@ -104,6 +96,18 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static boolean errnoRemovePathDoesNotExist(int errno) {
         return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    }
+
+    public static CairoException instance(int errno) {
+        CairoException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new CairoException()) != null;
+        ex.message.clear();
+        ex.errno = errno;
+        ex.cacheable = false;
+        ex.interruption = false;
+        ex.authorizationError = false;
+        return ex;
     }
 
     public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {

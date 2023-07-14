@@ -31,6 +31,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.line.AuthorizationFailedException;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -311,6 +312,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // and all the resolved column indexes have been invalidated
                     }
                 }
+            } catch (AuthorizationFailedException ex) {
+                throw CairoException.authorization().put(ex.getMessage());
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -347,7 +350,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob,
             LineTcpParser parser,
             TableUpdateDetails tud
-    ) throws CommitFailedException, MetadataChangedException {
+    ) throws AuthorizationFailedException, CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
@@ -653,10 +656,10 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             r.append();
             tud.commitIfMaxUncommittedRowsCountReached();
-        } catch (CommitFailedException commitFailedException) {
-            throw commitFailedException;
-        } catch (CairoException th) {
-            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
+        } catch (AuthorizationFailedException | CommitFailedException ex) {
+            throw ex;
+        } catch (CairoException ex) {
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(ex.getFlyweightMessage()).I$();
             if (r != null) {
                 r.cancel();
             }

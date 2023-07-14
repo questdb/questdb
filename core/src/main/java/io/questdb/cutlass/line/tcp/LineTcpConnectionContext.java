@@ -33,6 +33,7 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.line.AuthorizationFailedException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -144,7 +145,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         clear();
     }
 
-    public long commitWalTables(long wallClockMillis) {
+    public long commitWalTables(long wallClockMillis) throws AuthorizationFailedException {
         long minTableNextCommitTime = Long.MAX_VALUE;
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
@@ -160,6 +161,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         // taking the earliest commit time
                         minTableNextCommitTime = tableNextCommitTime;
                     }
+                } catch (AuthorizationFailedException ex) {
+                    throw ex;
                 } catch (CommitFailedException ex) {
                     if (ex.isTableDropped()) {
                         // table dropped, nothing to worry about
@@ -178,7 +181,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitInterval;
     }
 
-    public void doMaintenance(long now) {
+    public void doMaintenance(long now) throws AuthorizationFailedException {
         if (now > nextCommitTime) {
             nextCommitTime = commitWalTables(now);
         }
@@ -209,6 +212,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 IOContextResult parseResult = parseMeasurements(netIoJob);
                 doMaintenance(milliClock.getTicks());
                 return parseResult;
+            } catch (AuthorizationFailedException ex) {
+                LOG.info().$("authorization failed [ex=").$(ex).I$();
+                return IOContextResult.NEEDS_DISCONNECT;
             } finally {
                 netIoJob.releaseWalTableDetails();
             }
@@ -287,7 +293,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     LOG.error().$("unexpected authenticator result [result=").$(result).I$();
                     return IOContextResult.NEEDS_DISCONNECT;
             }
-        } catch (AuthenticatorException e) {
+        } catch (AuthenticatorException ex) {
             return IOContextResult.NEEDS_DISCONNECT;
         }
     }
@@ -423,7 +429,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
-                if (disconnectOnError) {
+                // Disconnect on parse error (if configured) or on authz error.
+                if (disconnectOnError || ex.isAuthorizationError()) {
                     if (!ex.isAuthorizationError()) {
                         logParseError();
                     }

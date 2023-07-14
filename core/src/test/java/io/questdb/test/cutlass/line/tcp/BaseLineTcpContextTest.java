@@ -33,6 +33,7 @@ import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
+import io.questdb.cutlass.line.AuthorizationFailedException;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -258,7 +259,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 break;
         }
-        context.commitWalTables(Long.MAX_VALUE);
+        try {
+            context.commitWalTables(Long.MAX_VALUE);
+        } catch (AuthorizationFailedException e) {
+            context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
+        }
         scheduler.doMaintenance(noNetworkIOJob.localTableUpdateDetailsByTableName, noNetworkIOJob.getWorkerId(), Long.MAX_VALUE);
         return false;
     }
