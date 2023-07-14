@@ -140,7 +140,7 @@ public class VectTest {
             // Generate data
             int tsVal = 1000;
             for (int i = 0; i < indexLen; i++) {
-                if (rnd.nextDouble() < 0.3) {
+                if (rnd.nextDouble() < 0.1) {
                     tsVal += rnd.nextInt(50);
                 }
                 index.add(tsVal);
