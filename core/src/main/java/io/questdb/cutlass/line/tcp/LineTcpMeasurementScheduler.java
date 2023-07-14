@@ -491,7 +491,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
                                     r.putInt(columnIndex, (int) entityValue);
                                 } else if (entityValue == Numbers.LONG_NaN) {
-                                    r.putInt(columnIndex, Numbers.INT_NaN);
+                                    r.putInt(columnIndex, Numbers.IPv4_NULL);
                                 } else {
                                     throw boundsError(entityValue, i, ColumnType.IPv4);
                                 }

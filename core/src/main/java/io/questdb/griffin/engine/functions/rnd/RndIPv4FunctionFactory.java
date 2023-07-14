@@ -57,6 +57,11 @@ public class RndIPv4FunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getIPv4(Record rec) {
+            return rnd.nextInt();
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }

@@ -100,6 +100,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     int getInt(Record rec);
 
+    int getIPv4(Record rec);
+
     long getLong(Record rec);
 
     long getLong128Hi(Record rec);

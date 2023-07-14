@@ -50,6 +50,11 @@ public class IPv4Constant extends IPv4Function implements ConstantFunction {
     }
 
     @Override
+    public int getIPv4(Record rec) {
+        return value;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(value);
     }

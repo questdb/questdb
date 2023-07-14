@@ -98,6 +98,11 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
+    public int getIPv4(long offset) {
+        return Numbers.IPv4_NULL;
+    }
+
+    @Override
     public long getLong(long offset) {
         return Numbers.LONG_NaN;
     }

@@ -1247,7 +1247,7 @@ public final class TestUtils {
                 }
                 break;
             case ColumnType.IPv4: {
-                final int val = r.getInt(i);
+                final int val = r.getIPv4(i);
                 Numbers.intToIPv4Sink(sink, val);
                 break;
             }

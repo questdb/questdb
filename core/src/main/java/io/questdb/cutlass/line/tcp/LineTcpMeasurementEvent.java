@@ -426,7 +426,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
                                 offset = buffer.addInt(offset, (int) entityValue);
                             } else if (entityValue == Numbers.LONG_NaN) {
-                                offset = buffer.addInt(offset, Numbers.INT_NaN);
+                                offset = buffer.addInt(offset, Numbers.IPv4_NULL);
                             } else {
                                 throw boundsError(entityValue, nEntity, ColumnType.IPv4);
                             }

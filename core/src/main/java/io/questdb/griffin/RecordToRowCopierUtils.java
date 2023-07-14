@@ -65,6 +65,7 @@ public class RecordToRowCopierUtils {
         // [                reference   one array dimension
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
@@ -190,7 +191,7 @@ public class RecordToRowCopierUtils {
             asm.iconst(i);
 
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
-            if (fromColumnTypeTag == ColumnType.NULL && toColumnTypeTag != ColumnType.IPv4) { // todo: insert into ipv4(null) should print null
+            if (fromColumnTypeTag == ColumnType.NULL) {
                 fromColumnTypeTag = toColumnTypeTag;
             }
             switch (fromColumnTypeTag) {
@@ -234,7 +235,7 @@ public class RecordToRowCopierUtils {
                     }
                     break;
                 case ColumnType.IPv4:
-                    asm.invokeInterface(rGetInt);
+                    asm.invokeInterface(rGetIPv4);
                     switch(toColumnTypeTag) {
                         case ColumnType.IPv4:
                             asm.invokeInterface(wPutInt, 2);

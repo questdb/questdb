@@ -117,6 +117,9 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
+    @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
     }

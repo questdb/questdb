@@ -99,6 +99,9 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
+    @Override
     public final long getLong(Record rec) {
         return getLong256A(rec).getLong0();
     }

@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import org.junit.Assert;
 import org.junit.Test;
 public class IPv4FunctionTest {
     private static final IPv4Function function = new IPv4Function() {
@@ -34,6 +33,9 @@ public class IPv4FunctionTest {
         public int getInt(Record rec) {
             return 150;
         }
+
+        @Override
+        public int getIPv4(Record rec) { return 150; }
 
         @Override
         public boolean isReadThreadSafe() {

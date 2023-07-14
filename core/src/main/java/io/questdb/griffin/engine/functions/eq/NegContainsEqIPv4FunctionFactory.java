@@ -95,7 +95,7 @@ public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
         public Function getArg() { return arg; }
 
         @Override
-        public boolean getBool(Record rec) { return (arg.getInt(rec) & netmask) == subnet; }
+        public boolean getBool(Record rec) { return (arg.getIPv4(rec) & netmask) == subnet; }
 
         @Override
         public void toPlan(PlanSink sink) {
@@ -112,7 +112,7 @@ public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
         public Function getArg() { return arg; }
 
         @Override
-        public boolean getBool(Record rec) { return arg.getInt(rec) == IPv4_NULL; }
+        public boolean getBool(Record rec) { return arg.getIPv4(rec) == IPv4_NULL; }
 
         @Override
         public void toPlan(PlanSink sink) { sink.val(arg).val(" is null"); }

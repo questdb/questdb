@@ -171,6 +171,10 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default int getIPv4(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * Gets the value of a long column by index
      *

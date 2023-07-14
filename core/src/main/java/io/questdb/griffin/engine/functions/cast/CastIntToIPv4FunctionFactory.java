@@ -53,5 +53,13 @@ public class CastIntToIPv4FunctionFactory implements FunctionFactory{
             }
             return arg.getInt(rec);
         }
+
+        @Override
+        public int getIPv4(Record rec) {
+            if(arg.getInt(rec) == Numbers.INT_NaN) {
+                return Numbers.IPv4_NULL;
+            }
+            return arg.getInt(rec);
+        }
     }
 }

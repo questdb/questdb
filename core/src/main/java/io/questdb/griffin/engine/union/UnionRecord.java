@@ -137,6 +137,14 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public int getIPv4(int col) {
+        if (useA) {
+            return recordA.getIPv4(col);
+        }
+        return recordB.getIPv4(col);
+    }
+
+    @Override
     public long getLong(int col) {
         if (useA) {
             return recordA.getLong(col);

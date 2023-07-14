@@ -40,4 +40,7 @@ public class IPv4TypeConstant extends IPv4Function implements TypeConstant {
     public int getInt(Record rec) {
         return Numbers.IPv4_NULL;
     }
+
+    @Override
+    public int getIPv4(Record rec) { return Numbers.IPv4_NULL; }
 }

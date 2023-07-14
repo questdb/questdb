@@ -102,6 +102,11 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        return SqlUtil.implicitCastStrAsIPv4(getStr(rec));
+    }
+
+    @Override
     public final long getLong(Record rec) {
         return SqlUtil.implicitCastStrAsLong(getStr(rec));
     }

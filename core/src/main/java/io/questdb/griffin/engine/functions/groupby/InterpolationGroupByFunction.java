@@ -153,6 +153,9 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
+    @Override
     public long getLong(Record rec) {
         long value = wrappedFunction.getLong(rec);
         if (interpolating) {

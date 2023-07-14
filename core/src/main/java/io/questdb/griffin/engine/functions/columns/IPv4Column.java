@@ -57,6 +57,14 @@ public class IPv4Column extends IPv4Function implements ScalarFunction {
     }
 
     @Override
+    public int getIPv4(Record rec) {
+        if(rec.getInt(columnIndex) == Numbers.INT_NaN) {
+            return Numbers.IPv4_NULL;
+        }
+        return rec.getInt(columnIndex);
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return true;
     }

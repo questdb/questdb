@@ -202,6 +202,13 @@ public class MemoryPARWImpl implements MemoryARW {
         return getInt0(offset);
     }
 
+    public final int getIPv4(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
+            return Unsafe.getUnsafe().getInt(absolutePointer + offset);
+        }
+        return getInt0(offset);
+    }
+
     public int getIntBytes(int page, long pageOffset) {
         int value = 0;
         long pageAddress = getPageAddress(page);

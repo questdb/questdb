@@ -361,7 +361,7 @@ public final class ColumnType {    //@formatter:off
     }
 
     private static boolean isIPv4Cast(int fromType, int toType) {
-        return (fromType == STRING && toType == IPv4);
+        return (fromType == STRING && toType == IPv4); //|| (fromType == IPv4 && toType == STRING)
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

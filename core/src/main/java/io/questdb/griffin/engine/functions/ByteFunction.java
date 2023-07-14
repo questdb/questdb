@@ -95,6 +95,9 @@ public abstract class ByteFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
+    @Override
     public long getLong(Record rec) {
         return getByte(rec);
     }

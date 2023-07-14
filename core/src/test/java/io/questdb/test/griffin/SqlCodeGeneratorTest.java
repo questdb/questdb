@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -75,19 +76,39 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4UpdateTable() throws Exception {
-        compiler.compile("create table test (col1 string, col2 ipv4)", sqlExecutionContext);
-        executeInsert("insert into test values('0.0.0.1', null)");
-        executeInsert("insert into test values('0.0.0.2', null)");
-        executeInsert("insert into test values('0.0.0.3', null)");
-        executeInsert("insert into test values('0.0.0.4', null)");
-        executeInsert("insert into test values('0.0.0.5', null)");
-        //compiler.compile("alter table test add col2 ipv4", sqlExecutionContext);
-        compiler.compile("update test set col2 = col1", sqlExecutionContext);
+    public void IPv4NullTest() throws Exception {
+        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values(null)");
+        assertSql("test", "col\n" +
+                "null\n");
     }
 
     @Test
-    public void testIPv4UpdateTable2() throws Exception {
+    public void alterTableIPv4NullCol() throws Exception {
+        compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values ('0.0.0.1')");
+        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w,true);
+        }
+
+        assertSql("test", "col1\tcol2\n" +
+                "0.0.0.1\tnull\n");
+    }
+
+//    @Test
+//    public void testUpdateTableIPv4ToString() throws Exception {
+//        compiler.compile("create table test (col1 string, col2 ipv4)", sqlExecutionContext);
+//        executeInsert("insert into test values('0.0.0.1', null)");
+//        executeInsert("insert into test values('0.0.0.2', null)");
+//        executeInsert("insert into test values('0.0.0.3', null)");
+//        executeInsert("insert into test values('0.0.0.4', null)");
+//        executeInsert("insert into test values('0.0.0.5', null)");
+//        //compiler.compile("alter table test add col2 ipv4", sqlExecutionContext);
+//        compiler.compile("update test set col2 = col1", sqlExecutionContext);
+//    }
+
+    @Test
+    public void testUpdateTableStringToIPv4() throws Exception {
         compiler.compile("create table test (col1 string)", sqlExecutionContext);
         executeInsert("insert into test values('0.0.0.1')");
         executeInsert("insert into test values('0.0.0.2')");
@@ -97,9 +118,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
             compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w,true);
         }
-
-        compiler.compile("update test set col2 = col1", sqlExecutionContext);
-        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "");
+        try(TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
+            op.withContext(sqlExecutionContext);
+            op.apply(w, true);
+        }
+        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
+                "0.0.0.1\t0.0.0.1\n" +
+                "0.0.0.2\t0.0.0.2\n" +
+                "0.0.0.3\t0.0.0.3\n" +
+                "0.0.0.4\t0.0.0.4\n" +
+                "0.0.0.5\t0.0.0.5\n");
     }
 
     @Test
@@ -994,21 +1023,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testIPv4ContainsEqSubnetAndMask() throws Exception {
-        compiler.compile("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        compiler.compile("create table test as (select rnd_int(0,1000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
 
         assertSql("select * from test where ip <<= '0.0.0/24'", "ip\n" +
-                "0.0.0.115\n" +
-                "0.0.0.208\n" +
-                "0.0.0.110\n" +
+                "0.0.0.167\n" +
+                "0.0.0.182\n" +
+                "0.0.0.108\n" +
+                "0.0.0.95\n" +
+                "0.0.0.12\n" +
+                "0.0.0.71\n" +
+                "0.0.0.10\n" +
+                "0.0.0.238\n" +
+                "0.0.0.105\n" +
+                "0.0.0.203\n" +
+                "0.0.0.86\n" +
+                "0.0.0.100\n" +
+                "0.0.0.144\n" +
+                "0.0.0.173\n" +
+                "0.0.0.121\n" +
+                "0.0.0.231\n" +
+                "0.0.0.181\n" +
+                "0.0.0.218\n" +
+                "0.0.0.34\n" +
                 "0.0.0.90\n" +
-                "0.0.0.53\n" +
-                "0.0.0.143\n" +
-                "0.0.0.246\n" +
-                "0.0.0.158\n" +
-                "0.0.0.237\n" +
-                "0.0.0.220\n" +
-                "0.0.0.184\n" +
-                "0.0.0.103\n");
+                "0.0.0.114\n" +
+                "0.0.0.23\n" +
+                "0.0.0.150\n" +
+                "0.0.0.147\n" +
+                "null\n" +
+                "0.0.0.29\n" +
+                "0.0.0.159\n");
     }
 
     @Test

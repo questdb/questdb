@@ -100,6 +100,8 @@ public abstract class UuidFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+    @Override
     public long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }

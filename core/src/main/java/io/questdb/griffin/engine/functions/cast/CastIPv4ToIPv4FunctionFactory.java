@@ -22,47 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mutable {
-
-    int value;
-
-    IPv4BindVariable() {
-        super();
-    }
+public class CastIPv4ToIPv4FunctionFactory extends AbstractEntityCastFunctionFactory {
 
     @Override
-    public void clear() {
-        this.value = Numbers.IPv4_NULL;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
-    public int getIPv4(Record rec) { return value; }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return true;
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("?::IPv4");
-    }
+    public String getSignature() { return "cast(Xx)"; }
 }

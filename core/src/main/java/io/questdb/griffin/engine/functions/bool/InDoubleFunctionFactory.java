@@ -61,7 +61,6 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                 case ColumnType.BYTE:
                 case ColumnType.SHORT:
                 case ColumnType.INT:
-                case ColumnType.IPv4:
                 case ColumnType.LONG:
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
@@ -96,7 +95,6 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                 case ColumnType.BYTE:
                 case ColumnType.SHORT:
                 case ColumnType.INT:
-                case ColumnType.IPv4:
                 case ColumnType.LONG:
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
@@ -168,7 +166,6 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                     case ColumnType.BYTE:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
-                    case ColumnType.IPv4:
                     case ColumnType.LONG:
                     case ColumnType.FLOAT:
                     case ColumnType.DOUBLE:

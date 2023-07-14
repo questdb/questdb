@@ -116,7 +116,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
         return IntConstant.NULL.getInt(null);
     }
 
-    //public int getIPv4(Record rec) { return IPv4Constant.NULL.getInt(null); }
+    public int getIPv4(Record rec) { return IPv4Constant.NULL.getInt(null); }
 
     @Override
     public long getLong(Record rec) {

@@ -261,6 +261,17 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return Numbers.IPv4_NULL;
         }
+
+        @Override
+        public int getIPv4(Record rec) {
+            for (int i = 0; i < size; i++) {
+                int value = args.getQuick(i).getInt(rec);
+                if (value != Numbers.INT_NaN) {
+                    return value;
+                }
+            }
+            return Numbers.IPv4_NULL;
+        }
     }
 
     private static class Long256CoalesceFunction extends Long256Function implements MultiArgCoalesceFunction {
@@ -538,6 +549,15 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
+            int value = args0.getInt(rec);
+            if (value != Numbers.INT_NaN) {
+                return value;
+            }
+            return args1.getInt(rec);
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
             int value = args0.getInt(rec);
             if (value != Numbers.INT_NaN) {
                 return value;

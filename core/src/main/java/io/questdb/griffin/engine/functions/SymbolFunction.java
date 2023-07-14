@@ -101,6 +101,9 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
+    @Override
     public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }

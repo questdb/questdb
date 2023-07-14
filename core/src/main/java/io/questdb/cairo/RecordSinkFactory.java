@@ -49,6 +49,7 @@ public class RecordSinkFactory {
         final int interfaceClassIndex = asm.poolClass(RecordSink.class);
 
         final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        //final int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
         final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
@@ -116,6 +117,13 @@ public class RecordSinkFactory {
                     asm.invokeInterface(rGetInt, 1);
                     asm.invokeInterface(wPutInt, 1);
                     break;
+//                case ColumnType.IPv4:
+//                    asm.aload(2);
+//                    asm.aload(1);
+//                    asm.iconst(getSkewedIndex(index, skewIndex));
+//                    asm.invokeInterface(rGetIPv4, 1);
+//                    asm.invokeInterface(wPutInt, 1);
+//                    break;
                 case ColumnType.SYMBOL:
                     asm.aload(2);
                     asm.aload(1);

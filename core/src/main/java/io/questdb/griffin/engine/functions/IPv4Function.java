@@ -85,6 +85,9 @@ public abstract class IPv4Function implements ScalarFunction{
         throw new UnsupportedOperationException();
     }
 
+//    @Override
+//    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
     @Override
     public long getLong(Record rec) { throw new UnsupportedOperationException(); }
 
