@@ -273,11 +273,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public boolean matches(SecurityContext other) {
-        return other == INSTANCE;
-    }
-
-    @Override
     public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 

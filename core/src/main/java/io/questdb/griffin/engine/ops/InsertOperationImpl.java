@@ -36,14 +36,11 @@ import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.*;
 
 public class InsertOperationImpl implements InsertOperation {
 
-    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
+    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<>() {
         @Override
         public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
             throw new UnsupportedOperationException();
@@ -56,13 +53,10 @@ public class InsertOperationImpl implements InsertOperation {
     private final long metadataVersion;
     private final TableToken tableToken;
     private ObjList<CharSequence> columnNames;
-    private SecurityContext securityContext;
-
-    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion, SecurityContext securityContext) {
+    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
         this.engine = engine;
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
-        this.securityContext = securityContext;
     }
 
     @Override
@@ -73,10 +67,7 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         SecurityContext securityContext = executionContext.getSecurityContext();
-        if (!this.securityContext.matches(securityContext)) {
-            securityContext.authorizeInsert(tableToken, columnNames);
-            this.securityContext = securityContext;
-        }
+        securityContext.authorizeInsert(tableToken, columnNames);
 
         initContext(executionContext);
         if (insertMethod.writer == null) {

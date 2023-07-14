@@ -4771,7 +4771,7 @@ public class SqlOptimiser {
     }
 
     QueryModel optimise(@Transient final QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
-        permissions = queryPermissionsPool.pop().of(sqlExecutionContext.getSecurityContext());
+        permissions = queryPermissionsPool.pop();
         try {
             // only set permissions on the outermost model
             QueryModel rewrittenModel = optimiseInner(model, sqlExecutionContext);

@@ -1542,7 +1542,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static class QueryPermissions extends AbstractSelfReturningObject<QueryPermissions> {
         final LongObjHashMap<TablePermissions> permissions;
         boolean checked;
-        SecurityContext securityContext;
         TablePermissions updatePermissions;
 
         public QueryPermissions(WeakSelfReturningObjectPool<QueryPermissions> parentPool) {
@@ -1561,23 +1560,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 return;
             }
 
-            if (this.securityContext.matches(securityContext)) {
-                return;
-            }
-
             if (updatePermissions != null) {
                 securityContext.authorizeTableUpdate(updatePermissions.getToken(), updatePermissions.getColumns());
             }
 
             permissions.forEach((k, v) -> securityContext.authorizeSelect(v.getToken(), v.getColumns()));
-
-            this.securityContext = securityContext;
         }
 
         @Override
         public void close() {
             updatePermissions = Misc.free(updatePermissions);
-            securityContext = null;
             checked = false;
             permissions.forEach((key, value) -> value.close());
             permissions.clear();
@@ -1588,9 +1580,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             return permissions.get(tableToken.getTableId());
         }
 
-        public QueryPermissions of(@Transient SecurityContext securityContext) {
+        public QueryPermissions of() {
             this.checked = true;
-            this.securityContext = securityContext;
             return this;
         }
 

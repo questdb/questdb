@@ -133,13 +133,6 @@ public interface SecurityContext {
 
     CharSequence getPrincipal();
 
-    /**
-     * Checks if both security contexts belong to the same principal and up to date.
-     * @param other - another security context
-     * @return true if this context belongs to entityName and has given version, false otherwise .
-     */
-    boolean matches(SecurityContext other);
-
     void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
 
     void onTableCreated(TableToken tableToken);

@@ -58,14 +58,14 @@ public class CompiledQueryImpl implements CompiledQuery {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
+        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
 
-        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
+        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation, true);
@@ -158,110 +158,109 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQuery ofBackupTable() {
-        return of(BACKUP_TABLE);
+    public void ofBackupTable() {
+        of(BACKUP_TABLE);
     }
 
-    public CompiledQuery ofBegin() {
-        return of(BEGIN);
+    public void ofBegin() {
+        of(BEGIN);
     }
 
-    public CompiledQuery ofCommit() {
-        return of(COMMIT);
+    public void ofCommit() {
+        of(COMMIT);
     }
 
-    public CompiledQuery ofCopyRemote(TextLoader textLoader) {
+    public void ofCopyRemote(TextLoader textLoader) {
         this.textLoader = textLoader;
-        return of(COPY_REMOTE);
+        of(COPY_REMOTE);
     }
 
-    public CompiledQuery ofCreateTable(TableToken tableToken) {
-        return of(CREATE_TABLE, null, tableToken);
+    public void ofCreateTable(TableToken tableToken) {
+        of(CREATE_TABLE, null, tableToken);
     }
 
-    public CompiledQuery ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
+    public void ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
         of(CREATE_TABLE_AS_SELECT, null, tableToken);
         this.affectedRowsCount = affectedRowsCount;
-        return this;
     }
 
-    public CompiledQuery ofDeallocate(CharSequence statementName) {
+    public void ofDeallocate(CharSequence statementName) {
         this.statementName = Chars.toString(statementName);
-        return of(DEALLOCATE);
+        of(DEALLOCATE);
     }
 
-    public CompiledQuery ofDrop() {
-        return of(DROP);
+    public void ofDrop() {
+        of(DROP);
     }
 
-    public CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
-        return of(EXPLAIN, recordCursorFactory, null);
+    public void ofExplain(RecordCursorFactory recordCursorFactory) {
+        of(EXPLAIN, recordCursorFactory, null);
     }
 
-    public CompiledQuery ofInsert(InsertOperation insertOperation) {
+    public void ofInsert(InsertOperation insertOperation) {
         this.insertOp = insertOperation;
-        return of(INSERT);
+        of(INSERT);
     }
 
-    public CompiledQuery ofInsertAsSelect(long affectedRowsCount) {
+    public void ofInsertAsSelect(long affectedRowsCount) {
         of(INSERT_AS_SELECT);
         this.affectedRowsCount = affectedRowsCount;
-        return this;
     }
 
-    public CompiledQuery ofPseudoSelect(@Nullable RecordCursorFactory factory) {
+    // although executor was there it had to fail back to the model
+    public void ofNone() {
+        of(NONE);
+    }
+
+    public void ofPseudoSelect(@Nullable RecordCursorFactory factory) {
         this.type = PSEUDO_SELECT;
         this.recordCursorFactory = factory;
         this.affectedRowsCount = -1;
-        return this;
     }
 
-    public CompiledQuery ofRenameTable() {
-        return of(RENAME_TABLE);
+    public void ofRenameTable() {
+        of(RENAME_TABLE);
     }
 
-    public CompiledQuery ofRepair() {
-        return of(REPAIR);
+    public void ofRepair() {
+        of(REPAIR);
     }
 
-    public CompiledQuery ofRollback() {
-        return of(ROLLBACK);
+    public void ofRollback() {
+        of(ROLLBACK);
     }
 
-    public CompiledQuery ofSet() {
-        return of(SET);
+    public void ofSet() {
+        of(SET);
     }
 
-    public CompiledQuery ofSnapshotComplete() {
-        return of(SNAPSHOT_DB_COMPLETE);
+    public void ofSnapshotComplete() {
+        of(SNAPSHOT_DB_COMPLETE);
     }
 
-    public CompiledQuery ofSnapshotPrepare() {
-        return of(SNAPSHOT_DB_PREPARE);
+    public void ofSnapshotPrepare() {
+        of(SNAPSHOT_DB_PREPARE);
     }
 
-    public CompiledQuery ofTableResume() {
+    public void ofTableResume() {
         type = TABLE_RESUME;
-        return this;
     }
 
-    public CompiledQuery ofTableSetType() {
+    public void ofTableSetType() {
         type = TABLE_SET_TYPE;
-        return this;
     }
 
-    public CompiledQuery ofTruncate() {
-        return of(TRUNCATE);
+    public void ofTruncate() {
+        of(TRUNCATE);
     }
 
-    public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
+    public void ofUpdate(UpdateOperation updateOperation) {
         this.updateOp = updateOperation;
         this.type = UPDATE;
-        return this;
     }
 
-    public CompiledQuery ofVacuum() {
-        return of(VACUUM);
+    public void ofVacuum() {
+        of(VACUUM);
     }
 
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {

@@ -225,11 +225,6 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public boolean matches(SecurityContext other) {
-        return other == INSTANCE;
-    }
-
-    @Override
     public void onColumnAdded(TableToken tableToken, CharSequence columnName) {
     }
 

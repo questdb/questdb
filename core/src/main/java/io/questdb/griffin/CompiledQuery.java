@@ -35,6 +35,7 @@ import io.questdb.mp.SCSequence;
 
 public interface CompiledQuery {
 
+    short NONE = 0;
     // these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short ALTER = 4;
     short BACKUP_TABLE = 13;

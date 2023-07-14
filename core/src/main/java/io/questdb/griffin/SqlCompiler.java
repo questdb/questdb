@@ -352,7 +352,8 @@ public class SqlCompiler implements Closeable {
     private void alterTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !SqlKeywords.isTableKeyword(tok)) {
-            throw unknownAlterStatement(tok);
+            unknownAlterStatement(executionContext, tok);
+            return;
         }
 
         final int tableNamePosition = lexer.getPosition();
@@ -841,7 +842,8 @@ public class SqlCompiler implements Closeable {
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                throw unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+                unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+                return;
             }
         } while (true);
 
@@ -1226,7 +1228,10 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         if (executor != null) {
             executor.execute(executionContext);
-        } else {
+        }
+
+        // executor is allowed to give up on the execution and fallback to standard behaviour
+        if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
             compileUsingModel(executionContext);
         }
         final short type = compiledQuery.getType();
@@ -1568,7 +1573,12 @@ public class SqlCompiler implements Closeable {
     /**
      * Returns number of copied rows.
      */
-    private long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker) {
+    private long copyUnordered(
+            RecordCursor cursor,
+            TableWriterAPI writer,
+            RecordToRowCopier copier,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -1583,8 +1593,7 @@ public class SqlCompiler implements Closeable {
         return rowCount;
     }
 
-    private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws
-            SqlException {
+    private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
         TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
@@ -1874,7 +1883,7 @@ public class SqlCompiler implements Closeable {
 
         try (TableRecordMetadata metadata = engine.getMetadata(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion, executionContext.getSecurityContext());
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
@@ -2712,25 +2721,34 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
     }
 
-    protected SqlException unknownAlterStatement(CharSequence tok) {
+    protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            return SqlException.position(lexer.getPosition()).put("'table' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' expected");
         }
-        return SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
     @SuppressWarnings({"unused"})
-    protected SqlException unknownDropColumnSuffix(
+    protected void unknownDropColumnSuffix(
             @Transient SecurityContext securityContext,
             CharSequence tok,
             TableToken tableToken,
             AlterOperationBuilder dropColumnStatement
-    ) {
-        return SqlException.$(lexer.lastTokenPosition(), "',' expected");
+    ) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+    }
+
+    @SuppressWarnings({"unused"})
+    protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
+        }
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
     }
 
     @SuppressWarnings("unused")
     protected void unknownDropTableSuffix(
+            SqlExecutionContext executionContext,
             CharSequence tok,
             CharSequence tableName,
             int tableNamePosition,
@@ -2740,7 +2758,10 @@ public class SqlCompiler implements Closeable {
     }
 
     @SuppressWarnings({"unused", "RedundantThrows"})
-    protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+    protected RecordCursorFactory unknownShowStatement(
+            SqlExecutionContext executionContext,
+            CharSequence tok
+    ) throws SqlException {
         return null; // no-op
     }
 
@@ -3261,7 +3282,6 @@ public class SqlCompiler implements Closeable {
             // the selected method depends on the second token, we have already seen DROP
             CharSequence tok = SqlUtil.fetchNext(lexer);
             if (tok != null) {
-
                 // DROP TABLE [ IF EXISTS ] name [;]
                 if (SqlKeywords.isTableKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
@@ -3283,28 +3303,25 @@ public class SqlCompiler implements Closeable {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {
                         dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
-                    } else {
-                        unknownDropTableSuffix(tok, tableName, tableNamePosition, hasIfExists);
+                        return;
                     }
+                    unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
                 } else if (SqlKeywords.isAllKeyword(tok)) {
                     // DROP ALL TABLES [;]
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && SqlKeywords.isTablesKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer);
-                        if (tok != null && !Chars.equals(tok, ';')) {
-                            throw parseErrorExpected("[;]");
-                        } else {
+                        if (tok == null || Chars.equals(tok, ';')) {
                             dropAllTables(executionContext);
+                            return;
                         }
+                        throw parseErrorExpected("[;]");
                     } else {
-                        throw SqlException.position(lexer.getPosition()).put("'tables' expected");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("'tables' expected");
                     }
-                } else {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
                 }
-            } else {
-                throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
             }
+            unknownDropStatement(executionContext, tok);
         }
 
         private boolean isSystemTable(TableToken tableToken) {
