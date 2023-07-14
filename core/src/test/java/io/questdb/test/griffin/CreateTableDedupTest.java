@@ -131,6 +131,12 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(2));
                 Assert.assertTrue(writer.getMetadata().isDedupKey(3));
             }
+
+            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n" +
+                    "i\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n");
         });
     }
 
@@ -182,6 +188,11 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(2));
             }
 
+            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n");
+
             compile("ALTER table " + tableName + " dedup disable");
             drainWalQueue();
 
@@ -192,6 +203,11 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
 
+            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
+
             compile("ALTER table " + tableName + " dedup UPSERT KEYS(ts)");
             drainWalQueue();
 
@@ -201,6 +217,11 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(1));
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
+
+            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
 
             compile("ALTER table " + tableName + " dedup disable");
             compile("ALTER table " + tableName + " drop column x");
@@ -213,6 +234,10 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(1));
                 Assert.assertTrue(writer.getMetadata().isDedupKey(2));
             }
+
+            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n");
 
             compile("ALTER table " + tableName + " dedup disable");
             compile("ALTER table " + tableName + " drop column s");
