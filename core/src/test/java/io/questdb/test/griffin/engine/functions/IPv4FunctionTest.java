@@ -113,7 +113,7 @@ public class IPv4FunctionTest {
         function.getStr(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = NullPointerException.class)
     public void testGetStr2() {
         function.getStr(null, null);
     }
