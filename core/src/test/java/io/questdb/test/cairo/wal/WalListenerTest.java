@@ -135,7 +135,7 @@ public class WalListenerTest extends AbstractGriffinTest {
         public Deque<WalListenerEvent> events = new ArrayDeque<>();
 
         @Override
-        public void dataTxnCommitted(TableToken tableToken, long txn, int walId, int segmentId, int segmentTxn) {
+        public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.DATA_TXN_COMMITTED,
                     tableToken,
@@ -148,7 +148,7 @@ public class WalListenerTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void nonDataTxnCommitted(TableToken tableToken, long txn) {
+        public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.NON_DATA_TXN_COMMITTED,
                     tableToken,
@@ -174,7 +174,7 @@ public class WalListenerTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void tableDropped(TableToken tableToken, long txn) {
+        public void tableDropped(TableToken tableToken, long txn, long timestamp) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.TABLE_DROPPED,
                     tableToken,
@@ -187,7 +187,7 @@ public class WalListenerTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void tableRenamed(TableToken tableToken, long txn, TableToken oldTableToken) {
+        public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.TABLE_RENAMED,
                     tableToken,
