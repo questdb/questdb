@@ -63,4 +63,8 @@ void log_event(WORD logType, char* serviceName, const char *message);
 #define QUESTDB_MAIN_CLASS @QUESTDB_MAIN_CLASS@
 #endif
 
+#ifndef QUESTDB_BANNER
+#define QUESTDB_BANNER @QUESTDB_BANNER@
+#endif
+
 #endif //WIN64SVC_COMMON_H

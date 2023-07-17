@@ -372,7 +372,7 @@ int qdbRun(int argc, char **argv) {
     eprintf("| | | | | | |/ _ \\/ __| __| | | |  _ \\\n");
     eprintf("| |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n");
     eprintf(" \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n");
-    eprintf("                        www.questdb.io\n\n");
+    eprintf(QUESTDB_BANNER);
 
     CONFIG config;
     initAndParseConfig(argc, argv, &config);
