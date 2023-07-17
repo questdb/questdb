@@ -91,6 +91,10 @@ public final class StaticUsernamePasswordMatcher implements UsernamePasswordMatc
 
     @Override
     public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+        if (username == null) {
+            return false;
+        }
+
         boolean matchRo = roUsername != null
                 && passwordLen == roPasswordLen
                 && Chars.equals(roUsername, username)
