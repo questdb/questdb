@@ -249,6 +249,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndStringRndListFunctionFactory,

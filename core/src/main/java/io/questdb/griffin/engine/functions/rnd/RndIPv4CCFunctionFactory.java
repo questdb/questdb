@@ -33,7 +33,10 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 
 public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
@@ -47,35 +50,47 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
         CharSequence subnetStr = args.getQuick(0).getStr(null);
         int nullRate = args.getQuick(1).getInt(null);
-        int subnet = Numbers.parseSubnet(subnetStr);
+        int lo = Numbers.getIPv4Subnet(subnetStr);
 
-        if (subnet == -2) {
+        if (lo == -2) {
+            lo = Numbers.parseSubnet(subnetStr);
+        }
+
+        int hi = Numbers.getBroadcastAddress(subnetStr);
+
+        if (lo == -2 || hi == -2) {
             throw SqlException.$(argPositions.getQuick(0), "invalid subnet: ").put(subnetStr);
         }
-        return new RndFunction(subnet, nullRate);
+
+        return new RndFunction(lo, hi, nullRate);
     }
 
     private static class RndFunction extends IPv4Function implements Function {
-        private final int subnet;
+        private final int hi;
+        private final int lo;
+        private final int range;
         private final int nullRate;
         private Rnd rnd;
 
-        public RndFunction(int subnet, int nullRate) {
+        public RndFunction(int lo, int hi, int nullRate) {
             super();
-            this.subnet = subnet;
-            this.nullRate = nullRate;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            //implement here
-            return subnet;
+            this.lo = lo;
+            this.hi = hi;
+            this.range = hi - lo + 1;
+            this.nullRate = nullRate + 1;
         }
 
         @Override
         public int getIPv4(Record rec) {
-            //implement here
-            return subnet;
+            return getInt(rec);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            if ((rnd.nextInt() % nullRate) == 1) {
+                return Numbers.IPv4_NULL;
+            }
+            return lo + rnd.nextPositiveInt() % range;
         }
 
         @Override
@@ -90,8 +105,7 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            //add more here
-            sink.val("rnd_ipv4(");
+            sink.val("rnd_ipv4(").val(lo).val(',').val(range + lo - 1).val(nullRate - 1).val(')');
         }
 
     }
