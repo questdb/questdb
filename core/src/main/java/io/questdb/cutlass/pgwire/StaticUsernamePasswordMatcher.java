@@ -31,46 +31,61 @@ import io.questdb.std.Vect;
 
 import java.nio.charset.StandardCharsets;
 
-public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
-    private final int defaultPasswordLen;
-    private final String defaultUsername;
-    private final String roUsername;
+public final class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
+    private int defaultPasswordLen;
     private long defaultPasswordPtr;
+    private String defaultUsername;
     private int roPasswordLen;
     private long roPasswordPtr;
+    private String roUsername;
 
     public StaticUsernamePasswordMatcher(PGWireConfiguration configuration) {
-        // todo: test empty password
-        this.defaultUsername = configuration.getDefaultUsername();
-        byte[] defaultPasswordBytes = configuration.getDefaultPassword().getBytes(StandardCharsets.UTF_8);
-        int defaultPasswordUtfLength = defaultPasswordBytes.length;
-        defaultPasswordPtr = Unsafe.malloc(defaultPasswordUtfLength, MemoryTag.NATIVE_DEFAULT);
-        defaultPasswordLen = defaultPasswordUtfLength;
-        for (int i = 0; i < defaultPasswordUtfLength; i++) {
-            Unsafe.getUnsafe().putByte(defaultPasswordPtr + i, defaultPasswordBytes[i]);
+        String configuredDefaultUsername = configuration.getDefaultUsername();
+        String defaultPassword = configuration.getDefaultPassword();
+
+        if (Chars.empty(configuredDefaultUsername) || Chars.empty(defaultPassword)) {
+            defaultUsername = null;
+            defaultPasswordPtr = 0;
+            defaultPasswordLen = 0;
+        } else {
+            defaultUsername = configuredDefaultUsername;
+            byte[] defaultPasswordBytes = defaultPassword.getBytes(StandardCharsets.UTF_8);
+            int defaultPasswordUtfLength = defaultPasswordBytes.length;
+            defaultPasswordPtr = Unsafe.malloc(defaultPasswordUtfLength, MemoryTag.NATIVE_DEFAULT);
+            defaultPasswordLen = defaultPasswordUtfLength;
+            for (int i = 0; i < defaultPasswordUtfLength; i++) {
+                Unsafe.getUnsafe().putByte(defaultPasswordPtr + i, defaultPasswordBytes[i]);
+            }
         }
-        if (configuration.isReadOnlyUserEnabled()) {
-            byte[] roPasswordBytes = configuration.getReadOnlyPassword().getBytes(StandardCharsets.UTF_8);
-            int roPasswordUtfLength = roPasswordBytes.length;
-            roPasswordPtr = Unsafe.malloc(roPasswordUtfLength, MemoryTag.NATIVE_DEFAULT);
-            roPasswordLen = roPasswordUtfLength;
-            for (int i = 0; i < roPasswordUtfLength; i++) {
+
+        String readOnlyUsername = configuration.getReadOnlyUsername();
+        String readOnlyPassword = configuration.getReadOnlyPassword();
+        if (configuration.isReadOnlyUserEnabled() && !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword)) {
+            byte[] roPasswordBytes = readOnlyPassword.getBytes(StandardCharsets.UTF_8);
+            roPasswordLen = roPasswordBytes.length;
+            roPasswordPtr = Unsafe.malloc(roPasswordLen, MemoryTag.NATIVE_DEFAULT);
+            for (int i = 0; i < roPasswordLen; i++) {
                 Unsafe.getUnsafe().putByte(roPasswordPtr + i, roPasswordBytes[i]);
             }
-            this.roUsername = configuration.getReadOnlyUsername();
+            this.roUsername = readOnlyUsername;
         } else {
             this.roUsername = null;
             this.roPasswordPtr = 0;
-            this.roPasswordLen = -1;
+            this.roPasswordLen = 0;
         }
     }
 
     @Override
     public void close() {
-        defaultPasswordPtr = Unsafe.free(defaultPasswordPtr, defaultPasswordLen, MemoryTag.NATIVE_DEFAULT);
-        if (roPasswordLen != -1) {
+        if (defaultPasswordLen != 0) {
+            defaultUsername = null;
+            defaultPasswordPtr = Unsafe.free(defaultPasswordPtr, defaultPasswordLen, MemoryTag.NATIVE_DEFAULT);
+            defaultPasswordLen = 0;
+        }
+        if (roPasswordLen != 0) {
+            roUsername = null;
             roPasswordPtr = Unsafe.free(roPasswordPtr, roPasswordLen, MemoryTag.NATIVE_DEFAULT);
-            roPasswordLen = -1;
+            roPasswordLen = 0;
         }
     }
 
@@ -81,9 +96,10 @@ public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
                 && Chars.equals(roUsername, username)
                 && Vect.memeq(roPasswordPtr, passwordPtr, passwordLen);
 
-        return matchRo
-                || (Chars.equals(defaultUsername, username)
+        return matchRo || (!Chars.empty(defaultUsername)
+                && Chars.equals(defaultUsername, username)
                 && passwordLen == defaultPasswordLen
-                && Vect.memeq(defaultPasswordPtr, passwordPtr, passwordLen));
+                && Vect.memeq(defaultPasswordPtr, passwordPtr, passwordLen)
+        );
     }
 }
