@@ -86,9 +86,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLastIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select last(ip) from test", "last\n" +
-                "10.5.45.159\n");
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))", sqlExecutionContext);
+        assertSql("select sym, last(ip) from test", "sym\tlast\n" +
+                "$a\t10.5.237.229\n" +
+                "ac\t10.5.235.200\n" +
+                "ab\tnull\n");
     }
 
     @Test
