@@ -586,15 +586,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            PredicateType predicateType = PredicateType.NONE;
-
-            if(PredicateType.GEO_HASH == predicateContext.type) {
-                predicateType = PredicateType.GEO_HASH;
-            } else if(PredicateType.IPv4 == predicateContext.type) {
-                predicateType = PredicateType.IPv4;
-            }
-
-            serializeNull(offset, position, typeCode, predicateType);
+            serializeNull(offset, position, typeCode, predicateContext.type);
             return;
         }
 
@@ -921,7 +913,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private enum PredicateType {
-        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4, NONE
+        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -1196,6 +1188,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
                     type = PredicateType.GEO_HASH;
+                    break;
+                case ColumnType.IPv4:
+                    if(type != null && type != PredicateType.IPv4) {
+                        throw SqlException.position(position)
+                                .put("non-ipv4 column in ipv4 expression: ")
+                                .put(ColumnType.nameOf(columnTypeTag));
+                    }
+                    type = PredicateType.IPv4;
                     break;
                 case ColumnType.CHAR:
                     if (type != null && type != PredicateType.CHAR) {
