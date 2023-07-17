@@ -128,10 +128,7 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
-    // todo: remove the default impl before merging!
-    default void onColumnAdded(TableToken tableToken, CharSequence columnName) {
-
-    }
+    void onColumnAdded(TableToken tableToken, CharSequence columnName);
 
     void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
 
