@@ -85,6 +85,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLastIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select last(ip) from test", "last\n" +
+                "10.5.45.159\n");
+    }
+
+    @Test
+    public void testFirstIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select first(ip) from test", "first\n" +
+                "10.5.96.238\n");
+    }
+
+    @Test
     public void testGroupByIPv42() throws Exception {
         compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
         assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
