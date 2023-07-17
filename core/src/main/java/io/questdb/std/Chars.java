@@ -1046,7 +1046,24 @@ public final class Chars {
         return true;
     }
 
+    /**
+     * Translates UTF8 sequence into UTF16 sequence and returns number of bytes read from the input sequence.
+     * It terminates transcoding when it encounters one of the following:
+     * <ul>
+     *     <li>end of the input sequence</li>
+     *     <li>terminator byte</li>
+     *     <li>invalid UTF8 sequence</li>
+     * </ul>
+     * It returns number of bytes consumed from the input sequence and does not include terminator byte.
+     * <p>
+     * When input sequence is invalid, it returns -1 and the sink is left in undefined state and should be cleared before
+     * next use.
+     *
+     * @return number of bytes read or -1 if input sequence is invalid.
+     */
     public static int utf8toUtf16(ByteSequence seq, CharSinkBase sink, byte terminator) {
+        assert terminator >= 0;
+
         int i = 0;
         int len = seq.length();
         while (i < len) {
@@ -1287,7 +1304,7 @@ public final class Chars {
             return utf8error();
         }
 
-        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
+        byte b2 = seq.byteAt(index + 1);
         if (isNotContinuation(b2)) {
             return utf8error();
         }
@@ -1353,8 +1370,8 @@ public final class Chars {
             return utf8error();
         }
 
-        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(index + 2);
+        byte b2 = seq.byteAt(index + 1);
+        byte b3 = seq.byteAt(index + 2);
 
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
@@ -1390,9 +1407,9 @@ public final class Chars {
             return utf8error();
         }
 
-        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(index + 2);
-        byte b4 = Unsafe.getUnsafe().getByte(index + 3);
+        byte b2 = seq.byteAt(index + 1);
+        byte b3 = seq.byteAt(index + 2);
+        byte b4 = seq.byteAt(index + 3);
 
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
