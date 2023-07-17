@@ -77,7 +77,7 @@ int fileExists(char *file) {
 
 void buildJavaArgs(CONFIG *config) {
     // main class
-    LPCSTR mainClass = "io.questdb/io.questdb.ServerMain";
+    LPCSTR mainClass = QUESTDB_MAIN_CLASS;
 
     // put together static java opts
     LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
