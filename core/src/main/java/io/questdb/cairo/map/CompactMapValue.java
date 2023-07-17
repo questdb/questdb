@@ -150,6 +150,11 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public int getIPv4(int columnIndex) {
+        return entries.getIPv4(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
     public long getLong(int columnIndex) {
         return entries.getLong(getValueColumnOffset(columnIndex));
     }

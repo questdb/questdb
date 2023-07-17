@@ -146,6 +146,11 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public int getIPv4(int index) {
+        return (int) values[4 * index];
+    }
+
+    @Override
     public long getLong(int index) {
         return values[4 * index];
     }

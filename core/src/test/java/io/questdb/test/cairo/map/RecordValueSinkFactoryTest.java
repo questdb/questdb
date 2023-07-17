@@ -53,7 +53,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
-                .col("IPv4", ColumnType.IPv4)
+                .col("ipv4", ColumnType.IPv4)
         ) {
             CreateTableTestUtils.create(model);
         }
@@ -120,7 +120,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
                     Assert.assertEquals(rnd.nextLong(), value.getDate(8));
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
-                    Assert.assertEquals(rnd.nextInt(), value.getInt(10));
+                    Assert.assertEquals(rnd.nextInt(), value.getIPv4(10));
                 }
             }
         }

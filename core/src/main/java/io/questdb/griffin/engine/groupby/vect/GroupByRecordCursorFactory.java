@@ -608,6 +608,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
+            public int getIPv4(int col) {
+                return Unsafe.getUnsafe().getInt(getValueOffset(col));
+            }
+
+            @Override
             public long getLong(int col) {
                 return Unsafe.getUnsafe().getLong(getValueOffset(col));
             }

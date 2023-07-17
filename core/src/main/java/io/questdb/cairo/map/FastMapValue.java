@@ -149,6 +149,11 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public int getIPv4(int index) {
+        return Unsafe.getUnsafe().getInt(address0(index));
+    }
+
+    @Override
     public long getLong(int index) {
         return Unsafe.getUnsafe().getLong(address0(index));
     }

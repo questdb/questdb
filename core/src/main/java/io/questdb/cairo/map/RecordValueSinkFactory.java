@@ -93,6 +93,7 @@ public class RecordValueSinkFactory {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
+               // case ColumnType.IPv4:
                     asm.invokeInterface(rGetInt, 1);
                     asm.invokeInterface(wPutInt, 2);
                     break;

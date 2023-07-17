@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.functions.eq.NegContainsIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -1762,6 +1763,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 args.add(new StrConstant("34.56.22.11/12"));
                             } else if(factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("32.12.22.11/12"));
+                            } else if(factory instanceof RndIPv4CCFunctionFactory) {
+                                args.add(new StrConstant("4.12.22.11/12"));
+                                args.add(new IntConstant(2));
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
                             } else {

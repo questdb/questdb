@@ -203,6 +203,17 @@ public class TableListFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
+                public int getIPv4(int col) {
+                    if (col == ID_COLUMN) {
+                        return tableId;
+                    }
+                    if (col == MAX_UNCOMMITTED_ROWS_COLUMN) {
+                        return maxUncommittedRows;
+                    }
+                    return Numbers.IPv4_NULL;
+                }
+
+                @Override
                 public long getLong(int col) {
                     if (col == O3MAXLAG_COLUMN) {
                         return o3MaxLag;
