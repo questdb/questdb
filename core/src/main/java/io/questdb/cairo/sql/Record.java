@@ -170,6 +170,13 @@ public interface Record {
     default int getInt(int col) {
         throw new UnsupportedOperationException();
     }
+    /**
+     * Gets the value of an IPv4 column by index
+     * Distinct from getInt(int col) because INT and IPv4 have different null values
+     *
+     * @param col numeric index of the column
+     * @return 32-bit integer
+     */
 
     default int getIPv4(int col) {
         throw new UnsupportedOperationException();
