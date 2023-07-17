@@ -97,6 +97,8 @@ public class TableConverter {
                                     }
                                     txWriter.ofRW(path.trimTo(rootLen).concat(dirName).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                                     txWriter.resetStructureVersionUnsafe();
+                                    txWriter.resetLagValuesUnsafe();
+                                    txWriter.resetLagValuesUnsafe();
                                     txWriter.close();
 
                                 } else {
@@ -105,6 +107,12 @@ public class TableConverter {
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
+                                if (txWriter == null) {
+                                    txWriter = new TxWriter(ff, configuration);
+                                }
+                                txWriter.ofRW(path.trimTo(rootLen).concat(dirName).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                                txWriter.resetLagValuesUnsafe();
+                                txWriter.close();
                             }
 
                             path.trimTo(rootLen).concat(dirName).concat(CONVERT_FILE_NAME).$();
