@@ -64,6 +64,59 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select count(count), ip from test group by ip", "count\tip\n" +
+                "1\t10.5.96.238\n" +
+                "6\tnull\n" +
+                "1\t10.5.173.21\n" +
+                "1\t10.5.250.138\n" +
+                "1\t10.5.76.40\n" +
+                "1\t10.5.20.236\n" +
+                "1\t10.5.95.15\n" +
+                "1\t10.5.132.196\n" +
+                "1\t10.5.93.114\n" +
+                "1\t10.5.121.252\n" +
+                "1\t10.5.249.199\n" +
+                "1\t10.5.212.34\n" +
+                "1\t10.5.236.196\n" +
+                "1\t10.5.170.235\n" +
+                "1\t10.5.45.159\n");
+    }
+
+    @Test
+    public void testGroupByIPv42() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
+                "1\t10.5.96.238\n" +
+                "6\tnull\n" +
+                "1\t10.5.173.21\n" +
+                "1\t10.5.250.138\n" +
+                "1\t10.5.76.40\n" +
+                "1\t10.5.20.236\n" +
+                "1\t10.5.95.15\n" +
+                "1\t10.5.132.196\n" +
+                "1\t10.5.93.114\n" +
+                "1\t10.5.121.252\n" +
+                "1\t10.5.249.199\n" +
+                "1\t10.5.212.34\n" +
+                "1\t10.5.236.196\n" +
+                "1\t10.5.170.235\n" +
+                "1\t10.5.45.159\n");
+    }
+
+    @Test
+    public void testGroupByIPv43() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
+                "4\t10.5.6.2\n" +
+                "6\tnull\n" +
+                "1\t10.5.6.1\n" +
+                "5\t10.5.6.0\n" +
+                "4\t10.5.6.3\n");
+    }
+
+    @Test
     public void alterTableIPv4NullCol() throws Exception {
         compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
         executeInsert("insert into test values ('0.0.0.1')");
