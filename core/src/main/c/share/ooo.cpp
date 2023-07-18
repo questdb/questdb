@@ -66,9 +66,6 @@ struct long_3x {
     }
 };
 
-bool key_equals(const int64_t count, int64_t i, const int32_t **pInt, const int64_t *pInt1, int64_t pos,
-                const int32_t **pInt2);
-
 #define RADIX_SHUFFLE 0
 
 #if RADIX_SHUFFLE == 0
@@ -436,17 +433,27 @@ int64_t merge_dedup_long_index(
         const int64_t index_hi_incl,
         index_t *dest_start
 ) {
+    // src* points to the timestamps column in the table
+    // index* points to the O3 data to be merged into the table
+    // Both memory buffers are sorted in ASC order of the timestamps
     int64_t src_pos = src_lo;
     int64_t index_pos = index_lo;
     index_t *dest = dest_start;
 
+    // Simple 2 way merge
+    // index* rows replace the column data, e.g. new incoming data
+    // overwrite existing data when records match
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
         if (src[src_pos] < index[index_pos].ts) {
             dest[0].ts = src[src_pos];
+            // Take column data.
+            // Set first bit to 1 for merge routines to take column data.
             dest[0].i = src_pos | (1ull << 63);
             dest++;
             src_pos++;
         } else if (src[src_pos] > index[index_pos].ts) {
+            // Take o3 data.
+            // Set first bit to 1 for merge routines to take column data.
             dest[0] = index[index_pos];
             dest++;
             index_pos++;
@@ -466,123 +473,24 @@ int64_t merge_dedup_long_index(
         }
     }
 
+    // This is tail something left either in src data or index.
+
+    // Copy remaining records from index
     while (index_pos <= index_hi_incl) {
         dest[0] = index[index_pos];
         dest++;
         index_pos++;
     }
 
+    // Copy remaining records from column
     while (src_pos <= src_hi_incl) {
         dest[0].ts = src[src_pos];
+        // Set first bit to 1 for merge routines to take column data.
         dest[0].i = src_pos | (1ull << 63);
         dest++;
         src_pos++;
     }
     return dest - dest_start;
-}
-
-int64_t merge_dedup_long_index_int_keys(
-        const uint64_t *src,
-        const int64_t src_lo,
-        const int64_t src_hi_incl,
-        const index_t *index,
-        const int64_t index_lo,
-        const int64_t index_hi_incl,
-        index_t *dest_start,
-        const int64_t dedupKeyCount,
-        const int32_t **dedupSrc,
-        const int64_t *dedupSrcTops,
-        const int32_t **dedupIndex
-) {
-    int64_t src_pos = src_lo;
-    int64_t index_pos = index_lo;
-    index_t *dest = dest_start;
-
-    uint64_t src_ts;
-    uint64_t index_ts;
-
-    while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
-        src_ts = src[src_pos];
-        index_ts = (int64_t) index[index_pos].ts;
-
-        if (src_ts < index_ts) {
-            dest[0].ts = src_ts;
-            dest[0].i = src_pos | (1ull << 63);
-            dest++;
-            src_pos++;
-        } else if (src_ts > index_ts) {
-            dest[0].ts = index_ts;
-            dest[0].i = index_pos;
-            dest++;
-            index_pos++;
-        } else {
-            // index_ts == src_ts
-            const uint64_t conflict_ts = src_ts;
-            const int64_t conflict_src_pos = src_pos;
-            index_t *conflict_dest_start = dest;
-
-            // copy all src records with the same ts
-            while (src[src_pos] == conflict_ts) {
-                dest[0].ts = conflict_ts;
-                dest[0].i = src_pos | (1ull << 63);
-                dest++;
-                src_pos++;
-            }
-
-            // overwrite them with dest if key match
-            while (index[index_pos].ts == conflict_ts) {
-                bool matched = false;
-                for (int64_t i = conflict_src_pos; i < src_pos; i++) {
-                    if (key_equals(dedupKeyCount, i, dedupSrc, dedupSrcTops, index_pos, dedupIndex)) {
-                        conflict_dest_start[i - conflict_src_pos].i = index_pos;
-                        matched = true;
-                        // keep looking, there can be more than 1 match
-                    }
-                }
-                if (!matched) {
-                    dest[0].ts = conflict_ts;
-                    dest[0].i = index_pos;
-                    dest++;
-                }
-                index_pos++;
-            }
-        }
-    }
-
-    while (index_pos <= index_hi_incl) {
-        dest[0].ts = index[index_pos].ts;
-        dest[0].i = (index_pos - 1);
-        dest++;
-        index_pos++;
-    }
-
-    while (src_pos <= src_hi_incl) {
-        dest[0].ts = src[src_pos];
-        dest[0].i = src_pos | (1ull << 63);
-        dest++;
-        src_pos++;
-    }
-
-    return dest - dest_start;
-}
-
-bool key_equals(
-        const int64_t count,
-        const int64_t src_pos,
-        const int32_t **src_data,
-        const int64_t *src_tops,
-        int64_t dest_pos,
-        const int32_t **dest_data
-) {
-    for (int c = 0; c < count; c++) {
-        const int64_t col_top = src_tops[c];
-        const int32_t src_val = src_pos >= col_top ? src_data[c][src_pos - col_top] : -1;
-        const int32_t dest_val = dest_data[c][dest_pos];
-        if (src_val != dest_val) {
-            return false;
-        }
-    }
-    return true;
 }
 
 inline int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
@@ -966,36 +874,6 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
             __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
             __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive),
             reinterpret_cast<index_t *> (pDestIndex)
-    );
-    return merge_count;
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
-        JAVA_STATIC,
-        jlong pSrc,
-        jlong srcLo,
-        jlong srcHiInclusive,
-        jlong pIndex,
-        jlong indexLo,
-        jlong indexHiInclusive,
-        jlong pDestIndex,
-        jint dedupKeyCount,
-        jlong dedupColBuffs,
-        jlong dedupColTops,
-        jlong dedupO3Buffs) {
-    int64_t merge_count = merge_dedup_long_index_int_keys(
-            reinterpret_cast<uint64_t *> (pSrc),
-            __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive),
-            reinterpret_cast<index_t *> (pIndex),
-            __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive),
-            reinterpret_cast<index_t *> (pDestIndex),
-            dedupKeyCount,
-            reinterpret_cast<const int32_t **> (dedupColBuffs),
-            reinterpret_cast<const int64_t *> (dedupColTops),
-            reinterpret_cast<const int32_t **> (dedupO3Buffs)
     );
     return merge_count;
 }

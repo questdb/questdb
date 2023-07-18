@@ -250,7 +250,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
     @Test
     public void testManyTablesFuzzTest() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG, 127668244828333L, 1687527306083L);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = 1;
         int testIterations = 100;
 
