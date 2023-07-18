@@ -414,6 +414,7 @@ public interface CairoConfiguration {
 
     CharSequence getSystemTableNamePrefix();
 
+    // todo: remove
     int getTablePermissionsPoolCapacity();
 
     long getTableRegistryAutoReloadFrequency();

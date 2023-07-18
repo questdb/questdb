@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.OrderByMnemonic;
@@ -148,7 +147,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     /* Expression clause that is actually part of left/outer join but not in join model.
      *  Inner join expressions */
     private ExpressionNode outerJoinExpressionClause;
-    private QueryPermissions permissions;
+    private final QueriedTables queriedTables = new QueriedTables();
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByOffset = null;
@@ -384,7 +383,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
         explicitTimestamp = false;
-        permissions = null;
+        queriedTables.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -761,8 +760,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
-    public QueryPermissions getPermissions() {
-        return permissions;
+    public QueriedTables getQueriedTables() {
+        return queriedTables;
     }
 
     public ExpressionNode getPostJoinWhereClause() {
@@ -1112,10 +1111,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
         this.outerJoinExpressionClause = outerJoinExpressionClause;
-    }
-
-    public void setPermissions(QueryPermissions permissions) {
-        this.permissions = permissions;
     }
 
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
@@ -1536,110 +1531,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         @Override
         public QueryModel newInstance() {
             return new QueryModel();
-        }
-    }
-
-    public static class QueryPermissions extends AbstractSelfReturningObject<QueryPermissions> {
-        final LongObjHashMap<TablePermissions> permissions;
-        boolean checked;
-        TablePermissions updatePermissions;
-
-        public QueryPermissions(WeakSelfReturningObjectPool<QueryPermissions> parentPool) {
-            super(parentPool);
-            this.permissions = new LongObjHashMap<>();
-        }
-
-        public void add(TableToken tableToken, TablePermissions newPermissions) {
-            permissions.put(tableToken.getTableId(), newPermissions);
-        }
-
-        public void check(SecurityContext securityContext) {
-            if (checked) {
-                // skip first check because it was already done in optimiser 
-                checked = false;
-                return;
-            }
-
-            if (updatePermissions != null) {
-                securityContext.authorizeTableUpdate(updatePermissions.getToken(), updatePermissions.getColumns());
-            }
-
-            permissions.forEach((k, v) -> securityContext.authorizeSelect(v.getToken(), v.getColumns()));
-        }
-
-        @Override
-        public void close() {
-            updatePermissions = Misc.free(updatePermissions);
-            checked = false;
-            permissions.forEach((key, value) -> value.close());
-            permissions.clear();
-            super.close();
-        }
-
-        public TablePermissions get(TableToken tableToken) {
-            return permissions.get(tableToken.getTableId());
-        }
-
-        public QueryPermissions of() {
-            this.checked = true;
-            return this;
-        }
-
-        public void setUpdatePermissions(TablePermissions updatePermissions) {
-            assert this.updatePermissions == null;
-            this.updatePermissions = updatePermissions;
-        }
-    }
-
-    public static class TablePermissions extends AbstractSelfReturningObject<TablePermissions> implements Mutable {
-        private final ObjHashSet<CharSequence> columns;
-        private TableToken token;
-
-        public TablePermissions(WeakSelfReturningObjectPool<TablePermissions> parentPool) {
-            super(parentPool);
-            columns = new ObjHashSet<>();
-        }
-
-        public void add(ObjList<CharSequence> newColumns) {
-            for (int i = 0, n = newColumns.size(); i < n; i++) {
-                CharSequence newColumn = newColumns.getQuick(i);
-                int idx = columns.keyIndex(newColumn);
-                if (idx >= 0) {
-                    assert newColumn instanceof String;// column must not be mutable
-                    columns.addAt(idx, newColumn);
-                }
-            }
-        }
-
-        @Override
-        public void clear() {
-            token = null;
-            columns.clear();
-        }
-
-        @Override
-        public void close() {
-            clear();
-            super.close();
-        }
-
-        public ObjList<CharSequence> getColumns() {
-            return columns.getList();
-        }
-
-        public TableToken getToken() {
-            return token;
-        }
-
-        public TablePermissions of(TableToken token) {
-            this.token = token;
-            return this;
-        }
-
-        public TablePermissions of(TableToken tableToken, ObjList<CharSequence> columns) {
-            token = tableToken;
-            add(columns);
-            return this;
         }
     }
 

@@ -26,7 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -96,10 +99,8 @@ public class SqlOptimiser {
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final WeakSelfReturningObjectPool<QueryModel.QueryPermissions> queryPermissionsPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
-    private final WeakSelfReturningObjectPool<QueryModel.TablePermissions> tablePermissionsPool;
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
@@ -108,7 +109,6 @@ public class SqlOptimiser {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
-    private QueryModel.QueryPermissions permissions;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
@@ -130,8 +130,6 @@ public class SqlOptimiser {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
-        this.queryPermissionsPool = new WeakSelfReturningObjectPool<>(QueryModel.QueryPermissions::new, configuration.getQueryPermissionsPoolCapacity());
-        this.tablePermissionsPool = new WeakSelfReturningObjectPool<>(QueryModel.TablePermissions::new, configuration.getTablePermissionsPoolCapacity());
     }
 
     public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
@@ -773,82 +771,86 @@ public class SqlOptimiser {
     }
 
     private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model, boolean requireTimestamp) {
-        if (model != null) {
-            if (model.getTableName() != null) {
-                ExpressionNode tableNameExpr = model.getTableNameExpr();
-                switch (tableNameExpr.type) {
-                    case CONSTANT:
-                    case LITERAL:
-                        // adjust name in case of marker
-                        GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) tableNameExpr.token;
-                        int lo = tab.getLo();
-                        if (Chars.startsWith(tab, QueryModel.NO_ROWID_MARKER)) {
-                            tab.setLo(lo + QueryModel.NO_ROWID_MARKER.length());
-                        }
-                        try {
-                            // copy column names 
-                            literalCollectorANames.clear();
-                            final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-                            boolean checkTimestamp = requireTimestamp && model.getTimestamp() != null;
-                            boolean timestampFound = false;
-                            CharSequence tstmpToken = checkTimestamp ? model.getTimestamp().token : null;
-                            for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-                                CharSequence colName = topDownColumns.getQuick(i).getName();
+        if (model == null) {
+            System.out.println("why?");
+        }
+        // collect queried tables on top-level model
+        authorizeColumnAccess0(executionContext, model.getQueriedTables(), model, requireTimestamp);
+    }
 
-                                CharSequence immutableColName = model.getAliasToColumnMap().get(colName).getAlias();
-                                assert immutableColName instanceof String && Chars.equalsIgnoreCase(colName, immutableColName);
+    private void authorizeColumnAccess0(SqlExecutionContext executionContext, QueriedTables queriedTables, QueryModel model, boolean requireTimestamp) {
+        // this is a recursive method, hence null check is optimally located in this method
+        if (model == null) {
+            return;
+        }
+        if (model.getTableName() != null) {
+            ExpressionNode tableNameExpr = model.getTableNameExpr();
+            switch (tableNameExpr.type) {
+                case CONSTANT:
+                case LITERAL:
+                    // adjust name in case of marker
+                    GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) tableNameExpr.token;
+                    int lo = tab.getLo();
+                    if (Chars.startsWith(tab, QueryModel.NO_ROWID_MARKER)) {
+                        tab.setLo(lo + QueryModel.NO_ROWID_MARKER.length());
+                    }
+                    try {
+                        // copy column names
+                        literalCollectorANames.clear();
+                        final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+                        boolean checkTimestamp = requireTimestamp && model.getTimestamp() != null;
+                        boolean timestampFound = false;
+                        CharSequence tstmpToken = checkTimestamp ? model.getTimestamp().token : null;
+                        for (int i = 0, n = topDownColumns.size(); i < n; i++) {
+                            CharSequence colName = topDownColumns.getQuick(i).getName();
 
-                                literalCollectorANames.add(immutableColName);
-                                timestampFound |= checkTimestamp && !timestampFound && Chars.equals(tstmpToken, colName);
-                            }
+                            CharSequence immutableColName = model.getAliasToColumnMap().get(colName).getAlias();
+                            assert immutableColName instanceof String && Chars.equalsIgnoreCase(colName, immutableColName);
 
-                            if (checkTimestamp && !timestampFound) {
-                                CharSequence immutableColName = model.getAliasToColumnMap().get(tstmpToken).getAlias();
-                                assert immutableColName instanceof String && Chars.equalsIgnoreCase(tstmpToken, immutableColName);
-                                literalCollectorANames.add(immutableColName);
-                            }
-
-                            TableToken tableToken = executionContext.getTableToken(tab);
-                            executionContext.getSecurityContext().authorizeSelect(
-                                    tableToken,
-                                    literalCollectorANames
-                            );
-
-                            QueryModel.TablePermissions tablePermissions = permissions.get(tableToken);
-                            if (tablePermissions == null) {
-                                tablePermissions = tablePermissionsPool.pop().of(tableToken);
-                                permissions.add(tableToken, tablePermissions);
-                            }
-                            tablePermissions.add(literalCollectorANames);
-                        } finally {
-                            tab.setLo(lo);
+                            literalCollectorANames.add(immutableColName);
+                            timestampFound |= checkTimestamp && !timestampFound && Chars.equals(tstmpToken, colName);
                         }
 
-                        ObjList<QueryModel> joinModels = model.getJoinModels();
-                        for (int i = 1, n = joinModels.size(); i < n; i++) {
-                            // exclude 0 index, it is the same as "model"
-                            QueryModel joinModel = joinModels.getQuick(i);
-                            authorizeColumnAccess(executionContext, joinModel, requireTimestamp || joinModel.isTemporalJoin());
+                        if (checkTimestamp && !timestampFound) {
+                            CharSequence immutableColName = model.getAliasToColumnMap().get(tstmpToken).getAlias();
+                            assert immutableColName instanceof String && Chars.equalsIgnoreCase(tstmpToken, immutableColName);
+                            literalCollectorANames.add(immutableColName);
                         }
-                        authorizeColumnAccess(executionContext, model.getUnionModel(), requireTimestamp);
 
-                        break;
-                    case FUNCTION:
-                        break;
-                    default:
-                        // todo: function call
-                        break;
-                }
-            } else {
-                authorizeColumnAccess(executionContext, model.getNestedModel(), model.getSampleBy() != null);
+                        TableToken tableToken = executionContext.getTableToken(tab);
+                        executionContext.getSecurityContext().authorizeSelect(
+                                tableToken,
+                                literalCollectorANames
+                        );
+                        queriedTables.mergePermissions(tableToken, literalCollectorANames);
+                    } finally {
+                        tab.setLo(lo);
+                    }
 
-                ObjList<QueryModel> joinModels = model.getJoinModels();
-                for (int i = 1, n = joinModels.size(); i < n; i++) {
-                    // exclude 0 index, it is the same as "model"
-                    authorizeColumnAccess(executionContext, joinModels.getQuick(i), requireTimestamp);
-                }
-                authorizeColumnAccess(executionContext, model.getUnionModel(), requireTimestamp);
+                    ObjList<QueryModel> joinModels = model.getJoinModels();
+                    for (int i = 1, n = joinModels.size(); i < n; i++) {
+                        // exclude 0 index, it is the same as "model"
+                        QueryModel joinModel = joinModels.getQuick(i);
+                        authorizeColumnAccess0(executionContext, queriedTables, joinModel, requireTimestamp || joinModel.isTemporalJoin());
+                    }
+                    authorizeColumnAccess0(executionContext, queriedTables, model.getUnionModel(), requireTimestamp);
+
+                    break;
+                case FUNCTION:
+                    break;
+                default:
+                    // todo: function call
+                    break;
             }
+        } else {
+            authorizeColumnAccess0(executionContext, queriedTables, model.getNestedModel(), model.getSampleBy() != null);
+
+            ObjList<QueryModel> joinModels = model.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                // exclude 0 index, it is the same as "model"
+                authorizeColumnAccess0(executionContext, queriedTables, joinModels.getQuick(i), requireTimestamp);
+            }
+            authorizeColumnAccess0(executionContext, queriedTables, model.getUnionModel(), requireTimestamp);
         }
     }
 
@@ -4771,18 +4773,7 @@ public class SqlOptimiser {
     }
 
     QueryModel optimise(@Transient final QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
-        permissions = queryPermissionsPool.pop();
-        try {
-            // only set permissions on the outermost model
-            QueryModel rewrittenModel = optimiseInner(model, sqlExecutionContext);
-            rewrittenModel.setPermissions(permissions);
-            return rewrittenModel;
-        } catch (Throwable t) {
-            permissions = Misc.free(permissions);
-            throw t;
-        } finally {
-            permissions = null;
-        }
+        return optimiseInner(model, sqlExecutionContext);
     }
 
     void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext, TableRecordMetadata metadata) throws SqlException {
@@ -4847,9 +4838,7 @@ public class SqlOptimiser {
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
             }
             updateQueryModel.setUpdateTableToken(tableToken);
-
-            QueryModel.QueryPermissions permissions = updateQueryModel.getNestedModel().getPermissions();
-            permissions.setUpdatePermissions(tablePermissionsPool.pop().of(tableToken, literalCollectorANames));
+            updateQueryModel.getNestedModel().getQueriedTables().mergeUpdatedColumns(tableToken, literalCollectorANames);
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

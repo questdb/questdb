@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -7558,7 +7557,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     }
                 }
             } finally {
-                engine.unlock(AllowAllSecurityContext.INSTANCE, tableToken, null, false);
+                engine.unlock(tableToken, null, false);
             }
         });
     }

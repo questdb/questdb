@@ -30,7 +30,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-@SuppressWarnings("unused")
 public interface SecurityContext {
 
     void assumeServiceAccount(CharSequence serviceAccountName);

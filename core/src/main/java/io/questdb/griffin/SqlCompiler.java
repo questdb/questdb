@@ -1538,7 +1538,7 @@ public class SqlCompiler implements Closeable {
             if (isWalEnabled) {
                 Misc.free(writerAPI);
             } else {
-                engine.unlock(securityContext, tableToken, writer, false);
+                engine.unlock(tableToken, writer, false);
             }
         }
     }
@@ -2191,9 +2191,9 @@ public class SqlCompiler implements Closeable {
 
     private RecordCursorFactory prepareForUpdate(
             TableToken tableToken,
-            QueryModel selectQueryModel,
-            QueryModel updateQueryModel,
-            SqlExecutionContext executionContext
+            @Transient QueryModel selectQueryModel,
+            @Transient QueryModel updateQueryModel,
+            @Transient SqlExecutionContext executionContext
     ) throws SqlException {
         final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
         final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
@@ -2573,8 +2573,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private void validateTableModelAndCreateTypeCast(
-            CreateTableModel model,
-            RecordMetadata metadata,
+            @Transient CreateTableModel model,
+            @Transient RecordMetadata metadata,
             @Transient IntIntHashMap typeCast
     ) throws SqlException {
         CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
@@ -2623,7 +2623,9 @@ public class SqlCompiler implements Closeable {
         // no need to worry that column will not resolve
         ExpressionNode timestamp = model.getTimestamp();
         if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
-            throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
+            throw SqlException.position(timestamp.position)
+                    .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token)))
+                    .put(']');
         }
 
         if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
@@ -2664,7 +2666,10 @@ public class SqlCompiler implements Closeable {
         functionParser.clear();
     }
 
-    RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generate(
+            @Transient QueryModel queryModel,
+            @Transient SqlExecutionContext executionContext
+    ) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
@@ -2728,7 +2733,6 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
-    @SuppressWarnings({"unused"})
     protected void unknownDropColumnSuffix(
             @Transient SecurityContext securityContext,
             CharSequence tok,
@@ -2738,7 +2742,6 @@ public class SqlCompiler implements Closeable {
         throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
     }
 
-    @SuppressWarnings({"unused"})
     protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
@@ -2746,7 +2749,6 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
     }
 
-    @SuppressWarnings("unused")
     protected void unknownDropTableSuffix(
             SqlExecutionContext executionContext,
             CharSequence tok,
@@ -2757,7 +2759,6 @@ public class SqlCompiler implements Closeable {
         throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
     }
 
-    @SuppressWarnings({"unused", "RedundantThrows"})
     protected RecordCursorFactory unknownShowStatement(
             SqlExecutionContext executionContext,
             CharSequence tok

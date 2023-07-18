@@ -28,9 +28,11 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueriedTables;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Factory responsible for re-authorizing user permissions on getCursor() call.
@@ -38,11 +40,11 @@ import io.questdb.std.str.CharSink;
 public class SecurityCheckFactory implements RecordCursorFactory {
 
     final RecordCursorFactory base;
-    final QueryModel.QueryPermissions permissions;
+    final QueriedTables queriedTables;
 
-    public SecurityCheckFactory(RecordCursorFactory factory, QueryModel.QueryPermissions permissions) {
+    public SecurityCheckFactory(RecordCursorFactory factory, @NotNull QueriedTables queriedTables) {
         this.base = factory;
-        this.permissions = permissions;
+        this.queriedTables = queriedTables;
     }
 
     @Override
@@ -56,7 +58,7 @@ public class SecurityCheckFactory implements RecordCursorFactory {
     }
 
     @Override
-    public PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<?> execute(@Transient SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return base.execute(executionContext, collectSubSeq, order);
     }
 
@@ -95,10 +97,7 @@ public class SecurityCheckFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (permissions != null) {
-            permissions.check(executionContext.getSecurityContext());
-        }
-
+        queriedTables.revalidate(executionContext.getSecurityContext());
         return base.getCursor(executionContext);
     }
 

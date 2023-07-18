@@ -1997,7 +1997,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    @SuppressWarnings("unused")
     public void setCommitListener(CommitListener commitListener) {
         this.commitListener = commitListener;
     }

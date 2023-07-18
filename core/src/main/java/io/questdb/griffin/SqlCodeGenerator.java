@@ -196,10 +196,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursorFactory generate(@Transient QueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         RecordCursorFactory factory = generateQuery(model, executionContext, true);
-        if (model.getPermissions() != null) {
-            return new SecurityCheckFactory(factory, model.getPermissions());
+        if (model.getQueriedTables() != null) {
+            return new SecurityCheckFactory(factory, model.getQueriedTables().deepCopy());
         }
         return factory;
     }
@@ -209,7 +209,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
-    public RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel innerModel = model.getInnerExecutionModel();
         QueryModel queryModel = innerModel.getQueryModel();
         RecordCursorFactory factory;
@@ -1857,7 +1857,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             TableToken tableToken,
             IntrinsicModel intrinsicModel,
             Function filter,
-            SqlExecutionContext executionContext,
+            @Transient SqlExecutionContext executionContext,
             int timestampIndex,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizes,
@@ -3059,7 +3059,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
-    private RecordCursorFactory generateSelectCursor(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateSelectCursor(
+            @Transient QueryModel model,
+            @Transient SqlExecutionContext executionContext) throws SqlException {
         // sql parser ensures this type of model always has only one column
         return new RecordAsAFieldRecordCursorFactory(
                 generate(model.getNestedModel(), executionContext),
@@ -3707,12 +3709,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateTableQuery0(
-            QueryModel model,
-            SqlExecutionContext executionContext,
+            @Transient QueryModel model,
+            @Transient SqlExecutionContext executionContext,
             ObjList<ExpressionNode> latestBy,
             boolean supportsRandomAccess,
-            TableReader reader,
-            TableRecordMetadata metadata
+            @Transient TableReader reader,
+            @Transient TableRecordMetadata metadata
     ) throws SqlException {
         // create metadata based on top-down columns that are required
 

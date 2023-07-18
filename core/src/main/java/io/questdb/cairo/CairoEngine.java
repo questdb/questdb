@@ -540,7 +540,6 @@ public class CairoEngine implements Closeable, WriterSource {
     // For testing only
     @TestOnly
     public WalReader getWalReader(
-            @SuppressWarnings("unused") SecurityContext securityContext,
             TableToken tableToken,
             CharSequence walName,
             int segmentId,
@@ -778,7 +777,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                 toTableToken.getTableName()
                         );
                     } finally {
-                        unlock(securityContext, fromTableToken, null, false);
+                        unlock(fromTableToken, null, false);
                     }
                     tableNameRegistry.dropTable(fromTableToken);
                 } else {
@@ -820,7 +819,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void unlock(
-            @SuppressWarnings("unused") SecurityContext securityContext,
             TableToken tableToken,
             @Nullable TableWriter writer,
             boolean newTable
