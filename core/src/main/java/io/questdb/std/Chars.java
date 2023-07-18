@@ -1054,6 +1054,8 @@ public final class Chars {
      *     <li>terminator byte</li>
      *     <li>invalid UTF8 sequence</li>
      * </ul>
+     * The terminator byte must be a valid ASCII character.
+     * <p>
      * It returns number of bytes consumed from the input sequence and does not include terminator byte.
      * <p>
      * When input sequence is invalid, it returns -1 and the sink is left in undefined state and should be cleared before
@@ -1062,7 +1064,7 @@ public final class Chars {
      * @return number of bytes read or -1 if input sequence is invalid.
      */
     public static int utf8toUtf16(ByteSequence seq, CharSinkBase sink, byte terminator) {
-        assert terminator >= 0;
+        assert terminator >= 0 : "terminator must be ASCII character";
 
         int i = 0;
         int len = seq.length();
