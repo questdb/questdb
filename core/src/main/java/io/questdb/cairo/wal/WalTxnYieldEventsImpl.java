@@ -37,14 +37,20 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 
 public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
 
+    // Used to pass arguments to avoid allocations due to capturing lambdas.
+    private static final ThreadLocal<YieldEvent> tlEvent = new ThreadLocal<>();
+    private static final ThreadLocal<ObjList<YieldEvent>> tlList = new ThreadLocal<>();
     private final CharSequence dbRoot;
     private final ConcurrentHashMap<TableToken, ObjList<YieldEvent>> events = new ConcurrentHashMap<>();
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
+    private final BiFunction<TableToken, ObjList<YieldEvent>, ObjList<YieldEvent>> registerComputeRef = this::registerCompute;
     private final long spinLockTimeout;
+    private final BiFunction<TableToken, ObjList<YieldEvent>, ObjList<YieldEvent>> takeRegisteredEventsComputeRef = this::takeRegisteredEventsCompute;
     private final TxReader txReader;
     private final YieldEventFactory yieldEventFactory;
 
@@ -76,13 +82,12 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
             }
 
             final YieldEvent yieldEvent = yieldEventFactory.newInstance();
-            events.compute(tableToken, (t, list) -> {
-                if (list == null) {
-                    list = new ObjList<>();
-                }
-                list.add(yieldEvent);
-                return list;
-            });
+            tlEvent.set(yieldEvent);
+            try {
+                events.compute(tableToken, registerComputeRef);
+            } finally {
+                tlEvent.set(null);
+            }
 
             // Read the txn once again to make sure ApplyWal2TableJob sees our changes.
             try {
@@ -107,11 +112,12 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
 
     @Override
     public void takeRegisteredEvents(TableToken tableToken, ObjList<YieldEvent> dest) {
-        events.computeIfPresent(tableToken, (t, list) -> {
-            dest.addAll(list);
-            list.clear();
-            return list;
-        });
+        tlList.set(dest);
+        try {
+            events.computeIfPresent(tableToken, takeRegisteredEventsComputeRef);
+        } finally {
+            tlList.set(null);
+        }
     }
 
     private long readSeqTxn(TableToken tableToken, Path path) {
@@ -129,5 +135,21 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
             // The table must have been dropped, so we have nothing to wait for.
             return -1;
         }
+    }
+
+    private ObjList<YieldEvent> registerCompute(TableToken tableToken, ObjList<YieldEvent> list) {
+        if (list == null) {
+            list = new ObjList<>();
+        }
+        final YieldEvent yieldEvent = tlEvent.get();
+        list.add(yieldEvent);
+        return list;
+    }
+
+    private ObjList<YieldEvent> takeRegisteredEventsCompute(TableToken tableToken, ObjList<YieldEvent> list) {
+        ObjList<YieldEvent> dest = tlList.get();
+        dest.addAll(list);
+        list.clear();
+        return list;
     }
 }
