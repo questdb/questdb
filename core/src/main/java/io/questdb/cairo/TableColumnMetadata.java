@@ -65,21 +65,21 @@ public class TableColumnMetadata implements Plannable {
     public TableColumnMetadata(
             String name,
             int type,
-            boolean indexFlag,
+            boolean indexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
             int writerIndex,
-            boolean dedupKeyFlag
+            boolean isDedupKey
     ) {
         this.name = name;
         this.type = type;
-        this.indexed = indexFlag;
+        this.indexed = indexed;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
-        this.isDedupKey = dedupKeyFlag;
+        this.isDedupKey = isDedupKey;
     }
 
     public int getIndexValueBlockCapacity() {

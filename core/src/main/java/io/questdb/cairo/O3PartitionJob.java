@@ -711,26 +711,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return timestampIndexAddr;
     }
 
-    private static long getDedupRows(
-            long srcTimestampAddr,
-            long mergeDataLo,
-            long mergeDataHi,
-            long sortedTimestampsAddr,
-            long mergeOOOLo,
-            long mergeOOOHi,
-            long tempIndexAddr
-    ) {
-        return Vect.mergeDedupTimestampWithLongIndexAsc(
-                srcTimestampAddr,
-                mergeDataLo,
-                mergeDataHi,
-                sortedTimestampsAddr,
-                mergeOOOLo,
-                mergeOOOHi,
-                tempIndexAddr
-        );
-    }
-
     private static void publishOpenColumnTaskContended(
             long cursor,
             int openColumnMode,
@@ -1048,7 +1028,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             } else {
                 final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
                 try {
-                    final long dedupRows = getDedupRows(
+                    final long rowCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             srcTimestampAddr,
                             mergeDataLo,
                             mergeDataHi,
@@ -1057,12 +1037,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeOOOHi,
                             tempIndexAddr
                     );
-                    timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                    timestampMergeIndexSize = rowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
                     timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                    final long duplicateCount = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) - dedupRows;
-                    newPartitionSize -= duplicateCount;
+                    final long duplicateRowCount = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) - rowCount;
+                    newPartitionSize -= duplicateRowCount;
                     if (oldPartitionTimestamp == partitionTimestamp) {
-                        oldPartitionSize -= duplicateCount;
+                        oldPartitionSize -= duplicateRowCount;
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
