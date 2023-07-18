@@ -141,7 +141,7 @@ public abstract class CharFunction implements ScalarFunction {
     @Override
     public final CharSequence getStr(Record rec) {
         final char value = getChar(rec);
-        if (value == 0) {
+        if (value == Character.MIN_VALUE) {
             return null;
         }
         sinkA.clear();
@@ -179,7 +179,7 @@ public abstract class CharFunction implements ScalarFunction {
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStr(rec);
     }
 
     @Override
