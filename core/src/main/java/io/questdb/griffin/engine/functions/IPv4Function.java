@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -129,7 +130,7 @@ public abstract class IPv4Function implements ScalarFunction{
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        Numbers.intToIPv4Sink(sink, getIPv4(rec));
+            Numbers.intToIPv4Sink(sink, getIPv4(rec));
     }
 
     @Override

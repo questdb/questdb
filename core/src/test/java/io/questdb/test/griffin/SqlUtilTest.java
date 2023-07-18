@@ -256,14 +256,14 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsIPv4("77823.23232.23232.33");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: `77823.23232.23232.33` [STRING -> IPv4]", e.getFlyweightMessage());
+            TestUtils.assertEquals("invalid ipv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
         }
 
         try {
             SqlUtil.implicitCastStrAsIPv4("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> IPv4]", e.getFlyweightMessage());
+            TestUtils.assertEquals("invalid ipv4 format: hello", e.getFlyweightMessage());
         }
     }
 
