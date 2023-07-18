@@ -254,8 +254,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             for (int i = 0; i < size; i++) {
-                int value = args.getQuick(i).getInt(rec);
-                if (value != Numbers.INT_NaN) {
+                int value = args.getQuick(i).getIPv4(rec);
+                if (value != Numbers.IPv4_NULL) {
                     return value;
                 }
             }
@@ -265,8 +265,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public int getIPv4(Record rec) {
             for (int i = 0; i < size; i++) {
-                int value = args.getQuick(i).getInt(rec);
-                if (value != Numbers.INT_NaN) {
+                int value = args.getQuick(i).getIPv4(rec);
+                if (value != Numbers.IPv4_NULL) {
                     return value;
                 }
             }
@@ -549,20 +549,20 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            int value = args0.getInt(rec);
-            if (value != Numbers.INT_NaN) {
+            int value = args0.getIPv4(rec);
+            if (value != Numbers.IPv4_NULL) {
                 return value;
             }
-            return args1.getInt(rec);
+            return args1.getIPv4(rec);
         }
 
         @Override
         public int getIPv4(Record rec) {
-            int value = args0.getInt(rec);
-            if (value != Numbers.INT_NaN) {
+            int value = args0.getIPv4(rec);
+            if (value != Numbers.IPv4_NULL) {
                 return value;
             }
-            return args1.getInt(rec);
+            return args1.getIPv4(rec);
         }
 
         @Override

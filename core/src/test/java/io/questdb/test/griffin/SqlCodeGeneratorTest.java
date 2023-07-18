@@ -63,11 +63,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "null\n");
     }
 
-//    @Test
-//    public void IPv4WalTest() throws Exception {
-//        compiler.compile("create table test (col ipv4) wal", sqlExecutionContext);
-//    }
-
     @Test
     public void alterTableIPv4NullCol() throws Exception {
         compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
