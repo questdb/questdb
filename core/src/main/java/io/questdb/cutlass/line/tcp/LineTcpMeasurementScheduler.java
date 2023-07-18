@@ -526,6 +526,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         final DirectByteCharSequence entityValue = ent.getValue();
                         if (geoHashBits == 0) { // not geohash
                             switch (ColumnType.tagOf(colType)) {
+                                case ColumnType.IPv4:
+                                    r.putInt(columnIndex, Numbers.parseIPv4Quiet(entityValue));
+                                    break;
                                 case ColumnType.STRING:
                                     r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;
