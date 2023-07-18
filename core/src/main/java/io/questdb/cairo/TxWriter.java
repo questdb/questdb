@@ -82,6 +82,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
 
+    public void resetLagValuesUnsafe() {
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_SEQ_TXN_64, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_CHECKSUM_32, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, 0);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, 0);
+    }
+
+
     public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion = Numbers.encodeLowHighInts(getMetadataVersion(), getColumnStructureVersion() + 1);
