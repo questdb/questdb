@@ -1036,7 +1036,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             if (!tableWriter.isDeduplicationEnabled()) {
                 timestampMergeIndexSize = tempIndexSize;
-                assert timestampMergeIndexSize > 0; // avoid SIGSEGV
                 timestampMergeIndexAddr = createMergeIndex(
                         srcTimestampAddr,
                         sortedTimestampsAddr,
@@ -1067,7 +1066,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
-                    LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     O3CopyJob.closeColumnIdleQuick(
@@ -1241,7 +1240,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
-                    LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;
