@@ -1,18 +1,18 @@
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.StaticUsernamePasswordMatcher;
 import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
 public class StaticUsernamePasswordMatcherTest {
+    private int passwordLen;
+    private long passwordPtr;
 
     public static void assertMatch(UsernamePasswordMatcher matcher, String username, String password) {
         byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
@@ -48,222 +48,34 @@ public class StaticUsernamePasswordMatcherTest {
         }
     }
 
-    @Test
-    public void testAfterClose() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "pass", true, "roUser", "roPass");
-            StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg);
-            matcher.close();
-            assertNoMatch(matcher, "user", "pass");
-            assertNoMatch(matcher, "roUser", "roPass");
-        });
-    }
-
-    @Test
-    public void testEmptyDefaultPassword() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "", true, "roUser", "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertNoMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testEmptyDefaultUser() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("", "pass", true, "roUser", "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertNoMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testEmptyRoPassword() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "pass", true, "roUser", "");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertNoMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testEmptyRoUser() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "pass", true, "", "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertNoMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testNullDefaultPassword() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "", true, "roUser", "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertNoMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testNullDefaultUser() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration(null, "pass", true, "roUser", "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertNoMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testNullRoPassword() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "pass", true, "roUser", null);
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertNoMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testNullRoUser() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "pass", true, null, "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertNoMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testRoDisabled() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "pass", false, "roUser", "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, null, "pass");
-                assertNoMatch(matcher, "user", "ssap");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertNoMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testRoEnabled() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            PGWireConfiguration cfg = new MyPGWireConfiguration("user", "pass", true, "roUser", "roPass");
-            try (StaticUsernamePasswordMatcher matcher = new StaticUsernamePasswordMatcher(cfg)) {
-                assertMatch(matcher, "user", "pass");
-                assertNoMatch(matcher, "resu", "pass");
-                assertNoMatch(matcher, "user", "bad-password");
-                assertNoMatch(matcher, "user", "ssap");
-                assertMatch(matcher, "roUser", "roPass");
-                assertNoMatch(matcher, "resUor", "roPass");
-                assertNoMatch(matcher, "roUser", "bad-password");
-                assertNoMatch(matcher, "user", 42, 0);
-                assertNoMatch(matcher, "roUser", 42, 0);
-                assertNoMatch(matcher, "user", 0, 0);
-                assertNoMatch(matcher, "roUser", 0, 0);
-            }
-        });
-    }
-
-    private static class MyPGWireConfiguration extends DefaultPGWireConfiguration {
-        private final String defaultPassword;
-        private final String defaultUsername;
-        private final String readOnlyPassword;
-        private final boolean readOnlyUserEnabled;
-        private final String readOnlyUsername;
-
-
-        private MyPGWireConfiguration(String defaultUsername, String defaultPassword, boolean readOnlyUserEnabled, String readOnlyUsername, String readOnlyPassword) {
-            this.defaultUsername = defaultUsername;
-            this.defaultPassword = defaultPassword;
-            this.readOnlyUserEnabled = readOnlyUserEnabled;
-            this.readOnlyUsername = readOnlyUsername;
-            this.readOnlyPassword = readOnlyPassword;
+    @After
+    public void tearDown() {
+        if (passwordPtr != 0) {
+            Unsafe.free(passwordPtr, passwordLen, MemoryTag.NATIVE_DEFAULT);
         }
+    }
 
-        @Override
-        public String getDefaultPassword() {
-            return defaultPassword;
+    @Test
+    public void testVerifyPassword() {
+        try (StaticUsernamePasswordMatcher matcher = newMatcher("user", "pass")) {
+            assertMatch(matcher, "user", "pass");
+            assertNoMatch(matcher, "user", "ssap");
+            assertNoMatch(matcher, "user", "wrongpassword");
+            assertNoMatch(matcher, "", "wrongpassword");
+            assertNoMatch(matcher, null, "pass");
         }
+    }
 
-        @Override
-        public String getDefaultUsername() {
-            return defaultUsername;
-        }
+    private StaticUsernamePasswordMatcher newMatcher(String username, String password) {
+        assert passwordPtr == 0;
+        assert passwordLen == 0;
 
-        @Override
-        public String getReadOnlyPassword() {
-            return readOnlyPassword;
+        byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
+        passwordLen = bytes.length;
+        passwordPtr = Unsafe.malloc(passwordLen, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < bytes.length; i++) {
+            Unsafe.getUnsafe().putByte(passwordPtr + i, bytes[i]);
         }
-
-        @Override
-        public String getReadOnlyUsername() {
-            return readOnlyUsername;
-        }
-
-        @Override
-        public boolean isReadOnlyUserEnabled() {
-            return readOnlyUserEnabled;
-        }
+        return new StaticUsernamePasswordMatcher(username, passwordPtr, passwordLen);
     }
 }
