@@ -179,7 +179,7 @@ public abstract class CharFunction implements ScalarFunction {
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        return getStr(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
