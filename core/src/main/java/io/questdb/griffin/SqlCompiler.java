@@ -74,6 +74,7 @@ public class SqlCompiler implements Closeable {
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
     protected final AlterOperationBuilder alterOperationBuilder;
+    protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
     protected final CairoEngine engine;
@@ -83,7 +84,6 @@ public class SqlCompiler implements Closeable {
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
-    private final SqlCodeGenerator codeGenerator;
     private final DropStatementCompiler dropStmtCompiler = new DropStatementCompiler();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
@@ -157,7 +157,8 @@ public class SqlCompiler implements Closeable {
         configureLexer(lexer);
 
         final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
-        optimiser = new SqlOptimiser(
+
+        optimiser = newSqlOptimiser(
                 configuration,
                 characterStore,
                 sqlNodePool,
@@ -165,8 +166,7 @@ public class SqlCompiler implements Closeable {
                 queryModelPool,
                 postOrderTreeTraversalAlgo,
                 functionParser,
-                path
-        );
+                path);
 
         parser = new SqlParser(
                 configuration,
@@ -180,6 +180,7 @@ public class SqlCompiler implements Closeable {
 
         textLoader = new TextLoader(engine);
         alterOperationBuilder = new AlterOperationBuilder();
+
     }
 
     // public for testing
@@ -2198,7 +2199,7 @@ public class SqlCompiler implements Closeable {
         final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
         final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
 
-        RecordCursorFactory updateToDataCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
+        RecordCursorFactory updateToDataCursorFactory = generateFactory(selectQueryModel, executionContext);
         try {
             if (!updateToDataCursorFactory.supportsUpdateRowId(tableToken)) {
                 // in theory this should never happen because all valid UPDATE statements should result in
@@ -2670,7 +2671,32 @@ public class SqlCompiler implements Closeable {
             @Transient QueryModel queryModel,
             @Transient SqlExecutionContext executionContext
     ) throws SqlException {
-        return codeGenerator.generate(queryModel, executionContext);
+        return generateFactory(queryModel, executionContext);
+    }
+
+    protected RecordCursorFactory generateFactory(QueryModel selectQueryModel, SqlExecutionContext executionContext) throws SqlException {
+        return codeGenerator.generate(selectQueryModel, executionContext);
+    }
+
+    @NotNull
+    protected SqlOptimiser newSqlOptimiser(CairoConfiguration configuration,
+                                           CharacterStore characterStore,
+                                           ObjectPool<ExpressionNode> sqlNodePool,
+                                           ObjectPool<QueryColumn> queryColumnPool,
+                                           ObjectPool<QueryModel> queryModelPool,
+                                           PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
+                                           FunctionParser functionParser,
+                                           Path path) {
+        return new SqlOptimiser(
+                configuration,
+                characterStore,
+                sqlNodePool,
+                queryColumnPool,
+                queryModelPool,
+                postOrderTreeTraversalAlgo,
+                functionParser,
+                path
+        );
     }
 
     protected void registerKeywordBasedExecutors() {

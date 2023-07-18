@@ -136,6 +136,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode limitLo;
     //position of the limit clause token
     private int limitPosition;
+    private long metadataVersion = -1;
     private int modelPosition = 0;
     private int modelType = ExecutionModel.QUERY;
     private QueryModel nestedModel;
@@ -147,7 +148,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     /* Expression clause that is actually part of left/outer join but not in join model.
      *  Inner join expressions */
     private ExpressionNode outerJoinExpressionClause;
-    private final QueriedTables queriedTables = new QueriedTables();
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByOffset = null;
@@ -158,7 +158,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private Function tableNameFunction;
-    private long metadataVersion = -1;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
     private QueryModel updateTableModel;
@@ -383,7 +382,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
         explicitTimestamp = false;
-        queriedTables.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -683,6 +681,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return limitPosition;
     }
 
+    public long getMetadataVersion() {
+        return metadataVersion;
+    }
+
     public int getModelAliasIndex(CharSequence column, int start, int end) {
         int index = modelAliasIndexes.keyIndex(column, start, end);
         if (index < 0) {
@@ -760,10 +762,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
-    public QueriedTables getQueriedTables() {
-        return queriedTables;
-    }
-
     public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
@@ -816,10 +814,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public Function getTableNameFunction() {
         return tableNameFunction;
-    }
-
-    public long getMetadataVersion() {
-        return metadataVersion;
     }
 
     public ExpressionNode getTimestamp() {
@@ -1080,6 +1074,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.limitPosition = limitPosition;
     }
 
+    public void setMetadataVersion(long metadataVersion) {
+        this.metadataVersion = metadataVersion;
+    }
+
     public void setModelPosition(int modelPosition) {
         this.modelPosition = modelPosition;
     }
@@ -1156,10 +1154,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setTableNameFunction(Function function) {
         this.tableNameFunction = function;
-    }
-
-    public void setMetadataVersion(long metadataVersion) {
-        this.metadataVersion = metadataVersion;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {

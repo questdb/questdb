@@ -1324,7 +1324,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
                 return;
-            } catch (TableReferenceOutOfDateException ex) {
+            } catch (TableReferenceOutOfDateException | WriterOutOfDateException ex) {
                 if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
@@ -1333,7 +1333,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 LOG.info().$(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
-                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
                 processCompiledQuery(cc);
             } catch (Throwable e) {
                 if (transactionState == IN_TRANSACTION) {

@@ -197,11 +197,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     public RecordCursorFactory generate(@Transient QueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
-        RecordCursorFactory factory = generateQuery(model, executionContext, true);
-        if (model.getQueriedTables() != null) {
-            return new SecurityCheckFactory(factory, model.getQueriedTables().deepCopy());
-        }
-        return factory;
+        return generateQuery(model, executionContext, true);
     }
 
     public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {

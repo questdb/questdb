@@ -84,7 +84,7 @@ public class InsertOperationImpl implements InsertOperation {
                             || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
             ) {
                 writer.close();
-                throw WriterOutOfDateException.INSTANCE;
+                throw WriterOutOfDateException.of(tableToken.getTableName());
             }
             insertMethod.writer = writer;
         }
