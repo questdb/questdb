@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -4860,6 +4861,49 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testUseExtensionPoints() {
+        try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
+
+            try {
+                compiler.compile("alter altar", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownAlterStatementCalled);
+            }
+
+            try {
+                compiler.compile("show something", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownShowStatementCalled);
+            }
+
+            try {
+                compiler.compile("drop table ka boom zoom", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownDropTableSuffixCalled);
+            }
+
+            try {
+                compiler.compile("drop something", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownDropStatementCalled);
+            }
+
+            try {
+                compiler.compile("create table tab ( i int)", sqlExecutionContext);
+                compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownDropColumnSuffixCalled);
+            }
+        }
+    }
+
+
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql, sqlExecutionContext);
         try (TableReader reader = getReader("y")) {
@@ -5229,4 +5273,47 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         void run(CairoEngine engine);
     }
+
+    static class SqlCompilerWrapper extends SqlCompiler {
+        boolean unknownAlterStatementCalled;
+        boolean unknownDropColumnSuffixCalled;
+        boolean unknownDropStatementCalled;
+        boolean unknownDropTableSuffixCalled;
+        boolean unknownShowStatementCalled;
+
+        SqlCompilerWrapper(CairoEngine engine) {
+            super(engine);
+        }
+
+        @Override
+        protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+            unknownAlterStatementCalled = true;
+            super.unknownAlterStatement(executionContext, tok);
+        }
+
+        @Override
+        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+            unknownDropColumnSuffixCalled = true;
+            super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+        }
+
+        @Override
+        protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+            unknownDropStatementCalled = true;
+            super.unknownDropStatement(executionContext, tok);
+        }
+
+        @Override
+        protected void unknownDropTableSuffix(SqlExecutionContext executionContext, CharSequence tok, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
+            unknownDropTableSuffixCalled = true;
+            super.unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
+        }
+
+        @Override
+        protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+            unknownShowStatementCalled = true;
+            return super.unknownShowStatement(executionContext, tok);
+        }
+    }
+
 }
