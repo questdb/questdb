@@ -33,9 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 
 public class CastCharToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -51,9 +49,7 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             if (value == 0) {
                 return SymbolConstant.NULL;
             }
-            final StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(value);
-            return SymbolConstant.newInstance(Chars.toString(sink));
+            return SymbolConstant.newInstance(Chars.toString(value));
         }
         return new Func(arg);
     }
@@ -86,10 +82,8 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             }
 
             symbolTableShortcut.putAt(keyIndex, value, next++);
-            sink.clear();
-            sink.put(value);
-            final String str = Chars.toString(sink);
-            symbols.add(Chars.toString(sink));
+            final String str = Chars.toString(value);
+            symbols.add(str);
             return str;
         }
 
