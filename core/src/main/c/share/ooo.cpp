@@ -431,14 +431,14 @@ int64_t merge_dedup_long_index(
         const index_t *index,
         const int64_t index_lo,
         const int64_t index_hi_incl,
-        index_t *dest_start
+        index_t *index_dest
 ) {
     // src* points to the timestamps column in the table
     // index* points to the O3 data to be merged into the table
     // Both memory buffers are sorted in ASC order of the timestamps
     int64_t src_pos = src_lo;
     int64_t index_pos = index_lo;
-    index_t *dest = dest_start;
+    index_t *dest = index_dest;
 
     // Simple 2 way merge
     // index* rows replace the column data, e.g. new incoming data
@@ -490,7 +490,7 @@ int64_t merge_dedup_long_index(
         dest++;
         src_pos++;
     }
-    return dest - dest_start;
+    return dest - index_dest;
 }
 
 inline int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
