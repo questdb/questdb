@@ -85,6 +85,161 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInnerJoinIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('1.1.1.1/32', 0) ip, 1 count from long_sequence(5))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))", sqlExecutionContext);
+        assertSql("select test.count, test2.count2 from test inner join test2 on test2.ip2 = test.ip", "count\tcount2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n");
+    }
+
+    @Test
+    public void testLeftJoinIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('1.1.1.1/16', 0) ip, 1 count from long_sequence(5))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))", sqlExecutionContext);
+        assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
+                "1.1.96.238\tnull\t1\tNaN\n" +
+                "1.1.50.227\tnull\t1\tNaN\n" +
+                "1.1.89.171\tnull\t1\tNaN\n" +
+                "1.1.82.23\tnull\t1\tNaN\n" +
+                "1.1.76.40\tnull\t1\tNaN\n");
+    }
+
+    @Test
+    public void testLeftJoinIPv42() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(50))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))", sqlExecutionContext);
+        assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
+                "12.5.9.238\tnull\t1\tNaN\n" +
+                "12.5.9.227\tnull\t1\tNaN\n" +
+                "12.5.9.171\tnull\t1\tNaN\n" +
+                "12.5.9.23\tnull\t1\tNaN\n" +
+                "12.5.9.40\tnull\t1\tNaN\n" +
+                "12.5.9.236\tnull\t1\tNaN\n" +
+                "12.5.9.15\tnull\t1\tNaN\n" +
+                "12.5.9.136\tnull\t1\tNaN\n" +
+                "12.5.9.145\tnull\t1\tNaN\n" +
+                "12.5.9.114\t12.5.9.114\t1\t2\n" +
+                "12.5.9.243\tnull\t1\tNaN\n" +
+                "12.5.9.229\tnull\t1\tNaN\n" +
+                "12.5.9.120\tnull\t1\tNaN\n" +
+                "12.5.9.160\tnull\t1\tNaN\n" +
+                "12.5.9.196\tnull\t1\tNaN\n" +
+                "12.5.9.235\tnull\t1\tNaN\n" +
+                "12.5.9.159\t12.5.9.159\t1\t2\n" +
+                "12.5.9.81\tnull\t1\tNaN\n" +
+                "12.5.9.196\tnull\t1\tNaN\n" +
+                "12.5.9.108\tnull\t1\tNaN\n" +
+                "12.5.9.173\tnull\t1\tNaN\n" +
+                "12.5.9.76\tnull\t1\tNaN\n" +
+                "12.5.9.126\tnull\t1\tNaN\n" +
+                "12.5.9.248\tnull\t1\tNaN\n" +
+                "12.5.9.226\t12.5.9.226\t1\t2\n" +
+                "12.5.9.115\tnull\t1\tNaN\n" +
+                "12.5.9.98\tnull\t1\tNaN\n" +
+                "12.5.9.200\tnull\t1\tNaN\n" +
+                "12.5.9.247\tnull\t1\tNaN\n" +
+                "12.5.9.216\tnull\t1\tNaN\n" +
+                "12.5.9.48\tnull\t1\tNaN\n" +
+                "12.5.9.202\tnull\t1\tNaN\n" +
+                "12.5.9.50\tnull\t1\tNaN\n" +
+                "12.5.9.228\tnull\t1\tNaN\n" +
+                "12.5.9.210\tnull\t1\tNaN\n" +
+                "12.5.9.7\tnull\t1\tNaN\n" +
+                "12.5.9.4\tnull\t1\tNaN\n" +
+                "12.5.9.135\tnull\t1\tNaN\n" +
+                "12.5.9.117\tnull\t1\tNaN\n" +
+                "12.5.9.43\t12.5.9.43\t1\t2\n" +
+                "12.5.9.43\t12.5.9.43\t1\t2\n" +
+                "12.5.9.179\t12.5.9.179\t1\t2\n" +
+                "12.5.9.179\t12.5.9.179\t1\t2\n" +
+                "12.5.9.142\tnull\t1\tNaN\n" +
+                "12.5.9.75\tnull\t1\tNaN\n" +
+                "12.5.9.239\tnull\t1\tNaN\n" +
+                "12.5.9.48\tnull\t1\tNaN\n" +
+                "12.5.9.100\t12.5.9.100\t1\t2\n" +
+                "12.5.9.100\t12.5.9.100\t1\t2\n" +
+                "12.5.9.100\t12.5.9.100\t1\t2\n" +
+                "12.5.9.26\tnull\t1\tNaN\n" +
+                "12.5.9.240\tnull\t1\tNaN\n" +
+                "12.5.9.192\tnull\t1\tNaN\n" +
+                "12.5.9.181\tnull\t1\tNaN\n");
+    }
+    @Test
+    public void testFullJoinIPv4() throws Exception {
+        compiler.setFullFatJoins(true);
+        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))", sqlExecutionContext);
+        assertSql("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip", "count\tip\tip2\tcount2\n" +
+                "1\t12.5.9.227\t12.5.9.227\t2\n" +
+                "1\t12.5.9.23\t12.5.9.23\t2\n" +
+                "1\t12.5.9.145\t12.5.9.145\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.115\t12.5.9.115\t2\n" +
+                "1\t12.5.9.216\t12.5.9.216\t2\n" +
+                "1\t12.5.9.216\t12.5.9.216\t2\n" +
+                "1\t12.5.9.216\t12.5.9.216\t2\n" +
+                "1\t12.5.9.48\t12.5.9.48\t2\n" +
+                "1\t12.5.9.228\t12.5.9.228\t2\n" +
+                "1\t12.5.9.228\t12.5.9.228\t2\n" +
+                "1\t12.5.9.117\t12.5.9.117\t2\n" +
+                "1\t12.5.9.179\t12.5.9.179\t2\n" +
+                "1\t12.5.9.48\t12.5.9.48\t2\n" +
+                "1\t12.5.9.26\t12.5.9.26\t2\n" +
+                "1\t12.5.9.240\t12.5.9.240\t2\n" +
+                "1\t12.5.9.194\t12.5.9.194\t2\n" +
+                "1\t12.5.9.137\t12.5.9.137\t2\n" +
+                "1\t12.5.9.179\t12.5.9.179\t2\n" +
+                "1\t12.5.9.179\t12.5.9.179\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.215\t12.5.9.215\t2\n" +
+                "1\t12.5.9.184\t12.5.9.184\t2\n" +
+                "1\t12.5.9.46\t12.5.9.46\t2\n" +
+                "1\t12.5.9.184\t12.5.9.184\t2\n" +
+                "1\t12.5.9.147\t12.5.9.147\t2\n" +
+                "1\t12.5.9.152\t12.5.9.152\t2\n" +
+                "1\t12.5.9.28\t12.5.9.28\t2\n" +
+                "1\t12.5.9.20\t12.5.9.20\t2\n" +
+                "1\t12.5.9.20\t12.5.9.20\t2\n");
+        compiler.setFullFatJoins(false);
+    }
+
+    @Test
+    public void testFullJoinIPv4Fails() throws Exception {
+        compiler.setFullFatJoins(true);
+        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))", sqlExecutionContext);
+        engine.releaseInactive();
+        assertFailure("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.count", null, 76, "join column type mismatch");
+        compiler.setFullFatJoins(false);
+    }
+
+    @Test
     public void testLastIPv4() throws Exception {
         compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))", sqlExecutionContext);
         assertSql("select sym, last(ip) from test", "sym\tlast\n" +
