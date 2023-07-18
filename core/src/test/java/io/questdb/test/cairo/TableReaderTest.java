@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
@@ -3397,6 +3398,8 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
                 }
             }
+            Assert.assertTrue(sq instanceof MemoryCR.ByteSequenceView);
+            Assert.assertTrue(Vect.memeq(blob, ((MemoryCR.ByteSequenceView) sq).getAddress(), blobLen));
         } else {
             Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
         }
