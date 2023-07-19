@@ -253,7 +253,7 @@ function banner {
     echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
     echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
     echo ' \__\_\\__,_|\___||___/\__|____/|____/'
-    echo $QUESTDB_BANNER
+    echo -e "$QUESTDB_BANNER"
     echo
 }
 
