@@ -181,11 +181,11 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "str1\tstr2\tnullif\n" +
                         "cat\tcat\t\n" +
-                        "dog\t\t\n" +
+                        "dog\t\tdog\n" +
                         "\t\t\n" +
                         "\tdog\t\n" +
                         "cat\tdog\tcat\n" +
-                        "dog\t\t\n" +
+                        "dog\t\tdog\n" +
                         "dog\tdog\t\n" +
                         "dog\tcat\tdog\n" +
                         "cat\tdog\tcat\n" +
