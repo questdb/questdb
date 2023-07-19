@@ -42,7 +42,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.model.ExpressionNode.*;
 
-public class SqlOptimiser {
+public class SqlOptimiser implements Mutable {
 
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
@@ -66,6 +66,7 @@ public class SqlOptimiser {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
@@ -88,7 +89,6 @@ public class SqlOptimiser {
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
-    private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
@@ -112,7 +112,7 @@ public class SqlOptimiser {
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
-    SqlOptimiser(
+    public SqlOptimiser(
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
@@ -130,6 +130,32 @@ public class SqlOptimiser {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+    }
+
+    public void clear() {
+        contextPool.clear();
+        intHashSetPool.clear();
+        joinClausesSwap1.clear();
+        joinClausesSwap2.clear();
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
+        literalCollectorAIndexes.clear();
+        literalCollectorBIndexes.clear();
+        literalCollectorANames.clear();
+        literalCollectorBNames.clear();
+        defaultAliasCount = 0;
+        expressionNodePool.clear();
+        characterStore.clear();
+        tablesSoFar.clear();
+        clausesToSteal.clear();
+        tmpCursorAliases.clear();
+        functionsInFlight.clear();
+        groupByAliases.clear();
+        groupByNodes.clear();
+        groupByUsed.clear();
+        tempColumnAlias = null;
+        tempQueryModel = null;
     }
 
     public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
@@ -768,90 +794,6 @@ public class SqlOptimiser {
             }
         }
         assert postFilterRemoved.size() == pc;
-    }
-
-    private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model, boolean requireTimestamp) {
-        if (model == null) {
-            System.out.println("why?");
-        }
-        // collect queried tables on top-level model
-        authorizeColumnAccess0(executionContext, model.getQueriedTables(), model, requireTimestamp);
-    }
-
-    private void authorizeColumnAccess0(SqlExecutionContext executionContext, QueriedTables queriedTables, QueryModel model, boolean requireTimestamp) {
-        // this is a recursive method, hence null check is optimally located in this method
-        if (model == null) {
-            return;
-        }
-        if (model.getTableName() != null) {
-            ExpressionNode tableNameExpr = model.getTableNameExpr();
-            switch (tableNameExpr.type) {
-                case CONSTANT:
-                case LITERAL:
-                    // adjust name in case of marker
-                    GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) tableNameExpr.token;
-                    int lo = tab.getLo();
-                    if (Chars.startsWith(tab, QueryModel.NO_ROWID_MARKER)) {
-                        tab.setLo(lo + QueryModel.NO_ROWID_MARKER.length());
-                    }
-                    try {
-                        // copy column names
-                        literalCollectorANames.clear();
-                        final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-                        boolean checkTimestamp = requireTimestamp && model.getTimestamp() != null;
-                        boolean timestampFound = false;
-                        CharSequence tstmpToken = checkTimestamp ? model.getTimestamp().token : null;
-                        for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-                            CharSequence colName = topDownColumns.getQuick(i).getName();
-
-                            CharSequence immutableColName = model.getAliasToColumnMap().get(colName).getAlias();
-                            assert immutableColName instanceof String && Chars.equalsIgnoreCase(colName, immutableColName);
-
-                            literalCollectorANames.add(immutableColName);
-                            timestampFound |= checkTimestamp && !timestampFound && Chars.equals(tstmpToken, colName);
-                        }
-
-                        if (checkTimestamp && !timestampFound) {
-                            CharSequence immutableColName = model.getAliasToColumnMap().get(tstmpToken).getAlias();
-                            assert immutableColName instanceof String && Chars.equalsIgnoreCase(tstmpToken, immutableColName);
-                            literalCollectorANames.add(immutableColName);
-                        }
-
-                        TableToken tableToken = executionContext.getTableToken(tab);
-                        executionContext.getSecurityContext().authorizeSelect(
-                                tableToken,
-                                literalCollectorANames
-                        );
-                        queriedTables.mergePermissions(tableToken, literalCollectorANames);
-                    } finally {
-                        tab.setLo(lo);
-                    }
-
-                    ObjList<QueryModel> joinModels = model.getJoinModels();
-                    for (int i = 1, n = joinModels.size(); i < n; i++) {
-                        // exclude 0 index, it is the same as "model"
-                        QueryModel joinModel = joinModels.getQuick(i);
-                        authorizeColumnAccess0(executionContext, queriedTables, joinModel, requireTimestamp || joinModel.isTemporalJoin());
-                    }
-                    authorizeColumnAccess0(executionContext, queriedTables, model.getUnionModel(), requireTimestamp);
-
-                    break;
-                case FUNCTION:
-                    break;
-                default:
-                    // todo: function call
-                    break;
-            }
-        } else {
-            authorizeColumnAccess0(executionContext, queriedTables, model.getNestedModel(), model.getSampleBy() != null);
-
-            ObjList<QueryModel> joinModels = model.getJoinModels();
-            for (int i = 1, n = joinModels.size(); i < n; i++) {
-                // exclude 0 index, it is the same as "model"
-                authorizeColumnAccess0(executionContext, queriedTables, joinModels.getQuick(i), requireTimestamp);
-            }
-            authorizeColumnAccess0(executionContext, queriedTables, model.getUnionModel(), requireTimestamp);
-        }
     }
 
     // The model for the following SQL:
@@ -2682,7 +2624,7 @@ public class SqlOptimiser {
                 // for expression models that have been converted to
                 // the joins, the query model will be set to null.
                 if (node.queryModel != null) {
-                    QueryModel optimised = optimiseInner(node.queryModel, executionContext);
+                    QueryModel optimised = optimise(node.queryModel, executionContext);
                     if (optimised != node.queryModel) {
                         node.queryModel = optimised;
                     }
@@ -2706,46 +2648,6 @@ public class SqlOptimiser {
         // call out to union models
         if (model.getUnionModel() != null) {
             optimiseExpressionModels(model.getUnionModel(), executionContext);
-        }
-    }
-
-    private QueryModel optimiseInner(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        QueryModel rewrittenModel = model;
-        try {
-            rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
-            //extractCorrelatedQueriesAsJoins(rewrittenModel);
-            optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
-            enumerateTableColumns(rewrittenModel, sqlExecutionContext);
-            rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-            rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
-            resolveJoinColumns(rewrittenModel);
-            optimiseBooleanNot(rewrittenModel);
-            rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
-            rewrittenModel = rewriteOrderBy(
-                    rewriteOrderByPositionForUnionModels(
-                            rewriteOrderByPosition(
-                                    rewriteSelectClause(
-                                            rewrittenModel,
-                                            true,
-                                            sqlExecutionContext
-                                    )
-                            )
-                    )
-            );
-            optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
-            createOrderHash(rewrittenModel);
-            optimiseJoins(rewrittenModel);
-            moveWhereInsideSubQueries(rewrittenModel);
-            eraseColumnPrefixInWhereClauses(rewrittenModel);
-            moveTimestampToChooseModel(rewrittenModel);
-            propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            authorizeColumnAccess(sqlExecutionContext, rewrittenModel, false);
-            return rewrittenModel;
-        } catch (SqlException e) {
-            // at this point models may have functions than need to be freed
-            Misc.freeObjList(functionsInFlight);
-            functionsInFlight.clear();
-            throw e;
         }
     }
 
@@ -4746,34 +4648,51 @@ public class SqlOptimiser {
         }
     }
 
-    void clear() {
-        contextPool.clear();
-        intHashSetPool.clear();
-        joinClausesSwap1.clear();
-        joinClausesSwap2.clear();
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
-        literalCollectorAIndexes.clear();
-        literalCollectorBIndexes.clear();
-        literalCollectorANames.clear();
-        literalCollectorBNames.clear();
-        defaultAliasCount = 0;
-        expressionNodePool.clear();
-        characterStore.clear();
-        tablesSoFar.clear();
-        clausesToSteal.clear();
-        tmpCursorAliases.clear();
-        functionsInFlight.clear();
-        groupByAliases.clear();
-        groupByNodes.clear();
-        groupByUsed.clear();
-        tempColumnAlias = null;
-        tempQueryModel = null;
+    protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
+    }
+
+    protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
+
     }
 
     QueryModel optimise(@Transient final QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return optimiseInner(model, sqlExecutionContext);
+        QueryModel rewrittenModel = model;
+        try {
+            rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
+            //extractCorrelatedQueriesAsJoins(rewrittenModel);
+            optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
+            enumerateTableColumns(rewrittenModel, sqlExecutionContext);
+            rewriteTopLevelLiteralsToFunctions(rewrittenModel);
+            rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
+            resolveJoinColumns(rewrittenModel);
+            optimiseBooleanNot(rewrittenModel);
+            rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
+            rewrittenModel = rewriteOrderBy(
+                    rewriteOrderByPositionForUnionModels(
+                            rewriteOrderByPosition(
+                                    rewriteSelectClause(
+                                            rewrittenModel,
+                                            true,
+                                            sqlExecutionContext
+                                    )
+                            )
+                    )
+            );
+            optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            createOrderHash(rewrittenModel);
+            optimiseJoins(rewrittenModel);
+            moveWhereInsideSubQueries(rewrittenModel);
+            eraseColumnPrefixInWhereClauses(rewrittenModel);
+            moveTimestampToChooseModel(rewrittenModel);
+            propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            return rewrittenModel;
+        } catch (SqlException e) {
+            // at this point models may have functions than need to be freed
+            Misc.freeObjList(functionsInFlight);
+            functionsInFlight.clear();
+            throw e;
+        }
     }
 
     void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext, TableRecordMetadata metadata) throws SqlException {
@@ -4838,7 +4757,7 @@ public class SqlOptimiser {
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
             }
             updateQueryModel.setUpdateTableToken(tableToken);
-            updateQueryModel.getNestedModel().getQueriedTables().mergeUpdatedColumns(tableToken, literalCollectorANames);
+            authorizeUpdate(updateQueryModel, tableToken);
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

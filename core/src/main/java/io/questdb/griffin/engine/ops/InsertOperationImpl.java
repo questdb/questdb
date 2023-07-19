@@ -40,7 +40,8 @@ import io.questdb.std.*;
 
 public class InsertOperationImpl implements InsertOperation {
 
-    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<>() {
+    //type inference fails on java 8 if <CharSequence> is removed 
+    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
         @Override
         public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
             throw new UnsupportedOperationException();
@@ -53,6 +54,7 @@ public class InsertOperationImpl implements InsertOperation {
     private final long metadataVersion;
     private final TableToken tableToken;
     private ObjList<CharSequence> columnNames;
+
     public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
         this.engine = engine;
         this.tableToken = tableToken;
@@ -73,16 +75,16 @@ public class InsertOperationImpl implements InsertOperation {
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
             if (
-                    // when metadata changes the compiled insert may no longer be valid, we have to
-                    // recompile SQL text to ensure column indexes are correct
+                // when metadata changes the compiled insert may no longer be valid, we have to
+                // recompile SQL text to ensure column indexes are correct
                     writer.getMetadataVersion() != metadataVersion
                             // when table names do not match, it means table was renamed (although our table token
                             // remains valid). We should not allow user to insert into new table name because they
                             // used "old" table name in SQL text
-                    || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
+                            || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
             ) {
                 writer.close();
-                throw WriterOutOfDateException.INSTANCE;
+                throw WriterOutOfDateException.of(tableToken.getTableName());
             }
             insertMethod.writer = writer;
         }

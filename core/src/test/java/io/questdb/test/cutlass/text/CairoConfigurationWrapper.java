@@ -457,11 +457,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getQueryPermissionsPoolCapacity() {
-        return conf.getQueryPermissionsPoolCapacity();
-    }
-
-    @Override
     public int getReaderPoolMaxSegments() {
         return conf.getReaderPoolMaxSegments();
     }
@@ -784,11 +779,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public CharSequence getSystemTableNamePrefix() {
         return conf.getSystemTableNamePrefix();
-    }
-
-    @Override
-    public int getTablePermissionsPoolCapacity() {
-        return conf.getTablePermissionsPoolCapacity();
     }
 
     @Override

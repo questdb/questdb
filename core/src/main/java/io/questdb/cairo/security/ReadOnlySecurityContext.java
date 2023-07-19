@@ -269,12 +269,12 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void onColumnAdded(TableToken tableToken, CharSequence columnName) {
+    public CharSequence getEntityName() {
+        return Constants.USER_NAME;
     }
 
     @Override
-    public CharSequence getPrincipal() {
-        return Constants.USER_NAME;
+    public void onColumnAdded(TableToken tableToken, CharSequence columnName) {
     }
 
     @Override
