@@ -39,7 +39,7 @@ public:
     }
 
     ~bit_vector_t() {
-        if (length_bits > 0 && bit_array != nullptr) {
+        if (bit_array != nullptr) {
             bit_array = static_cast<T *>(realloc(bit_array, 0));
             length_bits = 0;
         }
