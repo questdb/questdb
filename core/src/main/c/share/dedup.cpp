@@ -59,21 +59,21 @@ inline bool operator<(const int256 &a, const int256 &b) {
 }
 
 template<typename LambdaDiff>
-inline int64_t branch_free_search(int64_t search_index, const index_t *array, const int64_t count, LambdaDiff compare) {
+inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t value_index, LambdaDiff compare) {
     const index_t *base = array;
     int64_t n = count;
     while (n > 1) {
         int64_t half = n / 2;
         MM_PREFETCH_T0(base + half / 2);
         MM_PREFETCH_T0(base + half + half / 2);
-        auto diff = compare(search_index, base[half].i);
+        auto diff = compare(value_index, base[half].i);
         base = (diff > 0) ? base + half : base;
         n -= half;
     }
-    if (compare(search_index, base[0].i) == 0) {
+    if (compare(value_index, base[0].i) == 0) {
         return base - array;
     }
-    if (base - array + 1 < count && compare(search_index, base[1].i) == 0) {
+    if (base - array + 1 < count && compare(value_index, base[1].i) == 0) {
         return base - array + 1;
     }
     return -1;
@@ -98,8 +98,9 @@ int64_t merge_dedup_long_index_int_keys(
     while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
         // Perform normal merge until the timestamp matches.
         if (src[src_pos] < index[index_pos].ts) {
-            dest[0].ts = src[src_pos];
-            dest[0].i = src_pos | (1ull << 63);
+            (*dest).ts = src[src_pos];
+            // The first bit is used by merge procedures to know where to take the value from. 1 indicates column, 0 O3 data
+            (*dest).i = src_pos | (1ull << 63);
             dest++;
             src_pos++;
         } else if (src[src_pos] > index[index_pos].ts) {
@@ -122,14 +123,14 @@ int64_t merge_dedup_long_index_int_keys(
             // track all found index records
             used_indexes.reset(binary_search_len);
             while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
-                dest[0].ts = conflict_ts;
-                const int64_t matched_index = branch_free_search(src_pos, conflict_index_start, binary_search_len,
-                                                                 compare);
+                (*dest).ts = conflict_ts;
+                const int64_t matched_index = branch_free_search(conflict_index_start, binary_search_len,
+                                                                 src_pos, compare);
                 if (matched_index > -1) {
                     used_indexes.set(matched_index);
-                    dest[0].i = conflict_index_start[matched_index].i;
+                    (*dest).i = conflict_index_start[matched_index].i;
                 } else {
-                    dest[0].i = src_pos | (1ull << 63);
+                    (*dest).i = src_pos | (1ull << 63);
                 }
                 ++src_pos;
                 ++dest;
@@ -151,8 +152,9 @@ int64_t merge_dedup_long_index_int_keys(
         dest += index_hi_incl - index_pos + 1;
     } else {
         for (; src_pos <= src_hi_incl; src_pos++, dest++) {
-            dest[0].ts = src[src_pos];
-            dest[0].i = src_pos | (1ull << 63);
+            (*dest).ts = src[src_pos];
+            // The first bit is used by merge procedures to know where to take the value from. 1 indicates column, 0 O3 data
+            (*dest).i = src_pos | (1ull << 63);
         }
     }
 
@@ -368,14 +370,14 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
     while (src_pos <= src_hi_incl &&
            index_pos <= index_hi_inc) {
         if (src[src_pos] < index[index_pos].ts) {
-            dest[0].ts = src[src_pos];
-            dest[0].i = src_pos | (1ull << 63);
+            (*dest).ts = src[src_pos];
+            // The first bit is used by merge procedures to know where to take the value from. 1 indicates column, 0 O3 data
+            (*dest).i = src_pos | (1ull << 63);
             dest++;
             src_pos++;
         } else if (src[src_pos] >
                    index[index_pos].ts) {
-            dest[0] = index[index_pos];
-            dest++;
+            *dest++ = index[index_pos];
             index_pos++;
         } else {
             // index_ts == src_ts
@@ -387,22 +389,20 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
 
             // replace all records with same timestamp with last version from index
             while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
-                dest[0] = index[index_pos - 1];
-                dest++;
+                *dest++ = index[index_pos - 1];
                 src_pos++;
             }
         }
     }
 
     while (index_pos <= index_hi_inc) {
-        dest[0] = index[index_pos];
-        dest++;
+        *dest++ = index[index_pos];
         index_pos++;
     }
 
     while (src_pos <= src_hi_incl) {
-        dest[0].ts = src[src_pos];
-        dest[0].i = src_pos | (1ull << 63);
+        (*dest).ts = src[src_pos];
+        (*dest).i = src_pos | (1ull << 63);
         dest++;
         src_pos++;
     }
