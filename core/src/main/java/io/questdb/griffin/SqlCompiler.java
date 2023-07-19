@@ -555,10 +555,10 @@ public class SqlCompiler implements Closeable {
                             tableNamePosition,
                             tableToken
                     );
-                    return compiledQuery.ofAlter(setDedup.build());
+                    compiledQuery.ofAlter(setDedup.build());
                 } else {
                     lexer.unparseLast();
-                    return alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, true, lexer);
+                    alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, true, lexer);
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
@@ -827,7 +827,7 @@ public class SqlCompiler implements Closeable {
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private CompiledQuery alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, boolean status, GenericLexer lexer) throws SqlException {
+    private void alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, boolean status, GenericLexer lexer) throws SqlException {
         if (!tableMetadata.isWalEnabled()) {
             throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
         }
@@ -896,7 +896,7 @@ public class SqlCompiler implements Closeable {
         } else {
             throw SqlException.$(lexer.getPosition(), "deduplication column list expected");
         }
-        return compiledQuery.ofAlter(setDedup.build());
+        compiledQuery.ofAlter(setDedup.build());
     }
 
     private void alterTableDropColumn(
