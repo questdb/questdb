@@ -1136,7 +1136,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         tableWriter.addPhysicallyWrittenRows(
                 isOpenColumnModeForAppend(openColumnMode)
                         ? srcOooBatchRowSize
-                        : srcDataMax + srcOooBatchRowSize
+                        : newPartitionSize
         );
 
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).I$();

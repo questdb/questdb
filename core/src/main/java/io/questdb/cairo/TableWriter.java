@@ -628,7 +628,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void addPhysicallyWrittenRows(long rows) {
-        // maybe not thread safe but hey it's just a metric
         physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
@@ -7141,7 +7140,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             targetFrame = partitionFrameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
                             FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
-                            physicallyWrittenRowsSinceLastCommit.addAndGet(firstPartitionFrame.getSize());
+                            addPhysicallyWrittenRows(firstPartitionFrame.getSize());
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexLo * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
                             partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
                         } finally {
@@ -7169,7 +7168,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn)).$(", sourceSize=").$(partitionSize).I$();
                         try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
                             FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
-                            physicallyWrittenRowsSinceLastCommit.addAndGet(sourceFrame.getSize());
+                            addPhysicallyWrittenRows(sourceFrame.getSize());
                         } catch (Throwable th) {
                             LOG.critical().$("partition squashing failed [table=").$(tableToken).$(", error=").$(th).I$();
                             throw th;
