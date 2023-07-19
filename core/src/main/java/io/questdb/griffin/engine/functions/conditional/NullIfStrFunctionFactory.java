@@ -86,7 +86,7 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             }
             CharSequence cs2 = strFunc2.getStr(rec);
             if (cs2 == null) {
-                return null;
+                return cs1;
             }
             return Chars.equals(cs1, cs2) ? null : cs1;
         }
@@ -99,7 +99,7 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             }
             CharSequence cs2 = strFunc2.getStrB(rec);
             if (cs2 == null) {
-                return null;
+                return cs1;
             }
             return Chars.equals(cs1, cs2) ? null : cs1;
         }
