@@ -26,18 +26,17 @@ package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
+import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
@@ -52,7 +51,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class FilesTest {
+
     private static final String EOL = System.lineSeparator();
+    private static final Log LOG = LogFactory.getLog(FilesTest.class);
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -85,15 +86,20 @@ public class FilesTest {
         // I found that on OSX (m1) with large disk allocate() call is painfully slow and
         // for that reason (until we understood the problem better) we won't run this test
         // on OSX
-        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
+        // In Windows CI, concurrent allocate calls could take almost 2 minutes to complete
+        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64 && Os.type != Os.WINDOWS);
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
         AtomicInteger errors = new AtomicInteger();
+        // ff.getDiskFreeSpace() can see intermediate disk size while other thread is allocating space 
+        // so there is a risk it'll see a value large enough for the two threads to exhaust space and crash build 
+        SOCountDownLatch latch = new SOCountDownLatch(2);
 
         for (int i = 0; i < 10; i++) {
-            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors));
-            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors));
+            latch.setCount(2);
+            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors, latch));
+            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors, latch));
             th1.start();
             th2.start();
             th1.join();
@@ -125,6 +131,70 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Ignore
+    @Test
+    public void testCheckDiskSizeWhileAllocating() throws IOException {
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+
+        String tmpFolder = temporaryFolder.newFolder("checksize").getAbsolutePath();
+        AtomicInteger errors = new AtomicInteger();
+
+        Path p2 = new Path().of(tmpFolder).$();
+        SOCountDownLatch latch = new SOCountDownLatch(1);
+
+        for (int i = 0; i < 3; i++) {
+            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors, latch));
+
+            long oldSize = ff.getDiskFreeSpace(p2);
+            LOG.info().$("free disk space at ").$(oldSize).$();
+
+            th1.start();
+
+            while (th1.isAlive()) {
+                long newSize = ff.getDiskFreeSpace(p2);
+                if (newSize != oldSize) {
+                    LOG.info().$("free disk space at ").$(newSize).$(" diff ").$(newSize - oldSize).$();
+                    oldSize = newSize;
+                }
+
+                Os.sleep(10L);
+            }
+
+            Assert.assertEquals(0, errors.get());
+        }
+    }
+
+    @Ignore
+    @Test
+    public void testCheckDiskSizeWhileDoingNothing() throws IOException {
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+
+        String tmpFolder = temporaryFolder.newFolder("checksize").getAbsolutePath();
+        AtomicInteger errors = new AtomicInteger();
+
+        Path p2 = new Path().of(tmpFolder).$();
+
+        long startMs = System.currentTimeMillis();
+        final long TIMEOUT = 60000;
+
+        for (int i = 0; i < 3; i++) {
+            long oldSize = ff.getDiskFreeSpace(p2);
+            LOG.info().$("free disk space at ").$(oldSize).$();
+
+            while ((System.currentTimeMillis() - startMs) < TIMEOUT) {
+                long newSize = ff.getDiskFreeSpace(p2);
+                if (newSize != oldSize) {
+                    LOG.info().$("free disk space at ").$(newSize).$(" diff ").$(newSize - oldSize).$();
+                    oldSize = newSize;
+                }
+
+                Os.sleep(10L);
+            }
+
+            Assert.assertEquals(0, errors.get());
+        }
     }
 
     @Test
@@ -1263,7 +1333,7 @@ public class FilesTest {
         }
     }
 
-    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
+    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors, SOCountDownLatch latch) {
         try (
                 Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
                 Path p2 = new Path().of(pathName).$()
@@ -1273,12 +1343,60 @@ public class FilesTest {
             long diskSize = ff.getDiskFreeSpace(p2);
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
+            latch.countDown();
+            latch.await();
+
             try {
                 fd = ff.openRW(path, CairoConfiguration.O_NONE);
                 assert fd != -1;
+                LOG.info().$("allocating ").$(fileSize).$(" out of ").$(diskSize).$(" to ").$(path).$();
                 if (ff.allocate(fd, fileSize)) {
+                    LOG.info().$("allocation succeeded for ").$(path).$();
                     mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
                     Unsafe.getUnsafe().putLong(mem, 123455);
+                    LOG.info().$("mmap succeeded for ").$(path).$();
+                } else {
+                    LOG.info().$("allocation failed for ").$(path).$();
+                }
+            } finally {
+                if (mem != -1) {
+                    ff.munmap(mem, fileSize, 0);
+                }
+
+                if (fd != -1) {
+                    ff.close(fd);
+                }
+
+                ff.remove(path);
+            }
+        } catch (Throwable e) {
+            e.printStackTrace();
+            errors.incrementAndGet();
+        }
+    }
+
+    private static void testCheckConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
+        try (
+                Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
+                Path p2 = new Path().of(pathName).$()
+        ) {
+            int fd = -1;
+            long mem = -1;
+            long diskSize = ff.getDiskFreeSpace(p2);
+            Assert.assertNotEquals(-1, diskSize);
+            long fileSize = diskSize / 3 * 2;
+
+            try {
+                fd = ff.openRW(path, CairoConfiguration.O_NONE);
+                assert fd != -1;
+                LOG.info().$("allocating ").$(fileSize).$(" out of ").$(diskSize).$(" to ").$(path).$();
+                if (ff.allocate(fd, fileSize)) {
+                    LOG.info().$("allocation succeeded for ").$(path).$();
+                    mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
+                    Unsafe.getUnsafe().putLong(mem, 123455);
+                    LOG.info().$("mmap succeeded for ").$(path).$();
+                } else {
+                    LOG.info().$("allocation failed for ").$(path).$();
                 }
             } finally {
                 if (mem != -1) {
