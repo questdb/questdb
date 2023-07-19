@@ -1743,7 +1743,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
             modelOf("sym in ()");
             Assert.fail("exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Too few arguments");
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few arguments");
         }
     }
 
@@ -2012,7 +2012,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
             modelOf("timestamp in ()");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Too few arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few arg");
         }
     }
 
@@ -2375,7 +2375,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
             modelOf("not (ex in  ()) and timestamp = '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Too few");
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
             Assert.assertEquals(8, e.getPosition());
         }
     }

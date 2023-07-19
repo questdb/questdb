@@ -1548,9 +1548,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         };
 
-        Function function = parseFunction("a in ()", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertFalse(function.getBool(record));
+        try {
+            parseFunction("a in ()", metadata, functionParser);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals("[2] too few arguments for 'in'", e.getMessage());
+        }
     }
 
     private void assertBindVariableTypes(
