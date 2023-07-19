@@ -31,10 +31,10 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     public void testDefaultUserEnabledReadOnlyUserDisabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = startWithEnvVariables(
-                    Map.of("QDB_PG_USER", "", // disables the default user
-                            "QDB_PG_READONLY_USER_ENABLED", "true",
-                            "QDB_PG_READONLY_USER", "roUser",
-                            "QDB_PG_READONLY_PASSWORD", "roPassword"))
+                    "QDB_PG_USER", "", // disables the default user
+                    "QDB_PG_READONLY_USER_ENABLED", "true",
+                    "QDB_PG_READONLY_USER", "roUser",
+                    "QDB_PG_READONLY_PASSWORD", "roPassword")
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
                 assertQueryFails("roUser",
@@ -59,11 +59,10 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testPgWireLoginDisabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (ServerMain serverMain = startWithEnvVariables(
-                    Map.of("QDB_PG_USER", "", // disables the default user
-                            "QDB_PG_READONLY_USER_ENABLED", "false", // disables read-only user
-                            "QDB_PG_READONLY_USER", "roUser",
-                            "QDB_PG_READONLY_PASSWORD", "roPassword"))
+            try (ServerMain serverMain = startWithEnvVariables("QDB_PG_USER", "", // disables the default user
+                    "QDB_PG_READONLY_USER_ENABLED", "false", // disables read-only user
+                    "QDB_PG_READONLY_USER", "roUser",
+                    "QDB_PG_READONLY_PASSWORD", "roPassword")
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
                 assertQueryFails("roUser",
@@ -88,7 +87,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testReadOnlyPgWireContext() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (ServerMain serverMain = startWithEnvVariables(Map.of("QDB_PG_SECURITY_READONLY", "true"))) {
+            try (ServerMain serverMain = startWithEnvVariables("QDB_PG_SECURITY_READONLY", "true")) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
                 assertQueryFails("admin",
                         "quest",
@@ -105,9 +104,9 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     public void testReadOnlyPgWireUser() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = startWithEnvVariables(
-                    Map.of("QDB_PG_READONLY_USER_ENABLED", "true",
-                            "QDB_PG_READONLY_USER", "roUser",
-                            "QDB_PG_READONLY_PASSWORD", "roPassword"))
+                    "QDB_PG_READONLY_USER_ENABLED", "true",
+                    "QDB_PG_READONLY_USER", "roUser",
+                    "QDB_PG_READONLY_PASSWORD", "roPassword")
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
                 assertQueryFails("roUser",
@@ -131,10 +130,10 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     public void testReadOnlyPgWireUserAndReadOnlyContext() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = startWithEnvVariables(
-                    Map.of("QDB_PG_READONLY_USER_ENABLED", "true",
-                            "QDB_PG_READONLY_USER", "roUser",
-                            "QDB_PG_READONLY_PASSWORD", "roPassword",
-                            "QDB_PG_SECURITY_READONLY", "true"))
+                    "QDB_PG_READONLY_USER_ENABLED", "true",
+                    "QDB_PG_READONLY_USER", "roUser",
+                    "QDB_PG_READONLY_PASSWORD", "roPassword",
+                    "QDB_PG_SECURITY_READONLY", "true")
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
                 assertQueryFails("roUser",
@@ -206,8 +205,14 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         );
     }
 
-    private static ServerMain startWithEnvVariables(Map<String, String> envs) {
-        ServerMain serverMain = new ServerMain(newBootstrapWithEnvVariables(envs));
+    private static ServerMain startWithEnvVariables(String... envs) {
+        assert envs.length % 2 == 0;
+
+        Map<String, String> envMap = new HashMap<>();
+        for (int i = 0; i < envs.length; i += 2) {
+            envMap.put(envs[i], envs[i + 1]);
+        }
+        ServerMain serverMain = new ServerMain(newBootstrapWithEnvVariables(envMap));
         serverMain.start();
         return serverMain;
     }
