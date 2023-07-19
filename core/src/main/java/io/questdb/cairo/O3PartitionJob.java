@@ -224,6 +224,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 assert srcTimestampFd != -1 && srcTimestampFd != 1;
 
                 int branch;
+
+                // When deduplication is enabled, we want to take into the merge
+                // the rows from the partition which equals to the O3 min and O3 max.
+                // Without taking equal rows, deduplication will be incorrect.
+                // Without deduplication, taking timestamp == o3TimestampHi into merge
+                // can result into unnecessary partition rewrites, when instead of appending
+                // rows with equal timestamp a merge is triggered.
                 long mergeEquals = tableWriter.isDeduplicationEnabled() ? 1 : 0;
 
                 if (o3TimestampLo >= dataTimestampLo) {
@@ -232,6 +239,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     //   |      |  | OOO |
                     //   |      |  |     |
 
+                    // When deduplication is enabled, take into the merge the rows which are equals
+                    // to the dataTimestampHi in the else block
                     if (o3TimestampLo >= dataTimestampHi + mergeEquals) {
 
                         // +------+
@@ -258,9 +267,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
+                        // When deduplication is enabled, take into the merge the rows which are equals
+                        // to the o3TimestampLo in the else block, e.g. reduce the prefix size
                         prefixHi = Vect.boundedBinarySearch64Bit(
                                 srcTimestampAddr,
-                                o3TimestampLo - 1,
+                                o3TimestampLo - mergeEquals,
                                 0,
                                 srcDataMax - 1,
                                 BinarySearch.SCAN_DOWN
@@ -365,6 +376,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         //  |      |
 
                         mergeDataLo = 0;
+                        // To make inserts stable o3 rows with timestamp == dataTimestampLo
+                        // should go into the merge section.
                         prefixHi = Vect.boundedBinarySearchIndexT(
                                 sortedTimestampsAddr,
                                 dataTimestampLo - 1,
@@ -385,6 +398,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             branch = 5;
                             mergeType = O3_BLOCK_MERGE;
                             mergeO3Hi = srcOooHi;
+                            // To make inserts stable table rows with timestamp == o3TimestampMax
+                            // should go into the merge section.
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
                                     srcTimestampAddr,
                                     o3TimestampMax + 1,
@@ -407,9 +422,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             branch = 6;
                             mergeDataHi = srcDataMax - 1;
+                            // To deduplicate O3 rows with timestamp == dataTimestampHi
+                            // should go into the merge section.
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
-                                    dataTimestampHi,
+                                    dataTimestampHi - 1 + mergeEquals,
                                     mergeO3Lo,
                                     srcOooHi,
                                     BinarySearch.SCAN_DOWN
@@ -1365,7 +1382,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
-                    LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;

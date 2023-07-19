@@ -54,8 +54,16 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void disableDeduplication() {
+    }
+
+    @Override
     default void dropIndex(@NotNull CharSequence columnName) {
         throw CairoException.critical(0).put("drop index does not update sequencer metadata");
+    }
+
+    @Override
+    default void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
     }
 
     @Override

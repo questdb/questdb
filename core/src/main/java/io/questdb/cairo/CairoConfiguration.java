@@ -462,6 +462,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMultiKeyDedupEnabled();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();

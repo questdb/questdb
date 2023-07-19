@@ -2439,7 +2439,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean commitTerminates) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
-        if (txWriter.getLagRowCount() > 0
+        if (!isDeduplicationEnabled()
+                && txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
                 && txWriter.getMaxTimestamp() <= lagMinTimestamp
                 && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp) {
@@ -3195,6 +3196,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
             dedupColumnCommitAddresses.setDedupColumnCount(dedupColCount);
         }
+        assert dedupColCount <= 1;
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3MemColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
@@ -7489,7 +7491,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void updateMetadataWithDeduplicationUpsertKeys(boolean status, LongList columnsIndexes) {
+    private void updateMetadataWithDeduplicationUpsertKeys(boolean isEnable, LongList columnsIndexes) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
@@ -7500,7 +7502,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false, status && columnsIndexes.indexOf(i) >= 0);
+                writeColumnEntry(i, false, isEnable && columnsIndexes.indexOf(i) >= 0);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -7517,10 +7519,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         finishMetaSwapUpdateStructural();
 
         for (int i = 0; i < columnCount; i++) {
-            metadata.getColumnMetadata(i).setDedupKeyFlag(status && columnsIndexes.indexOf(i) >= 0);
+            metadata.getColumnMetadata(i).setDedupKeyFlag(isEnable && columnsIndexes.indexOf(i) >= 0);
         }
 
-        if (status) {
+        if (isEnable) {
             if (dedupColumnCommitAddresses == null) {
                 dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
             } else {

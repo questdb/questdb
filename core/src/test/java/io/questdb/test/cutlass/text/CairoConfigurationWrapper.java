@@ -907,6 +907,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMultiKeyDedupEnabled() {
+        return conf.isMultiKeyDedupEnabled();
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return conf.isO3QuickSortEnabled();
     }

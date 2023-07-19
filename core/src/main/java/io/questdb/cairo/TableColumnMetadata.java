@@ -65,7 +65,7 @@ public class TableColumnMetadata implements Plannable {
     public TableColumnMetadata(
             String name,
             int type,
-            boolean indexFlag,
+            boolean indexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
@@ -74,7 +74,7 @@ public class TableColumnMetadata implements Plannable {
     ) {
         this.name = name;
         this.type = type;
-        this.indexed = indexFlag;
+        this.indexed = indexed;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
