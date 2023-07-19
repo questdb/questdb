@@ -2005,7 +2005,7 @@ public class SqlParser {
                 // this can be simplified to "expression" only
 
                 ExpressionNode that = node.rhs;
-                if (Chars.equals(that.token, '*')) {
+                if (Chars.equalsNc(that.token, '*')) {
                     if (that.rhs == null && node.lhs == null) {
                         that.paramCount = 0;
                         node.rhs = null;
