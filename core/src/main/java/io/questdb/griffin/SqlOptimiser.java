@@ -771,9 +771,6 @@ public class SqlOptimiser {
     }
 
     private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model, boolean requireTimestamp) {
-        if (model == null) {
-            System.out.println("why?");
-        }
         // collect queried tables on top-level model
         authorizeColumnAccess0(executionContext, model.getQueriedTables(), model, requireTimestamp);
     }

@@ -254,8 +254,6 @@ public interface CairoConfiguration {
 
     int getQueryCacheEventQueueCapacity();
 
-    int getQueryPermissionsPoolCapacity();
-
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();
         if (rnd == null) {
@@ -413,9 +411,6 @@ public interface CairoConfiguration {
     int getStrFunctionMaxBufferLength();
 
     CharSequence getSystemTableNamePrefix();
-
-    // todo: remove
-    int getTablePermissionsPoolCapacity();
 
     long getTableRegistryAutoReloadFrequency();
 

@@ -183,7 +183,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final int queryCacheEventQueueCapacity;
-    private final int queryPermissionsPoolCapacity;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
@@ -273,7 +272,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWithClauseModelPoolCapacity;
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final String systemTableNamePrefix;
-    private final int tablePermissionsPoolCapacity;
     private final boolean tableTypeConversionEnabled;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
     private final boolean telemetryDisableCompletely;
@@ -808,8 +806,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 4);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 4);
-            this.queryPermissionsPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_QUERY_PERMISSIONS_POOL_CAPACITY, 64);
-            this.tablePermissionsPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_TABLE_PERMISSIONS_POOL_CAPACITY, 64);
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
             this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
             this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
@@ -2059,11 +2055,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getQueryPermissionsPoolCapacity() {
-            return queryPermissionsPoolCapacity;
-        }
-
-        @Override
         public int getReaderPoolMaxSegments() {
             return readerPoolMaxSegments;
         }
@@ -2386,11 +2377,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getSystemTableNamePrefix() {
             return systemTableNamePrefix;
-        }
-
-        @Override
-        public int getTablePermissionsPoolCapacity() {
-            return tablePermissionsPoolCapacity;
         }
 
         @Override

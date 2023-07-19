@@ -161,13 +161,3 @@ public class SecurityCheckFactory implements RecordCursorFactory {
         return base.usesCompiledFilter();
     }
 }
-
-
-
-
-
-
-
-
-
-
