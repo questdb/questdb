@@ -750,8 +750,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     final String expectedTableInTracsaction = TableHeader +
                             "777\t2023-10-13T00:10:00.000000Z\n" +
-                            "888\t2023-10-15T00:00:00.000000Z\n" +
                             "5\t2023-10-15T00:00:00.000000Z\n" +
+                            "888\t2023-10-15T00:00:00.000000Z\n" +
                             "111\t2023-10-15T11:11:11.111111Z\n";
 
                     final String expectedTableAfterDrop = TableHeader + "777\t2023-10-13T00:10:00.000000Z\n";

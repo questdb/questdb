@@ -43,7 +43,6 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -99,6 +98,12 @@ public class AbstractO3Test extends AbstractTest {
             String table,
             CairoEngine engine
     ) throws SqlException {
+        try (TableReader reader = engine.getReader("x")) {
+            int symIndex = reader.getMetadata().getColumnIndexQuiet("sym");
+            if (symIndex == -1 || !reader.getMetadata().isColumnIndexed(symIndex)) {
+                return;
+            }
+        }
         TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
         TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
     }
@@ -126,14 +131,6 @@ public class AbstractO3Test extends AbstractTest {
                 "y where sym = 'googl' order by ts",
                 "x where sym = 'googl'"
         );
-    }
-
-    protected static void assertIndexResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String resourceName
-    ) throws SqlException, URISyntaxException {
-        AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
     static void assertMaxTimestamp(
@@ -167,29 +164,6 @@ public class AbstractO3Test extends AbstractTest {
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(code);
-    }
-
-    protected static void assertO3DataConsistency(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String o3InsertSQL,
-            final String resourceName
-    ) throws SqlException, URISyntaxException {
-        // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
-
-        // expected outcome - output ignored, but useful for debug
-        // y ordered with 'order by ts' is not the same order as OOO insert into x when there are several records
-        // with the same ts value
-        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-        compiler.compile(o3InsertSQL, sqlExecutionContext);
-        AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
-
-        // check that reader can process out of order partition layout after fresh open
-        engine.releaseAllReaders();
-        AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
     }
 
     static void assertO3DataConsistency(
@@ -230,33 +204,38 @@ public class AbstractO3Test extends AbstractTest {
         );
     }
 
-    protected static void assertO3DataCursors(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            @Nullable String referenceTableDDL,
-            String referenceSQL,
-            String o3InsertSQL,
-            String assertSQL,
-            String countReferenceSQL,
-            String countAssertSQL
+    static void assertO3DataConsistencyStableSort(
+            final CairoEngine engine,
+            final SqlCompiler compiler,
+            final SqlExecutionContext sqlExecutionContext,
+            final String referenceTableDDL,
+            final String o3InsertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
             compiler.compile(referenceTableDDL, sqlExecutionContext);
         }
-        compiler.compile(o3InsertSQL, sqlExecutionContext);
-        TestUtils.assertEquals(compiler, sqlExecutionContext, referenceSQL, assertSQL);
-        engine.releaseAllReaders();
-        TestUtils.assertEquals(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+        if (o3InsertSQL != null) {
+            compiler.compile(o3InsertSQL, sqlExecutionContext);
+        }
 
-        TestUtils.assertEquals(
+        TestUtils.assertEqualsExactOrder(
                 compiler,
                 sqlExecutionContext,
-                "select count() from " + countReferenceSQL,
-                "select count() from " + countAssertSQL
+                "y order by ts, commit",
+                "x"
+        );
+
+        engine.releaseAllReaders();
+
+        TestUtils.assertEqualsExactOrder(
+                compiler,
+                sqlExecutionContext,
+                "y order by ts, commit",
+                "x"
         );
     }
+
 
     protected static void assertSqlResultAgainstFile(
             SqlCompiler compiler,

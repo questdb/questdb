@@ -34,7 +34,8 @@ import io.questdb.std.str.CharSink;
 public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, TableStructure {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
     private static final int COLUMN_FLAG_CACHED = 1;
-    private static final int COLUMN_FLAG_INDEXED = 2;
+    private static final int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
+    private static final int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private final LongList columnBits = new LongList();
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
@@ -189,6 +190,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return volumeAlias;
     }
 
+    @Override
+    public boolean isDedupKey(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
+    }
+
     public boolean isIgnoreIfExists() {
         return ignoreIfExists;
     }
@@ -207,6 +213,12 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void setDedupKeyFlag(int index) {
+        int flagsIndex = index * 2 + 1;
+        int flags = getLowAt(flagsIndex) | COLUMN_FLAG_DEDUP_KEY;
+        columnBits.setQuick(flagsIndex, Numbers.encodeLowHighInts(flags, getHighAt(flagsIndex)));
     }
 
     public void setIgnoreIfExists(boolean flag) {
