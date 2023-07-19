@@ -539,9 +539,11 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                         .append('\n');
             }
             lineData = sb.toString();
-            SqlException exception = sendWithAlterStatement(lineData,
+            SqlException exception = sendWithAlterStatement(
+                    lineData,
                     "ALTER TABLE plug DROP COLUMN room",
-                    true, 1);
+                    true, 1
+            );
             Assert.assertNull(exception);
             drainWalQueue();
 
@@ -553,7 +555,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testDropColumnConcurrentlyManyAttempts() throws Exception {
-        final int rows = 10_000;
+        final int rows = 15_000;
         runInContext((server) -> {
             String lineData = "plug,room=0i watts=\"1\",power=220 2631819999000\n";
             // pre-create the table
