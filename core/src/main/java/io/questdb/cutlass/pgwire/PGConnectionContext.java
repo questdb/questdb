@@ -504,6 +504,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bindVariableService.setInt(index, getIntUnsafe(address));
     }
 
+    public void setIPv4BindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(index, Integer.BYTES, valueLen);
+        bindVariableService.setIPv4(index, getIntUnsafe(address));
+    }
+
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLongUnsafe(address));
@@ -732,6 +737,29 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void appendIPv4Col(Record record, int i) {
+        final int val = record.getIPv4(i);
+        if (val != Numbers.IPv4_NULL) {
+            final long a = responseAsciiSink.skip();
+            responseAsciiSink.put(val);
+            responseAsciiSink.putLenEx(a);
+        } else {
+            responseAsciiSink.setNullValue();
+        }
+    }
+
+    private void appendIPv4ColumnBin(Record record, int columnIndex) {
+        final int val = record.getIPv4(columnIndex);
+        if (val != Numbers.IPv4_NULL) {
+            responseAsciiSink.ensureCapacity(8);
+            responseAsciiSink.putIntUnsafe(0, INT_BYTES_X);
+            responseAsciiSink.putIntUnsafe(4, Numbers.bswap(val));
+            responseAsciiSink.bump(8);
+        } else {
+            responseAsciiSink.setNullValue();
+        }
+    }
+
     private void appendLong256Column(Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
         if (long256Value.getLong0() == Numbers.LONG_NaN &&
@@ -788,6 +816,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     break;
                 case ColumnType.INT:
                     appendIntCol(record, i);
+                    break;
+                case BINARY_TYPE_IPv4:
+                    appendIPv4ColumnBin(record, i);
+                    break;
+                case ColumnType.IPv4:
+                    appendIPv4Col(record, i);
                     break;
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
@@ -1064,6 +1098,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         break;
                     case X_B_PG_UUID:
                         setUuidBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_IPv4:
+                        setIPv4BindVariable(j, lo, valueLen);
                         break;
                     default:
                         setStrBindVariable(j, lo, valueLen);

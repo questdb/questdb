@@ -25,16 +25,12 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1303,6 +1299,100 @@ if __name__ == "__main__":
         });
     }
 
+    @Test
+    public void testBasicFetchIPv4() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+
+            PreparedStatement tbl = connection.prepareStatement("create table x as (select rnd_ipv4() from long_sequence(10))");
+            tbl.execute();
+
+            PreparedStatement statement = connection.prepareStatement("select * from x");
+
+            ResultSet rs = statement.executeQuery();
+
+            while(rs.next()) {
+                System.out.println(rs.getString(1));
+            }
+
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+        });
+    }
+
+    @Test
+    public void testIPv4() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
+            tbl.execute();
+
+            CompiledQuery compiledQuery = compiler.compile("insert into x(a) values($1)", sqlExecutionContext);
+            sqlExecutionContext.getBindVariableService().getFunction(0);
+            sqlExecutionContext.getBindVariableService().setIPv4("hello", 1);
+
+            assertNotNull(compiledQuery.getInsertOperation());
+            final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+            try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                insertMethod.execute();
+                insertMethod.commit();
+            }
+            TestUtils.printSql(compiler, sqlExecutionContext, "x", sink);
+            System.out.println(sink);
+        });
+    }
+
+    @Test
+    public void testIPv4_2() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
+            tbl.execute();
+
+            CompiledQuery compiledQuery = compiler.compile("insert into x(a) values($1)", sqlExecutionContext);
+            sqlExecutionContext.getBindVariableService().getFunction(0);
+            sqlExecutionContext.getBindVariableService().setIPv4(0, "1.1.1.1");
+
+            assertNotNull(compiledQuery.getInsertOperation());
+            final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+            try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                insertMethod.execute();
+                insertMethod.commit();
+            }
+            TestUtils.printSql(compiler, sqlExecutionContext, "x", sink);
+            System.out.println(sink);
+        });
+    }
+
+    @Test
+    public void dummyTest() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
+            tbl.execute();
+
+            CompiledQuery compiledQuery = compiler.compile("insert into x(a) values(:hello)", sqlExecutionContext);
+            sqlExecutionContext.getBindVariableService().getFunction(0);
+            sqlExecutionContext.getBindVariableService().setInt("hello", 1);
+
+            assertNotNull(compiledQuery.getInsertOperation());
+            final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+            try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                insertMethod.execute();
+                insertMethod.commit();
+            }
+            TestUtils.printSql(compiler, sqlExecutionContext, "x", sink);
+            System.out.println(sink);
+        });
+    }
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned

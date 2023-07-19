@@ -957,7 +957,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if(function instanceof IPv4Constant) {
                     return function;
                 } else {
-                    return IPv4Constant.newInstance(function.getInt(null));
+                    return IPv4Constant.newInstance(function.getIPv4(null));
                 }
             default:
                 return function;
