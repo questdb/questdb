@@ -375,15 +375,13 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
             (*dest).i = src_pos | (1ull << 63);
             dest++;
             src_pos++;
-        } else if (src[src_pos] >
-                   index[index_pos].ts) {
+        } else if (src[src_pos] > index[index_pos].ts) {
             *dest++ = index[index_pos];
             index_pos++;
         } else {
             // index_ts == src_ts
             const uint64_t conflict_ts = src[src_pos];
-            while (index_pos <= index_hi_inc &&
-                   index[index_pos].ts == conflict_ts) {
+            while (index_pos <= index_hi_inc && index[index_pos].ts == conflict_ts) {
                 index_pos++;
             }
 

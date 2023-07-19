@@ -76,11 +76,9 @@
 
 constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
 constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
-constexpr jint I_MAX = std::numeric_limits<jint>::max();
 constexpr jint I_MIN = std::numeric_limits<jint>::min();
 constexpr jlong L_MIN = std::numeric_limits<jlong>::min();
 constexpr jlong L_MAX = std::numeric_limits<jlong>::max();
-constexpr uint64_t UL_MIN = std::numeric_limits<uint64_t>::min();
 constexpr uint64_t UL_MAX = std::numeric_limits<uint64_t>::max();
 constexpr jdouble D_NAN = std::numeric_limits<jdouble>::quiet_NaN();
 
