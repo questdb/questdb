@@ -125,7 +125,7 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         sink.clear();
         sink.put(value);
         final String str = Chars.toString(sink);
-        symbols.add(Chars.toString(sink));
+        symbols.add(str);
         return str;
     }
 
