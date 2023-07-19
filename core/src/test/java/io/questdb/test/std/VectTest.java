@@ -375,65 +375,6 @@ public class VectTest {
     }
 
     @Test
-    public void testMergeDedupIndexWithKey() {
-        try (DirectLongList src = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT);
-             DirectLongList srcDedupCol = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT)) {
-            try (DirectLongList index = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT);
-                 DirectLongList indexDedupCol = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT)) {
-                try (DirectLongList dest = new DirectLongList(100, MemoryTag.NATIVE_DEFAULT)) {
-                    src.add(10);
-                    src.add(20);
-                    src.add(20);
-                    src.add(30);
-                    src.add(40);
-                    src.add(40);
-                    src.add(50);
-                    srcDedupCol.add(Numbers.encodeLowHighInts(1, 0));
-                    srcDedupCol.add(Numbers.encodeLowHighInts(0, 1));
-                    srcDedupCol.add(Numbers.encodeLowHighInts(0, 1));
-                    srcDedupCol.add(Numbers.encodeLowHighInts(0, 1));
-                    Assert.assertEquals("10:1, 20:0, 20:0, 30:1, 40:0, 40:1, 50:0", printTsWithDedupKey(src, srcDedupCol));
-
-                    index.add(10);
-                    index.add(0);
-                    index.add(20);
-                    index.add(0);
-                    index.add(30);
-                    index.add(0);
-                    index.add(40);
-                    index.add(0);
-                    indexDedupCol.add(Numbers.encodeLowHighInts(0, 0));
-                    indexDedupCol.add(Numbers.encodeLowHighInts(0, 0));
-                    Assert.assertEquals("10:0, 20:0, 30:0, 40:0", printTsIndexWithDedupKey(index, indexDedupCol));
-
-                    try (DirectLongList dedupValues = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
-                        dedupValues.add(srcDedupCol.getAddress());
-                        dedupValues.add(0);
-                        dedupValues.add(indexDedupCol.getAddress());
-                        dest.setPos(index.size() + src.size() * 2);
-
-                        long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
-                                src.getAddress(),
-                                0,
-                                src.size() - 1,
-                                index.getAddress(),
-                                0,
-                                index.size() / 2 - 1,
-                                dest.getAddress(),
-                                1,
-                                dedupValues.getAddress(),
-                                dedupValues.getAddress() + Long.BYTES,
-                                dedupValues.getAddress() + Long.BYTES * 2
-                        );
-                        dest.setPos(mergedCount * 2);
-                        Assert.assertEquals("10 0:s, 10 0:i, 20 1:i, 20 1:i, 30 3:s, 30 2:i, 40 3:i, 40 5:s, 50 6:s", printMergeIndex(dest));
-                    }
-                }
-            }
-        }
-    }
-
-    @Test
     public void testMergeFourSameSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int count = 1_000_000;

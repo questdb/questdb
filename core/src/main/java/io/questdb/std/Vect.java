@@ -163,20 +163,6 @@ public final class Vect {
             long pDestIndex
     );
 
-    public static native long mergeDedupTimestampWithLongIndexIntKeys(
-            long srcTimestampAddr,
-            long mergeDataLo,
-            long mergeDataHi,
-            long sortedTimestampsAddr,
-            long mergeOOOLo,
-            long mergeOOOHi,
-            long tempIndexAddr,
-            int dedupKeyCount,
-            long dedupColBuffs,
-            long dedupColTops,
-            long dedupO3Buffs
-    );
-
     public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {
         if (count < 2) {
             throw new IllegalArgumentException("Count of indexes to merge should at least be 2.");
