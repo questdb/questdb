@@ -790,6 +790,11 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.resetMemory();
     }
 
+    public void setCommitListener(String table, CommitListener listener) {
+        final TableToken tt = getTableTokenIfExists(table);
+        writerPool.setCommitListener(tt, listener);
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.metadataPool.setPoolListener(poolListener);

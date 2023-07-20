@@ -33,9 +33,7 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -74,6 +72,7 @@ public class WriterPool extends AbstractPool {
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
+    private final LongObjHashMap<CommitListener> commitListeners = new LongObjHashMap<CommitListener>();
     private final CairoConfiguration configuration;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     @NotNull
@@ -226,6 +225,15 @@ public class WriterPool extends AbstractPool {
         return reinterpretOwnershipReason(e.ownershipReason);
     }
 
+    public void setCommitListener(TableToken tt, CommitListener listener) {
+        assert commitListeners.get(tt.getTableId()) == null;
+        commitListeners.put(tt.getTableId(), listener);
+
+        try (TableWriter tw = get(tt, "set commit listener")) {
+            tw.setCommitListener(listener);
+        }
+    }
+
     public int size() {
         return entries.size();
     }
@@ -256,6 +264,7 @@ public class WriterPool extends AbstractPool {
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
                 writer = new TableWriter(configuration, tableToken, messageBus, null, false, e, root, metrics);
+                writer.setCommitListener(commitListeners.get(tableToken.getTableId()));
             }
 
             if (writer == null) {
@@ -366,6 +375,7 @@ public class WriterPool extends AbstractPool {
             checkClosed();
             LOG.info().$("open [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
             e.writer = new TableWriter(configuration, tableToken, messageBus, null, true, e, root, metrics);
+            e.writer.setCommitListener(commitListeners.get(tableToken.getTableId()));
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
@@ -555,6 +565,10 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
+        commitListeners.forEach((k, v) -> {
+            Misc.free(v);
+        });
+        commitListeners.clear();
         LOG.info().$("closed").$();
     }
 
