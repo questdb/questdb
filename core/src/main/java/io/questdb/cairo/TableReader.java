@@ -513,10 +513,19 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean acquireTxn() {
         if (!txnAcquired) {
-            if (txnScoreboard.acquireTxn(txn)) {
-                txnAcquired = true;
-            } else {
-                return false;
+            try {
+                if (txnScoreboard.acquireTxn(txn)) {
+                    txnAcquired = true;
+                } else {
+                    return false;
+                }
+            } catch (CairoException ex) {
+                // Scoreboard can be over allocated
+                LOG.critical().$("cannot lock txn in scoreboard [table=")
+                        .$(tableToken)
+                        .$(", txn=").$(txn)
+                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                throw ex;
             }
         }
 
