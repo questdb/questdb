@@ -44,6 +44,8 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static org.junit.Assert.fail;
 
 public class CairoEngineTest extends AbstractCairoTest {
@@ -152,6 +154,37 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitListener() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                TableToken x = createX(engine);
+                AtomicBoolean flag = new AtomicBoolean();
+                engine.setCommitListener("x", new CommitListener() {
+                    @Override
+                    public void close() {
+                        //ignore
+                    }
+
+                    @Override
+                    public void onCommit(long txn, long rowsAdded) {
+                        flag.set(true);
+                    }
+                });
+
+
+                try (TableWriter writer = engine.getWriter(x, "test")) {
+                    TableWriter.Row row = writer.newRow();
+                    row.putInt(0, 0);
+                    row.append();
+                    writer.commit();
+                }
+
+                Assert.assertTrue(flag.get());
+            }
+        });
+    }
+
+    @Test
     public void testDuplicateTableCreation() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
@@ -226,6 +259,42 @@ public class CairoEngineTest extends AbstractCairoTest {
                     TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
                     assertWriter(engine, y);
                     assertReader(engine, y);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverwriteCommitListenerFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
+                engine.setCommitListener("x", new CommitListener() {
+                    @Override
+                    public void close() {
+                        //ignore
+                    }
+
+                    @Override
+                    public void onCommit(long txn, long rowsAdded) {
+                        //ignore
+                    }
+                });
+                try {
+                    engine.setCommitListener("x", new CommitListener() {
+                        @Override
+                        public void close() {
+                            //ignore
+                        }
+
+                        @Override
+                        public void onCommit(long txn, long rowsAdded) {
+                            //ignore
+                        }
+                    });
+                    Assert.fail("should fail");
+                } catch (AssertionError ae) {
+                    Assert.assertNotEquals("should fail", ae.getMessage());
                 }
             }
         });
