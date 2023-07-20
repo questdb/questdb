@@ -24,7 +24,9 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.BinarySearch;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -115,6 +117,35 @@ public class VectTest {
     }
 
     @Test
+    public void testDedupSorted() {
+        int indexLen = 10;
+        try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < indexLen * 2; i += 2) {
+                index.add((i / 4 + 1) * 10L);
+                index.add(0);
+            }
+            index.add(55);
+            index.add(0);
+
+            Assert.assertEquals(
+                    "{10, 0, 10, 0, 20, 0, 20, 0, 30, 0, 30, 0, 40, 0, 40, 0, 50, 0, 50, 0, 55, 0}",
+                    index.toString()
+            );
+
+            long dedupCount = Vect.dedupSortedTimestampIndexRebaseChecked(
+                    index.getAddress(),
+                    indexLen + 1,
+                    index.getAddress()
+            );
+            index.setPos(dedupCount * 2);
+            Assert.assertEquals(
+                    "10 1:s, 20 3:s, 30 5:s, 40 7:s, 50 9:s, 55 10:s",
+                    printMergeIndex(index)
+            );
+        }
+    }
+
+    @Test
     public void testMemeq() {
         int maxSize = 1024 * 1024;
         int[] sizes = {16, 1024, maxSize};
@@ -172,6 +203,174 @@ public class VectTest {
         } finally {
             Unsafe.free(from, buffSize, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(to, maxSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testMergeDedupIndex() {
+        int srcLen = 10;
+        try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
+            int indexLen = 10;
+            try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+                try (DirectLongList dest = new DirectLongList((srcLen + indexLen) * 2, MemoryTag.NATIVE_DEFAULT)) {
+                    src.setPos(srcLen);
+                    for (int i = 0; i < srcLen; i++) {
+                        src.set(i, (i + 1) * 10);
+                    }
+                    Assert.assertEquals("{10, 20, 30, 40, 50, 60, 70, 80, 90, 100}", src.toString());
+
+                    index.setPos(indexLen * 2);
+                    for (int i = 0; i < indexLen * 2; i += 2) {
+                        index.set(i, (i + 1) * 10L);
+                        index.set(i + 1, i / 2);
+                    }
+                    Assert.assertEquals("{10, 0, 30, 1, 50, 2, 70, 3, 90, 4, 110, 5, 130, 6, 150, 7, 170, 8, 190, 9}", index.toString());
+
+                    long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
+                            src.getAddress(),
+                            0,
+                            srcLen - 1,
+                            index.getAddress(),
+                            0,
+                            indexLen - 1,
+                            dest.getAddress()
+                    );
+                    dest.setPos(mergedCount * 2);
+                    Assert.assertEquals("10 0:i, 20 1:s, 30 1:i, 40 3:s, 50 2:i, 60 5:s, 70 3:i, 80 7:s, 90 4:i, 100 9:s, 110 5:i, 130 6:i, 150 7:i, 170 8:i, 190 9:i", printMergeIndex(dest));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testMergeDedupIndexEmptyIndex() {
+        int srcLen = 10;
+        try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
+            int indexLen = 0;
+            try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+                try (DirectLongList dest = new DirectLongList((srcLen + indexLen) * 2, MemoryTag.NATIVE_DEFAULT)) {
+                    src.setPos(srcLen);
+                    for (int i = 0; i < srcLen; i++) {
+                        src.set(i, (i + 1) * 10);
+                    }
+                    Assert.assertEquals("{10, 20, 30, 40, 50, 60, 70, 80, 90, 100}", src.toString());
+
+                    index.setPos(indexLen * 2);
+                    Assert.assertEquals("{}", index.toString());
+
+                    long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
+                            src.getAddress(),
+                            0,
+                            srcLen - 1,
+                            index.getAddress(),
+                            0,
+                            indexLen - 1,
+                            dest.getAddress()
+                    );
+                    dest.setPos(mergedCount * 2);
+                    Assert.assertEquals("10 0:s, 20 1:s, 30 2:s, 40 3:s, 50 4:s, 60 5:s, 70 6:s, 80 7:s, 90 8:s, 100 9:s", printMergeIndex(dest));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testMergeDedupIndexEmptySrc() {
+        int srcLen = 10000;
+        Rnd rnd = TestUtils.generateRandom(null);
+        try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
+            int indexLen = 20000;
+            try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+                try (DirectLongList dest = new DirectLongList((srcLen + indexLen) * 2, MemoryTag.NATIVE_DEFAULT)) {
+
+                    long lastTs = 0;
+                    for (int i = 0; i < srcLen; i++) {
+                        lastTs += 1 + rnd.nextLong(1_000L);
+                        src.add(lastTs);
+                    }
+
+                    lastTs = 1;
+                    for (int i = 0; i < indexLen * 2; i += 2) {
+                        while (src.binarySearch(lastTs, BinarySearch.SCAN_UP) >= 0) {
+                            lastTs += rnd.nextLong(1_000L);
+                        }
+                        index.add(lastTs);
+                        lastTs += 1 + rnd.nextLong(1_000L);
+                        index.add(rnd.nextPositiveLong());
+                    }
+
+                    long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
+                            src.getAddress(),
+                            0,
+                            srcLen - 1,
+                            index.getAddress(),
+                            0,
+                            indexLen - 1,
+                            dest.getAddress()
+                    );
+                    // Assert no dups found
+                    Assert.assertEquals(srcLen + indexLen, mergedCount);
+                    dest.setPos(mergedCount * 2);
+
+                    int timestampIndexSize = (srcLen + indexLen) * Long.BYTES * 2;
+                    long ptr = Unsafe.malloc(timestampIndexSize, MemoryTag.NATIVE_O3);
+                    Vect.mergeTwoLongIndexesAsc(
+                            src.getAddress(),
+                            0,
+                            srcLen,
+                            index.getAddress(),
+                            indexLen,
+                            ptr
+                    );
+
+                    try {
+                        // Assert memory equal
+                        assertEqualLongs(
+                                ptr,
+                                dest.getAddress(),
+                                timestampIndexSize / Long.BYTES
+                        );
+                    } finally {
+                        Unsafe.free(ptr, timestampIndexSize, MemoryTag.NATIVE_O3);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testMergeDedupIndexRepeated() {
+        int srcLen = 10;
+        try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
+            int indexLen = 5;
+            try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+                try (DirectLongList dest = new DirectLongList((srcLen + indexLen) * 2, MemoryTag.NATIVE_DEFAULT)) {
+                    src.setPos(srcLen);
+                    for (int i = 0; i < srcLen; i++) {
+                        src.set(i, (i + 1) / 2 * 2 * 10);
+                    }
+                    Assert.assertEquals("{0, 20, 20, 40, 40, 60, 60, 80, 80, 100}", src.toString());
+
+                    index.setPos(indexLen * 2);
+                    for (int i = 0; i < indexLen * 2; i += 2) {
+                        index.set(i, (4 + i / 2 * 2) * 10);
+                        index.set(i + 1, i / 2);
+                    }
+                    Assert.assertEquals("{40, 0, 60, 1, 80, 2, 100, 3, 120, 4}", index.toString());
+
+                    long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
+                            src.getAddress(),
+                            0,
+                            srcLen - 1,
+                            index.getAddress(),
+                            0,
+                            indexLen - 1,
+                            dest.getAddress()
+                    );
+                    dest.setPos(mergedCount * 2);
+                    Assert.assertEquals("0 0:s, 20 1:s, 20 2:s, 40 0:i, 40 0:i, 60 1:i, 60 1:i, 80 2:i, 80 2:i, 100 3:i, 120 4:i", printMergeIndex(dest));
+                }
+            }
         }
     }
 
@@ -347,6 +546,12 @@ public class VectTest {
     }
 
     @Test
+    public void testQuickSort1M() {
+        rnd = TestUtils.generateRandom(null);
+        testQuickSort(1_000_000);
+    }
+
+    @Test
     public void testReshuffleInt64() {
         int[] sizes = new int[]{0, 1, 3, 4, 5, 1024 * 1024 + 2};
         int typeBytes = Long.BYTES;
@@ -519,14 +724,15 @@ public class VectTest {
 
     @Test
     public void testSort1M() {
-        testSort(1_000_000);
+        rnd = TestUtils.generateRandom(null);
+        testSort(10_000_000);
     }
 
     @Test
-    public void testSortAB1M() {
+    public void testSortAB10M() {
         rnd = TestUtils.generateRandom(null);
-        int split = rnd.nextInt(1_000_000);
-        testSortAB(1_000_000 - split, split);
+        int split = rnd.nextInt(10_000_000);
+        testSortAB(10_000_000 - split, split);
     }
 
     @Test
@@ -561,6 +767,28 @@ public class VectTest {
         }
     }
 
+    private static String printMergeIndex(DirectLongList dest) {
+        StringSink sink = new StringSink();
+        for (int i = 0; i < dest.size(); i += 2) {
+            long bit_index = dest.get(i + 1);
+            char bit = bit_index < 0 ? 's' : 'i';
+            long index = bit_index & ~(1L << 63);
+            if (i > 0) {
+                sink.put(", ");
+            }
+            sink.put(dest.get(i)).put(' ').put(index).put(':').put(bit);
+        }
+        return sink.toString();
+    }
+
+    private void assertEqualLongs(long expected, long actual, int longCount) {
+        for (int i = 0; i < longCount; i++) {
+            if (Unsafe.getUnsafe().getLong(expected + i * 8L) != Unsafe.getUnsafe().getLong(actual + i * 8L)) {
+                Assert.assertEquals("Longs at " + i + " are not equal", Unsafe.getUnsafe().getLong(expected + i * 8L), Unsafe.getUnsafe().getLong(actual + i * 8L));
+            }
+        }
+    }
+
     private void assertIndexAsc(int count, long indexAddr) {
         long v = Unsafe.getUnsafe().getLong(indexAddr);
         for (int i = 1; i < count; i++) {
@@ -587,6 +815,36 @@ public class VectTest {
         }
     }
 
+    private String printTsIndexWithDedupKey(DirectLongList tsIndex, DirectLongList key) {
+        StringSink sink = new StringSink();
+        for (int i = 0; i < tsIndex.size() / 2; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+
+            long tsVal = tsIndex.get(i * 2L);
+            long value = key.get(i / 2);
+            int keyVal = i % 2 == 1 ? Numbers.decodeHighInt(value) : Numbers.decodeLowInt(value);
+            sink.put(tsVal).put(':').put(keyVal);
+        }
+        return sink.toString();
+    }
+
+    private String printTsWithDedupKey(DirectLongList ts, DirectLongList key) {
+        StringSink sink = new StringSink();
+        for (int i = 0; i < ts.size(); i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+
+            long tsVal = ts.get(i);
+            long value = key.get(i / 2);
+            int keyVal = i % 2 == 1 ? Numbers.decodeHighInt(value) : Numbers.decodeLowInt(value);
+            sink.put(tsVal).put(':').put(keyVal);
+        }
+        return sink.toString();
+    }
+
     private long seedAndSort(int count) {
         final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         seedMem2Longs(count, indexAddr);
@@ -606,6 +864,18 @@ public class VectTest {
             final long z = rnd.nextPositiveLong();
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
+        }
+    }
+
+    private void testQuickSort(int count) {
+        final int size = count * 2 * Long.BYTES;
+        final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            seedMem2Longs(count, indexAddr);
+            Vect.quickSortLongIndexAscInPlace(indexAddr, count);
+            assertIndexAsc(count, indexAddr);
+        } finally {
+            Unsafe.free(indexAddr, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

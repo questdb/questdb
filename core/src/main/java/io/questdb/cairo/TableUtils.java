@@ -167,6 +167,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_NOT_INDEXED = 0;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = META_FLAG_BIT_SEQUENTIAL << 1;
+    static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -1393,6 +1394,12 @@ public final class TableUtils {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
                 }
 
+                if (isColumnDedupKey(metaMem, i)) {
+                    if (!ColumnType.isSymbol(type) && !ColumnType.isInt(type) && i != timestampIndex) {
+                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for SYMBOL and INT column types").put(" at [").put(i).put(']');
+                    }
+                }
+
                 if (isColumnIndexed(metaMem, i)) {
                     if (!ColumnType.isSymbol(type)) {
                         throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
@@ -1506,6 +1513,10 @@ public final class TableUtils {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
             }
 
+            if (tableStruct.isDedupKey(i)) {
+                flags |= META_FLAG_BIT_DEDUP_KEY;
+            }
+
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
@@ -1575,6 +1586,10 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static boolean isColumnDedupKey(MemoryMR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {

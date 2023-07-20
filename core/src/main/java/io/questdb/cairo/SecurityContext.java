@@ -27,11 +27,13 @@ package io.questdb.cairo;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@SuppressWarnings("unused")
 public interface SecurityContext {
 
-    void assumeRole(CharSequence roleName);
+    void assumeServiceAccount(CharSequence serviceAccountName);
 
     void authorizeAddPassword();
 
@@ -39,26 +41,28 @@ public interface SecurityContext {
 
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
-    void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableAttachPartition(TableToken tableToken);
 
     void authorizeAlterTableDetachPartition(TableToken tableToken);
 
-    void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableDropPartition(TableToken tableToken);
 
     // the names are pairs from-to
-    void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeAlterTableSetDedup(TableToken tableToken);
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignRole();
+    void authorizeAssignServiceAccount();
 
     void authorizeCopy();
 
@@ -68,7 +72,7 @@ public interface SecurityContext {
 
     void authorizeCreateJwk();
 
-    void authorizeCreateRole();
+    void authorizeCreateServiceAccount();
 
     void authorizeCreateUser();
 
@@ -80,22 +84,31 @@ public interface SecurityContext {
 
     void authorizeDropJwk();
 
-    void authorizeDropRole();
+    void authorizeDropServiceAccount();
 
     void authorizeDropUser();
 
     void authorizeEnableUser();
 
-    void authorizeGrant(LongList permissions, CharSequence tableName, ObjList<CharSequence> columns);
+    void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
     // columnNames.size() = 0 means all columns
-    void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    // Add column over ILP/TCP.
+    void authorizeLineAlterTableAddColumn(TableToken tableToken);
+
+    // Insert over ILP/TCP.
+    void authorizeLineInsert(TableToken tableToken);
+
+    // Create table over ILP/TCP.
+    void authorizeLineTableCreate();
 
     void authorizeRemovePassword();
 
     void authorizeRemoveUser();
 
-    void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
@@ -110,11 +123,17 @@ public interface SecurityContext {
 
     void authorizeTableTruncate(TableToken tableToken);
 
-    void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames);
+    void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignRole();
+    void authorizeUnassignServiceAccount();
 
-    void exitRole(CharSequence roleName);
+    void exitServiceAccount(CharSequence serviceAccountName);
+
+    void onColumnAdded(TableToken tableToken, CharSequence columnName);
+
+    void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
+
+    void onTableCreated(TableToken tableToken);
 }

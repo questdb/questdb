@@ -803,6 +803,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return new CastUuidToStrFunctionFactory.Func(function);
                 }
                 break;
+            case ColumnType.CHAR:
+                if (toType == ColumnType.SYMBOL) {
+                    return new CastCharToSymbolFunctionFactory.Func(function);
+                }
+                break;
             default:
                 if (ColumnType.isGeoHash(fromType)) {
                     int fromGeoBits = ColumnType.getGeoHashBits(fromType);

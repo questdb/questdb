@@ -31,6 +31,7 @@ public class O3CallbackTask {
     private int columnIndex;
     private int columnType;
     private CountDownLatchSPI countDownLatchSPI;
+    private long mergeCount;
     private long mergedTimestampsAddr;
     private long row1Count;
     private long row2Hi;
@@ -47,6 +48,10 @@ public class O3CallbackTask {
 
     public CountDownLatchSPI getCountDownLatchSPI() {
         return countDownLatchSPI;
+    }
+
+    public long getMergeCount() {
+        return mergeCount;
     }
 
     public long getMergedTimestampsAddr() {
@@ -74,6 +79,7 @@ public class O3CallbackTask {
             int columnIndex,
             int columnType,
             long mergedTimestampsAddr,
+            long mergeCount,
             long row1Count,
             long row2Lo,
             long row2Hi,
@@ -83,6 +89,7 @@ public class O3CallbackTask {
         this.columnIndex = columnIndex;
         this.columnType = columnType;
         this.mergedTimestampsAddr = mergedTimestampsAddr;
+        this.mergeCount = mergeCount;
         this.row1Count = row1Count;
         this.row2Lo = row2Lo;
         this.row2Hi = row2Hi;

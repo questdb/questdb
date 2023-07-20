@@ -87,12 +87,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             drainWalQueue();
 
             String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
-                    "6C\t666\t1970-01-01T00:25:31.817902Z\tNaN\tLine\n" +
                     "6C\t333\t1970-01-01T00:25:31.817902Z\tNaN\t\n" +
-                    "6B\t55\t1970-01-01T00:27:11.817902Z\tNaN\tPower\n" +
+                    "6C\t666\t1970-01-01T00:25:31.817902Z\tNaN\tLine\n" +
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tNaN\t\n" +
-                    "6A\t4\t1970-01-01T00:43:51.819999Z\tNaN\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\t\n";
+                    "6B\t55\t1970-01-01T00:27:11.817902Z\tNaN\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\t\n" +
+                    "6A\t4\t1970-01-01T00:43:51.819999Z\tNaN\tPower\n";
             assertTable(expected);
         });
     }
@@ -257,12 +257,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             drainWalQueue();
 
             String expected = "label2\troom\twatts\ttimestamp\tlabel\n" +
-                    "\t6C\t666\t1970-01-01T00:25:31.817902Z\t1\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\tNaN\n" +
-                    "\t6B\t55\t1970-01-01T00:27:11.817902Z\t0\n" +
+                    "\t6C\t666\t1970-01-01T00:25:31.817902Z\t1\n" +
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\tNaN\n" +
-                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\t0\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\n";
+                    "\t6B\t55\t1970-01-01T00:27:11.817902Z\t0\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\n" +
+                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\t0\n";
             assertTable(expected);
         }, false, 1000);
     }
@@ -288,12 +288,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             drainWalQueue();
 
             String expected = "label2\troom\twatts\ttimestamp\tlabel\n" +
-                    "\t6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\t\n" +
-                    "\t6B\t55\t1970-01-01T00:27:11.817902Z\tPower\n" +
+                    "\t6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\t\n" +
-                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\tPower\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+                    "\t6B\t55\t1970-01-01T00:27:11.817902Z\tPower\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\t\n" +
+                    "\t6A\t4\t1970-01-01T00:43:51.819999Z\tPower\n";
             assertTable(expected);
         }, false, 1000);
     }
@@ -539,9 +539,11 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                         .append('\n');
             }
             lineData = sb.toString();
-            SqlException exception = sendWithAlterStatement(lineData,
+            SqlException exception = sendWithAlterStatement(
+                    lineData,
                     "ALTER TABLE plug DROP COLUMN room",
-                    true, 1);
+                    true, 1
+            );
             Assert.assertNull(exception);
             drainWalQueue();
 
@@ -553,7 +555,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testDropColumnConcurrentlyManyAttempts() throws Exception {
-        final int rows = 10_000;
+        final int rows = 15_000;
         runInContext((server) -> {
             String lineData = "plug,room=0i watts=\"1\",power=220 2631819999000\n";
             // pre-create the table
@@ -597,12 +599,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             drainWalQueue();
 
             String expected = "room\tpower\ttimestamp\twatts\n" +
-                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
-                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t22\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
                     "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
-                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n" +
-                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t22\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n";
             assertTable(expected);
         });
     }
@@ -730,10 +732,10 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             drainWalQueue();
 
             String expected = "watts\tpower\ttimestamp\troom\n" +
-                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
-                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t6BB\n" +
+                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
                     "22\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t6BB\n" +
                     "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
                     "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
             assertTable(expected);

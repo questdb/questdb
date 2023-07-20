@@ -22,41 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.cutlass.auth;
 
-import io.questdb.std.Unsafe;
+import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
+import io.questdb.network.NetworkFacade;
 
-/**
- * Read-only interface for a UTF-8 string with native ptr access.
- */
-public interface Utf8Native extends Utf8Sequence {
-    /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
-     */
-    default byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(ptr() + index);
+public class EllipticCurveAuthenticatorFactory implements LineAuthenticatorFactory {
+    private final ChallengeResponseMatcher matcher;
+    private final NetworkFacade networkFacade;
+
+    public EllipticCurveAuthenticatorFactory(NetworkFacade networkFacade, ChallengeResponseMatcher matcher) {
+        this.networkFacade = networkFacade;
+        this.matcher = matcher;
     }
 
-    /**
-     * Address one past the last character.
-     */
-    default long hi() {
-        return ptr() + size();
+    @Override
+    public Authenticator getLineTCPAuthenticator() {
+        return new EllipticCurveAuthenticator(networkFacade, matcher);
     }
-
-    /**
-     * Address of the first character (alias of `.ptr()`).
-     */
-    default long lo() {
-        return ptr();
-    }
-
-    /**
-     * Address of the first character.
-     */
-    long ptr();
 }

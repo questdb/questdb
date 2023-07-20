@@ -227,6 +227,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(variableName).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }

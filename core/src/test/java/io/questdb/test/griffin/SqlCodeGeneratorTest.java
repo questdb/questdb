@@ -4355,7 +4355,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                 true
                         );
                     } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "Too few arguments for 'within'");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "too few arguments for 'within'");
                     }
                 });
     }
