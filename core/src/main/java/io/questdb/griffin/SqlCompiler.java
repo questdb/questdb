@@ -84,6 +84,7 @@ public class SqlCompiler implements Closeable {
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
     private final SqlCodeGenerator codeGenerator;
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final DropStatementCompiler dropStmtCompiler = new DropStatementCompiler();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
@@ -2274,7 +2275,12 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.getPosition(), "EOF expected");
         }
 
-        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnName);
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+
+        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
         rebuildIndex.reindex(partition, columnName);
         return compiledQuery.ofRepair();
     }
@@ -2647,6 +2653,7 @@ public class SqlCompiler implements Closeable {
         alterOperationBuilder.clear();
         backupAgent.clear();
         functionParser.clear();
+        columnNames.clear();
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {

@@ -28,7 +28,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 @SuppressWarnings("unused")
 public interface SecurityContext {
@@ -114,8 +113,8 @@ public interface SecurityContext {
 
     void authorizeTableDrop(TableToken tableToken);
 
-    // columnName = null means all columns
-    void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName);
+    // columnNames - empty means all columns
+    void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableRename(TableToken tableToken);
 
