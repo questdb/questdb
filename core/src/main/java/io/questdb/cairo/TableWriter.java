@@ -412,7 +412,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isIndexed,
                 indexValueBlockCapacity,
                 false,
-                isDedupKey
+                isDedupKey,
+                null
+        );
+    }
+
+    @Override
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isDedupKey,
+            SqlExecutionContext executionContext
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                false,
+                isDedupKey,
+                executionContext
         );
     }
 
