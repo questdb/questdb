@@ -3196,7 +3196,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
             dedupColumnCommitAddresses.setDedupColumnCount(dedupColCount);
         }
-        assert dedupColCount <= 1;
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3MemColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
