@@ -40,10 +40,7 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.DropIndexOperator;
-import io.questdb.griffin.PurgingOperator;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.UpdateOperatorImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -454,7 +451,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isSequential,
+            SqlExecutionContext executionContext
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -543,6 +541,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
+        }
+
+        if (executionContext != null) {
+            executionContext.getSecurityContext().onColumnAdded(tableToken, columnName);
         }
     }
 

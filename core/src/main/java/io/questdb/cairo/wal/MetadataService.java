@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.NotNull;
 
 public interface MetadataService {
@@ -69,8 +70,21 @@ public interface MetadataService {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isSequential,
+            SqlExecutionContext executionContext
     );
+
+    default void addColumn(
+            CharSequence name,
+            int type,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential
+    ) {
+        addColumn(name, type, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, null);
+    }
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
 

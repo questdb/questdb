@@ -324,7 +324,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         symbolCacheFlag,
                         isIndexed,
                         indexValueBlockCapacity,
-                        false
+                        false,
+                        sqlExecutionContext
                 );
             } catch (CairoException e) {
                 e.position(columnNamePosition);
