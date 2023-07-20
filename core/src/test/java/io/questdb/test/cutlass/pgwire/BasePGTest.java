@@ -264,10 +264,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return DriverManager.getConnection(url, properties);
     }
 
-    protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(binary));
         properties.setProperty("preferQueryMode", mode.value);
         if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
@@ -281,11 +282,10 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return DriverManager.getConnection(url, properties);
     }
 
-    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+    protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(binary));
         properties.setProperty("preferQueryMode", mode.value);
         if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
@@ -377,12 +377,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             sink.put(metaData.getColumnName(i + 1));
-            if(JDBCType.valueOf(metaData.getColumnType(i+1)) == JDBCType.INTEGER) {
-                if(map != null) {
-                    if(map.get(i+1) == ColumnType.IPv4) {
+            if (JDBCType.valueOf(metaData.getColumnType(i + 1)) == JDBCType.INTEGER) {
+                if (map != null) {
+                    if (map.get(i + 1) == ColumnType.IPv4) {
                         sink.put('[').put("IPv4").put(']');
-                    }
-                    else {
+                    } else {
                         sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
                     }
                 } else {
@@ -412,7 +411,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                         }
                         break;
                     case INTEGER:
-                        if(map == null) {
+                        if (map == null) {
                             int intValue = rs.getInt(i);
                             if (rs.wasNull()) {
                                 sink.put("null");
@@ -421,19 +420,16 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                             }
                             break;
                         } else {
-                            switch (map.get(i)) {
-                                case ColumnType.IPv4:
-                                    int val = rs.getInt(i);
-                                    intToIPv4Sink(sink, val);
-                                    break;
-                                default:
-                                    int intValue = rs.getInt(i);
-                                    if (rs.wasNull()) {
-                                        sink.put("null");
-                                    } else {
-                                        sink.put(intValue);
-                                    }
-                                    break;
+                            if (map.get(i) == ColumnType.IPv4) {
+                                int val = rs.getInt(i);
+                                intToIPv4Sink(sink, val);
+                            } else {
+                                int intValue = rs.getInt(i);
+                                if (rs.wasNull()) {
+                                    sink.put("null");
+                                } else {
+                                    sink.put(intValue);
+                                }
                             }
                         }
                         break;
