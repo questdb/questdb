@@ -737,26 +737,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void appendIPv4Col(Record record, int i) {
-        final int val = record.getIPv4(i);
-        if (val != Numbers.IPv4_NULL) {
+    private void appendIPv4Col(Record record, int columnIndex) {
+        int ipV4 = record.getIPv4(columnIndex);
+        if (ipV4 == Numbers.IPv4_NULL) {
+            responseAsciiSink.setNullValue();
+        } else {
             final long a = responseAsciiSink.skip();
-            responseAsciiSink.put(val);
+            Numbers.intToIPv4Sink(responseAsciiSink, ipV4);
             responseAsciiSink.putLenEx(a);
-        } else {
-            responseAsciiSink.setNullValue();
-        }
-    }
-
-    private void appendIPv4ColumnBin(Record record, int columnIndex) {
-        final int val = record.getIPv4(columnIndex);
-        if (val != Numbers.IPv4_NULL) {
-            responseAsciiSink.ensureCapacity(8);
-            responseAsciiSink.putIntUnsafe(0, INT_BYTES_X);
-            responseAsciiSink.putIntUnsafe(4, Numbers.bswap(val));
-            responseAsciiSink.bump(8);
-        } else {
-            responseAsciiSink.setNullValue();
         }
     }
 
@@ -816,9 +804,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     break;
                 case ColumnType.INT:
                     appendIntCol(record, i);
-                    break;
-                case BINARY_TYPE_IPv4:
-                    appendIPv4ColumnBin(record, i);
                     break;
                 case ColumnType.IPv4:
                     appendIPv4Col(record, i);

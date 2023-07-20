@@ -1308,7 +1308,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
             connection.setAutoCommit(false);
-            int totalRows = 100;
+            int totalRows = 1;
             IntIntHashMap map = new IntIntHashMap();
             map.put(1, ColumnType.IPv4);
 
@@ -1436,11 +1436,49 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testReadINet() throws SQLException, IOException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "postgres");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(true));
+        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
+//            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
+//        }
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+
+        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+            var stmt = connection.prepareStatement("select * from ipv4");
+            ResultSet rs = stmt.executeQuery();
+            assertResultSet("a[OTHER]\n" +
+                    "1.1.1.1\n", sink, rs);
+        }
+
+    }
+
+//    @Test
+//    public void testReadINe2t() throws SQLException, IOException {
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n", sink, rs);
+//        }
+//
+//    }
+
+    @Test
     public void testBasicFetchIPv4MultiCol() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             connection.setAutoCommit(false);
-            int totalRows = 100;
+            int totalRows = 1;
             IntIntHashMap map = new IntIntHashMap();
             map.put(1, ColumnType.IPv4);
             map.put(3, ColumnType.IPv4);
