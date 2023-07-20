@@ -2927,6 +2927,33 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFailOnBadFunctionCallInOrderBy() throws Exception {
+        assertCompile("create table test(time TIMESTAMP, symbol STRING);");
+
+        assertFailure(97, "unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,INT constant)",
+                "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)");
+    }
+
+    @Test
+    public void testFailOnEmptyColumnName() throws Exception {
+        assertCompile("create table tab ( ts timestamp)");
+
+        assertFailure(28, "Invalid column: ",
+                "SELECT * FROM tab WHERE SUM(\"\", \"\")");
+    }
+
+    @Test
+    public void testFailOnEmptyInClause() throws Exception {
+        assertCompile("create table tab(event short);");
+
+        assertFailure(54, "too few arguments for 'in' [found=1,expected=2]", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ");
+        assertFailure(54, "too few arguments for 'in'", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())");
+        assertFailure(54, "too few arguments for 'in'", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ()");
+        assertFailure(13, "too few arguments for 'in'", "SELECT event IN () FROM tab");
+        assertFailure(60, "too few arguments for 'in'", "SELECT COUNT(*) FROM tab a join tab b on a.event > (b.event IN ())");
+    }
+
+    @Test
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )", sqlExecutionContext);
@@ -2980,6 +3007,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 Assert.assertEquals("[33] dangling expression", ex.getMessage());
             }
         });
+    }
+
+    @Test
+    public void testInLongTypeMismatch() throws Exception {
+        assertFailure(43, "cannot compare LONG with type DOUBLE", "select 1 from long_sequence(1) where x in (123.456)");
     }
 
     @Test
@@ -4645,23 +4677,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
-        assertFailure("select 1 from tab where (\"\")",
-                "create table tab (i int)",
-                25, "Invalid column");
-
-        assertFailure("select 1 from tab where (\"a\")",
-                null,
-                25, "Invalid column");
-
-        assertFailure("select 1 from tab where ('')", null,
-                25, "boolean expression expected");
-
-        assertFailure("select 1 from tab where ('a')", null,
-                25, "boolean expression expected");
-    }
-
-    @Test
     public void testSelectLongInListContainingNull() throws Exception {
         assertQuery("c\n1\nNaN\n",
                 "select * from x where c in (1,null, 1::byte, 1::short, 1::int, 1::long)",
@@ -4769,6 +4784,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table x as (select 1::timestamp c union all select null::timestamp )",
                 null, true, false
         );
+    }
+
+    @Test
+    public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
+        assertFailure("select 1 from tab where (\"\")",
+                "create table tab (i int)",
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where (\"a\")",
+                null,
+                25, "Invalid column");
+
+        assertFailure("select 1 from tab where ('')", null,
+                25, "boolean expression expected");
+
+        assertFailure("select 1 from tab where ('a')", null,
+                25, "boolean expression expected");
     }
 
     @Test

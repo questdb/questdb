@@ -155,7 +155,8 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.isColumnIndexed(i),
                     metadata.getIndexValueBlockCapacity(i),
                     metadata.isSymbolTableStatic(i),
-                    i
+                    i,
+                    metadata.isDedupKey(i)
             );
             if (columnType > -1) {
                 if (i == timestampIndex) {

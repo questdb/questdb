@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class CountTest extends AbstractGriffinTest {
@@ -71,7 +71,7 @@ public class CountTest extends AbstractGriffinTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testConstNull() throws Exception {
+    public void testConstNullThrows() throws Exception {
         assertQuery("cnt_1\tcnt_42\n" +
                         "20\t20\n",
                 "select count(NULL) from x",
@@ -85,6 +85,18 @@ public class CountTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test(expected = SqlException.class)
+    public void testCountOverCursorThrows() throws Exception {
+        assertQuery("cnt_1\tcnt_42\n" +
+                        "20\t20\n",
+                "count(select distinct s from x where right(s, 1)='/')",
+                "create table x (s string, ts timestamp) timestamp(ts) partition by day",
                 null,
                 false,
                 true
