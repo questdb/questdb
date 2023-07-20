@@ -24,28 +24,41 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
 
-public class FuzzAddColumnOperation implements FuzzTransactionOperation {
+public class FuzzStableInsertOperation implements FuzzTransactionOperation {
+    private final int commit;
+    private final String symbol;
+    private final long timestamp;
+    private final boolean withSymbol;
 
-    private final boolean indexFlag;
-    private final int indexValueBlockCapacity;
-    private final String newColName;
-    private final int newType;
-    private final boolean symbolTableStatic;
+    public FuzzStableInsertOperation(long timestamp, int commit) {
+        this.timestamp = timestamp;
+        this.commit = commit;
+        this.symbol = null;
+        this.withSymbol = false;
+    }
 
-    public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
-        this.newColName = newColName;
-        this.newType = newType;
-        this.indexFlag = indexFlag;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
-        this.symbolTableStatic = symbolTableStatic;
+    public FuzzStableInsertOperation(long timestamp, int commit, String symbol) {
+        this.timestamp = timestamp;
+        this.commit = commit;
+        this.symbol = symbol;
+        this.withSymbol = true;
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity, false);
-        return true;
+    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+        TableWriter.Row row = tableWriter.newRow(timestamp);
+        if (virtualTimestampIndex != -1) {
+            row.putTimestamp(virtualTimestampIndex, timestamp);
+        }
+        row.putInt(1, commit);
+        if (withSymbol) {
+            row.putSym(2, symbol);
+        }
+        row.append();
+        return false;
     }
 }
