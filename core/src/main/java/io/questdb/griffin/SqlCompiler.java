@@ -166,7 +166,8 @@ public class SqlCompiler implements Closeable {
                 queryModelPool,
                 postOrderTreeTraversalAlgo,
                 functionParser,
-                path);
+                path
+        );
 
         parser = new SqlParser(
                 configuration,
@@ -558,7 +559,7 @@ public class SqlCompiler implements Closeable {
                     compiledQuery.ofAlter(setDedup.build());
                 } else {
                     lexer.unparseLast();
-                    alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, true, lexer);
+                    alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
@@ -827,14 +828,18 @@ public class SqlCompiler implements Closeable {
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private void alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, boolean status, GenericLexer lexer) throws SqlException {
+    private void alterTableDedupEnable(
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            GenericLexer lexer
+    ) throws SqlException {
         if (!tableMetadata.isWalEnabled()) {
             throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
         }
         AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
                 tableNamePosition,
-                tableToken,
-                status
+                tableToken
         );
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
@@ -881,7 +886,7 @@ public class SqlCompiler implements Closeable {
                 }
             }
 
-            if (!Chars.equals(tok, ')')) {
+            if (tok == null || !Chars.equals(tok, ')')) {
                 throw SqlException.position(lexer.getPosition()).put("')' expected");
             }
 
@@ -1571,7 +1576,6 @@ public class SqlCompiler implements Closeable {
      * Sets insertCount to number of copied rows.
      */
     private void copyTableDataAndUnlock(
-            SecurityContext securityContext,
             TableToken tableToken,
             boolean isWalEnabled,
             RecordCursor cursor,
@@ -1790,7 +1794,7 @@ public class SqlCompiler implements Closeable {
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
-                copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
+                copyTableDataAndUnlock(tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
                 engine.drop(path, tableToken);

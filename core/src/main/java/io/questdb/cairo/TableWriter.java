@@ -397,27 +397,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
-    @Override
-    public void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isDedupKey
-    ) {
-        addColumn(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                false,
-                isDedupKey
-        );
-    }
 
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
@@ -449,6 +428,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
+    @Override
     public void addColumn(
             CharSequence columnName,
             int columnType,
@@ -456,8 +436,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential,
-            boolean isDedupKey
+            boolean isSequential
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -476,7 +455,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey);
+        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -542,7 +521,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         bumpMetadataAndColumnStructureVersion();
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, false);
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -2373,8 +2352,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
-            boolean sequentialFlag,
-            boolean dedupKeyFlag
+            boolean sequentialFlag
     ) {
         int index;
         try {
@@ -2401,7 +2379,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 flags |= META_FLAG_BIT_SEQUENTIAL;
             }
 
-            if (dedupKeyFlag) {
+            if (false) {
                 flags |= META_FLAG_BIT_DEDUP_KEY;
             }
 

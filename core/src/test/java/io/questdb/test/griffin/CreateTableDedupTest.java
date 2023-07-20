@@ -251,7 +251,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 try (TableWriterAPI tw2 = engine.getTableWriterAPI(tableToken, "test")) {
 
                     AlterOperationBuilder setDedupAlterBuilder = new AlterOperationBuilder()
-                            .ofDedupEnable(1, tableToken, true);
+                            .ofDedupEnable(1, tableToken);
                     setDedupAlterBuilder.setDedupKeyFlag(1);
                     AlterOperation ao = setDedupAlterBuilder.build();
                     ao.withContext(sqlExecutionContext);

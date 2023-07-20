@@ -175,7 +175,7 @@ public class WalWriter implements TableWriterAPI {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isSequential
     ) {
         alterOp.clear();
         alterOp.ofAddColumn(
@@ -189,7 +189,7 @@ public class WalWriter implements TableWriterAPI {
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isDedupKey
+                false
         );
         apply(alterOp, true);
     }
@@ -1522,7 +1522,7 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
             // this check deal with concurrency
-            if (fromNameTable == null || !Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
+            if (!Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
                 throw CairoException.tableDoesNotExist(fromNameTable);
             }
             structureVersion++;
