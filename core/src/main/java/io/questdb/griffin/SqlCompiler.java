@@ -80,6 +80,7 @@ public class SqlCompiler implements Closeable {
     protected final CairoEngine engine;
     protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
+    protected final SqlOptimiser optimiser;
     protected final Path path = new Path();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
@@ -92,7 +93,6 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
-    private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder = new QueryBuilder();
