@@ -455,17 +455,6 @@ public class BindVariableServiceImpl implements BindVariableService {
             ((IntBindVariable) function).value = value;
         }
     }
-    @Override
-    public void setIPv4(CharSequence name, int value) throws SqlException {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            final IPv4BindVariable function;
-            namedVariables.putAt(index, name, function = IPv4VarPool.next());
-            function.value = value;
-        } else {
-            setIPv40(namedVariables.valueAtQuick(index), value, -1, name);
-        }
-    }
 
     @Override
     public void setIPv4(int index) throws SqlException {

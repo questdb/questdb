@@ -1099,9 +1099,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     case X_B_PG_UUID:
                         setUuidBindVariable(j, lo, valueLen);
                         break;
-                    case X_B_PG_IPv4:
-                        setIPv4BindVariable(j, lo, valueLen);
-                        break;
                     default:
                         setStrBindVariable(j, lo, valueLen);
                         break;

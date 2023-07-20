@@ -25,12 +25,16 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1302,97 +1306,403 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetchIPv4() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
             connection.setAutoCommit(false);
+            int totalRows = 100;
+            IntIntHashMap map = new IntIntHashMap();
+            map.put(1, ColumnType.IPv4);
 
-            PreparedStatement tbl = connection.prepareStatement("create table x as (select rnd_ipv4() from long_sequence(10))");
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
             tbl.execute();
 
-            PreparedStatement statement = connection.prepareStatement("select * from x");
-
-            ResultSet rs = statement.executeQuery();
-
-            while(rs.next()) {
-                System.out.println(rs.getString(1));
+            PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setString(1, "1.1.1.1");
+                insert.execute();
             }
-
             connection.commit();
             PreparedStatement stmt = connection.prepareStatement("x");
-        });
-    }
+            int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
 
-    @Test
-    public void testIPv4() throws Exception {
-        skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            connection.setAutoCommit(false);
-
-            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
-            tbl.execute();
-
-            CompiledQuery compiledQuery = compiler.compile("insert into x(a) values($1)", sqlExecutionContext);
-            sqlExecutionContext.getBindVariableService().getFunction(0);
-            sqlExecutionContext.getBindVariableService().setIPv4("hello", 1);
-
-            assertNotNull(compiledQuery.getInsertOperation());
-            final InsertOperation insertOperation = compiledQuery.getInsertOperation();
-            try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                insertMethod.execute();
-                insertMethod.commit();
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+                sink.clear();
+                assertResultSet("a[IPv4]\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n" +
+                        "1.1.1.1\n", sink, rs, map);
             }
-            TestUtils.printSql(compiler, sqlExecutionContext, "x", sink);
-            System.out.println(sink);
         });
     }
 
     @Test
-    public void testIPv4_2() throws Exception {
-        skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            connection.setAutoCommit(false);
-
-            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
-            tbl.execute();
-
-            CompiledQuery compiledQuery = compiler.compile("insert into x(a) values($1)", sqlExecutionContext);
-            sqlExecutionContext.getBindVariableService().getFunction(0);
-            sqlExecutionContext.getBindVariableService().setIPv4(0, "1.1.1.1");
-
-            assertNotNull(compiledQuery.getInsertOperation());
-            final InsertOperation insertOperation = compiledQuery.getInsertOperation();
-            try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                insertMethod.execute();
-                insertMethod.commit();
-            }
-            TestUtils.printSql(compiler, sqlExecutionContext, "x", sink);
-            System.out.println(sink);
-        });
-    }
-
-    @Test
-    public void dummyTest() throws Exception {
+    public void testBasicFetchIPv4MultiCol() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
+            IntIntHashMap map = new IntIntHashMap();
+            map.put(1, ColumnType.IPv4);
+            map.put(3, ColumnType.IPv4);
 
-            PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4, b int, c ipv4, d int)");
             tbl.execute();
 
-            CompiledQuery compiledQuery = compiler.compile("insert into x(a) values(:hello)", sqlExecutionContext);
-            sqlExecutionContext.getBindVariableService().getFunction(0);
-            sqlExecutionContext.getBindVariableService().setInt("hello", 1);
-
-            assertNotNull(compiledQuery.getInsertOperation());
-            final InsertOperation insertOperation = compiledQuery.getInsertOperation();
-            try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                insertMethod.execute();
-                insertMethod.commit();
+            PreparedStatement insert = connection.prepareStatement("insert into x(a, b, c, d) values(?, ?, ?, ?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setString(1, "12.2.65.90");
+                insert.setInt(2, 5);
+                insert.setString(3, "65.34.123.99");
+                insert.setInt(4, 22);
+                insert.execute();
             }
-            TestUtils.printSql(compiler, sqlExecutionContext, "x", sink);
-            System.out.println(sink);
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+                sink.clear();
+                assertResultSet("a[IPv4],b[INTEGER],c[IPv4],d[INTEGER]\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n" +
+                        "12.2.65.90,5,65.34.123.99,22\n", sink, rs, map);
+            }
         });
     }
+
+    @Test
+    public void testBasicFetchIPv4Null() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
+            IntIntHashMap map = new IntIntHashMap();
+            map.put(1, ColumnType.IPv4);
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setString(1, null);
+                insert.execute();
+            }
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+                sink.clear();
+                assertResultSet("a[IPv4]\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n", sink, rs, map);
+            }
+        });
+    }
+
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned

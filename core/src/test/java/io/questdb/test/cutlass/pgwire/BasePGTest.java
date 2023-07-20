@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
@@ -38,6 +39,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -47,6 +49,7 @@ import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -55,6 +58,7 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
+import static io.questdb.std.Numbers.intToIPv4Sink;
 
 public abstract class BasePGTest extends AbstractGriffinTest {
 
@@ -141,12 +145,21 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         }
     }
 
+    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs, map);
+    }
+
     protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
         assertResultSet(null, expected, sink, rs);
     }
 
+    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
     protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs);
+        printToSink(sink, rs, null);
         TestUtils.assertEquals(message, expected, sink);
     }
 
@@ -354,7 +367,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         };
     }
 
-    protected long printToSink(StringSink sink, ResultSet rs) throws SQLException, IOException {
+    protected long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
         final int columnCount = metaData.getColumnCount();
@@ -364,7 +377,20 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             sink.put(metaData.getColumnName(i + 1));
-            sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            if(JDBCType.valueOf(metaData.getColumnType(i+1)) == JDBCType.INTEGER) {
+                if(map != null) {
+                    if(map.get(i+1) == ColumnType.IPv4) {
+                        sink.put('[').put("IPv4").put(']');
+                    }
+                    else {
+                        sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                    }
+                } else {
+                    sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                }
+            } else {
+                sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            }
         }
         sink.put('\n');
 
@@ -386,11 +412,29 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                         }
                         break;
                     case INTEGER:
-                        int intValue = rs.getInt(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
+                        if(map == null) {
+                            int intValue = rs.getInt(i);
+                            if (rs.wasNull()) {
+                                sink.put("null");
+                            } else {
+                                sink.put(intValue);
+                            }
+                            break;
                         } else {
-                            sink.put(intValue);
+                            switch (map.get(i)) {
+                                case ColumnType.IPv4:
+                                    int val = rs.getInt(i);
+                                    intToIPv4Sink(sink, val);
+                                    break;
+                                default:
+                                    int intValue = rs.getInt(i);
+                                    if (rs.wasNull()) {
+                                        sink.put("null");
+                                    } else {
+                                        sink.put(intValue);
+                                    }
+                                    break;
+                            }
                         }
                         break;
                     case DOUBLE:
