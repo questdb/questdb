@@ -272,7 +272,8 @@ public class FuzzTransactionGenerator {
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 null,
-                newMeta.getColumnCount()
+                newMeta.getColumnCount(),
+                false
         ));
         newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
         return newMeta;

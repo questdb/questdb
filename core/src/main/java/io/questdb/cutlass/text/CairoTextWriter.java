@@ -452,6 +452,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
+        public boolean isDedupKey(int columnIndex) {
+            return false;
+        }
+
+        @Override
         public boolean isIndexed(int columnIndex) {
             return types.getQuick(columnIndex).isIndexed();
         }
