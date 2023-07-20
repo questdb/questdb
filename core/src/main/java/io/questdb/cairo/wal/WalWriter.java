@@ -163,7 +163,8 @@ public class WalWriter implements TableWriterAPI {
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
-                configuration.getIndexValueBlockSize()
+                configuration.getIndexValueBlockSize(),
+                false
         );
     }
 
@@ -174,7 +175,8 @@ public class WalWriter implements TableWriterAPI {
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isDedupKey
     ) {
         alterOp.clear();
         alterOp.ofAddColumn(
@@ -187,7 +189,8 @@ public class WalWriter implements TableWriterAPI {
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
-                indexValueBlockCapacity
+                indexValueBlockCapacity,
+                isDedupKey
         );
         apply(alterOp, true);
     }

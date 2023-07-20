@@ -37,6 +37,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
@@ -88,6 +89,33 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     @AfterClass
     public static void tearDownStatic() throws Exception {
         AbstractGriffinTest.tearDownStatic();
+    }
+
+    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+        ObjList<WalWriter> writers = new ObjList<>();
+        for (int i = 0; i < walWriterCount; i++) {
+            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+        }
+
+        Rnd tempRnd = new Rnd();
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+            writer.goActive();
+            FuzzTransaction transaction = transactions.getQuick(i);
+            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                operation.apply(tempRnd, writer, -1);
+            }
+
+            if (transaction.rollback) {
+                writer.rollback();
+            } else {
+                writer.commit();
+            }
+        }
+
+        Misc.freeObjList(writers);
+        drainWalQueue(applyRnd, tableName);
     }
 
     @Before
@@ -325,33 +353,6 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         }
     }
 
-    private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
-        ObjList<WalWriter> writers = new ObjList<>();
-        for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
-        }
-
-        Rnd tempRnd = new Rnd();
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
-            writer.goActive();
-            FuzzTransaction transaction = transactions.getQuick(i);
-            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                operation.apply(tempRnd, writer, -1);
-            }
-
-            if (transaction.rollback) {
-                writer.rollback();
-            } else {
-                writer.commit();
-            }
-        }
-
-        Misc.freeObjList(writers);
-        drainWalQueue(applyRnd, tableName);
-    }
-
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
@@ -399,29 +400,6 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
             }
         }
-    }
-
-    private String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
-        String[] symbols = new String[totalSymbols];
-        int symbolIndex = 0;
-
-        try (TableReader reader = getReader(baseSymbolTableName)) {
-            TableReaderMetadata metadata = reader.getMetadata();
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-                int columnType = metadata.getColumnType(i);
-                if (ColumnType.isSymbol(columnType)) {
-                    SymbolMapReader symbolReader = reader.getSymbolMapReader(i);
-                    for (int sym = 0; symbolIndex < totalSymbols && sym < symbolReader.getSymbolCount() - 1; sym++) {
-                        symbols[symbolIndex++] = Chars.toString(symbolReader.valueOf(sym));
-                    }
-                }
-            }
-        }
-
-        for (; symbolIndex < totalSymbols; symbolIndex++) {
-            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
-        }
-        return symbols;
     }
 
     private int getRndParallelWalCount(Rnd rnd) {
@@ -608,6 +586,29 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
     protected void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
         runFuzz(rnd, getTestName(), tableCount, true, true);
+    }
+
+    protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
+        String[] symbols = new String[totalSymbols];
+        int symbolIndex = 0;
+
+        try (TableReader reader = getReader(baseSymbolTableName)) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                int columnType = metadata.getColumnType(i);
+                if (ColumnType.isSymbol(columnType)) {
+                    SymbolMapReader symbolReader = reader.getSymbolMapReader(i);
+                    for (int sym = 0; symbolIndex < totalSymbols && sym < symbolReader.getSymbolCount() - 1; sym++) {
+                        symbols[symbolIndex++] = Chars.toString(symbolReader.valueOf(sym));
+                    }
+                }
+            }
+        }
+
+        for (; symbolIndex < totalSymbols; symbolIndex++) {
+            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
+        }
+        return symbols;
     }
 
     protected String getTestName() {

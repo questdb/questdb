@@ -401,7 +401,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isDedupKey
     ) {
         addColumn(
                 columnName,
@@ -410,7 +411,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                false
+                false,
+                isDedupKey
         );
     }
 
@@ -452,6 +454,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
+            boolean isDedupKey,
             SqlExecutionContext executionContext
     ) {
         assert txWriter.getLagRowCount() == 0;
@@ -471,7 +474,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential);
+        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -537,7 +540,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         bumpMetadataAndColumnStructureVersion();
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey);
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -841,7 +844,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall writing because of that.
             // Schedule async purge and continue
-            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
+            LOG.critical().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
                     .utf8(tableToken.getTableName())
                     .$(", txn=").$(lastCommittedTxn)
                     .$(", error=").$(ex.getFlyweightMessage())
@@ -1141,6 +1144,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void disableDeduplication() {
+        assert txWriter.getLagRowCount() == 0;
+        checkDistressed();
+        LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
+        updateMetadataWithDeduplicationUpsertKeys(false, null);
+    }
+
+    @Override
     public void dropIndex(@NotNull CharSequence columnName) {
         checkDistressed();
 
@@ -1200,6 +1211,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", column=").put(columnName)
                     .put("]: ").put(e.getMessage());
         }
+    }
+
+    @Override
+    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        assert txWriter.getLagRowCount() == 0;
+        checkDistressed();
+        LOG.info().$("enabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
+
+        int upsertKeyColumn = columnsIndexes.size();
+        for (int i = 0; i < upsertKeyColumn; i++) {
+            int dedupColIndex = (int) columnsIndexes.getQuick(i);
+            if (dedupColIndex < 0 || dedupColIndex >= metadata.getColumnCount()) {
+                throw CairoException.critical(0).put("Invalid column index to make a dedup key [table=")
+                        .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
+            }
+
+            int columnType = metadata.getColumnType(dedupColIndex);
+            if (dedupColIndex != metadata.getTimestampIndex() && !ColumnType.isSymbol(columnType)) {
+                if (columnType < 0) {
+                    throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
+                            .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
+                }
+
+                throw CairoException.critical(0).put("Unsupported column type used as deduplicate key [table=")
+                        .put(tableToken.getTableName())
+                        .put(", column=").put(metadata.getColumnName(dedupColIndex))
+                        .put(", columnType=").put(ColumnType.nameOf(columnType));
+            }
+        }
+
+        updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
     }
 
     public long getAppliedSeqTxn() {
@@ -1386,6 +1428,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
+    }
+
+    public boolean isDeduplicationEnabled() {
+        int tsIndex = metadata.timestampIndex;
+        return tsIndex > -1 && metadata.isDedupKey(tsIndex);
     }
 
     public boolean isOpen() {
@@ -1592,9 +1639,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
                 txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
                 boolean needsOrdering = !ordered || walLagRowCount > 0;
+                boolean needsDedup = isDeduplicationEnabled();
 
                 long timestampAddr;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+
                 if (needsOrdering) {
                     LOG.info().$("sorting WAL [table=").$(tableToken)
                             .$(", ordered=").$(ordered)
@@ -1627,7 +1676,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                     }
 
-                    o3MergeIntoLag(timestampAddr, walLagRowCount, rowLo, rowHi, timestampIndex);
+                    if (needsDedup) {
+                        LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
+                        final long deduplicated = Vect.dedupSortedTimestampIndexChecked(timestampAddr, totalUncommitted, timestampAddr);
+                        o3TimestampMem.jumpTo(deduplicated * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        totalUncommitted = deduplicated;
+                    }
+                    o3MergeIntoLag(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, timestampIndex);
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
                     // Row indexes start from 0, not rowLo
@@ -1637,9 +1692,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Columns = o3MemColumns;
                     copiedToMemory = true;
                 } else {
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
-                    timestampAddr = walTimestampColumn.addressOf(0);
-                    copiedToMemory = false;
+                    if (needsDedup) {
+                        LOG.info().$("WAL deduplication [table=").$(tableToken).I$();
+                        // timestampAddr can be same o3TimestampMem but can be mmaped from file.
+                        // Ensure enough capacity in the out buffer o3TimestampMem
+                        o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        long deduplicatedRows = Vect.dedupSortedTimestampIndexRebaseChecked(
+                                walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES), totalUncommitted, o3TimestampMem.getAddress());
+
+                        if (deduplicatedRows != totalUncommitted) {
+                            o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
+                            timestampAddr = o3TimestampMem.getAddress();
+                            o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                            o3MergeIntoLag(timestampAddr, deduplicatedRows, 0, rowLo, rowHi, timestampIndex);
+
+                            // Sorted data is now sorted in memory copy of the data from mmap files
+                            // Row indexes start from 0, not rowLo
+                            o3Lo = 0L;
+                            o3Hi = deduplicatedRows;
+                            o3Columns = o3MemColumns;
+                            copiedToMemory = true;
+                        } else {
+                            o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
+                            timestampAddr = walTimestampColumn.addressOf(0);
+                            copiedToMemory = false;
+                        }
+                    } else {
+                        o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, rowLo);
+                        timestampAddr = walTimestampColumn.addressOf(0);
+                        copiedToMemory = false;
+                    }
                 }
 
                 if (commitToTimestamp < txWriter.getLagMaxTimestamp() && maxLagRows > 0) {
@@ -2294,7 +2376,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
-            boolean sequentialFlag
+            boolean sequentialFlag,
+            boolean dedupKeyFlag
     ) {
         int index;
         try {
@@ -2307,7 +2390,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
             }
 
             // add new column metadata to bottom of list
@@ -2319,6 +2402,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (sequentialFlag) {
                 flags |= META_FLAG_BIT_SEQUENTIAL;
+            }
+
+            if (dedupKeyFlag) {
+                flags |= META_FLAG_BIT_DEDUP_KEY;
             }
 
             ddlMem.putLong(flags);
@@ -2344,7 +2431,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean commitTerminates) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
-        if (txWriter.getLagRowCount() > 0
+        if (!isDeduplicationEnabled()
+                && txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
                 && txWriter.getMaxTimestamp() <= lagMinTimestamp
                 && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp) {
@@ -3070,6 +3158,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void configureColumnMemory() {
         symbolMapWriters.setPos(columnCount);
+        int dedupColCount = 0;
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i), i);
@@ -3090,7 +3179,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
             }
+            if (metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+                // Calculate non-timestamp dedup column count
+                dedupColCount++;
+            }
         }
+        assert dedupColCount <= 1;
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3MemColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
@@ -3122,7 +3216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
-                    writeColumnEntry(i, false);
+                    writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
                 } else {
                     ddlMem.putInt(getColumnType(metaMem, i));
                     long flags = indexedFlag;
@@ -3158,7 +3252,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -4047,7 +4141,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
 
             // reshuffle all columns according to timestamp index
-            o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
+            long mergeRowCount = o3RowCount;
+            o3Sort(sortedTimestampsAddr, timestampIndex, mergeRowCount, o3RowCount);
             LOG.info()
                     .$("sorted [table=").utf8(tableToken.getTableName())
                     .$(", o3RowCount=").$(o3RowCount)
@@ -4085,7 +4180,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long srcDataMax,
             long srcNameTxn,
             O3Basket o3Basket,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            long dedupColSinkAddr
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -4110,7 +4206,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this,
                     columnCounter,
                     o3Basket,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    dedupColSinkAddr
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -4134,7 +4231,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this,
                     columnCounter,
                     o3Basket,
-                    partitionUpdateSinkAddr
+                    partitionUpdateSinkAddr,
+                    dedupColSinkAddr
             );
         }
     }
@@ -4266,12 +4364,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void o3MergeFixColumnLag(int columnIndex, int columnType, long mergeIndex, long lagRows, long mappedRowLo, long mappedRowHi) {
+    private void o3MergeFixColumnLag(int columnIndex, int columnType, long mergeIndex, long mergeCount, long lagRows, long mappedRowLo, long mappedRowHi) {
         if (o3ErrorCount.get() > 0) {
             return;
         }
         try {
-            final long rowCount = lagRows + mappedRowHi - mappedRowLo;
             final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
             final MemoryMA lagMem = columns.getQuick(primaryColumnIndex);
             final MemoryCR mappedMem = o3Columns.getQuick(primaryColumnIndex);
@@ -4283,7 +4380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
 
             final int shl = ColumnType.pow2SizeOf(columnType);
-            destMem.jumpTo(rowCount << shl);
+            destMem.jumpTo(mergeCount << shl);
             long src1 = mappedMem.addressOf(mappedRowLo << shl);
             long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
@@ -4315,22 +4412,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 switch (shl) {
                     case 0:
-                        Vect.mergeShuffle8Bit(src1, src2, dest, mergeIndex, rowCount);
+                        Vect.mergeShuffle8Bit(src1, src2, dest, mergeIndex, mergeCount);
                         break;
                     case 1:
-                        Vect.mergeShuffle16Bit(src1, src2, dest, mergeIndex, rowCount);
+                        Vect.mergeShuffle16Bit(src1, src2, dest, mergeIndex, mergeCount);
                         break;
                     case 2:
-                        Vect.mergeShuffle32Bit(src1, src2, dest, mergeIndex, rowCount);
+                        Vect.mergeShuffle32Bit(src1, src2, dest, mergeIndex, mergeCount);
                         break;
                     case 3:
-                        Vect.mergeShuffle64Bit(src1, src2, dest, mergeIndex, rowCount);
+                        Vect.mergeShuffle64Bit(src1, src2, dest, mergeIndex, mergeCount);
                         break;
                     case 4:
-                        Vect.mergeShuffle128Bit(src1, src2, dest, mergeIndex, rowCount);
+                        Vect.mergeShuffle128Bit(src1, src2, dest, mergeIndex, mergeCount);
                         break;
                     case 5:
-                        Vect.mergeShuffle256Bit(src1, src2, dest, mergeIndex, rowCount);
+                        Vect.mergeShuffle256Bit(src1, src2, dest, mergeIndex, mergeCount);
                         break;
                     default:
                         assert false : "col type is unsupported";
@@ -4353,7 +4450,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void o3MergeIntoLag(long mergedTimestamps, long countInLag, long mappedRowLo, long mappedRoHi, int timestampIndex) {
+    private void o3MergeIntoLag(long mergedTimestamps, long mergeCount, long countInLag, long mappedRowLo, long mappedRoHi, int timestampIndex) {
         final Sequence pubSeq = messageBus.getO3CallbackPubSeq();
         final RingQueue<O3CallbackTask> queue = messageBus.getO3CallbackQueue();
 
@@ -4370,6 +4467,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             i,
                             type,
                             mergedTimestamps,
+                            mergeCount,
                             countInLag,
                             mappedRowLo,
                             mappedRoHi,
@@ -4378,7 +4476,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     queuedCount++;
                     pubSeq.done(cursor);
                 } else {
-                    o3MergeIntoLagColumn(mergedTimestamps, i, type, countInLag, mappedRowLo, mappedRoHi);
+                    o3MergeIntoLagColumn(mergedTimestamps, mergeCount, i, type, countInLag, mappedRowLo, mappedRoHi);
                 }
             }
         }
@@ -4387,20 +4485,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         swapO3ColumnsExcept(timestampIndex);
     }
 
-    private void o3MergeIntoLagColumn(long mergedTimestampAddress, int columnIndex, int type, long lagRows, long mappedRowLo, long mappedRowHi) {
+    private void o3MergeIntoLagColumn(long mergedTimestampAddress, long mergeCount, int columnIndex, int type, long lagRows, long mappedRowLo, long mappedRowHi) {
         if (ColumnType.isVariableLength(type)) {
-            o3MergeVarColumnLag(columnIndex, type, mergedTimestampAddress, lagRows, mappedRowLo, mappedRowHi);
+            o3MergeVarColumnLag(columnIndex, type, mergedTimestampAddress, mergeCount, lagRows, mappedRowLo, mappedRowHi);
         } else {
-            o3MergeFixColumnLag(columnIndex, type, mergedTimestampAddress, lagRows, mappedRowLo, mappedRowHi);
+            o3MergeFixColumnLag(columnIndex, type, mergedTimestampAddress, mergeCount, lagRows, mappedRowLo, mappedRowHi);
         }
     }
 
-    private void o3MergeVarColumnLag(int columnIndex, int columnType, long mergedTimestampAddress, long lagRows, long mappedRowLo, long mappedRowHi) {
+    private void o3MergeVarColumnLag(int columnIndex, int columnType, long mergedTimestampAddress, long mergeCount, long lagRows, long mappedRowLo, long mappedRowHi) {
         if (o3ErrorCount.get() > 0) {
             return;
         }
         try {
-            final long rowCount = lagRows + mappedRowHi - mappedRowLo;
             final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
@@ -4436,8 +4533,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     final long lagDataAddr = Math.abs(lagDataMapAddr) - lagDataBegin;
                     destData.jumpTo(src1DataSize + lagDataSize);
-                    destIndex.jumpTo((rowCount + 1) << 3);
-                    destIndex.putLong(rowCount << 3, src1DataSize + lagDataSize);
+                    destIndex.jumpTo((mergeCount + 1) << 3);
 
                     // exclude the trailing offset from shuffling
                     final long destDataAddr = destData.addressOf(0);
@@ -4447,7 +4543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // add max offset so that we do not have conditionals inside loop
                         Vect.oooMergeCopyStrColumn(
                                 mergedTimestampAddress,
-                                rowCount,
+                                mergeCount,
                                 src1IndxAddr,
                                 src1DataAddr,
                                 lagIndxAddr,
@@ -4459,7 +4555,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } else if (columnType == ColumnType.BINARY) {
                         Vect.oooMergeCopyBinColumn(
                                 mergedTimestampAddress,
-                                rowCount,
+                                mergeCount,
                                 src1IndxAddr,
                                 src1DataAddr,
                                 lagIndxAddr,
@@ -4495,6 +4591,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex,
             final int columnType,
             long copyToLagRowCount,
+            long ignore,
             long columnDataRowOffset,
             long existingLagRows,
             long excludeSymbols
@@ -4597,9 +4694,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int colIndex,
             int columnType,
             long committedTransientRowCount,
-            long transientRowsAdded,
             long ignore1,
-            long ignore2
+            long transientRowsAdded,
+            long ignore2,
+            long ignore3
     ) {
         if (o3ErrorCount.get() > 0) {
             return;
@@ -4743,6 +4841,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex,
             final int columnType,
             long copyToLagRowCount,
+            long ignore,
             long columnDataRowOffset,
             long existingLagRows,
             long symbolsFlags
@@ -4966,6 +5065,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.fixedRowCount += oldPartitionSize;
                 }
             }
+        } else if (partitionTimestamp >= lastPartitionTimestamp && isLastWrittenPartition) {
+            // Update transient row count for last partition, it may have changed due to dedups.
+            txWriter.transientRowCount = newPartitionSize;
         }
 
         if (partitionMutates && newPartitionTimestamp == partitionTimestamp) {
@@ -5018,6 +5120,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     columnIndex,
                                     columnType,
                                     committedTransientRowCount,
+                                    IGNORE,
                                     transientRowsAdded,
                                     IGNORE,
                                     IGNORE,
@@ -5028,7 +5131,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             pubSeq.done(cursor);
                         }
                     } else {
-                        o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded, IGNORE, IGNORE);
+                        o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, IGNORE, transientRowsAdded, IGNORE, IGNORE);
                     }
                 }
             }
@@ -5093,6 +5196,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 columnIndex,
                                 columnType,
                                 o3LagRowCount,
+                                IGNORE,
                                 o3RowCount,
                                 existingLagRowCount,
                                 excludeSymbolsL,
@@ -5104,7 +5208,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         pubSeq.done(cursor);
                     }
                 } else {
-                    o3MoveLagRef.run(columnIndex, columnType, o3LagRowCount, o3RowCount, existingLagRowCount, excludeSymbolsL);
+                    o3MoveLagRef.run(columnIndex, columnType, o3LagRowCount, IGNORE, o3RowCount, existingLagRowCount, excludeSymbolsL);
                 }
             }
         }
@@ -5112,7 +5216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dispatchO3CallbackQueue(queue, queuedCount);
     }
 
-    private void o3Sort(long mergedTimestamps, int timestampIndex, long rowCount) {
+    private void o3Sort(long mergedTimestamps, int timestampIndex, long mergeCount, long rowCount) {
         o3ErrorCount.set(0);
         lastErrno = 0;
 
@@ -5133,6 +5237,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 i,
                                 type,
                                 mergedTimestamps,
+                                mergeCount,
                                 rowCount,
                                 IGNORE,
                                 IGNORE,
@@ -5143,7 +5248,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         pubSeq.done(cursor);
                     }
                 } else {
-                    o3SortColumn(mergedTimestamps, i, type, rowCount);
+                    o3SortColumn(mergedTimestamps, mergeCount, i, type, rowCount);
                 }
             }
         }
@@ -5152,11 +5257,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         swapO3ColumnsExcept(timestampIndex);
     }
 
-    private void o3SortColumn(long mergedTimestamps, int i, int type, long rowCount) {
+    private void o3SortColumn(long mergedTimestamps, long mergeCount, int i, int type, long rowCount) {
         if (ColumnType.isVariableLength(type)) {
-            o3SortVarColumn(i, type, mergedTimestamps, rowCount, IGNORE, IGNORE);
+            o3SortVarColumn(i, type, mergedTimestamps, mergeCount, rowCount, IGNORE, IGNORE);
         } else {
-            o3SortFixColumn(i, type, mergedTimestamps, rowCount, IGNORE, IGNORE);
+            o3SortFixColumn(i, type, mergedTimestamps, mergeCount, rowCount, IGNORE, IGNORE);
         }
     }
 
@@ -5164,6 +5269,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex,
             final int columnType,
             long mergedTimestampsAddr,
+            long mergeCount,
             long valueCount,
             long ignore1,
             long ignore2
@@ -5211,6 +5317,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex,
             int columnType,
             long mergedTimestampsAddr,
+            long mergeCount,
             long valueCount,
             long ignore1,
             long ignore2
@@ -5589,7 +5696,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     // We're appending onto the last (active) partition.
-                    final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
+                    final boolean append = last && (srcDataMax == 0 || (isDeduplicationEnabled() && o3Timestamp > maxTimestamp) || (!isDeduplicationEnabled() && o3Timestamp >= maxTimestamp));
 
                     // Number of rows to insert from the O3 segment into this partition.
                     final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -5756,7 +5863,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
                             flattenTimestamp = false;
                         }
-
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -5771,7 +5877,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcDataMax,
                                 srcNameTxn,
                                 o3Basket,
-                                partitionUpdateSinkAddr
+                                partitionUpdateSinkAddr,
+                                0L
                         );
                     }
                 } catch (CairoException | CairoError e) {
@@ -6288,7 +6395,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, i == index);
+                writeColumnEntry(i, i == index, isColumnDedupKey(metaMem, i));
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -6469,7 +6576,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, isColumnDedupKey(metaMem, i));
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -7308,6 +7415,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void updateMetadataWithDeduplicationUpsertKeys(boolean status, LongList columnsIndexes) {
+        try {
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+
+            ddlMem.putInt(columnCount);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            copyVersionAndLagValues();
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                writeColumnEntry(i, false, status && columnsIndexes.indexOf(i) >= 0);
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+            this.metaSwapIndex = index;
+        } finally {
+            ddlMem.close();
+        }
+
+        finishMetaSwapUpdate();
+        clearTodoLog();
+
+        for (int i = 0; i < columnCount; i++) {
+            metadata.getColumnMetadata(i).setDedupKeyFlag(status && columnsIndexes.indexOf(i) >= 0);
+        }
+    }
+
     private void updateO3ColumnTops() {
         int columnCount = metadata.getColumnCount();
         long blockIndex = -1;
@@ -7351,7 +7491,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void writeColumnEntry(int i, boolean markDeleted) {
+    private void writeColumnEntry(int i, boolean markDeleted, boolean columnDedupKey) {
         int columnType = getColumnType(metaMem, i);
         // When column is deleted it's written to metadata with negative type
         if (markDeleted) {
@@ -7366,6 +7506,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (isSequential(metaMem, i)) {
             flags |= META_FLAG_BIT_SEQUENTIAL;
+        }
+
+        if (columnDedupKey) {
+            flags |= META_FLAG_BIT_DEDUP_KEY;
         }
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
@@ -7593,6 +7737,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int columnIndex,
                 final int columnType,
                 long mergedTimestampsAddr,
+                long mergeCount,
                 long row1Count,
                 long row2CountLo,
                 long row2CountHi

@@ -77,7 +77,7 @@ public class SqlCompiler implements Closeable {
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
     protected final CairoEngine engine;
-    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -543,6 +543,20 @@ public class SqlCompiler implements Closeable {
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
                 }
+            } else if (SqlKeywords.isDedupKeyword(tok) || SqlKeywords.isDeduplicateKeyword(tok)) {
+                executionContext.getSecurityContext().authorizeAlterTableSetDedup(tableToken);
+                tok = expectToken(lexer, "'dedup columns'");
+
+                if (SqlKeywords.isDisableKeyword(tok)) {
+                    AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
+                            tableNamePosition,
+                            tableToken
+                    );
+                    return compiledQuery.ofAlter(setDedup.build());
+                } else {
+                    lexer.unparseLast();
+                    return alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, true, lexer);
+                }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
             }
@@ -722,7 +736,8 @@ public class SqlCompiler implements Closeable {
                     Numbers.ceilPow2(symbolCapacity),
                     cache,
                     indexed,
-                    Numbers.ceilPow2(indexValueBlockCapacity)
+                    Numbers.ceilPow2(indexValueBlockCapacity),
+                    false
             );
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -807,6 +822,78 @@ public class SqlCompiler implements Closeable {
         alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
         securityContext.authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         return compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private CompiledQuery alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, boolean status, GenericLexer lexer) throws SqlException {
+        if (!tableMetadata.isWalEnabled()) {
+            throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
+        }
+        AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
+                tableNamePosition,
+                tableToken,
+                status
+        );
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        boolean tsIncludedInDedupColumns = false;
+        int dedupColumns = 0;
+
+        if (tok == null || !isUpsertKeyword(tok)) {
+            throw SqlException.position(lexer.getPosition()).put("expected 'upsert'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isKeysKeyword(tok)) {
+            throw SqlException.position(lexer.getPosition()).put("expected 'keys'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && Chars.equals(tok, '(')) {
+            tok = SqlUtil.fetchNext(lexer);
+
+            while (tok != null && !Chars.equals(tok, ')')) {
+                final CharSequence columnName = tok;
+
+                validateLiteral(lexer.getPosition(), tok);
+                int colIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                if (colIndex < 0) {
+                    throw SqlException.position(lexer.getPosition()).put("deduplicate column not found [column=").put(columnName).put(']');
+                }
+
+                if (colIndex == tableMetadata.getTimestampIndex()) {
+                    tsIncludedInDedupColumns = true;
+                } else {
+                    int columnType = tableMetadata.getColumnType(colIndex);
+                    if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
+                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                    }
+                }
+                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
+                dedupColumns++;
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && Chars.equals(tok, ',')) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+            }
+
+            if (!Chars.equals(tok, ')')) {
+                throw SqlException.position(lexer.getPosition()).put("')' expected");
+            }
+
+            if (!tsIncludedInDedupColumns) {
+                throw SqlException.position(lexer.getPosition()).put("deduplicate key list must include dedicated timestamp column");
+            }
+
+            if (dedupColumns > 0 && !configuration.isMultiKeyDedupEnabled()) {
+                throw SqlException.position(lexer.getPosition()).put("multiple key deduplication is not supported");
+            }
+
+        } else {
+            throw SqlException.$(lexer.getPosition(), "deduplication column list expected");
+        }
+        return compiledQuery.ofAlter(setDedup.build());
     }
 
     private CompiledQuery alterTableDropColumn(
@@ -2669,39 +2756,22 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
 
         keywordBasedExecutors.put("truncate", truncateTables);
-        keywordBasedExecutors.put("TRUNCATE", truncateTables);
         keywordBasedExecutors.put("alter", alterTable);
-        keywordBasedExecutors.put("ALTER", alterTable);
         keywordBasedExecutors.put("reindex", reindexTable);
-        keywordBasedExecutors.put("REINDEX", reindexTable);
         keywordBasedExecutors.put("set", compileSet);
-        keywordBasedExecutors.put("SET", compileSet);
         keywordBasedExecutors.put("begin", compileBegin);
-        keywordBasedExecutors.put("BEGIN", compileBegin);
         keywordBasedExecutors.put("commit", compileCommit);
-        keywordBasedExecutors.put("COMMIT", compileCommit);
         keywordBasedExecutors.put("rollback", compileRollback);
-        keywordBasedExecutors.put("ROLLBACK", compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("DISCARD", compileSet);
         keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("CLOSE", compileSet);  //no-op
         keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("UNLISTEN", compileSet);  //no-op
         keywordBasedExecutors.put("reset", compileSet);  //no-op
-        keywordBasedExecutors.put("RESET", compileSet);  //no-op
         keywordBasedExecutors.put("drop", dropStatement);
-        keywordBasedExecutors.put("DROP", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
-        keywordBasedExecutors.put("BACKUP", sqlBackup);
         keywordBasedExecutors.put("show", sqlShow);
-        keywordBasedExecutors.put("SHOW", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("VACUUM", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
-        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
-        keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
     }
 
     @SuppressWarnings({"unused"})
@@ -2834,6 +2904,11 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return model.isDedupKey(columnIndex);
         }
 
         @Override

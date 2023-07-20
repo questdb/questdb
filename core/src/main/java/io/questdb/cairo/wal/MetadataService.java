@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 public interface MetadataService {
@@ -94,7 +95,11 @@ public interface MetadataService {
 
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
+    void disableDeduplication();
+
     void dropIndex(@NotNull CharSequence columnName);
+
+    void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
     long getMetaMaxUncommittedRows();
 

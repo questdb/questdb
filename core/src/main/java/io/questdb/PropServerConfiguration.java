@@ -2504,6 +2504,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isMultiKeyDedupEnabled() {
+            return false;
+        }
+
+        @Override
         public boolean isO3QuickSortEnabled() {
             return o3QuickSortEnabled;
         }
