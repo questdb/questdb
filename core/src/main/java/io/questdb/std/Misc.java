@@ -30,12 +30,12 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 public final class Misc {
     public static final int CACHE_LINE_SIZE = 64;
     public static final String EOL = "\r\n";
-    private static final Consumer<ObjObjHashMap.Entry<?, ? extends Closeable>> MAP_CLEANER = (e) -> Misc.free(e.value);
+    public static final BiConsumer<CharSequence, ? super Closeable> HASH_MAP_CLEANER = (k, v) -> Misc.free(v);
     private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
 
     private Misc() {
@@ -81,9 +81,9 @@ public final class Misc {
         return null;
     }
 
-    public static <K, V extends Closeable> void freeMapAndClear(ObjObjHashMap<K, V> map) {
+    public static void freeMapAndClear(ConcurrentHashMap<? extends Closeable> map) {
         if (map != null) {
-            map.forEach(MAP_CLEANER);
+            map.forEach(HASH_MAP_CLEANER);
             map.clear();
         }
     }

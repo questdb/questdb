@@ -72,7 +72,7 @@ public class WriterPool extends AbstractPool {
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
-    private final ObjObjHashMap<TableToken, CommitListener> commitListeners = new ObjObjHashMap<TableToken, CommitListener>();
+    private final ConcurrentHashMap<CommitListener> commitListeners = new ConcurrentHashMap<CommitListener>();
     private final CairoConfiguration configuration;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     @NotNull
@@ -227,8 +227,8 @@ public class WriterPool extends AbstractPool {
 
     public void setCommitListener(TableToken tt, CommitListener listener) {
         try (TableWriter tw = get(tt, "set commit listener")) {
-            assert commitListeners.get(tt) == null;
-            commitListeners.put(tt, listener);
+            assert commitListeners.get(tt.getDirName()) == null;
+            commitListeners.put(tt.getDirName(), listener);
             tw.setCommitListener(listener);
         }
     }
@@ -263,7 +263,7 @@ public class WriterPool extends AbstractPool {
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
                 writer = new TableWriter(configuration, tableToken, messageBus, null, false, e, root, metrics);
-                writer.setCommitListener(commitListeners.get(tableToken));
+                writer.setCommitListener(commitListeners.get(tableToken.getDirName()));
             }
 
             if (writer == null) {
@@ -374,7 +374,7 @@ public class WriterPool extends AbstractPool {
             checkClosed();
             LOG.info().$("open [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
             e.writer = new TableWriter(configuration, tableToken, messageBus, null, true, e, root, metrics);
-            e.writer.setCommitListener(commitListeners.get(tableToken));
+            e.writer.setCommitListener(commitListeners.get(tableToken.getDirName()));
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
