@@ -1585,7 +1585,7 @@ public class WalWriter implements TableWriterAPI {
                     }
 
                     if (executionContext != null) {
-                        executionContext.getSecurityContext().onColumnAdded(metadata.getTableToken(), columnName);
+                        executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), metadata.getTableToken(), columnName);
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {

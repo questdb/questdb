@@ -572,7 +572,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (executionContext != null) {
-            executionContext.getSecurityContext().onColumnAdded(tableToken, columnName);
+            executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), tableToken, columnName);
         }
     }
 
