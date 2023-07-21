@@ -377,7 +377,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             sink.put(metaData.getColumnName(i + 1));
-            if (JDBCType.valueOf(metaData.getColumnType(i + 1)) == JDBCType.INTEGER) {
+            if (JDBCType.valueOf(metaData.getColumnType(i + 1)) == JDBCType.VARCHAR) {
                 if (map != null) {
                     if (map.get(i + 1) == ColumnType.IPv4) {
                         sink.put('[').put("IPv4").put(']');
@@ -411,26 +411,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                         }
                         break;
                     case INTEGER:
-                        if (map == null) {
-                            int intValue = rs.getInt(i);
-                            if (rs.wasNull()) {
-                                sink.put("null");
-                            } else {
-                                sink.put(intValue);
-                            }
-                            break;
+                        int intValue = rs.getInt(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
                         } else {
-                            if (map.get(i) == ColumnType.IPv4) {
-                                int val = rs.getInt(i);
-                                intToIPv4Sink(sink, val);
-                            } else {
-                                int intValue = rs.getInt(i);
-                                if (rs.wasNull()) {
-                                    sink.put("null");
-                                } else {
-                                    sink.put(intValue);
-                                }
-                            }
+                            sink.put(intValue);
                         }
                         break;
                     case DOUBLE:
