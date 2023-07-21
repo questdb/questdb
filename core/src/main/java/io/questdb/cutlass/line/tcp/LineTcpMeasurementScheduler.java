@@ -373,55 +373,66 @@ public class LineTcpMeasurementScheduler implements Closeable {
         final int entCount = parser.getEntityCount();
         for (int i = 0; i < entCount; i++) {
             final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-            int columnIndex = ld.getColumnIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
-            int columnType = ColumnType.UNDEFINED;
-            if (columnIndex == COLUMN_NOT_FOUND) {
-                final String columnNameUtf16 = ld.getColNameUtf16();
-                if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
-                    columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                    if (columnIndex < 0) {
-                        securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
-                        tud.commit(false);
-                        try {
-                            writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
-                            securityContext.onColumnAdded(tud.getTableToken(), columnNameUtf16);
-                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                        } catch (CairoException e) {
-                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                            if (columnIndex < 0) {
-                                // the column is still not there, something must be wrong
-                                throw e;
-                            }
-                            // all good, someone added the column concurrently
+            int columnWriterIndex = ld.getColumnWriterIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
+
+            switch (columnWriterIndex) {
+                default:
+                    final int columnType = metadata.getColumnType(columnWriterIndex);
+                    if (columnType > -1) {
+                        if (columnWriterIndex == tud.getTimestampIndex()) {
+                            timestamp = timestampAdapter.getMicros(ent.getLongValue());
+                            ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
+                        } else {
+                            ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
                         }
+                        break;
+                    } else {
+                        // column has been deleted from the metadata, but it is in our utf8 cache
+                        ld.removeFromCaches(ent.getName(), parser.hasNonAsciiChars());
+                        // act as if we did not find this column and fall through
                     }
-                    if (ld.getMetadataVersion() != initialMetadataVersion) {
-                        // Restart the whole line,
-                        // some columns can be deleted or renamed in tud.commit and ww.addColumn calls
-                        throw MetadataChangedException.INSTANCE;
+                case COLUMN_NOT_FOUND:
+                    final String columnNameUtf16 = ld.getColNameUtf16();
+                    if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
+                        columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                        if (columnWriterIndex < 0) {
+                            securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
+                            tud.commit(false);
+                            try {
+                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
+                                securityContext.onColumnAdded(tud.getTableToken(), columnNameUtf16);
+                                columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                            } catch (CairoException e) {
+                                columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                                if (columnWriterIndex < 0) {
+                                    // the column is still not there, something must be wrong
+                                    throw e;
+                                }
+                                // all good, someone added the column concurrently
+                            }
+                        }
+                        if (ld.getMetadataVersion() != initialMetadataVersion) {
+                            // Restart the whole line,
+                            // some columns can be deleted or renamed in tud.commit and ww.addColumn calls
+                            throw MetadataChangedException.INSTANCE;
+                        }
+                        ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
+                    } else if (!autoCreateNewColumns) {
+                        throw newColumnsNotAllowed(tud, columnNameUtf16);
+                    } else {
+                        throw invalidColNameError(tud, columnNameUtf16);
                     }
-                    columnType = metadata.getColumnType(columnIndex);
-                } else if (!autoCreateNewColumns) {
-                    throw newColumnsNotAllowed(tud, columnNameUtf16);
-                } else {
-                    throw invalidColNameError(tud, columnNameUtf16);
-                }
-            } else if (columnIndex > -1) {
-                if (columnIndex == tud.getTimestampIndex()) {
-                    timestamp = timestampAdapter.getMicros(ent.getLongValue());
-                    columnIndex = DUPLICATED_COLUMN;
-                }
-                columnType = columnIndex < 0 ? ColumnType.UNDEFINED : metadata.getColumnType(columnIndex);
+                    break;
+                case DUPLICATED_COLUMN:
+                    // indicate to the second loop that writer index does not exist
+                    ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
+                    break;
             }
-            ld.addColumnType(columnIndex, columnType);
         }
 
         TableWriter.Row r = writer.newRow(timestamp);
         try {
             for (int i = 0; i < entCount; i++) {
-                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-
-                short entType = ent.getType();
                 int colTypeAndIndex = ld.getColumnType(i);
                 int colType = Numbers.decodeLowShort(colTypeAndIndex);
                 int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);
@@ -430,7 +441,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     continue;
                 }
 
-                switch (entType) {
+                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
+                switch (ent.getType()) {
                     case LineTcpParser.ENTITY_TYPE_TAG: {
                         if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
                             r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
@@ -772,11 +784,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // Use actual table name from the "details" to avoid case mismatches in the
                         // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
                         // to identify the cause
-                        tud = unsafeAssignTableToWriterThread(
-                                tudKeyIndex,
-                                tud.getTableNameUtf16(),
-                                tud.getTableNameUtf8()
-                        );
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());
                     } else {
                         idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
                         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
@@ -800,11 +808,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         ctx.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), tud);
                         return tud;
                     } else {
-                        tud = unsafeAssignTableToWriterThread(
-                                tudKeyIndex,
-                                tableNameUtf16,
-                                ByteCharSequence.newInstance(tableNameUtf8)
-                        );
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));
                     }
                 }
             }

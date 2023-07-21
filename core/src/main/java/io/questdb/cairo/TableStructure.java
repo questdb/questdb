@@ -40,6 +40,8 @@ public interface TableStructure extends TableDescriptor {
 
     CharSequence getTableName();
 
+    boolean isDedupKey(int columnIndex);
+
     boolean isIndexed(int columnIndex);
 
     boolean isSequential(int columnIndex);
