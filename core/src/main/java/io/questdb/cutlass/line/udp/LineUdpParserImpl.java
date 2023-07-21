@@ -617,6 +617,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
+        public boolean isDedupKey(int columnIndex) {
+            return false;
+        }
+
+        @Override
         public boolean isIndexed(int columnIndex) {
             return false;
         }

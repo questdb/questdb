@@ -85,7 +85,8 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
                                 that.getIndexValueBlockCapacity(i),
                                 that.isSymbolTableStatic(i),
                                 that.getMetadata(i),
-                                that.getWriterIndex(i)
+                                that.getWriterIndex(i),
+                                that.isDedupKey(i)
                         )
                 );
             }

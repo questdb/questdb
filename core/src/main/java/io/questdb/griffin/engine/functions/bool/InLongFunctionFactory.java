@@ -68,7 +68,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case ColumnType.SYMBOL:
                     break;
                 default:
-                    throw SqlException.position(0).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
+                    throw SqlException.position(argPositions.get(i)).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
             }
             if (!func.isConstant()) {
                 allConst = false;

@@ -2910,6 +2910,42 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScoreBoardOverflow() throws Throwable {
+        try (TableModel model = new TableModel(configuration, "all", PartitionBy.DAY)
+                .col("int", ColumnType.INT)
+                .timestamp("t")
+        ) {
+            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
+            assertMemoryLeak(() -> {
+
+                try (TableReader ignore = getReader("all")) {
+                    try (TableWriter w = newTableWriter(configuration, "all", metrics)) {
+                        for (int i = 0; i < configuration.getTxnScoreboardEntryCount() + 1; i++) {
+                            TableWriter.Row r = w.newRow(1000);
+                            r.putInt(0, 100);
+                            r.append();
+                            w.commit();
+                        }
+                    }
+
+                    try (TableReader ignore2 = getReader("all")) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
+                    }
+
+                    try (TableWriter w = newTableWriter(configuration, "all", metrics)) {
+                        TableWriter.Row r = w.newRow(0);
+                        r.putInt(0, 100);
+                        r.append();
+                        w.commit();
+                    }
+                }
+            });
+        }
+    }
+
+    @Test
     public void testStringColumnRemove() throws Exception {
         AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
         TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b", "");
