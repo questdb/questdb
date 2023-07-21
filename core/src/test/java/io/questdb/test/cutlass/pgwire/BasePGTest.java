@@ -58,7 +58,6 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
-import static io.questdb.std.Numbers.intToIPv4Sink;
 
 public abstract class BasePGTest extends AbstractGriffinTest {
 
