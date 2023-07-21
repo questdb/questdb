@@ -381,9 +381,7 @@ public class SqlCompiler implements Closeable {
 
             if (SqlKeywords.isAddKeyword(tok)) {
                 securityContext.authorizeAlterTableAddColumn(tableToken);
-                final CompiledQuery cq = alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
-                securityContext.onColumnsAdded(tableToken, cq.getAlterOperation().getExtraStrInfo());
-                return cq;
+                return alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
