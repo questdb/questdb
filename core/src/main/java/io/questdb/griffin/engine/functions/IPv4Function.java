@@ -32,8 +32,11 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public abstract class IPv4Function implements ScalarFunction {
+    private final StringSink sinkA = new StringSink();
+    private final StringSink sinkB = new StringSink();
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -142,7 +145,10 @@ public abstract class IPv4Function implements ScalarFunction {
 
     @Override
     public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
+        final int value = getIPv4(rec);
+        sinkA.clear();
+        Numbers.intToIPv4Sink(sinkA, value);
+        return sinkA;
     }
 
     @Override
@@ -152,7 +158,10 @@ public abstract class IPv4Function implements ScalarFunction {
 
     @Override
     public final CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
+        final int value = getIPv4(rec);
+        sinkB.clear();
+        Numbers.intToIPv4Sink(sinkB, value);
+        return sinkB;
     }
 
     @Override

@@ -8922,14 +8922,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateTableIPv4ToString() throws Exception {
-        compiler.compile("create table test (col1 string)", sqlExecutionContext);
+        compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
         executeInsert("insert into test values('0.0.0.1')");
         executeInsert("insert into test values('0.0.0.2')");
         executeInsert("insert into test values('0.0.0.3')");
         executeInsert("insert into test values('0.0.0.4')");
         executeInsert("insert into test values('0.0.0.5')");
         try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
+            compiler.compile("alter table test add col2 string", sqlExecutionContext).getAlterOperation().apply(w, true);
         }
         try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
             UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
@@ -8944,41 +8944,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.5\t0.0.0.5\n");
     }
 
-//    @Test
-//    public void testUpdateTableIPv4ToStringWal() throws Exception {
-//        compiler.compile("create table test (col1 string, col3 timestamp) timestamp(col3) partition by hour wal", sqlExecutionContext);
-//        executeInsert("insert into test values('0.0.0.1', 100::timestamp)");
-//        executeInsert("insert into test values('0.0.0.2', 100::timestamp)");
-//        executeInsert("insert into test values('0.0.0.3', 100::timestamp)");
-//        executeInsert("insert into test values('0.0.0.4', 100::timestamp)");
-//        executeInsert("insert into test values('0.0.0.5', 100::timestamp)");
-//        assertSql("test", "");
-//        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-//            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
-//        }
-////        compiler.compile("create table test (col1 string, col3 timestamp) timestamp (col3) partition by hour wal", sqlExecutionContext);
-////        executeInsert("insert into test(col1, col3) values('0.0.0.1', timestamp_sequence(0,100000))");
-////        executeInsert("insert into test(col1, col3) values('0.0.0.2', timestamp_sequence(0,100000))");
-////        executeInsert("insert into test(col1, col3) values('0.0.0.3', timestamp_sequence(0,100000))");
-////        executeInsert("insert into test(col1, col3) values('0.0.0.4', timestamp_sequence(0,100000))");
-////        executeInsert("insert into test(col1, col3) values('0.0.0.5', timestamp_sequence(0,100000))");
-////        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-////            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
-////            assertSql("test", "");
-////        }
-//
-////        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-////            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
-////            op.withContext(sqlExecutionContext);
-////            op.apply(w, true);
-////        }
-////        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
-////                "0.0.0.1\t0.0.0.1\n" +
-////                "0.0.0.2\t0.0.0.2\n" +
-////                "0.0.0.3\t0.0.0.3\n" +
-////                "0.0.0.4\t0.0.0.4\n" +
-////                "0.0.0.5\t0.0.0.5\n");
-//    }
+    @Test
+    public void testUpdateTableIPv4ToStringWal() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test as (" +
+                    "select " +
+                    " rnd_ipv4 col1, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+
+            compile("alter table test add column col2 string", sqlExecutionContext);
+            compile("update test set col2 = col1", sqlExecutionContext);
+
+            drainWalQueue();
+
+            String allRows = "col1\tts\tcol2\n" +
+                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\t187.139.150.80\n" +
+                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\t18.206.96.238\n" +
+                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\t92.80.211.65\n" +
+                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29\n" +
+                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21\n";
+
+            assertSql("test", allRows);
+        });
+    }
 
     @Test
     public void testUpdateTableStringToIPv4() throws Exception {
@@ -9207,6 +9198,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testWalIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test as (" +
+                    "select " +
+                    " rnd_ipv4 col1, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            String allRows = "col1\tts\n" +
+                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\n" +
+                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\n" +
+                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\n" +
+                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\n" +
+                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\n";
+
+            assertSql("test", allRows);
+        });
     }
 
     @Test

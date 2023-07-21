@@ -26,6 +26,8 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class IPv4FunctionTest {
@@ -111,19 +113,21 @@ public class IPv4FunctionTest {
         function.getShort(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStr() {
-        function.getStr(null);
+        TestUtils.assertEquals("0.0.0.150", function.getStr(null));
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void testGetStr2() {
-        function.getStr(null, null);
+        StringSink sink = new StringSink();
+        function.getStr(null, sink);
+        TestUtils.assertEquals("0.0.0.150", sink);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStrB() {
-        function.getStrB(null);
+        TestUtils.assertEquals("0.0.0.150", function.getStrB(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
