@@ -849,7 +849,7 @@ public class NumbersTest {
     @Test
     public void testParseIPv42() throws Exception {
         Assert.assertEquals(0, Numbers.parseIPv4(null));
-        Assert.assertEquals(0, Numbers.parseIPv4("NaN"));
+        Assert.assertEquals(0, Numbers.parseIPv4("null"));
     }
 
     @Test(expected = NumericException.class)
