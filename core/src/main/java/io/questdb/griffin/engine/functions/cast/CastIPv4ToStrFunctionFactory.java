@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+
 public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
     @Override
@@ -45,7 +46,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         Function IPv4Func = args.getQuick(0);
         if (IPv4Func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(IPv4Func.getInt(null));
+            sink.put(IPv4Func.getIPv4(null));
             return new StrConstant(Chars.toString(sink));
         }
         return new CastIPv4ToStrFunctionFactory.CastIPv4ToStrFunction(args.getQuick(0));
@@ -61,7 +62,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            final int value = arg.getInt(rec);
+            final int value = arg.getIPv4(rec);
             sinkA.clear();
             Numbers.intToIPv4Sink(sinkA, value);
             return sinkA;
@@ -69,14 +70,14 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            final int value = arg.getInt(rec);
+            final int value = arg.getIPv4(rec);
 
             Numbers.intToIPv4Sink(sink, value);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            final int value = arg.getInt(rec);
+            final int value = arg.getIPv4(rec);
             sinkB.clear();
             Numbers.intToIPv4Sink(sinkB, value);
             return sinkB;

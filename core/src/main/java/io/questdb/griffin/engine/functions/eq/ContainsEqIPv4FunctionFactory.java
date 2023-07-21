@@ -37,6 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.std.Numbers.*;
+
 public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -62,21 +63,20 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
     private Function createHalfConstantFunc(Function varFunc, Function constFunc) throws SqlException {
         CharSequence constValue = constFunc.getStr(null);
 
-        if(constValue == null) {
+        if (constValue == null) {
             return new ContainsEqIPv4FunctionFactory.NullCheckFunc(varFunc);
         }
 
         int subnet = getIPv4Subnet(constValue);
         int netmask = getIPv4Netmask(constValue);
 
-        if(subnet == -2 && netmask == -2) { //catches negative netmask
+        if (subnet == -2 && netmask == -2) { //catches negative netmask
             throw SqlException.$(18, "invalid argument: ").put(constValue);
-        }
-        else if(subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
+        } else if (subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
 
             subnet = parseSubnet(constValue); // Check is arg is subnet
 
-            if(subnet == -2) { // Is true if arg is not a valid subnet/ip address
+            if (subnet == -2) { // Is true if arg is not a valid subnet/ip address
                 throw SqlException.$(18, "invalid argument: ").put(constValue);
             } else {
                 return new ContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
@@ -87,8 +87,8 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final int subnet;
         private final int netmask;
+        private final int subnet;
 
         public ConstCheckFunc(Function arg, int subnet, int netmask) {
             this.arg = arg;
@@ -97,10 +97,14 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() { return arg; }
+        public Function getArg() {
+            return arg;
+        }
 
         @Override
-        public boolean getBool(Record rec) { return (arg.getInt(rec) & netmask) == subnet; }
+        public boolean getBool(Record rec) {
+            return (arg.getIPv4(rec) & netmask) == subnet;
+        }
 
         @Override
         public void toPlan(PlanSink sink) {
@@ -111,16 +115,25 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
 
     public static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        public NullCheckFunc(Function arg) { this.arg = arg; }
+
+        public NullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
 
         @Override
-        public Function getArg() { return arg; }
+        public Function getArg() {
+            return arg;
+        }
 
         @Override
-        public boolean getBool(Record rec) {  return arg.getInt(rec) == IPv4_NULL; }
+        public boolean getBool(Record rec) {
+            return arg.getInt(rec) == IPv4_NULL;
+        }
 
         @Override
-        public void toPlan(PlanSink sink) { sink.val(arg).val( " is null"); }
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val(" is null");
+        }
     }
 
 }

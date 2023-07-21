@@ -2340,10 +2340,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.218\n" +
                 "0.0.0.34\n" +
                 "0.0.0.90\n" +
-                "0.0.0.114\n" +
-                "0.0.0.23\n" +
-                "0.0.0.150\n" +
-                "0.0.0.147\n" +
+                "null\n" +
+                "0.0.0.161\n" +
+                "0.0.0.188\n" +
                 "null\n" +
                 "0.0.0.29\n" +
                 "0.0.0.159\n");
@@ -2500,8 +2499,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.4\n" +
                 "0.0.0.4\n" +
                 "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
                 "0.0.0.4\n");
     }
 
@@ -2538,9 +2535,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
 
         assertSql("select * from test where '0.0.0.1' = ip", "ip\n" +
-                "0.0.0.1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.1\n" +
                 "0.0.0.1\n");
     }
 
@@ -2549,22 +2543,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
 
         assertSql("select * from test where ip != '0.0.0.1'", "ip\n" +
+                "null\n" +
                 "0.0.0.5\n" +
-                "0.0.0.2\n" +
+                "0.0.0.4\n" +
                 "null\n" +
                 "0.0.0.4\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
                 "null\n" +
                 "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "0.0.0.4\n" +
+                "null\n" +
                 "0.0.0.3\n" +
-                "0.0.0.5\n");
+                "0.0.0.2\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "null\n" +
+                "null\n");
     }
 
     @Test
@@ -2572,28 +2569,50 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
 
         assertSql("select * from test where '0.0.0.1' != ip", "ip\n" +
+                "null\n" +
                 "0.0.0.5\n" +
-                "0.0.0.2\n" +
+                "0.0.0.4\n" +
                 "null\n" +
                 "0.0.0.4\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
                 "null\n" +
                 "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "0.0.0.4\n" +
+                "null\n" +
                 "0.0.0.3\n" +
-                "0.0.0.5\n");
+                "0.0.0.2\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "null\n" +
+                "null\n");
     }
 
     @Test
     public void testIPv4EqNull() throws Exception {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
         assertSql("select * from test where ip = null", "ip\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
                 "null\n" +
                 "null\n" +
                 "null\n" +
@@ -2799,12 +2818,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_int(0,5,2)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
 
         assertSql("select * from test where '0.0.0.4' >>= ip", "ip\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
                 "0.0.0.4\n" +
                 "0.0.0.4\n" +
                 "0.0.0.4\n" +
@@ -8122,29 +8135,64 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSampleByIPv4() throws Exception {
         assertQuery("ip\tts\tsum\n" +
-                        "0.0.0.1\t1970-01-01T00:00:00.000000Z\t2352\n" +
-                        "0.0.0.2\t1970-01-01T00:00:00.000000Z\t1102\n" +
-                        "0.0.0.3\t1970-01-01T00:00:00.000000Z\t4491\n" +
-                        "0.0.0.4\t1970-01-01T00:00:00.000000Z\t4307\n" +
-                        "0.0.0.5\t1970-01-01T00:00:00.000000Z\t5477\n" +
-                        "0.0.0.1\t1970-01-01T01:00:00.000000Z\t4023\n" +
-                        "0.0.0.2\t1970-01-01T01:00:00.000000Z\t3828\n" +
-                        "0.0.0.3\t1970-01-01T01:00:00.000000Z\t2603\n" +
-                        "0.0.0.4\t1970-01-01T01:00:00.000000Z\t5042\n" +
-                        "0.0.0.5\t1970-01-01T01:00:00.000000Z\t2648\n" +
-                        "0.0.0.1\t1970-01-01T02:00:00.000000Z\t5269\n" +
-                        "0.0.0.2\t1970-01-01T02:00:00.000000Z\t2430\n" +
-                        "0.0.0.3\t1970-01-01T02:00:00.000000Z\t2136\n" +
-                        "0.0.0.4\t1970-01-01T02:00:00.000000Z\t756\n" +
-                        "0.0.0.5\t1970-01-01T02:00:00.000000Z\t3614\n",
-                "select ip, ts, sum(bytes) from test sample by 1h order by ts, ip",
+                        "0.0.0.2\t1970-01-01T00:00:00.000000Z\t23\n" +
+                        "0.0.0.4\t1970-01-01T00:01:30.000000Z\t167\n" +
+                        "0.0.0.3\t1970-01-01T00:03:00.000000Z\t7\n" +
+                        "0.0.0.3\t1970-01-01T00:05:00.000000Z\t522\n" +
+                        "0.0.0.4\t1970-01-01T00:06:30.000000Z\t827\n" +
+                        "0.0.0.5\t1970-01-01T00:08:00.000000Z\t424\n" +
+                        "0.0.0.4\t1970-01-01T00:10:00.000000Z\t539\n" +
+                        "0.0.0.5\t1970-01-01T00:11:30.000000Z\t904\n" +
+                        "0.0.0.3\t1970-01-01T00:13:00.000000Z\t136\n" +
+                        "0.0.0.5\t1970-01-01T00:15:00.000000Z\t810\n" +
+                        "0.0.0.5\t1970-01-01T00:16:30.000000Z\t528\n" +
+                        "0.0.0.5\t1970-01-01T00:18:00.000000Z\t95\n" +
+                        "0.0.0.4\t1970-01-01T00:20:00.000000Z\t619\n" +
+                        "0.0.0.3\t1970-01-01T00:21:30.000000Z\t369\n" +
+                        "0.0.0.1\t1970-01-01T00:23:00.000000Z\t906\n" +
+                        "0.0.0.4\t1970-01-01T00:25:00.000000Z\t71\n" +
+                        "0.0.0.4\t1970-01-01T00:26:30.000000Z\t334\n" +
+                        "0.0.0.3\t1970-01-01T00:28:00.000000Z\t563\n" +
+                        "0.0.0.2\t1970-01-01T00:30:00.000000Z\t906\n" +
+                        "0.0.0.5\t1970-01-01T00:31:30.000000Z\t238\n" +
+                        "0.0.0.3\t1970-01-01T00:33:00.000000Z\t986\n" +
+                        "0.0.0.4\t1970-01-01T00:35:00.000000Z\t598\n" +
+                        "0.0.0.3\t1970-01-01T00:36:30.000000Z\t574\n" +
+                        "0.0.0.3\t1970-01-01T00:38:00.000000Z\t740\n" +
+                        "0.0.0.5\t1970-01-01T00:40:00.000000Z\t37\n" +
+                        "0.0.0.3\t1970-01-01T00:41:30.000000Z\t594\n" +
+                        "0.0.0.5\t1970-01-01T00:43:00.000000Z\t180\n" +
+                        "0.0.0.5\t1970-01-01T00:45:00.000000Z\t606\n" +
+                        "0.0.0.5\t1970-01-01T00:46:30.000000Z\t877\n" +
+                        "0.0.0.5\t1970-01-01T00:48:00.000000Z\t308\n" +
+                        "0.0.0.4\t1970-01-01T00:50:00.000000Z\t807\n" +
+                        "0.0.0.5\t1970-01-01T00:51:30.000000Z\t470\n" +
+                        "0.0.0.4\t1970-01-01T00:53:00.000000Z\t345\n" +
+                        "0.0.0.1\t1970-01-01T00:55:00.000000Z\t711\n" +
+                        "0.0.0.1\t1970-01-01T00:56:30.000000Z\t735\n" +
+                        "0.0.0.2\t1970-01-01T00:58:00.000000Z\t173\n" +
+                        "0.0.0.3\t1970-01-01T01:00:00.000000Z\t162\n" +
+                        "0.0.0.2\t1970-01-01T01:01:30.000000Z\t345\n" +
+                        "0.0.0.2\t1970-01-01T01:03:00.000000Z\t417\n" +
+                        "0.0.0.4\t1970-01-01T01:05:00.000000Z\t181\n" +
+                        "0.0.0.5\t1970-01-01T01:06:30.000000Z\t697\n" +
+                        "0.0.0.4\t1970-01-01T01:08:00.000000Z\t34\n" +
+                        "0.0.0.4\t1970-01-01T01:10:00.000000Z\t935\n" +
+                        "0.0.0.1\t1970-01-01T01:11:30.000000Z\t887\n" +
+                        "0.0.0.2\t1970-01-01T01:13:00.000000Z\t99\n" +
+                        "0.0.0.1\t1970-01-01T01:15:00.000000Z\t428\n" +
+                        "0.0.0.4\t1970-01-01T01:16:30.000000Z\t328\n" +
+                        "0.0.0.1\t1970-01-01T01:18:00.000000Z\t924\n" +
+                        "0.0.0.2\t1970-01-01T01:20:00.000000Z\t480\n" +
+                        "0.0.0.4\t1970-01-01T01:21:30.000000Z\t883\n",
+                "select ip, ts, sum(bytes) from test sample by 30s order by 2,1",
                 "create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,5,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(100)" +
+                        "  from long_sequence(50)" +
                         ") timestamp(ts)",
                 "ts",
                 true,
@@ -8896,6 +8944,42 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.5\t0.0.0.5\n");
     }
 
+//    @Test
+//    public void testUpdateTableIPv4ToStringWal() throws Exception {
+//        compiler.compile("create table test (col1 string, col3 timestamp) timestamp(col3) partition by hour wal", sqlExecutionContext);
+//        executeInsert("insert into test values('0.0.0.1', 100::timestamp)");
+//        executeInsert("insert into test values('0.0.0.2', 100::timestamp)");
+//        executeInsert("insert into test values('0.0.0.3', 100::timestamp)");
+//        executeInsert("insert into test values('0.0.0.4', 100::timestamp)");
+//        executeInsert("insert into test values('0.0.0.5', 100::timestamp)");
+//        assertSql("test", "");
+//        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+//            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
+//        }
+////        compiler.compile("create table test (col1 string, col3 timestamp) timestamp (col3) partition by hour wal", sqlExecutionContext);
+////        executeInsert("insert into test(col1, col3) values('0.0.0.1', timestamp_sequence(0,100000))");
+////        executeInsert("insert into test(col1, col3) values('0.0.0.2', timestamp_sequence(0,100000))");
+////        executeInsert("insert into test(col1, col3) values('0.0.0.3', timestamp_sequence(0,100000))");
+////        executeInsert("insert into test(col1, col3) values('0.0.0.4', timestamp_sequence(0,100000))");
+////        executeInsert("insert into test(col1, col3) values('0.0.0.5', timestamp_sequence(0,100000))");
+////        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+////            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
+////            assertSql("test", "");
+////        }
+//
+////        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+////            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
+////            op.withContext(sqlExecutionContext);
+////            op.apply(w, true);
+////        }
+////        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
+////                "0.0.0.1\t0.0.0.1\n" +
+////                "0.0.0.2\t0.0.0.2\n" +
+////                "0.0.0.3\t0.0.0.3\n" +
+////                "0.0.0.4\t0.0.0.4\n" +
+////                "0.0.0.5\t0.0.0.5\n");
+//    }
+
     @Test
     public void testUpdateTableStringToIPv4() throws Exception {
         compiler.compile("create table test (col1 string)", sqlExecutionContext);
@@ -9168,109 +9252,121 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("ip1\tip2\n" +
                         "0.0.0.1\t0.0.0.1\n" +
                         "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "null\tnull\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "null\tnull\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "null\tnull\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "null\tnull\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "null\tnull\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "null\tnull\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "null\tnull\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.5\t0.0.0.5\n" +
                         "0.0.0.3\t0.0.0.3\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
                         "null\tnull\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "null\tnull\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
                         "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "null\tnull\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "null\tnull\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "null\tnull\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "null\tnull\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "null\tnull\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "null\tnull\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
                         "0.0.0.4\t0.0.0.4\n" +
                         "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "null\tnull\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "null\tnull\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "null\tnull\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.3\t0.0.0.3\n",
+                        "0.0.0.8\t0.0.0.8\n",
                 "select * from test where ip1 = ip2",
                 "create table test as " +
                         "(" +

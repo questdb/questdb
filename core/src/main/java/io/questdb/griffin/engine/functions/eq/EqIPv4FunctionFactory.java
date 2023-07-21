@@ -36,7 +36,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.std.Numbers.*;
+import static io.questdb.std.Numbers.IPv4_NULL;
+import static io.questdb.std.Numbers.parseIPv4Quiet;
 
 public class EqIPv4FunctionFactory implements FunctionFactory {
 
@@ -102,7 +103,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getInt(rec) == constant);
+            return negated != (arg.getIPv4(rec) == constant);
         }
 
         @Override
@@ -122,7 +123,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getInt(rec) == parseIPv4Quiet(right.getStr(rec)));
+            return negated != (left.getIPv4(rec) == parseIPv4Quiet(right.getStr(rec)));
         }
 
         @Override
@@ -149,7 +150,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getInt(rec) == IPv4_NULL);
+            return negated != (arg.getIPv4(rec) == IPv4_NULL);
         }
 
         @Override

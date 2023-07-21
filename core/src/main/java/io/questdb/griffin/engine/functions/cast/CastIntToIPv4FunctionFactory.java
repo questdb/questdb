@@ -53,10 +53,10 @@ public class CastIntToIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            if (arg.getIPv4(rec) == Numbers.IPv4_NULL) {
+            if (arg.getInt(rec) == Numbers.IPv4_NULL) {
                 return Numbers.IPv4_NULL;
             }
-            return arg.getIPv4(rec);
+            return arg.getInt(rec);
         }
     }
 }

@@ -63,21 +63,20 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
     private Function createHalfConstantFunc(Function varFunc, Function constFunc) throws SqlException {
         CharSequence constValue = constFunc.getStr(null);
 
-        if(constValue == null) {
+        if (constValue == null) {
             return new NullCheckFunc(varFunc);
         }
 
         int subnet = getIPv4Subnet(constValue);
         int netmask = getIPv4Netmask(constValue);
 
-        if(subnet == -2 && netmask == -2) { //catches negative netmask
+        if (subnet == -2 && netmask == -2) { //catches negative netmask
             throw SqlException.$(18, "invalid argument: ").put(constValue);
-        }
-        else if(subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
+        } else if (subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
 
             subnet = parseSubnet(constValue); // Check is arg is subnet
 
-            if(subnet == -2) { // Is true if arg is not a valid subnet/ip address
+            if (subnet == -2) { // Is true if arg is not a valid subnet/ip address
                 throw SqlException.$(18, "invalid argument: ").put(constValue);
             } else {
                 return new ConstCheckFunc(varFunc, subnet, netmask);
@@ -89,8 +88,8 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final int subnet;
         private final int netmask;
+        private final int subnet;
 
         public ConstCheckFunc(Function arg, int subnet, int netmask) {
             this.arg = arg;
@@ -99,14 +98,16 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() { return arg; }
+        public Function getArg() {
+            return arg;
+        }
 
         @Override
         public boolean getBool(Record rec) {
-            if(netmask == 32 || netmask == -1) { //if netmask is 32 then IP can't be strictly contained because arg is a single host, if netmask is -1 that means no netmask was provided and the arg is a single host
+            if (netmask == 32 || netmask == -1) { //if netmask is 32 then IP can't be strictly contained because arg is a single host, if netmask is -1 that means no netmask was provided and the arg is a single host
                 return false;
             }
-            return (arg.getInt(rec) & netmask) == subnet;
+            return (arg.getIPv4(rec) & netmask) == subnet;
         }
 
         @Override
@@ -118,18 +119,25 @@ public class ContainsIPv4FunctionFactory implements FunctionFactory {
 
     public static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        public NullCheckFunc(Function arg) { this.arg = arg; }
+
+        public NullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
 
         @Override
-        public Function getArg() { return arg; }
+        public Function getArg() {
+            return arg;
+        }
 
         @Override
-        public boolean getBool(Record rec) { return arg.getInt(rec) == IPv4_NULL; }
+        public boolean getBool(Record rec) {
+            return arg.getIPv4(rec) == IPv4_NULL;
+        }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg);
-            sink.val( "is null");
+            sink.val("is null");
         }
     }
 
