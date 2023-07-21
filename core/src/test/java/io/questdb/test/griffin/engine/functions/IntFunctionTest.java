@@ -100,6 +100,11 @@ public class IntFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        function.getIPv4(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
     }

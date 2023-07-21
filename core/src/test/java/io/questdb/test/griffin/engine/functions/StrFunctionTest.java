@@ -28,6 +28,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -249,6 +250,11 @@ public class StrFunctionTest {
     @Test
     public void testCastToFloatZero() {
         Assert.assertEquals(0, new StrConstant("0.0000f").getFloat(null), 0.001);
+    }
+
+    @Test
+    public void testCastToIPv4() {
+        Assert.assertEquals("23.200.41.90", Chars.ipv4ToString(new StrConstant("23.200.41.90").getIPv4(null)));
     }
 
     @Test

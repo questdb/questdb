@@ -115,6 +115,11 @@ public class CharFunctionTest {
         Assert.assertEquals(value, function.getFloat(null), 0.0001);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        function.getIPv4(null);
+    }
+
     @Test
     public void testGetInt() {
         Assert.assertEquals(value, function.getInt(null));

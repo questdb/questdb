@@ -27,15 +27,18 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import org.junit.Test;
+
 public class IPv4FunctionTest {
     private static final IPv4Function function = new IPv4Function() {
         @Override
-        public int getInt(Record rec) {
+        public int getIPv4(Record rec) {
             return 150;
         }
 
         @Override
-        public int getIPv4(Record rec) { return 150; }
+        public int getInt(Record rec) {
+            return 150;
+        }
 
         @Override
         public boolean isReadThreadSafe() {
@@ -88,12 +91,12 @@ public class IPv4FunctionTest {
         function.getByte(null);
     }
 
-    @Test (expected = UnsupportedOperationException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
     }
 
-    @Test (expected = UnsupportedOperationException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetFloat() {
         function.getFloat(null);
     }
@@ -138,7 +141,7 @@ public class IPv4FunctionTest {
         function.getSymbolB(null);
     }
 
-    @Test (expected = UnsupportedOperationException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetTimestamp() {
         function.getTimestamp(null);
     }

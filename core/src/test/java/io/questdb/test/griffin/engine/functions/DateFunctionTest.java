@@ -105,6 +105,11 @@ public class DateFunctionTest {
         function.getInt(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        function.getIPv4(null);
+    }
+
     @Test
     public void testGetLong() {
         Assert.assertEquals(163, function.getLong(null));
