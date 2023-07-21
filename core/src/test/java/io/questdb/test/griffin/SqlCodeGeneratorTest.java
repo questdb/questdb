@@ -7174,6 +7174,40 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true);
     }
 
+//    @Test
+//    public void testOrderByIPv4Ascending() throws Exception {
+//        assertQuery("",
+//                "select * from test order by ip",
+//                "create table test as " +
+//                        "(" +
+//                        "  select" +
+//                        "    rnd_ipv4 ip," +
+//                        "    rnd_int(0,1000,0) bytes," +
+//                        "    timestamp_sequence(0,100000000) ts" +
+//                        "  from long_sequence(50)" +
+//                        ")",
+//                null,
+//                true,
+//                true);
+//    }
+//
+//    @Test
+//    public void testOrderByIPv4Descending() throws Exception {
+//        assertQuery("",
+//                "select * from test order by ip DESC",
+//                "create table test as " +
+//                        "(" +
+//                        "  select" +
+//                        "    rnd_ipv4 ip," +
+//                        "    rnd_int(0,1000,0) bytes," +
+//                        "    timestamp_sequence(0,100000000) ts" +
+//                        "  from long_sequence(50)" +
+//                        ")",
+//                null,
+//                true,
+//                true);
+//    }
+
     @Test
     public void testOrderByLong256AndChar() throws Exception {
         final String expected = "a\tb\tk\n" +
