@@ -31,7 +31,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -41,6 +45,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 public class VacuumColumnVersionTest extends AbstractGriffinTest {
     private int iteration;
@@ -58,6 +64,57 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         columnPurgeRetryDelay = 1;
         columnVersionPurgeQueueCapacity = 2;
         super.setUp();
+    }
+
+    @Test
+    public void testVacuumInMiddleOfUpdate() throws Exception {
+        AtomicReference<ColumnPurgeJob> purgeJobInstance = new AtomicReference<>();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (purgeJobInstance.get() != null && (Chars.endsWith(name, "/1970-01-05/sym1.d.2") || Chars.endsWith(name, "\\1970-01-05\\sym1.d.2"))) {
+                    try {
+                        runTableVacuum("testPurge");
+                        runPurgeJob(purgeJobInstance.get());
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                compiler.compile(
+                        "create table testPurge as" +
+                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                                " x," +
+                                " rnd_str('a', 'b', 'c', 'd') str," +
+                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                                " rnd_symbol('1', '2', '3', '4') sym2" +
+                                " from long_sequence(5)), index(sym2)" +
+                                " timestamp(ts) PARTITION BY DAY",
+                        sqlExecutionContext
+                );
+                compile("alter table testPurge drop column x");
+
+                purgeJobInstance.set(purgeJob);
+                executeUpdate("UPDATE testPurge SET sym1='123'");
+
+                assertSql("testPurge", "ts\tstr\tsym1\tsym2\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t123\t2\n" +
+                        "1970-01-02T00:00:00.000000Z\td\t123\t4\n" +
+                        "1970-01-03T00:00:00.000000Z\tc\t123\t3\n" +
+                        "1970-01-04T00:00:00.000000Z\ta\t123\t1\n" +
+                        "1970-01-05T00:00:00.000000Z\tc\t123\t2\n");
+
+                String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
+                String[] files = {"sym1.d"};
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+            }
+        });
     }
 
     @Test
