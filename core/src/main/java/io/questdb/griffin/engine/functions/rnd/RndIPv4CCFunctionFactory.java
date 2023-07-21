@@ -68,8 +68,8 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
     private static class RndFunction extends IPv4Function implements Function {
         private final int hi;
         private final int lo;
-        private final int range;
         private final int nullRate;
+        private final int range;
         private Rnd rnd;
 
         public RndFunction(int lo, int hi, int nullRate) {
@@ -82,11 +82,6 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            return getInt(rec);
-        }
-
-        @Override
-        public int getInt(Record rec) {
             if ((rnd.nextInt() % nullRate) == 1) {
                 return Numbers.IPv4_NULL;
             }

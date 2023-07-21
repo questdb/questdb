@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
+
 public class IPv4Column extends IPv4Function implements ScalarFunction {
 
     private static final ObjList<IPv4Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
@@ -49,19 +50,11 @@ public class IPv4Column extends IPv4Function implements ScalarFunction {
     }
 
     @Override
-    public int getInt(Record rec) {
-        if(rec.getInt(columnIndex) == Numbers.INT_NaN) {
-            return Numbers.IPv4_NULL;
-        }
-        return rec.getInt(columnIndex);
-    }
-
-    @Override
     public int getIPv4(Record rec) {
-        if(rec.getInt(columnIndex) == Numbers.INT_NaN) {
+        if (rec.getIPv4(columnIndex) == Numbers.IPv4_NULL) {
             return Numbers.IPv4_NULL;
         }
-        return rec.getInt(columnIndex);
+        return rec.getIPv4(columnIndex);
     }
 
     @Override

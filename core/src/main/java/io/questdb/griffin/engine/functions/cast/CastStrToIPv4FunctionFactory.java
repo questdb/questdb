@@ -32,10 +32,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+
 public class CastStrToIPv4FunctionFactory implements FunctionFactory {
 
     @Override
-    public String getSignature() { return "cast(Sx)"; }
+    public String getSignature() {
+        return "cast(Sx)";
+    }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
@@ -43,19 +46,13 @@ public class CastStrToIPv4FunctionFactory implements FunctionFactory {
     }
 
     private static class CastStrToIPv4Function extends AbstractCastToIPv4Function {
-        public CastStrToIPv4Function(Function arg) { super(arg); }
-
-        @Override
-        public int getInt(Record rec) {
-            if(arg.getStr(rec) == null) {
-                return Numbers.IPv4_NULL;
-            }
-            return Numbers.parseIPv4Quiet(arg.getStr(rec));
+        public CastStrToIPv4Function(Function arg) {
+            super(arg);
         }
 
         @Override
         public int getIPv4(Record rec) {
-            if(arg.getStr(rec) == null) {
+            if (arg.getStr(rec) == null) {
                 return Numbers.IPv4_NULL;
             }
             return Numbers.parseIPv4Quiet(arg.getStr(rec));

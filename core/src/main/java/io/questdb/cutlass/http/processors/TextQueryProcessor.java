@@ -250,6 +250,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
+    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final int i = rec.getIPv4(col);
+        if (i != Numbers.IPv4_NULL) {
+            Numbers.intToIPv4Sink(socket, i);
+        }
+    }
+
     private static void putStringOrNull(CharSink r, CharSequence str) {
         if (str != null) {
             r.encodeUtf8AndQuote(str);
@@ -261,17 +268,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             return;
         }
         Numbers.appendUuid(lo, hi, socket);
-    }
-
-    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col){
-        final int i = rec.getIPv4(col);
-        if(i == Numbers.IPv4_NULL) {
-            socket.put("null");
-        } else {
-            socket.put('"');
-            Numbers.intToIPv4Sink(socket, i);
-            socket.put('"');
-        }
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {

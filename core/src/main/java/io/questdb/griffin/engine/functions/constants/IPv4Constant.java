@@ -45,11 +45,6 @@ public class IPv4Constant extends IPv4Function implements ConstantFunction {
     }
 
     @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
     public int getIPv4(Record rec) {
         return value;
     }

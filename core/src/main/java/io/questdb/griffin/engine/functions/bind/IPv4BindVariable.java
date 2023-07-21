@@ -30,6 +30,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+
 public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mutable {
 
     int value;
@@ -44,12 +45,9 @@ public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mu
     }
 
     @Override
-    public int getInt(Record rec) {
+    public int getIPv4(Record rec) {
         return value;
     }
-
-    @Override
-    public int getIPv4(Record rec) { return value; }
 
     @Override
     public boolean isReadThreadSafe() {

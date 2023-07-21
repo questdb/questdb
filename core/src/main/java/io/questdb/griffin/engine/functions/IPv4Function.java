@@ -28,15 +28,17 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
-public abstract class IPv4Function implements ScalarFunction{
+
+public abstract class IPv4Function implements ScalarFunction {
 
     @Override
-    public final BinarySequence getBin(Record rec) { throw new UnsupportedOperationException(); }
+    public final BinarySequence getBin(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public long getBinLen(Record rec) {
@@ -59,13 +61,19 @@ public abstract class IPv4Function implements ScalarFunction{
     }
 
     @Override
-    public long getDate(Record rec) { throw new UnsupportedOperationException(); }
+    public long getDate(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
-    public double getDouble(Record rec) { throw new UnsupportedOperationException(); }
+    public double getDouble(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
-    public float getFloat(Record rec) { throw new UnsupportedOperationException(); }
+    public float getFloat(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public byte getGeoByte(Record rec) {
@@ -88,7 +96,14 @@ public abstract class IPv4Function implements ScalarFunction{
     }
 
     @Override
-    public long getLong(Record rec) { throw new UnsupportedOperationException(); }
+    public int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public long getLong128Hi(Record rec) {
@@ -126,11 +141,13 @@ public abstract class IPv4Function implements ScalarFunction{
     }
 
     @Override
-    public final CharSequence getStr(Record rec) { throw new UnsupportedOperationException(); }
+    public final CharSequence getStr(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-            Numbers.intToIPv4Sink(sink, getIPv4(rec));
+        Numbers.intToIPv4Sink(sink, getIPv4(rec));
     }
 
     @Override
@@ -154,7 +171,12 @@ public abstract class IPv4Function implements ScalarFunction{
     }
 
     @Override
-    public long getTimestamp(Record rec) { throw new UnsupportedOperationException(); }
+    public long getTimestamp(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
-    public final int getType() { return ColumnType.IPv4; }
+    public final int getType() {
+        return ColumnType.IPv4;
+    }
 }

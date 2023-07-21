@@ -38,10 +38,12 @@ import io.questdb.std.Rnd;
 
 public class RndIPv4FunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "rnd_ipv4()";
+
     @Override
     public String getSignature() {
         return SIGNATURE;
     }
+
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new RndFunction();
@@ -50,11 +52,6 @@ public class RndIPv4FunctionFactory implements FunctionFactory {
     private static class RndFunction extends IPv4Function implements Function {
 
         private Rnd rnd;
-
-        @Override
-        public int getInt(Record rec) {
-            return rnd.nextInt();
-        }
 
         @Override
         public int getIPv4(Record rec) {

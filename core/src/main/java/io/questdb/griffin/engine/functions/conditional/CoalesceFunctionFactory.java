@@ -209,6 +209,33 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class IPv4CoalesceFunction extends IPv4Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public IPv4CoalesceFunction(ObjList<Function> args, int size) {
+            super();
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            for (int i = 0; i < size; i++) {
+                int value = args.getQuick(i).getIPv4(rec);
+                if (value != Numbers.IPv4_NULL) {
+                    return value;
+                }
+            }
+            return Numbers.IPv4_NULL;
+        }
+    }
+
     private static class IntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -233,44 +260,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Numbers.INT_NaN;
-        }
-    }
-
-    private static class IPv4CoalesceFunction extends IPv4Function implements MultiArgCoalesceFunction {
-        private final ObjList<Function> args;
-        private final int size;
-
-        public IPv4CoalesceFunction(ObjList<Function> args, int size) {
-            super();
-            this.args = args;
-            this.size = size;
-        }
-
-        @Override
-        public ObjList<Function> getArgs() {
-            return args;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            for (int i = 0; i < size; i++) {
-                int value = args.getQuick(i).getIPv4(rec);
-                if (value != Numbers.IPv4_NULL) {
-                    return value;
-                }
-            }
-            return Numbers.IPv4_NULL;
-        }
-
-        @Override
-        public int getIPv4(Record rec) {
-            for (int i = 0; i < size; i++) {
-                int value = args.getQuick(i).getIPv4(rec);
-                if (value != Numbers.IPv4_NULL) {
-                    return value;
-                }
-            }
-            return Numbers.IPv4_NULL;
         }
     }
 
@@ -507,6 +496,36 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoIPv4CoalesceFunction extends IPv4Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoIPv4CoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            int value = args0.getIPv4(rec);
+            if (value != Numbers.IPv4_NULL) {
+                return value;
+            }
+            return args1.getIPv4(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
     private static class TwoIntCoalesceFunction extends IntFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
@@ -524,45 +543,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return value;
             }
             return args1.getInt(rec);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-    }
-
-    private static class TwoIPv4CoalesceFunction extends IPv4Function implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoIPv4CoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            int value = args0.getIPv4(rec);
-            if (value != Numbers.IPv4_NULL) {
-                return value;
-            }
-            return args1.getIPv4(rec);
-        }
-
-        @Override
-        public int getIPv4(Record rec) {
-            int value = args0.getIPv4(rec);
-            if (value != Numbers.IPv4_NULL) {
-                return value;
-            }
-            return args1.getIPv4(rec);
         }
 
         @Override

@@ -36,11 +36,6 @@ public class IPv4FunctionTest {
         }
 
         @Override
-        public int getInt(Record rec) {
-            return 150;
-        }
-
-        @Override
         public boolean isReadThreadSafe() {
             return true;
         }
@@ -99,6 +94,11 @@ public class IPv4FunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetFloat() {
         function.getFloat(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetInt() {
+        function.getInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

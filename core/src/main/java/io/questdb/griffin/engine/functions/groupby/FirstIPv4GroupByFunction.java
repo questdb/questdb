@@ -46,24 +46,33 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) { mapValue.putInt(valueIndex, arg.getIPv4(record)); }
+    public void computeFirst(MapValue mapValue, Record record) {
+        mapValue.putInt(valueIndex, arg.getIPv4(record));
+    }
+
     @Override
     public void computeNext(MapValue mapValue, Record record) {
     }
-    @Override
-    public Function getArg() { return this.arg; }
 
     @Override
-    public int getInt(Record rec) { return rec.getIPv4(valueIndex); }
+    public Function getArg() {
+        return this.arg;
+    }
 
     @Override
-    public int getIPv4(Record rec) { return rec.getIPv4(valueIndex); }
+    public int getIPv4(Record rec) {
+        return rec.getIPv4(valueIndex);
+    }
 
     @Override
-    public String getName() { return "first"; }
+    public String getName() {
+        return "first";
+    }
 
     @Override
-    public boolean isConstant() { return false; }
+    public boolean isConstant() {
+        return false;
+    }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
@@ -72,8 +81,12 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public void setInt(MapValue mapValue, int value) { mapValue.putInt(valueIndex, value); }
+    public void setInt(MapValue mapValue, int value) {
+        mapValue.putInt(valueIndex, value);
+    }
 
     @Override
-    public void setNull(MapValue mapValue) { setInt(mapValue, Numbers.IPv4_NULL); }
+    public void setNull(MapValue mapValue) {
+        setInt(mapValue, Numbers.IPv4_NULL);
+    }
 }
