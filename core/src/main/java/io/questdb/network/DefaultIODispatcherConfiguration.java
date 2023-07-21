@@ -70,11 +70,6 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public boolean getPeerNoLinger() {
-        return false;
-    }
-
-    @Override
     public long getQueueTimeout() {
         return 300_000;
     }
