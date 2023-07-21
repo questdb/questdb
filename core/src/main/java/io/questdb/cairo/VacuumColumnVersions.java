@@ -132,7 +132,8 @@ public class VacuumColumnVersions implements Closeable {
             long partitionTs = tableFiles.get(i + 1);
             long columnVersion = tableFiles.get(i + 2);
             long latestColumnNameTxn = columnVersionReader.getColumnNameTxn(partitionTs, writerIndex);
-            if (columnVersion != latestColumnNameTxn) {
+            // Do not delete if columnVersion >= reader.getTxn(), this may be the transaction not committed yet
+            if (columnVersion != latestColumnNameTxn && columnVersion < reader.getTxn()) {
                 // Has to be deleted. Columns can have multiple files e.g. .i, .d, .k, .v
                 if (!versionSetToDelete(purgeTask, partitionTs, columnVersion)) {
                     long partitionNameTxn = reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTs);
