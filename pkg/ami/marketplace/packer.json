@@ -3,8 +3,8 @@
   "variables": {
     "base_ami_name": "questdb",
     "region": "eu-west-1",
-    "ami_regions": "",
-    "questdb_version": "",
+    "ami_regions": " ",
+    "questdb_version": " ",
     "ami_groups": ""
   },
   "builders": [
