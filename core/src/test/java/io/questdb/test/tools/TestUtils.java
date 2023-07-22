@@ -158,8 +158,8 @@ public final class TestUtils {
 
                 if (tsL == timestampValue && tsR == timestampValue) {
                     // store both records
-                    addRecordToMap(l, metadataExpected, mapL);
-                    addRecordToMap(r, metadataActual, mapR);
+                    addRecordToMap(l, metadataActual, mapL, symbolsAsStrings);
+                    addRecordToMap(r, metadataExpected, mapR, symbolsAsStrings);
                     continue;
                 }
 
@@ -218,8 +218,8 @@ public final class TestUtils {
                     }
 
                     // store both records
-                    addRecordToMap(l, metadataExpected, mapL);
-                    addRecordToMap(r, metadataActual, mapR);
+                    addRecordToMap(l, metadataActual, mapL, symbolsAsStrings);
+                    addRecordToMap(r, metadataExpected, mapR, symbolsAsStrings);
                 }
             }
         }
@@ -358,27 +358,6 @@ public final class TestUtils {
         }
     }
 
-    public static boolean equals(CharSequence expected, CharSequence actual) {
-        if (expected == null && actual == null) {
-            return true;
-        }
-
-        if (expected == null || actual == null) {
-            return false;
-        }
-
-        if (expected.length() != actual.length()) {
-            return false;
-        }
-
-        for (int i = 0; i < expected.length(); i++) {
-            if (expected.charAt(i) != actual.charAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
         if (bs == null) {
             Assert.assertNull(actBs);
@@ -428,6 +407,44 @@ public final class TestUtils {
                 RecordCursor c2 = f2.getCursor(sqlExecutionContext)
         ) {
             assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
+        }
+    }
+
+    public static void assertEqualsExactOrder(
+            RecordCursor cursorExpected,
+            RecordMetadata metadataExpected,
+            RecordCursor cursorActual,
+            RecordMetadata metadataActual,
+            boolean symbolsAsStrings
+    ) {
+        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
+        Record r = cursorExpected.getRecord();
+        Record l = cursorActual.getRecord();
+        long rowIndex = 0;
+        while (cursorExpected.hasNext()) {
+            if (!cursorActual.hasNext()) {
+                Assert.fail("Actual cursor does not have record at " + rowIndex);
+            }
+            rowIndex++;
+            assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, symbolsAsStrings);
+        }
+
+        Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
+    }
+
+    public static void assertEqualsExactOrder(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expectedSql,
+            String actualSql
+    ) throws SqlException {
+        try (
+                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+        ) {
+            assertEqualsExactOrder(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
     }
 
@@ -596,11 +613,11 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
-    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log) throws SqlException {
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
         assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
     }
 
-    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
@@ -919,6 +936,27 @@ public final class TestUtils {
         }
     }
 
+    public static boolean equals(CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return true;
+        }
+
+        if (expected == null || actual == null) {
+            return false;
+        }
+
+        if (expected.length() != actual.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < expected.length(); i++) {
+            if (expected.charAt(i) != actual.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
@@ -1164,10 +1202,14 @@ public final class TestUtils {
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
-        printColumn(r, m, i, sink, false);
+        printColumn(r, m, i, sink, false, false);
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean printTypes) {
+        printColumn(r, m, i, sink, false, printTypes);
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes) {
         final int columnType = m.getColumnType(i);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
@@ -1189,7 +1231,11 @@ public final class TestUtils {
                 sink.put("null");
                 break;
             case ColumnType.STRING:
-                r.getStr(i, sink);
+                if (symbolAsString && m.getColumnType(i) == ColumnType.SYMBOL) {
+                    sink.put(r.getSym(i));
+                } else {
+                    sink.put(r.getStr(i));
+                }
                 break;
             case ColumnType.SYMBOL:
                 sink.put(r.getSym(i));
@@ -1244,7 +1290,8 @@ public final class TestUtils {
                 break;
         }
         if (printTypes) {
-            sink.put(':').put(ColumnType.nameOf(columnType));
+            int printColType = symbolAsString && ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType;
+            sink.put(':').put(ColumnType.nameOf(printColType));
         }
     }
 
@@ -1342,6 +1389,12 @@ public final class TestUtils {
         return ptr;
     }
 
+    public static void txnPartitionConditionally(Path path, int txn) {
+        if (txn > -1) {
+            path.put('.').put(txn);
+        }
+    }
+
     public static void unchecked(CheckedRunnable runnable) {
         try {
             runnable.run();
@@ -1372,12 +1425,6 @@ public final class TestUtils {
             return runnable.get();
         } catch (Throwable e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    public static void txnPartitionConditionally(Path path, int txn) {
-        if (txn > -1) {
-            path.put('.').put(txn);
         }
     }
 
@@ -1472,8 +1519,8 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
-                String expected = recordToString(rr, metadataExpected);
-                String actual = recordToString(lr, metadataActual);
+                String expected = recordToString(rr, metadataExpected, symbolsAsStrings);
+                String actual = recordToString(lr, metadataActual, symbolsAsStrings);
                 Assert.assertEquals(
                         String.format(String.format("Row %d column %s[%s]", rowIndex, columnName, ColumnType.nameOf(columnType))),
                         expected,
@@ -1483,17 +1530,6 @@ public final class TestUtils {
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
             }
         }
-    }
-
-    private static String recordToString(Record record, RecordMetadata metadata) {
-        sink.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            printColumn(record, metadata, i, sink, false);
-            if (i < n - 1) {
-                sink.put('\t');
-            }
-        }
-        return sink.toString();
     }
 
     private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
@@ -1522,6 +1558,17 @@ public final class TestUtils {
         }
     }
 
+    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
+        long increment = 0;
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+        return increment;
+    }
+
 /*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -1538,17 +1585,6 @@ public final class TestUtils {
     }
 */
 
-    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
-        long increment = 0;
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
-            assert partitionAddMethod != null;
-            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
-            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
-        }
-        return increment;
-    }
-
     private static void putGeoHash(long hash, int bits, CharSink sink) {
         if (hash == GeoHashes.NULL) {
             return;
@@ -1558,6 +1594,17 @@ public final class TestUtils {
         } else {
             GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
         }
+    }
+
+    private static String recordToString(Record record, RecordMetadata metadata, boolean symbolsAsStrings) {
+        sink.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            printColumn(record, metadata, i, sink, symbolsAsStrings, false);
+            if (i < n - 1) {
+                sink.put('\t');
+            }
+        }
+        return sink.toString();
     }
 
     private static String toHexString(Long256 expected) {
@@ -1571,14 +1618,14 @@ public final class TestUtils {
         cursor.toTop();
         Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            addRecordToMap(record, metadata, map);
+            addRecordToMap(record, metadata, map, false);
         }
     }
 
-    static void addRecordToMap(Record record, RecordMetadata metadata, Map<String, Integer> map) {
+    static void addRecordToMap(Record record, RecordMetadata metadata, Map<String, Integer> map, boolean symbolsAsStrings) {
         sink.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            printColumn(record, metadata, i, sink, true);
+            printColumn(record, metadata, i, sink, symbolsAsStrings, true);
         }
         String printed = sink.toString();
         map.compute(printed, (s, i) -> {

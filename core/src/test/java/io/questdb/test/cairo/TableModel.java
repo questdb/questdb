@@ -36,7 +36,8 @@ import java.io.Closeable;
 
 public class TableModel implements TableStructure, Closeable {
     private static final long COLUMN_FLAG_CACHED = 1L;
-    private static final long COLUMN_FLAG_INDEXED = 2L;
+    private static final long COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
+    private static final long COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -76,6 +77,14 @@ public class TableModel implements TableStructure, Closeable {
         columnNames.add(Chars.toString(name));
         // set default symbol capacity
         columnBits.add((128L << 32) | type, COLUMN_FLAG_CACHED);
+        return this;
+    }
+
+    public TableModel dedupKey() {
+        int pos = columnBits.size() - 1;
+        assert pos > 0;
+        long bits = columnBits.getQuick(pos);
+        columnBits.setQuick(pos, bits | COLUMN_FLAG_DEDUP_KEY);
         return this;
     }
 
@@ -161,6 +170,11 @@ public class TableModel implements TableStructure, Closeable {
             columnBits.setQuick(pos, bits & ~COLUMN_FLAG_INDEXED);
         }
         return this;
+    }
+
+    @Override
+    public boolean isDedupKey(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) == COLUMN_FLAG_DEDUP_KEY;
     }
 
     @Override

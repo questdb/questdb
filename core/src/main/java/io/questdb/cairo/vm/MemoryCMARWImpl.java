@@ -166,7 +166,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         this.minMappedMemorySize = extendSegmentSize;
         this.madviseOpts = madviseOpts;
         openFile(ff, name, opts);
-        map(ff, name, size, memoryTag);
+        try {
+            map(ff, name, size, memoryTag);
+        } catch (Throwable th) {
+            ff.close(fd);
+            throw th;
+        }
     }
 
     @Override

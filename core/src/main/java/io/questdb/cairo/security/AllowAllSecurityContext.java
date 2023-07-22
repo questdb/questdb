@@ -25,7 +25,202 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class AllowAllSecurityContext implements SecurityContext {
     public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
+
+    @Override
+    public void assumeServiceAccount(CharSequence serviceAccountName) {
+    }
+
+    @Override
+    public void authorizeAddPassword() {
+    }
+
+    @Override
+    public void authorizeAddUser() {
+    }
+
+    @Override
+    public void authorizeAlterTableAddColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeAlterTableAttachPartition(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDetachPartition(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeAlterTableDropPartition(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+    
+    @Override
+    public void authorizeAlterTableSetDedup(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableSetType(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAssignServiceAccount() {
+    }
+
+    @Override
+    public void authorizeCopy() {
+    }
+
+    @Override
+    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    }
+
+    @Override
+    public void authorizeCreateGroup() {
+    }
+
+    @Override
+    public void authorizeCreateJwk() {
+    }
+
+    @Override
+    public void authorizeCreateServiceAccount() {
+    }
+
+    @Override
+    public void authorizeCreateUser() {
+    }
+
+    @Override
+    public void authorizeDatabaseSnapshot() {
+    }
+
+    @Override
+    public void authorizeDisableUser() {
+    }
+
+    @Override
+    public void authorizeDropGroup() {
+    }
+
+    @Override
+    public void authorizeDropJwk() {
+    }
+
+    @Override
+    public void authorizeDropServiceAccount() {
+    }
+
+    @Override
+    public void authorizeDropUser() {
+    }
+
+    @Override
+    public void authorizeEnableUser() {
+    }
+
+    @Override
+    public void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns) {
+    }
+
+    @Override
+    public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeLineAlterTableAddColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeLineInsert(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeLineTableCreate() {
+    }
+
+    @Override
+    public void authorizeRemovePassword() {
+    }
+
+    @Override
+    public void authorizeRemoveUser() {
+    }
+
+    @Override
+    public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
+    }
+
+    @Override
+    public void authorizeTableCreate() {
+    }
+
+    @Override
+    public void authorizeTableDrop(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
+    }
+
+    @Override
+    public void authorizeTableRename(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeTableTruncate(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeTableVacuum(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeUnassignServiceAccount() {
+    }
+
+    @Override
+    public void exitServiceAccount(CharSequence serviceAccountName) {
+    }
+
+    @Override
+    public String getPrincipal() {
+        return null;
+    }
 }

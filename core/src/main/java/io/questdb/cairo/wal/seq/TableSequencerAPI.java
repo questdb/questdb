@@ -29,11 +29,15 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.Iterator;
 import java.util.function.BiFunction;
 
 import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
@@ -258,6 +262,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void notifySegmentClosed(TableToken tableToken, int walId, int segmentId) {
+        engine.getWalListener().segmentClosed(tableToken, walId, segmentId);
+    }
+
     @TestOnly
     public void openSequencer(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
@@ -331,7 +339,7 @@ public class TableSequencerAPI implements QuietCloseable {
                     try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
                         long seqTxn = tableWriter.getAppliedSeqTxn();
                         if (resumeFromTxn - 1 > seqTxn) {
-                            // including resumeFromTxn 
+                            // including resumeFromTxn
                             tableWriter.commitSeqTxn(resumeFromTxn - 1);
                         }
                     }
@@ -416,13 +424,15 @@ public class TableSequencerAPI implements QuietCloseable {
             return true;
         }
         boolean removed = false;
-        for (CharSequence tableDir : seqRegistry.keySet()) {
+        final Iterator<CharSequence> iterator = seqRegistry.keySet().iterator();
+        while (iterator.hasNext()) {
+            final CharSequence tableDir = iterator.next();
             final TableSequencerEntry sequencer = seqRegistry.get(tableDir);
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
                     LOG.info().$("releasing idle table sequencer [tableDir=").utf8(tableDir).I$();
-                    seqRegistry.remove(tableDir, sequencer);
+                    iterator.remove();
                     removed = true;
                 }
             }

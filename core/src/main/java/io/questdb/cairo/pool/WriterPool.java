@@ -99,6 +99,7 @@ public class WriterPool extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
+    @TestOnly
     public int countFreeWriters() {
         int count = 0;
         for (Entry e : entries.values()) {
@@ -375,6 +376,15 @@ public class WriterPool extends AbstractPool {
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
             e.ex = ex;
+            e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
+            e.owner = UNALLOCATED;
+            notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
+            throw ex;
+        } catch (CairoError ex) {
+            LOG.critical().$("could not open [table=`").utf8(tableToken.getTableName())
+                    .$("`, thread=").$(e.owner)
+                    .$(", ex=").utf8(ex.getFlyweightMessage())
+                    .$(']').$();
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);

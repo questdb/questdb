@@ -84,7 +84,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                     T tenant = e.getTenant(i);
                     if (tenant == null) {
                         try {
-                            LOG.info()
+                            LOG.debug()
                                     .$("open '").utf8(tableToken.getDirName())
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .I$();
@@ -127,7 +127,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry<T>(e.index + 1, clock.getTicks());
+                e.next = new Entry<>(e.index + 1, clock.getTicks());
             } else {
                 // if the race is lost we need to wait until e.next is set by the winning thread
                 while (e.next == null && e.nextStatus == NEXT_ALLOCATED) {
@@ -245,7 +245,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         if (tenant != null) {
             tenant.goodbye();
             tenant.close();
-            LOG.info().$("closed '").utf8(tenant.getTableToken().getDirName())
+            LOG.debug().$("closed '").utf8(tenant.getTableToken().getDirName())
                     .$("' [at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();
@@ -259,7 +259,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
         Entry<T> e = entries.get(name.getDirName());
         if (e == null) {
-            e = new Entry<T>(0, clock.getTicks());
+            e = new Entry<>(0, clock.getTicks());
             Entry<T> other = entries.putIfAbsent(name.getDirName(), e);
             if (other != null) {
                 e = other;

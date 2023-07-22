@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -58,6 +57,7 @@ public class TableConverter {
         final StringSink sink = Misc.getThreadLocalBuilder();
         final FilesFacade ff = configuration.getFilesFacade();
         final long findPtr = ff.findFirst(path.$());
+        TxWriter txWriter = null;
         try {
             do {
                 if (ff.isDirOrSoftLinkDirNoDots(path, rootLen, ff.findName(findPtr), ff.findType(findPtr), sink)) {
@@ -84,10 +84,21 @@ public class TableConverter {
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                                 final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled);
 
+                                if (txWriter == null) {
+                                    txWriter = new TxWriter(ff, configuration);
+                                }
+                                txWriter.ofRW(path.trimTo(rootLen).concat(dirName).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                                txWriter.resetLagValuesUnsafe();
+
                                 if (walEnabled) {
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token, metaMem)) {
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
+
+                                    // Reset structure versoin in _meta and _txn files
+                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                                    path.trimTo(rootLen).concat(dirName);
+                                    txWriter.resetStructureVersionUnsafe();
                                 } else {
                                     tableSequencerAPI.deregisterTable(token);
                                     removeWalPersistence(path, rootLen, ff, dirName);
@@ -103,6 +114,10 @@ public class TableConverter {
                         }
                     } catch (Exception e) {
                         LOG.error().$("Table conversion failed [path=").utf8(path).$(", e=").$(e).I$();
+                    } finally {
+                        if (txWriter != null) {
+                            txWriter.close();
+                        }
                     }
                 }
             } while (ff.findNext(findPtr) > 0);

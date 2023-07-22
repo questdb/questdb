@@ -24,17 +24,21 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -55,6 +59,9 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
 
+            Metrics metrics = engine.getMetrics();
+            int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
+
             // create table with 800 points at 2020-02-03 sharp
             // and 200 points in at 2020-02-03T01
             compiler.compile(
@@ -69,6 +76,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            rowCount = assertRowCount(1000, rowCount);
+
             // Split at 2020-02-03
             compiler.compile(
                     "insert into x " +
@@ -81,6 +90,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            rowCount = assertRowCount(1010, rowCount);
 
             // Check that the partition is not split
             assertSql("select name from table_partitions('x')", "name\n" +
@@ -99,9 +109,11 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             // Check that the partition is split
-            assertSql("select name from table_partitions('x')", "name\n" +
-                    "2020-02-03\n" +
-                    "2020-02-03T000000-000001\n");
+            assertSql("select name,numRows from table_partitions('x')", "name\tnumRows\n" +
+                    "2020-02-03\t809\n" +
+                    "2020-02-03T000000-000001\t211\n");
+
+            assertRowCount(211, rowCount);
         });
     }
 
@@ -111,6 +123,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             // 4kb prefix split threshold
             node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
             node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
 
             compile(
                     "create table x as (" +
@@ -123,6 +136,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             ") timestamp (ts) partition by DAY",
                     sqlExecutionContext
             );
+
+            rowCount = assertRowCount(60 * (23 * 2 - 24), rowCount);
 
             String sqlPrefix = "insert into x " +
                     "select" +
@@ -138,8 +153,10 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+                    "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
+                    "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n");
+
+            rowCount = assertRowCount(319, rowCount);
 
             // Partition "2020-02-04" squashed the new update
 
@@ -152,9 +169,11 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1080\t2020-02-04\n" +
-                        "2020-02-04T18:00:00.000000Z\t170\t2020-02-04T175900-000001\n" +
-                        "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+                        "2020-02-04T00:00:00.000000Z\t1081\t2020-02-04\n" +
+                        "2020-02-04T18:01:00.000000Z\t170\t2020-02-04T180000-000001\n" +
+                        "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n");
+
+                rowCount = assertRowCount(170, rowCount);
             }
 
             // should squash partitions into 2 pieces
@@ -165,8 +184,11 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1300\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+                    "2020-02-04T00:00:00.000000Z\t1301\t2020-02-04\n" +
+                    "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n");
+
+            rowCount = assertRowCount((170 + 50) * 2, rowCount);
+
 
             compile(sqlPrefix +
                             " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
@@ -175,8 +197,11 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1300\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t370\t2020-02-04T195900-000001\n");
+                    "2020-02-04T00:00:00.000000Z\t1301\t2020-02-04\n" +
+                    "2020-02-04T20:01:00.000000Z\t369\t2020-02-04T200000-000001\n");
+
+            int delta = 50;
+            rowCount = assertRowCount(delta, rowCount);
 
             // commit in order rolls to the next partition, should squash partition "2020-02-04" to single part
             compile(sqlPrefix +
@@ -188,6 +213,9 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t1670\t2020-02-04\n" +
                     "2020-02-05T01:01:15.000000Z\t50\t2020-02-05\n");
+
+            delta = 369 + 50;
+            assertRowCount(delta, rowCount);
         });
     }
 
@@ -198,6 +226,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
             node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
 
+            int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
             compile(
                     "create table x as (" +
                             "select" +
@@ -209,6 +238,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             ") timestamp (ts) partition by DAY"
             );
 
+            rowCount = assertRowCount(60 * (23 * 2 - 24), rowCount);
             compile("alter table x add column k int");
 
             String sqlPrefix = "insert into x " +
@@ -222,6 +252,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             " x + 2 as k" +
                             " from long_sequence(200)"
             );
+
+            rowCount = assertRowCount(319 * 2, rowCount);
 
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
@@ -238,6 +270,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t1720\t2020-02-04\n");
 
+            assertRowCount(200, rowCount);
         });
     }
 
@@ -314,10 +347,10 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             }
 
             assertSql("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", "i\tj\tstr\tts\n" +
-                    "1000000\t-1000001\tXMKJSM\t2020-02-03T17:00:00.000000Z\n" +
                     "34\t-34\tOPHNIMY\t2020-02-03T17:00:00.000000Z\n" +
-                    "1000000\t-1000001\tXEJCTIZKYFLUHZQS\t2020-02-03T17:00:00.000000Z\n" +
                     "35\t-35\tDTNPHFLPBNHGZWW\t2020-02-03T17:00:00.000000Z\n" +
+                    "1000000\t-1000001\tXEJCTIZKYFLUHZQS\t2020-02-03T17:00:00.000000Z\n" +
+                    "1000000\t-1000001\tXMKJSM\t2020-02-03T17:00:00.000000Z\n" +
                     "36\t-36\tNGTNLE\t2020-02-03T18:00:00.000000Z\n" +
                     "37\t-37\t\t2020-02-03T18:00:00.000000Z\n");
         });
@@ -450,6 +483,9 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testSplitMidPartitionFailedToSquash() throws Exception {
+        // Windows uses mmap-based writes instead of copyData to squash split partitions.
+        Assume.assumeFalse(Os.isWindows());
+
         AtomicLong failToCopyLen = new AtomicLong();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -488,7 +524,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             try {
                 // fail squashing fix len column.
-                failToCopyLen.set(1760);
+                failToCopyLen.set(1756);
                 compile(
                         sqlPrefix +
                                 " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
@@ -502,26 +538,27 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t440\t2020-02-04T195900-000001\n" +
+                    "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
+                    "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
                     "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n");
 
             try {
                 // Append another time and fail squashing var len column.
-                failToCopyLen.set(13380);
+                failToCopyLen.set(13376);
                 compile(
                         sqlPrefix +
                                 " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
                                 " x + 2 as k" +
                                 " from long_sequence(200)"
                 );
+                Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot copy data");
             }
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t640\t2020-02-04T195900-000001\n" +
+                    "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
+                    "2020-02-04T20:01:00.000000Z\t639\t2020-02-04T200000-000001\n" +
                     "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n");
 
             // success
@@ -589,11 +626,12 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                         true
                 );
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
-                assertSql("select name, minTimestamp from table_partitions('x')", "name\tminTimestamp\n" +
-                        "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
-                        "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
-                        "2020-02-04T225900-000001\t2020-02-04T23:00:00.000000Z\n" +
-                        "2020-02-05\t2020-02-05T00:00:00.000000Z\n");
+                assertSql("select name, minTimestamp from table_partitions('x')",
+                        "name\tminTimestamp\n" +
+                                "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
+                                "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
+                                "2020-02-04T230000-000001\t2020-02-04T23:01:00.000000Z\n" +
+                                "2020-02-05\t2020-02-05T00:00:00.000000Z\n");
             }
 
             // Another reader, should allow to squash partitions
@@ -645,8 +683,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                 );
 
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                        "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+                        "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
+                        "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n");
             }
 
             compile("alter table x add column k int");
@@ -673,6 +711,19 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
     @Test
     public void testSquashPartitionsWal() throws Exception {
         testSquashPartitions("WAL");
+    }
+
+    private int assertRowCount(int delta, int rowCount) {
+        Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit("x"));
+        rowCount += delta;
+        Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
+        return rowCount;
+    }
+
+    private long getPhysicalRowsSinceLastCommit(String table) {
+        try (TableWriter tw = getWriter(table)) {
+            return tw.getPhysicallyWrittenRowsSinceLastCommit();
+        }
     }
 
     private void testSquashPartitions(String wal) throws Exception {
@@ -711,8 +762,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
                 String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                        "2020-02-04T20:00:00.000000Z\t440\t2020-02-04T195900-000001\n" +
+                        "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
+                        "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
                         "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n");
 
                 compile(sqlPrefix +
@@ -724,10 +775,10 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                        "2020-02-04T20:00:00.000000Z\t440\t2020-02-04T195900-000001\n" +
-                        "2020-02-05T00:00:00.000000Z\t1080\t2020-02-05\n" +
-                        "2020-02-05T18:00:00.000000Z\t290\t2020-02-05T175900-000001\n");
+                        "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
+                        "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
+                        "2020-02-05T00:00:00.000000Z\t1081\t2020-02-05\n" +
+                        "2020-02-05T18:01:00.000000Z\t289\t2020-02-05T180000-000001\n");
 
                 // should squash partitions
                 compile("alter table x squash partitions");

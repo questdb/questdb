@@ -323,7 +323,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int columnIndex,
             long columnNameTxn
     ) {
-        final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+        final long mergeLen = mergeType == O3_BLOCK_MERGE ? timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES : mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         final Path pathToOldPartition = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(pathToOldPartition, tableWriter.getPartitionBy(), oldPartitionTimestamp, srcDataTxn);
         int plen = pathToOldPartition.length();
@@ -1239,7 +1239,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             tableWriter.o3ClockDownPartitionUpdateCount();
             tableWriter.o3CountDownDoneLatch();
             if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
             }
         }
     }
@@ -1352,9 +1352,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
-            if (mixedIOFlag) {
-                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
-            } else {
+            if (!mixedIOFlag) {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
@@ -1412,7 +1410,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (columnCounter.decrementAndGet() == 0) {
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
-                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                 tableWriter.o3ClockDownPartitionUpdateCount();
                 tableWriter.o3CountDownDoneLatch();
             }
@@ -2008,9 +2006,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize -= (prefixHi - srcDataTop + 1) * Long.BYTES;
             }
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
-            if (mixedIOFlag) {
-                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
-            } else {
+            if (!mixedIOFlag) {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
@@ -2026,9 +2022,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
-            if (mixedIOFlag) {
-                ff.fadvise(dstVarFd, 0, dstVarSize, Files.POSIX_FADV_RANDOM);
-            } else {
+            if (!mixedIOFlag) {
                 ff.madvise(dstVarAddr, dstVarSize, Files.POSIX_MADV_RANDOM);
             }
 

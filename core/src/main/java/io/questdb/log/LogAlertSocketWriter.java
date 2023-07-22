@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.BuildInformationHolder;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -48,7 +47,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     public static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
     public static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
-    public static final String QDB_VERSION_ENV = "QDB_VERSION";
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
@@ -327,6 +325,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 alertTemplate.parse(template, now, properties);
                 needsReading = false;
             }
+        } catch (LogError e) {
+            throw e;
         } catch (Throwable e) {
             // it was not a resource ("/resource_name")
         }
@@ -339,7 +339,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     ff,
                     sink
             );
-            alertTemplate.parse(sink, now, properties);
+            // originalTxt needs to be a static text and not a mutable sink because it's referred to in template nodes 
+            alertTemplate.parse(Chars.toString(sink), now, properties);
         }
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(
@@ -363,9 +364,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
         if (!ALERT_PROPS.contains(INSTANCE_ENV)) {
             ALERT_PROPS.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!ALERT_PROPS.contains(QDB_VERSION_ENV)) {
-            ALERT_PROPS.put(QDB_VERSION_ENV, BuildInformationHolder.INSTANCE.toString());
         }
         ALERT_PROPS.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
     }

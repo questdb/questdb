@@ -107,9 +107,11 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void dropTable() {
         checkDropped();
-        tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
+        final long timestamp = microClock.getTicks();
+        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, timestamp);
         metadata.dropTable();
         engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+        engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
 
     @Override
@@ -153,7 +155,8 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.isColumnIndexed(i),
                     metadata.getIndexValueBlockCapacity(i),
                     metadata.isSymbolTableStatic(i),
-                    i
+                    i,
+                    metadata.isDedupKey(i)
             );
             if (columnType > -1) {
                 if (i == timestampIndex) {
@@ -217,7 +220,10 @@ public class TableSequencerImpl implements TableSequencer {
         try {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
-                tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, microClock.getTicks());
+                final long timestamp = microClock.getTicks();
+                tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, timestamp);
+
+                final TableToken oldTableToken = tableToken;
 
                 // Re-read serialised change to ensure it can be read.
                 AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(expectedStructureVersion, alterCommandWalFormatter);
@@ -234,6 +240,15 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+
+                if (!metadata.isSuspended()) {
+                    engine.notifyWalTxnCommitted(tableToken, txn);
+                    if (!tableToken.equals(oldTableToken)) {
+                        engine.getWalListener().tableRenamed(tableToken, txn, timestamp, oldTableToken);
+                    } else {
+                        engine.getWalListener().nonDataTxnCommitted(tableToken, txn, timestamp);
+                    }
+                }
             } else {
                 return NO_TXN;
             }
@@ -244,10 +259,6 @@ public class TableSequencerImpl implements TableSequencer {
                     .I$();
             throw th;
         }
-
-        if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(tableToken, txn);
-        }
         return txn;
     }
 
@@ -257,10 +268,11 @@ public class TableSequencerImpl implements TableSequencer {
         assert !closed;
         checkDropped();
         long txn;
+        final long timestamp = microClock.getTicks();
         try {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
-                txn = nextTxn(walId, segmentId, segmentTxn);
+                txn = nextTxn(walId, segmentId, segmentTxn, timestamp);
             } else {
                 return NO_TXN;
             }
@@ -274,6 +286,7 @@ public class TableSequencerImpl implements TableSequencer {
 
         if (!metadata.isSuspended()) {
             engine.notifyWalTxnCommitted(tableToken, txn);
+            engine.getWalListener().dataTxnCommitted(tableToken, txn, timestamp, walId, segmentId, segmentTxn);
         }
         return txn;
     }
@@ -375,8 +388,8 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
     }
 
-    private long nextTxn(int walId, int segmentId, int segmentTxn) {
-        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, microClock.getTicks());
+    private long nextTxn(int walId, int segmentId, int segmentTxn, long timestamp) {
+        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, timestamp);
     }
 
     void create(int tableId, TableStructure tableStruct) {

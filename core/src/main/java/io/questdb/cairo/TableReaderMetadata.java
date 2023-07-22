@@ -92,6 +92,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             assert name != null;
             int columnType = TableUtils.getColumnType(metaMem, metaIndex);
             boolean isIndexed = TableUtils.isColumnIndexed(metaMem, metaIndex);
+            boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, metaIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, metaIndex);
             TableColumnMetadata existing = null;
             String newName;
@@ -117,6 +118,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         || existing == null
                         || existing.isIndexed() != isIndexed
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
+                        || existing.isDedupKey() != isDedupKey
                 ) {
                     columnMetadata.setQuick(existingIndex - shiftLeft,
                             new TableColumnMetadata(
@@ -126,7 +128,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     indexBlockCapacity,
                                     true,
                                     null,
-                                    metaIndex
+                                    metaIndex,
+                                    isDedupKey
+
                             )
                     );
                 } else if (shiftLeft > 0) {
@@ -186,11 +190,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
         }
-    }
-
-    @Override
-    public int getColumnCount() {
-        return columnCount;
     }
 
     @Override
@@ -257,7 +256,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     TableUtils.getIndexBlockCapacity(metaMem, i),
                                     true,
                                     null,
-                                    i
+                                    i,
+                                    TableUtils.isColumnDedupKey(metaMem, i)
                             )
                     );
                     if (i == timestampIndex) {

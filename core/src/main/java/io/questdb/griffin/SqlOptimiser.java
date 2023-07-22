@@ -2068,7 +2068,7 @@ public class SqlOptimiser {
     }
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
-        if (column.type != LITERAL) {
+        if (column == null || column.type != LITERAL) {
             return false;
         }
 
@@ -3295,7 +3295,8 @@ public class SqlOptimiser {
 
         ExpressionNode op = agg.rhs;
 
-        if (agg.type == FUNCTION &&
+        if (op != null &&
+                agg.type == FUNCTION &&
                 functionParser.getFunctionFactoryCache().isGroupBy(agg.token) &&
                 Chars.equalsIgnoreCase("sum", agg.token) &&
                 op.type == OPERATION) {

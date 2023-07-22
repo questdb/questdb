@@ -30,7 +30,10 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -163,12 +166,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void renameTable(CharSequence toTableName) {
         if (!Chars.equalsIgnoreCaseNc(toTableName, tableToken.getTableName())) {
-            tableToken = new TableToken(
-                    Chars.toString(toTableName),
-                    tableToken.getDirName(),
-                    tableToken.getTableId(),
-                    tableToken.isWal()
-            );
+            tableToken = tableToken.renamed(Chars.toString(toTableName));
         }
         structureVersion.incrementAndGet();
     }
@@ -195,7 +193,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         0,
                         false,
                         null,
-                        columnMetadata.size()
+                        columnMetadata.size(),
+                        false
                 )
         );
         columnCount++;

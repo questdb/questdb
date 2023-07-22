@@ -28,9 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
@@ -40,6 +40,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     private static final Log LOG = LogFactory.getLog(ContiguousFileFixFrameColumn.class);
     protected final FilesFacade ff;
     private final long fileOpts;
+    private final boolean mixedIOFlag;
     private int columnIndex;
     private long columnTop;
     private int columnType;
@@ -50,6 +51,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     public ContiguousFileFixFrameColumn(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         this.fileOpts = configuration.getWriterFileOpenOpts();
+        this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
     }
 
     @Override
@@ -73,19 +75,40 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 int sourceFd = sourceColumn.getPrimaryFd();
                 long length = sourceHi << shl;
                 TableUtils.allocateDiskSpaceToPage(ff, fd, (offset + sourceHi) << shl);
-                ff.fadvise(sourceFd, sourceLo << shl, length, Files.POSIX_FADV_SEQUENTIAL);
-                if (ff.copyData(sourceFd, fd, sourceLo << shl, offset << shl, length) != length) {
-                    throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
-                            .put(", destOffset=").put(offset << shl)
-                            .put(", size=").put(length)
-                            .put(", fileSize=").put(ff.length(fd))
-                            .put(", srcFd=").put(sourceFd)
-                            .put(", srcOffset=").put(sourceLo << shl)
-                            .put(", srcFileSize=").put(ff.length(sourceFd))
-                            .put(']');
-                }
-                if (commitMode != CommitMode.NOSYNC) {
-                    ff.fsync(fd);
+                if (mixedIOFlag) {
+                    if (ff.copyData(sourceFd, fd, sourceLo << shl, offset << shl, length) != length) {
+                        throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
+                                .put(", destOffset=").put(offset << shl)
+                                .put(", size=").put(length)
+                                .put(", fileSize=").put(ff.length(fd))
+                                .put(", srcFd=").put(sourceFd)
+                                .put(", srcOffset=").put(sourceLo << shl)
+                                .put(", srcFileSize=").put(ff.length(sourceFd))
+                                .put(']');
+                    }
+                    if (commitMode != CommitMode.NOSYNC) {
+                        ff.fsync(fd);
+                    }
+                } else {
+                    long srcAddress = 0;
+                    long dstAddress = 0;
+                    try {
+                        srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, length, false, MEMORY_TAG);
+                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, length, true, MEMORY_TAG);
+
+                        Vect.memcpy(dstAddress, srcAddress, length);
+
+                        if (commitMode != CommitMode.NOSYNC) {
+                            ff.msync(dstAddress, length, commitMode == CommitMode.ASYNC);
+                        }
+                    } finally {
+                        if (srcAddress != 0) {
+                            TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, length, MEMORY_TAG);
+                        }
+                        if (dstAddress != 0) {
+                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, offset << shl, length, MEMORY_TAG);
+                        }
+                    }
                 }
             }
         } else {
@@ -104,11 +127,11 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, count << shl, true, MEMORY_TAG);
             try {
                 TableUtils.setNull(columnType, mappedAddress, count);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(mappedAddress, count << shl, commitMode == CommitMode.ASYNC);
+                }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset << shl, count << shl, MEMORY_TAG);
-            }
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.fsync(fd);
             }
         }
     }
