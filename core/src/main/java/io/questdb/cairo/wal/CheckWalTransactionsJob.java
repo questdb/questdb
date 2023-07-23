@@ -69,20 +69,26 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 ) == TableUtils.TABLE_EXISTS
         ) {
             // Dropped table
-            engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+            engine.notifyWalTxnCommitted(tableToken);
         } else {
-            threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
-            if (ff.exists(threadLocalPath)) {
-                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
-                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                    if (txReader2.getSeqTxn() < txn) {
-                        engine.notifyWalTxnCommitted(tableToken, txn);
-                    }
+            if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
+                if (engine.getTableSequencerAPI().notifyCommit(tableToken, txn)) {
+                    engine.notifyWalTxnCommitted(tableToken);
                 }
             } else {
-                // table is dropped, notify the JOB to delete the data
-                engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                if (ff.exists(threadLocalPath)) {
+                    threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                    try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
+                        TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                        if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader2.getSeqTxn(), txn)) {
+                            engine.notifyWalTxnCommitted(tableToken);
+                        }
+                    }
+                } else {
+                    // table is dropped, notify the JOB to delete the data
+                    engine.notifyWalTxnCommitted(tableToken);
+                }
             }
         }
     }
