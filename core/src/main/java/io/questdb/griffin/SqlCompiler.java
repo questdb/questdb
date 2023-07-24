@@ -12,6 +12,5 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     void compileBatch(CharSequence queryText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException;
 
-    // todo: consider moving QueryBuilder from SqlCompilerImpl elsewhere (SqlCompiler?)
-    SqlCompilerImpl.QueryBuilder query();
+    QueryBuilder query();
 }

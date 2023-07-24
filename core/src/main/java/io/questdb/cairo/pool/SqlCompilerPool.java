@@ -119,7 +119,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public SqlCompilerImpl.QueryBuilder query() {
+        public QueryBuilder query() {
             return delegate.query();
         }
 

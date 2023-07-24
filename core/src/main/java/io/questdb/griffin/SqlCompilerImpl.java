@@ -94,7 +94,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
-    private final QueryBuilder queryBuilder = new QueryBuilder();
+    private final QueryBuilder queryBuilder;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex;
@@ -129,6 +129,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
 
     public SqlCompilerImpl(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
         this.engine = engine;
+        this.queryBuilder = new QueryBuilder(this);
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.messageBus = engine.getMessageBus();
@@ -3424,34 +3425,6 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
 
         private SqlException parseErrorExpected(CharSequence expected) {
             return SqlException.$(lexer.lastTokenPosition(), "expected ").put(expected);
-        }
-    }
-
-    public class QueryBuilder implements Mutable {
-        private final StringSink sink = new StringSink();
-
-        public QueryBuilder $(CharSequence value) {
-            sink.put(value);
-            return this;
-        }
-
-        public QueryBuilder $(int value) {
-            sink.put(value);
-            return this;
-        }
-
-        @Override
-        public void clear() {
-            sink.clear();
-        }
-
-        public CompiledQuery compile(SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.compile(sink, executionContext);
-        }
-
-        @Override
-        public String toString() {
-            return sink.toString();
         }
     }
 
