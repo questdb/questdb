@@ -1,6 +1,5 @@
 package io.questdb.cairo.pool;
 
-import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.*;
@@ -20,14 +19,12 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     private static final TableToken TOKEN_RED = new TableToken("red", "/compilers/red/", 0, false);
     private static final TableToken[] TOKENS = {TOKEN_RED, TOKEN_BLUE, TOKEN_GREEN};
     private final CairoEngine engine;
-    private final FactoryProvider factoryProvider;
     private final Rnd rnd = new Rnd();
     private final DatabaseSnapshotAgent snapshotAgent;
 
-    public SqlCompilerPool(CairoEngine engine, FactoryProvider factoryProvider, DatabaseSnapshotAgent snapshotAgent) {
+    public SqlCompilerPool(CairoEngine engine, DatabaseSnapshotAgent snapshotAgent) {
         super(engine.getConfiguration(), MAX_POOL_SEGMENTS, INACTIVE_COMPILER_TTL_MILLIS);
         this.engine = engine;
-        this.factoryProvider = factoryProvider;
         this.snapshotAgent = snapshotAgent;
     }
 
@@ -47,12 +44,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
     @Override
     protected C newTenant(TableToken tableName, Entry<C> entry, int index) {
-        SqlCompilerImpl delegate = factoryProvider.getSqlCompilerFactory().getInstance(engine, engine.getFunctionFactoryCache(), snapshotAgent);
+        // todo: fix this method-train.
+        // why it looks like this: there is a life-cycle issue: when the SqlCompilerPool is constructed
+        // the configuration is not yet initialized thus getFactoryProvider returns null
+        // see PropServerConfiguration#init(CairoEngine engine, FunctionFactoryCache functionFactoryCache, FreeOnExit freeOnExit)
+        SqlCompilerImpl delegate = engine.getConfiguration().getFactoryProvider().getSqlCompilerFactory().getInstance(engine, engine.getFunctionFactoryCache(), snapshotAgent);
         return new C(delegate, this, tableName, entry, index);
     }
 
     public static class C implements PoolTenant, SqlCompiler {
-
         private final SqlCompiler delegate;
         private final int index;
         private Entry<C> entry;

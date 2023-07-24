@@ -161,7 +161,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
         // todo: propagate Snapshot Agent
-        this.sqlCompilerPool = new SqlCompilerPool(this, configuration.getFactoryProvider(), null);
+        this.sqlCompilerPool = new SqlCompilerPool(this, null);
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {

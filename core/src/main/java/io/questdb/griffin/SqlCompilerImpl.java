@@ -63,11 +63,11 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
-        public void postCompile(SqlCompilerImpl compiler, CompiledQuery cq, CharSequence queryText) {
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
         }
 
         @Override
-        public void preCompile(SqlCompilerImpl compiler) {
+        public void preCompile(SqlCompiler compiler) {
         }
     };
     private final static Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
