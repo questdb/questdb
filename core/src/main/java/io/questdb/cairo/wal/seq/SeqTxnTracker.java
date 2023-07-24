@@ -38,6 +38,10 @@ public class SeqTxnTracker {
     private volatile int suspendedState = 0;
     private volatile long writerTxn = -1;
 
+    public long getAppliedTxn() {
+        return writerTxn;
+    }
+
     public boolean initTxns(long writerTxn, long seqTxn, boolean isSuspended) {
         Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
         Unsafe.cas(this, SEQ_TXN_OFFSET, -1, seqTxn);

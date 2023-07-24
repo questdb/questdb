@@ -204,6 +204,12 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public SeqTxnTracker getSeqTxnTracker(TableToken tt) {
+        return seqTxnTrackers.computeIfAbsent(tt.getDirName(), dir -> {
+            return new SeqTxnTracker();
+        });
+    }
+
     public long getTableMetadata(final TableToken tableToken, final TableRecordMetadataSink sink) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             try {
@@ -391,12 +397,6 @@ public class TableSequencerAPI implements QuietCloseable {
                 sequencer.unlockWrite();
             }
         }
-    }
-
-    private SeqTxnTracker getSeqTxnTracker(TableToken tt) {
-        return seqTxnTrackers.computeIfAbsent(tt.getDirName(), dir -> {
-            return new SeqTxnTracker();
-        });
     }
 
     @NotNull

@@ -24,19 +24,19 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.network.YieldEvent;
 import io.questdb.network.YieldEventFactory;
-import io.questdb.std.FilesFacade;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 
 public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
@@ -44,100 +44,75 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
     // Used to pass arguments to avoid allocations due to capturing lambdas.
     private static final ThreadLocal<YieldEvent> tlEvent = new ThreadLocal<>();
     private static final ThreadLocal<ObjList<YieldEvent>> tlList = new ThreadLocal<>();
-    private final CharSequence dbRoot;
-    private final ConcurrentHashMap<TableToken, ObjList<YieldEvent>> events = new ConcurrentHashMap<>();
-    private final FilesFacade ff;
-    private final MillisecondClock millisecondClock;
-    private final BiFunction<TableToken, ObjList<YieldEvent>, ObjList<YieldEvent>> registerComputeRef = this::registerCompute;
-    private final long spinLockTimeout;
-    private final BiFunction<TableToken, ObjList<YieldEvent>, ObjList<YieldEvent>> takeRegisteredEventsComputeRef = this::takeRegisteredEventsCompute;
-    private final TxReader txReader;
+    private final ConcurrentHashMap<ObjList<YieldEvent>> events = new ConcurrentHashMap<>(false);
+    private final BiFunction<CharSequence, ObjList<YieldEvent>, ObjList<YieldEvent>> registerComputeRef = this::registerCompute;
+    private final TableSequencerAPI tableSequencerAPI;
+    private final BiFunction<CharSequence, ObjList<YieldEvent>, ObjList<YieldEvent>> takeRegisteredEventsComputeRef = this::takeRegisteredEventsCompute;
     private final YieldEventFactory yieldEventFactory;
 
-    public WalTxnYieldEventsImpl(@NotNull CairoConfiguration cairoConfiguration, @NotNull YieldEventFactory yieldEventFactory) {
-        this.dbRoot = cairoConfiguration.getRoot();
-        this.ff = cairoConfiguration.getFilesFacade();
-        this.txReader = new TxReader(ff);
-        this.millisecondClock = cairoConfiguration.getMillisecondClock();
-        this.spinLockTimeout = cairoConfiguration.getSpinLockTimeout();
+    public WalTxnYieldEventsImpl(@NotNull TableSequencerAPI tableSequencerAPI, @NotNull YieldEventFactory yieldEventFactory) {
+        this.tableSequencerAPI = tableSequencerAPI;
         this.yieldEventFactory = yieldEventFactory;
     }
 
     @Override
     public void close() {
-        for (Map.Entry<TableToken, ObjList<YieldEvent>> entry : events.entrySet()) {
+        for (Map.Entry<CharSequence, ObjList<YieldEvent>> entry : events.entrySet()) {
             Misc.freeObjListAndClear(entry.getValue());
         }
     }
 
     @Override
     public @Nullable YieldEvent register(TableToken tableToken, long txn) {
-        Path tlPath = Path.PATH.get().of(dbRoot);
-        tlPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
-        if (ff.exists(tlPath)) {
-            long currentTxn = readSeqTxn(tableToken, tlPath);
-            if (currentTxn == -1 || currentTxn >= txn) {
-                // The txn is already visible or the table is dropped.
-                return null;
-            }
-
-            final YieldEvent yieldEvent = yieldEventFactory.newInstance();
-            tlEvent.set(yieldEvent);
-            try {
-                events.compute(tableToken, registerComputeRef);
-            } finally {
-                tlEvent.set(null);
-            }
-
-            // Read the txn once again to make sure ApplyWal2TableJob sees our changes.
-            try {
-                currentTxn = readSeqTxn(tableToken, tlPath);
-            } catch (CairoException e) {
-                yieldEvent.close();
-                throw e;
-            }
-
-            if (currentTxn == -1 || currentTxn >= txn) {
-                // The txn is already visible or the table is dropped, so we close the event
-                // and pretend it never existed. The event will be triggered and closed one
-                // more time later either after takeRegisteredEvents() or by close().
-                yieldEvent.close();
-                return null;
-            }
-            return yieldEvent;
+        // TODO we don't handle table dropped vs. tracker not initialized scenarios here properly
+        long currentTxn = readSeqTxn(tableToken);
+        if (currentTxn == -1 || currentTxn >= txn) {
+            // The txn is already visible or the table is dropped.
+            return null;
         }
-        // The table is dropped.
-        return null;
+
+        final YieldEvent yieldEvent = yieldEventFactory.newInstance();
+        tlEvent.set(yieldEvent);
+        try {
+            events.compute(tableToken.getDirName(), registerComputeRef);
+        } finally {
+            tlEvent.set(null);
+        }
+
+        // Read the txn once again to make sure ApplyWal2TableJob sees our changes.
+        try {
+            currentTxn = readSeqTxn(tableToken);
+        } catch (CairoException e) {
+            yieldEvent.close();
+            throw e;
+        }
+
+        if (currentTxn == -1 || currentTxn >= txn) {
+            // The txn is already visible or the table is dropped, so we close the event
+            // and pretend it never existed. The event will be triggered and closed one
+            // more time later either after takeRegisteredEvents() or by close().
+            yieldEvent.close();
+            return null;
+        }
+        return yieldEvent;
     }
 
     @Override
     public void takeRegisteredEvents(TableToken tableToken, ObjList<YieldEvent> dest) {
         tlList.set(dest);
         try {
-            events.computeIfPresent(tableToken, takeRegisteredEventsComputeRef);
+            events.computeIfPresent(tableToken.getDirName(), takeRegisteredEventsComputeRef);
         } finally {
             tlList.set(null);
         }
     }
 
-    private long readSeqTxn(TableToken tableToken, Path path) {
-        path.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-        try {
-            try (TxReader txReader2 = txReader.ofRO(path, PartitionBy.NONE)) {
-                TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                return txReader2.getSeqTxn();
-            }
-        } catch (CairoException e) {
-            if (e.getErrno() == 0) {
-                // This must be read timeout, so there is not so much we can do.
-                throw e;
-            }
-            // The table must have been dropped, so we have nothing to wait for.
-            return -1;
-        }
+    private long readSeqTxn(TableToken tableToken) {
+        final SeqTxnTracker seqTxnTracker = tableSequencerAPI.getSeqTxnTracker(tableToken);
+        return seqTxnTracker.getAppliedTxn();
     }
 
-    private ObjList<YieldEvent> registerCompute(TableToken tableToken, ObjList<YieldEvent> list) {
+    private ObjList<YieldEvent> registerCompute(CharSequence dir, ObjList<YieldEvent> list) {
         if (list == null) {
             list = new ObjList<>();
         }
@@ -146,7 +121,7 @@ public class WalTxnYieldEventsImpl implements WalTxnYieldEvents {
         return list;
     }
 
-    private ObjList<YieldEvent> takeRegisteredEventsCompute(TableToken tableToken, ObjList<YieldEvent> list) {
+    private ObjList<YieldEvent> takeRegisteredEventsCompute(CharSequence dir, ObjList<YieldEvent> list) {
         ObjList<YieldEvent> dest = tlList.get();
         dest.addAll(list);
         list.clear();
