@@ -26,7 +26,6 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlWalMode;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.YieldException;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -68,6 +67,7 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
     public void setUp() {
         super.setUp();
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        engine.setTableCreatedTxn(42);
     }
 
     @Test
@@ -219,11 +219,6 @@ public class LineTcpYieldTest extends AbstractLineTcpReceiverTest {
         public TestSecurityContext(TestYieldEventFactory factory, int yieldCount) {
             this.factory = factory;
             this.yieldCount = yieldCount;
-        }
-
-        @Override
-        public long onTableCreated(TableToken tableToken) {
-            return 42;
         }
 
         @Override

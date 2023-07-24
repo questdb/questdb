@@ -29,7 +29,6 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
@@ -73,7 +72,7 @@ public class QuestDBTestNode {
         return cairo.overrides;
     }
 
-    public CairoEngine getEngine() {
+    public TestCairoEngine getEngine() {
         return cairo.engine;
     }
 
@@ -155,7 +154,7 @@ public class QuestDBTestNode {
         private final ConfigurationOverrides overrides;
         private final boolean ownRoot;
         private final CharSequence root;
-        private CairoEngine engine;
+        private TestCairoEngine engine;
         private DatabaseSnapshotAgent snapshotAgent;
 
         private Cairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
@@ -171,7 +170,7 @@ public class QuestDBTestNode {
 
             configuration = new CairoTestConfiguration(root, telemetryConfiguration, overrides);
             metrics = Metrics.enabled();
-            engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
+            engine = new TestCairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
             snapshotAgent = new DatabaseSnapshotAgent(engine);
             messageBus = engine.getMessageBus();
         }

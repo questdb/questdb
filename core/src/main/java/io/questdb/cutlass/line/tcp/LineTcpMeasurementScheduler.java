@@ -400,7 +400,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             tud.commit(false);
                             try {
                                 writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
-                                securityContext.onColumnAdded(tud.getTableToken(), columnNameUtf16);
+                                tud.getEngine().onColumnAdded(securityContext, tud.getTableToken(), columnNameUtf16);
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                             } catch (CairoException e) {
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
@@ -757,7 +757,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     }
                     securityContext.authorizeLineTableCreate();
                     tableToken = engine.createTableInsecure(ddlMem, path, true, tsa, false, false);
-                    final long txn = securityContext.onTableCreated(tableToken);
+                    final long txn = engine.onTableCreated(securityContext, tableToken);
                     if (txn != -1) {
                         ctx.startWaitingForPermissions(txn);
                     }

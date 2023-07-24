@@ -83,7 +83,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     @Override
     public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
-    
+
     @Override
     public void authorizeAlterTableSetDedup(TableToken tableToken) {
     }
@@ -221,16 +221,8 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void onColumnAdded(TableToken tableToken, CharSequence columnName) {
-    }
-
-    @Override
-    public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    @Override
-    public long onTableCreated(TableToken tableToken) {
-        return -1;
+    public String getPrincipal() {
+        return null;
     }
 
     @Override

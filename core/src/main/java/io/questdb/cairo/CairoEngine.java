@@ -208,7 +208,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeTableCreate();
         final TableToken tableToken = createTableInsecure(mem, path, ifNotExists, struct, keepLock, false);
-        securityContext.onTableCreated(tableToken);
+        onTableCreated(securityContext, tableToken);
         return tableToken;
     }
 
@@ -222,7 +222,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeTableCreate();
         final TableToken tableToken = createTableInsecure(mem, path, ifNotExists, struct, keepLock, true);
-        securityContext.onTableCreated(tableToken);
+        onTableCreated(securityContext, tableToken);
         return tableToken;
     }
 
@@ -647,6 +647,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void notifyWalTxnRepublisher() {
         unpublishedWalTxnCount.incrementAndGet();
+    }
+
+    public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+    }
+
+    // returns txn number to wait for
+    public long onTableCreated(SecurityContext securityContext, TableToken tableToken) {
+        return -1;
     }
 
     public void registerTableToken(TableToken tableToken) {

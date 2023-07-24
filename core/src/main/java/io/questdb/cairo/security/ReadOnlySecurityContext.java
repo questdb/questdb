@@ -266,16 +266,8 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void onColumnAdded(TableToken tableToken, CharSequence columnName) {
-    }
-
-    @Override
-    public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    @Override
-    public long onTableCreated(TableToken tableToken) {
-        return -1;
+    public String getPrincipal() {
+        return null;
     }
 
     @Override

@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnIndexerJob;
-import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.*;
@@ -74,10 +71,10 @@ public class ServerMain implements Closeable {
     }
 
     public ServerMain(final Bootstrap bootstrap) {
-        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner());
+        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner(), bootstrap.getCairoEngineFactory());
     }
 
-    public ServerMain(final ServerConfiguration config, final Metrics metrics, final Log log, String banner) {
+    public ServerMain(final ServerConfiguration config, final Metrics metrics, final Log log, String banner, CairoEngineFactory cairoEngineFactory) {
         this.config = config;
         this.log = log;
         this.banner = banner;
@@ -86,7 +83,7 @@ public class ServerMain implements Closeable {
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(config.getLineTcpReceiverConfiguration().getDispatcherConfiguration());
         final WalTxnYieldEvents walTxnYieldEvents = new WalTxnYieldEventsImpl(cairoConfig, yieldEventFactory);
-        engine = freeOnExit.register(new CairoEngine(cairoConfig, walTxnYieldEvents, metrics));
+        engine = freeOnExit.register(cairoEngineFactory.createInstance(cairoConfig, walTxnYieldEvents, metrics));
 
         // obtain function factory cache
         FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();

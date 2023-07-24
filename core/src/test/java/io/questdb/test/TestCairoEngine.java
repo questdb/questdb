@@ -22,23 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.test;
 
-import io.questdb.cairo.CairoEngineFactory;
-import io.questdb.std.FilesFacade;
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalTxnYieldEvents;
+import org.jetbrains.annotations.NotNull;
 
-import java.util.Map;
+public class TestCairoEngine extends CairoEngine {
+    private long tableCreatedTxn = -1;
 
-public interface BootstrapConfiguration {
-    String getBanner();
+    public TestCairoEngine(@NotNull CairoConfiguration configuration, @NotNull WalTxnYieldEvents walTxnYieldEvents, @NotNull Metrics metrics) {
+        super(configuration, walTxnYieldEvents, metrics);
+    }
 
-    Map<String, String> getEnv();
+    @Override
+    public long onTableCreated(SecurityContext securityContext, TableToken tableToken) {
+        return tableCreatedTxn;
+    }
 
-    FilesFacade getFilesFacade();
-
-    CairoEngineFactory getCairoEngineFactory();
-
-    ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception;
-
-    boolean useSite();
+    public void setTableCreatedTxn(long tableCreatedTxn) {
+        this.tableCreatedTxn = tableCreatedTxn;
+    }
 }

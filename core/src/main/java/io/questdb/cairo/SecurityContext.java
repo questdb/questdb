@@ -131,12 +131,7 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
-    void onColumnAdded(TableToken tableToken, CharSequence columnName);
-
-    void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
-
-    // returns txn number to wait for
-    long onTableCreated(TableToken tableToken);
+    String getPrincipal();
 
     // throws YieldException if the txn is not yet visible for table readers
     void yieldUntilTxn(long txn) throws YieldException;
