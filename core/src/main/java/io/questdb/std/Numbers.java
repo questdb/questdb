@@ -745,6 +745,10 @@ public final class Numbers {
         return Numbers.LONG_NaN;
     }
 
+    public static long ipv4ToLong(int value) {
+        return value & (-1L >>> 32);
+    }
+
     public static long interleaveBits(long x, long y) {
         return spreadBits(x) | (spreadBits(y) << 1);
     }

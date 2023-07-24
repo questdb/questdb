@@ -168,6 +168,15 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
+    public long getLongIPv4(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return Numbers.ipv4ToLong(reader.getColumn(absoluteColumnIndex).getIPv4(offset));
+    }
+
+    @Override
     public long getLong(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
