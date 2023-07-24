@@ -111,6 +111,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
         return GeoHashes.SHORT_NULL;
     }
 
+    @Override
     public int getIPv4(Record rec) {
         return IPv4Constant.NULL.getIPv4(null);
     }
