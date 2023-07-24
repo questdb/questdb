@@ -7124,7 +7124,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "ZOU\t65.90341607692226\t1970-01-03T15:00:00.000000Z\n" +
                         "\t32.5403220015421\t1970-01-03T18:00:00.000000Z\n" +
                         "YCT\t57.78947915182423\t1970-01-03T18:00:00.000000Z\n",
-                // we have 'sample by fill(none)' because it doesn't support
                 // random record access, which is what we intend on testing
                 "select b, sum(a), k from x sample by 3h fill(none) order by k,b",
                 "create table x as " +
@@ -9128,6 +9127,33 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.3\t0.0.0.3\n" +
                 "0.0.0.4\t0.0.0.4\n" +
                 "0.0.0.5\t0.0.0.5\n");
+    }
+
+    @Test
+    public void testUpdateTableStringToIPv4Wal() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test as (" +
+                    "select " +
+                    " rnd_ipv4::string col1, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+
+            compile("alter table test add column col2 ipv4", sqlExecutionContext);
+            compile("update test set col2 = col1", sqlExecutionContext);
+
+            drainWalQueue();
+
+            String allRows = "col1\tts\tcol2\n" +
+                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\t187.139.150.80\n" +
+                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\t18.206.96.238\n" +
+                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\t92.80.211.65\n" +
+                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29\n" +
+                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21\n";
+
+            assertSql("test", allRows);
+        });
     }
 
     @Test
