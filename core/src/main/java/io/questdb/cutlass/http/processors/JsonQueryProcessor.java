@@ -425,6 +425,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
                     state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
                     state.setQueryType(cc.getType());
+                    // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
+                    // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
+                    // the CompilerQuery is used as a flyweight(?) and we cannot return the SqlCompiler instance to the pool
+                    // until we extract the result from the CompilerQuery.
                     queryExecutors.getQuick(cc.getType()).execute(
                             state,
                             cc,
