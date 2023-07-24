@@ -6,19 +6,31 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 
-public class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
-    private final TableToken RED_TOKEN = new TableToken("red", "/compilers/red/", 0, false);
+public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
+    private static final long INACTIVE_COMPILER_TTL_MILLIS = 5 * 60 * 1000L; // 5 minutes
+    // todo: consider making the constants configurable
+    private static final int MAX_POOL_SEGMENTS = 64;
+
+    // todo: are you sure there are no side effects here? for example the dirName? at very least it's being logged
+    // by the pool and that's confusing
+    private static final TableToken RED_TOKEN = new TableToken("red", "/compilers/red/", 0, false);
     private final CairoEngine engine;
     private final DatabaseSnapshotAgent snapshotAgent;
 
     public SqlCompilerPool(CairoEngine engine, DatabaseSnapshotAgent snapshotAgent) {
-        super(engine.getConfiguration());
+        super(engine.getConfiguration(), MAX_POOL_SEGMENTS, INACTIVE_COMPILER_TTL_MILLIS);
         this.engine = engine;
         this.snapshotAgent = snapshotAgent;
     }
 
     public C get() {
-        return super.get(RED_TOKEN);
+        return super.get(getRandToken());
+    }
+
+    private static TableToken getRandToken() {
+        // todo: implement actual token selection
+        // maybe random, maybe round robin, maybe something else
+        return RED_TOKEN;
     }
 
     @Override
@@ -86,7 +98,9 @@ public class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> 
 
         @Override
         public void refresh() {
-
+            // todo: is this correct? should we be doing this?
+            // and if so then perhaps we should do this while returning the compiler to the pool?
+            this.clear();
         }
 
         @Override

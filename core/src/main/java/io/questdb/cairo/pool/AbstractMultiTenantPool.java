@@ -53,9 +53,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     private final int maxEntries;
     private final int maxSegments;
 
-    public AbstractMultiTenantPool(CairoConfiguration configuration) {
-        super(configuration, configuration.getInactiveReaderTTL());
-        this.maxSegments = configuration.getReaderPoolMaxSegments();
+    public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
+        super(configuration, inactiveTtlMillis);
+        this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
