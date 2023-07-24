@@ -24,20 +24,19 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnIndexerJob;
-import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
-import io.questdb.cutlass.auth.EllipticCurveLineAuthenticatorFactory;
+import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
@@ -49,10 +48,12 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.CharSequenceObjHashMap;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.File;
+import java.security.PublicKey;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
@@ -60,27 +61,27 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ServerConfiguration config;
     private final CairoEngine engine;
+    private final FreeOnExit freeOnExit = new FreeOnExit();
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
-    private final FreeOnExit freeOnExit = new FreeOnExit();
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
     }
 
     public ServerMain(final Bootstrap bootstrap) {
-        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner());
+        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner(), bootstrap.getCairoEngineFactory());
     }
 
-    public ServerMain(final ServerConfiguration config, final Metrics metrics, final Log log, String banner) {
+    public ServerMain(final ServerConfiguration config, final Metrics metrics, final Log log, String banner, CairoEngineFactory cairoEngineFactory) {
         this.config = config;
         this.log = log;
         this.banner = banner;
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit.register(new CairoEngine(cairoConfig, metrics));
+        engine = freeOnExit.register(cairoEngineFactory.createInstance(cairoConfig, metrics));
 
         // obtain function factory cache
         FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
@@ -223,9 +224,11 @@ public class ServerMain implements Closeable {
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
             // we need "root/" here, not "root/db/"
             final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
-            authenticatorFactory = new EllipticCurveLineAuthenticatorFactory(
+            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
+            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
+            authenticatorFactory = new EllipticCurveAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath()
+                    new StaticChallengeResponseMatcher(authDb)
             );
         } else {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;

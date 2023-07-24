@@ -125,7 +125,7 @@ class LineTcpMeasurementEvent implements Closeable {
     void append() throws CommitFailedException {
         TableWriter.Row row = null;
         try {
-            TableWriterAPI writer = tableUpdateDetails.getWriter();
+            final TableWriterAPI writer = tableUpdateDetails.getWriter();
             long offset = buffer.getAddress();
             final long metadataVersion = buffer.readLong(offset);
             offset += Long.BYTES;
@@ -300,7 +300,8 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
-        this.tableUpdateDetails = tud;
+        tableUpdateDetails = tud;
+        securityContext.authorizeLineInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -314,7 +315,7 @@ class LineTcpMeasurementEvent implements Closeable {
             LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
             byte entityType = entity.getType();
             int colType;
-            int columnWriterIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
+            int columnWriterIndex = localDetails.getColumnWriterIndex(entity.getName(), parser.hasNonAsciiChars());
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
@@ -328,8 +329,9 @@ class LineTcpMeasurementEvent implements Closeable {
                 // send column by name
                 final String colNameUtf16 = localDetails.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
-                    securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
+                    securityContext.authorizeLineAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16);
+                    tud.getEngine().onColumnAdded(securityContext, tud.getTableToken(), colNameUtf16);
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(tableUpdateDetails, colNameUtf16);

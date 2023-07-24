@@ -31,12 +31,11 @@ import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.stream.IntStream;
 
 /**
  * A garbage-collected immutable UTF-8 string over owned native memory, originating from a Java String.
  */
-public class GcUtf8String implements Utf8Native {
+public class GcUtf8String implements DirectUtf8Sequence {
     private static final long BUFFER_ADDRESS_OFFSET;
     @SuppressWarnings("FieldCanBeLocal")  // We need to hold a reference to `buffer` or it will be GC'd.
     private final ByteBuffer buffer;  // We use a ByteBuffer here, instead of a ptr, to avoid Closeable requirement.

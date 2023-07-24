@@ -45,7 +45,7 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
+        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity, false);
         return true;
     }
 }

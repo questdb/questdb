@@ -38,6 +38,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -54,6 +55,8 @@ public class TableUpdateDetails implements Closeable {
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
+    // Set only for WAL tables, i.e. when writerThreadId == -1.
+    private final SecurityContext ownSecurityContext;
     private final ByteCharSequence tableNameUtf8;
     private final TableToken tableToken;
     private final int timestampIndex;
@@ -73,6 +76,7 @@ public class TableUpdateDetails implements Closeable {
     public TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
+            @Nullable SecurityContext ownSecurityContext,
             TableWriterAPI writer,
             int writerThreadId,
             NetworkIOJob[] netIoJobs,
@@ -81,6 +85,7 @@ public class TableUpdateDetails implements Closeable {
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
+        this.ownSecurityContext = ownSecurityContext;
         this.defaultColumnTypes = defaultColumnTypes;
         final CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
@@ -104,6 +109,10 @@ public class TableUpdateDetails implements Closeable {
             );
         }
         this.tableNameUtf8 = tableNameUtf8;
+    }
+
+    CairoEngine getEngine() {
+        return engine;
     }
 
     public void addReference(int workerId) {
@@ -135,8 +144,9 @@ public class TableUpdateDetails implements Closeable {
         if (writerThreadId != Integer.MIN_VALUE) {
             LOG.info().$("closing table writer [tableName=").$(tableToken).$(']').$();
             closeLocals();
-            if (null != writerAPI) {
+            if (writerAPI != null) {
                 try {
+                    authorizeWalCommit();
                     writerAPI.commit();
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
@@ -157,7 +167,12 @@ public class TableUpdateDetails implements Closeable {
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
-                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
+                LOG.debug()
+                        .$("time-based commit ").$(withLag ? "with lag " : "")
+                        .$("[rows=").$(writerAPI.getUncommittedRowCount())
+                        .$(", table=").$(tableToken)
+                        .I$();
+                authorizeWalCommit();
                 if (withLag) {
                     writerAPI.ic();
                 } else {
@@ -252,6 +267,12 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    private void authorizeWalCommit() {
+        if (ownSecurityContext != null) {
+            ownSecurityContext.authorizeLineInsert(tableToken);
+        }
+    }
+
     private long getMetaMaxUncommittedRows() {
         if (metadataService != null) {
             return metadataService.getMetaMaxUncommittedRows();
@@ -331,10 +352,11 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
+                    authorizeWalCommit();
                     writerAPI.commit();
                 }
             } catch (Throwable ex) {
-                LOG.error().$("writer commit fails, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
+                LOG.error().$("writer commit failed, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
             } finally {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
@@ -445,7 +467,7 @@ public class TableUpdateDetails implements Closeable {
 
         private int getColumnIndex0(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
             // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
-            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
+            final CharSequence colNameUtf16 = utf8toUtf16(colNameUtf8, hasNonAsciiChars);
             final int index = addedColsUtf16.keyIndex(colNameUtf16);
             if (index > -1) {
                 // column has not been sent to the writer by name on this line before
@@ -469,7 +491,7 @@ public class TableUpdateDetails implements Closeable {
                 }
                 // cannot not resolve column index even from the reader
                 // column will be passed to the writer by name
-                this.colNameUtf16 = colNameUtf16.toString();
+                this.colNameUtf16 = Chars.toString(colNameUtf16);
                 this.colNameUtf8 = onHeapColNameUtf8;
                 addedColsUtf16.addAt(index, this.colNameUtf16);
                 return COLUMN_NOT_FOUND;
@@ -517,8 +539,8 @@ public class TableUpdateDetails implements Closeable {
                     geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
 
-        void addColumnType(int colIndex, int colType) {
-            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) colIndex));
+        void addColumnType(int columnWriterIndex, int colType) {
+            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) columnWriterIndex));
         }
 
         void clear() {
@@ -538,8 +560,8 @@ public class TableUpdateDetails implements Closeable {
             if (txReader != null) {
                 txReader.clear();
             }
-            this.clean = true;
-            this.latestKnownMetadata = Misc.free(latestKnownMetadata);
+            clean = true;
+            latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
         void clearColumnTypes() {
@@ -561,14 +583,31 @@ public class TableUpdateDetails implements Closeable {
             return colNameUtf8;
         }
 
+        int getColumnType(int colIndex) {
+            return columnTypes.getQuick(colIndex);
+        }
+
+        int getColumnType(ByteCharSequence colName, byte entityType) {
+            int colType = columnTypeByNameUtf8.get(colName);
+            if (colType < 0) {
+                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                columnTypeByNameUtf8.put(colName, colType);
+            }
+            return colType;
+        }
+
+        int getColumnTypeMeta(int colIndex) {
+            return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
+        }
+
         // returns the column index for column name passed in colNameUtf8,
         // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
         // or DUPLICATED_COLUMN if the column has already been processed on the current event
-        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
+        int getColumnWriterIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
             int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
             if (colWriterIndex < 0) {
                 // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
-                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
+                final CharSequence colNameUtf16 = utf8toUtf16(colNameUtf8, hasNonAsciiChars);
                 final int index = addedColsUtf16.keyIndex(colNameUtf16);
                 if (index > -1) {
                     // column has not been sent to the writer by name on this line before
@@ -585,7 +624,7 @@ public class TableUpdateDetails implements Closeable {
                     } else {
                         // cannot not resolve column index even from the reader
                         // column will be passed to the writer by name
-                        this.colNameUtf16 = colNameUtf16.toString();
+                        this.colNameUtf16 = Chars.toString(colNameUtf16);
                         this.colNameUtf8 = onHeapColNameUtf8;
                         addedColsUtf16.addAt(index, this.colNameUtf16);
                         return COLUMN_NOT_FOUND;
@@ -603,7 +642,7 @@ public class TableUpdateDetails implements Closeable {
             return colWriterIndex;
         }
 
-        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+        int getColumnWriterIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
             final int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
             if (colWriterIndex < 0) {
                 // Hot path optimisation to allow the body of the current method to be small
@@ -616,23 +655,6 @@ public class TableUpdateDetails implements Closeable {
                 return DUPLICATED_COLUMN;
             }
             return colWriterIndex;
-        }
-
-        int getColumnType(int colIndex) {
-            return columnTypes.getQuick(colIndex);
-        }
-
-        int getColumnType(ByteCharSequence colName, byte entityType) {
-            int colType = columnTypeByNameUtf8.get(colName);
-            if (colType < 0) {
-                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
-                columnTypeByNameUtf8.put(colName, colType);
-            }
-            return colType;
-        }
-
-        int getColumnTypeMeta(int colIndex) {
-            return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
         }
 
         long getMetadataVersion() {
@@ -651,6 +673,11 @@ public class TableUpdateDetails implements Closeable {
                 return addSymbolCache(columnIndex);
             }
             return NOT_FOUND_LOOKUP;
+        }
+
+        void removeFromCaches(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
+            columnIndexByNameUtf8.remove(colNameUtf8);
+            addedColsUtf16.remove(utf8toUtf16(colNameUtf8, hasNonAsciiChars));
         }
 
         void resetStateIfNecessary() {
@@ -677,6 +704,10 @@ public class TableUpdateDetails implements Closeable {
                     }
                 }
             }
+        }
+
+        CharSequence utf8toUtf16(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
+            return utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
         }
     }
 }

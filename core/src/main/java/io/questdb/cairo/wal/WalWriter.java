@@ -37,6 +37,7 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -162,7 +163,8 @@ public class WalWriter implements TableWriterAPI {
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
-                configuration.getIndexValueBlockSize()
+                configuration.getIndexValueBlockSize(),
+                false
         );
     }
 
@@ -173,7 +175,8 @@ public class WalWriter implements TableWriterAPI {
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isDedupKey
     ) {
         alterOp.clear();
         alterOp.ofAddColumn(
@@ -186,7 +189,8 @@ public class WalWriter implements TableWriterAPI {
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
-                indexValueBlockCapacity
+                indexValueBlockCapacity,
+                isDedupKey
         );
         apply(alterOp, true);
     }
@@ -1455,7 +1459,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                SqlExecutionContext executionContext
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1541,7 +1546,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                SqlExecutionContext executionContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
@@ -1577,6 +1583,10 @@ public class WalWriter implements TableWriterAPI {
 
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
+                    }
+
+                    if (executionContext != null) {
+                        executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), metadata.getTableToken(), columnName);
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {
@@ -1740,6 +1750,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -1752,21 +1767,21 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
         }
 
         @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
         }
 
         @Override
@@ -1859,6 +1874,11 @@ public class WalWriter implements TableWriterAPI {
             putSym(columnIndex, str);
         }
 
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            putInt(columnIndex, key);
+        }
+
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
             // this method will write column name to the buffer if it has to be utf8 decoded
             // otherwise it will write nothing.
@@ -1880,6 +1900,11 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw new UnsupportedOperationException();
             }
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
         @Override

@@ -37,6 +37,7 @@ import java.util.Arrays;
 import static io.questdb.std.Numbers.hexDigits;
 
 public final class Chars {
+    static final String[] CHAR_STRINGS;
     static final char[] base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
     // inverted alphabets for base64 decoding could be just byte arrays. this would save 3 * 128 bytes per alphabet
     // but benchmarks show that int arrays make decoding faster.
@@ -853,6 +854,13 @@ public final class Chars {
         }
     }
 
+    public static String toString(char value) {
+        if (value < CHAR_STRINGS.length) {
+            return CHAR_STRINGS[value];
+        }
+        return Character.toString(value);
+    }
+
     public static String toString(CharSequence s) {
         return s == null ? null : s.toString();
     }
@@ -1437,5 +1445,12 @@ public final class Chars {
 
     private static int utf8error() {
         return -1;
+    }
+
+    static {
+        CHAR_STRINGS = new String[128];
+        for (char c = 0; c < 128; c++) {
+            CHAR_STRINGS[c] = Character.toString(c);
+        }
     }
 }
