@@ -14,10 +14,13 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     private static final int MAX_POOL_SEGMENTS = 64;
     // todo: are you sure there are no side effects here? for example the dirName? at very least it's being logged
     // by the pool and that's confusing
-    private static final TableToken TOKEN_BLUE = new TableToken("blue", "/compilers/blue/", 0, false);
-    private static final TableToken TOKEN_GREEN = new TableToken("green", "/compilers/green/", 0, false);
-    private static final TableToken TOKEN_RED = new TableToken("red", "/compilers/red/", 0, false);
-    private static final TableToken[] TOKENS = {TOKEN_RED, TOKEN_BLUE, TOKEN_GREEN};
+    // note: we should not use too many colours otherwise the pool might create more compiler instances
+    // then with no pooling at all. This is because we have to have a separate compiler for each colour.
+    private static final TableToken[] TOKENS = {
+            new TableToken("blue", "/compilers/blue/", 0, false),
+            new TableToken("red", "/compilers/red/", 0, false),
+            new TableToken("green", "/compilers/green/", 0, false)
+    };
     private final CairoEngine engine;
     private final Rnd rnd = new Rnd();
     private final DatabaseSnapshotAgent snapshotAgent;
@@ -52,7 +55,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         return new C(delegate, this, tableName, entry, index);
     }
 
-    public static class C implements PoolTenant, SqlCompiler {
+    static class C implements PoolTenant, SqlCompiler {
         private final SqlCompiler delegate;
         private final int index;
         private Entry<C> entry;
@@ -97,6 +100,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             delegate.compileBatch(queryText, sqlExecutionContext, batchCallback);
         }
 
+        @SuppressWarnings("unchecked")
         @Override
         public Entry<C> getEntry() {
             return entry;
