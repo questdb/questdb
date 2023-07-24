@@ -430,6 +430,21 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public long reserveForUtf8Write(int byteCount) {
+            return buffer.getWriteAddress(byteCount);
+        }
+
+        @Override
+        public int availForUtf8Write() {
+            return Math.toIntExact(buffer.getWriteNAvailable());
+        }
+
+        @Override
+        public void advanceUtf8WriteAddr(int byteCount) {
+            buffer.onWrite(byteCount);
+        }
+
+        @Override
         public boolean resetToBookmark() {
             buffer._wptr = bookmark;
             return bookmark != buffer.bufStartOfData;
