@@ -57,9 +57,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
-    private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int doubleScale;
+    private final CairoEngine engine;
     private final int floatScale;
     private final Metrics metrics;
     private final SqlExecutionContextImpl sqlExecutionContext;
@@ -82,18 +82,17 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
         this.configuration = configuration;
-        this.compiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
         this.doubleScale = configuration.getDoubleScale();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
+        this.engine = engine;
     }
 
     @Override
     public void close() {
-        Misc.free(compiler);
         Misc.free(circuitBreaker);
     }
 
@@ -115,17 +114,19 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     circuitBreaker.of(context.getFd())
             );
             if (state.recordCursorFactory == null) {
-                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
-                    state.recordCursorFactory = cc.getRecordCursorFactory();
-                } else if (isExpRequest) {
-                    throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                    if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
+                        state.recordCursorFactory = cc.getRecordCursorFactory();
+                    } else if (isExpRequest) {
+                        throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                    }
+                    info(state).$("execute-new [q=`").utf8(state.query)
+                            .$("`, skip: ").$(state.skip)
+                            .$(", stop: ").$(state.stop)
+                            .I$();
+                    sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 }
-                info(state).$("execute-new [q=`").utf8(state.query)
-                        .$("`, skip: ").$(state.skip)
-                        .$(", stop: ").$(state.stop)
-                        .I$();
-                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
             } else {
                 info(state).$("execute-cached [q=`").utf8(state.query)
                         .$("`, skip: ").$(state.skip)
@@ -147,12 +148,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             }
                             info(state).$(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
-                            final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                            if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
-                                throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                                if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
+                                    throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                                }
+                                state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
-
-                            state.recordCursorFactory = cc.getRecordCursorFactory();
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();

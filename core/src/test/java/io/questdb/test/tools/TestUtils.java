@@ -27,7 +27,6 @@ package io.questdb.test.tools;
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -562,16 +561,24 @@ public final class TestUtils {
 
         // Checks that the same tag used for allocation and freeing native memory
         long memAfter = Unsafe.getMemUsed();
+        long memNativeJitDiff = 0;
         Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
-                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
-                    Assert.assertTrue(actualMemByTag > -1);
+//                    if (i != MemoryTag.NATIVE_JIT) {
+                        Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
+                        Assert.assertTrue(actualMemByTag > -1);
+//                    } else {
+                        // JIT memory is not released immediately
+                        // todo: Can we do better than this? This is too fragile and prone to false positives
+//                        Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+//                        memNativeJitDiff = actualMemByTag - memoryUsageByTag[i];
+//                    }
                 }
             }
-            Assert.assertEquals(mem, memAfter);
+            Assert.assertEquals(mem + memNativeJitDiff, memAfter);
         }
 
         int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();

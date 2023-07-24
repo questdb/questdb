@@ -26,7 +26,6 @@ package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -36,10 +35,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -64,7 +64,7 @@ public class EmbeddedApiTest {
                 // Create table upfront, so that reader sees it
                 try (
                         final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                        final SqlCompiler compiler = new SqlCompiler(engine)
+                        final SqlCompiler compiler = engine.getSqlCompiler()
                 ) {
                     compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
                 }

@@ -530,7 +530,7 @@ public class TableBackupTest {
 
     private void drainWalQueue(CairoEngine engine) {
         if (isWal) {
-            try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
                 walApplyJob.drain(0);
                 new CheckWalTransactionsJob(engine).run(0);
                 walApplyJob.drain(0);

@@ -42,6 +42,7 @@ import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -75,6 +76,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MetadataPool metadataPool;
     private final Metrics metrics;
     private final ReaderPool readerPool;
+    private final SqlCompilerPool sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
@@ -158,6 +160,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         }
+        // todo: propagate Snapshot Agent
+        this.sqlCompilerPool = new SqlCompilerPool(this, null);
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
@@ -171,12 +175,14 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b3 = tableSequencerAPI.releaseAll();
         boolean b4 = metadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
+        boolean b6 = sqlCompilerPool.releaseAll();
         messageBus.reset();
-        return b1 & b2 & b3 & b4 & b5;
+        return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
     @Override
     public void close() {
+        Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
         Misc.free(readerPool);
         Misc.free(metadataPool);
@@ -441,6 +447,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$(", error=").$(e.getMessage()).I$();
             throw e;
         }
+    }
+
+    public SqlCompiler getSqlCompiler() {
+        return sqlCompilerPool.get();
     }
 
     public IDGenerator getTableIdGenerator() {

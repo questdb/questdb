@@ -61,7 +61,6 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private ParallelCsvFileImporter parallelImporter;
     private Path path;
     private SerialCsvFileImporter serialImporter;
-    private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private CopyRequestTask task;
     private TableWriter writer;
@@ -80,28 +79,29 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
 
-        this.sqlCompiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        this.statusTableToken = this.sqlCompiler.query()
-                .$("CREATE TABLE IF NOT EXISTS \"")
-                .$(statusTableName)
-                .$("\" (" +
-                        "ts timestamp, " + // 0
-                        "id string, " + // 1
-                        "table symbol, " + // 2
-                        "file symbol, " + // 3
-                        "phase symbol, " + // 4
-                        "status symbol, " + // 5
-                        "message string," + // 6
-                        "rows_handled long," + // 7
-                        "rows_imported long," + // 8
-                        "errors long" + // 9
-                        ") timestamp(ts) partition by DAY BYPASS WAL"
-                )
-                .compile(sqlExecutionContext)
-                .getTableToken();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            this.statusTableToken = compiler.query()
+                    .$("CREATE TABLE IF NOT EXISTS \"")
+                    .$(statusTableName)
+                    .$("\" (" +
+                            "ts timestamp, " + // 0
+                            "id string, " + // 1
+                            "table symbol, " + // 2
+                            "file symbol, " + // 3
+                            "phase symbol, " + // 4
+                            "status symbol, " + // 5
+                            "message string," + // 6
+                            "rows_handled long," + // 7
+                            "rows_imported long," + // 8
+                            "errors long" + // 9
+                            ") timestamp(ts) partition by DAY BYPASS WAL"
+                    )
+                    .compile(sqlExecutionContext)
+                    .getTableToken();
+        }
 
         this.writer = engine.getWriter(statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
@@ -116,7 +116,6 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         this.parallelImporter = Misc.free(parallelImporter);
         this.serialImporter = Misc.free(serialImporter);
         this.writer = Misc.free(this.writer);
-        this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.path = Misc.free(path);
     }
