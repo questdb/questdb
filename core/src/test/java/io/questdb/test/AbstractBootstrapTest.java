@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -169,7 +169,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     static void dropTable(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             TableToken tableToken
     ) throws Exception {

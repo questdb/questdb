@@ -25,7 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -280,7 +280,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -320,7 +320,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -469,7 +469,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -509,7 +509,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -574,7 +574,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -599,7 +599,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {

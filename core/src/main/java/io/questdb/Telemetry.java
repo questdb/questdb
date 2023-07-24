@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -215,7 +216,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder);
+        SqlCompilerImpl.QueryBuilder getCreateSql(SqlCompilerImpl.QueryBuilder builder);
 
         String getTableName();
 

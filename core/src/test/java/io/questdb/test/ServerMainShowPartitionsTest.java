@@ -30,7 +30,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
@@ -116,7 +116,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl defaultCompiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -133,10 +133,10 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 int numThreads = 5;
                 SOCountDownLatch completed = new SOCountDownLatch(numThreads);
                 AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
-                List<SqlCompiler> compilers = new ArrayList<>(numThreads);
+                List<SqlCompilerImpl> compilers = new ArrayList<>(numThreads);
                 List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine());
                     compilers.add(compiler);
                     contexts.add(context);
@@ -172,7 +172,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     private static void assertShowPartitions(
             String finallyExpected,
             TableToken tableToken,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context
     ) throws SqlException {
         try (
@@ -193,7 +193,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
+    private static void waitForData(String tableName, SqlCompilerImpl defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
         long time = System.currentTimeMillis();
         while (true) {
             try {
@@ -211,7 +211,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     private TableToken createPopulateTable(
             CairoConfiguration cairoConfig,
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             String tableName
     ) throws Exception {

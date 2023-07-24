@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -52,9 +52,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.griffin.CompiledQuery.SET;
 
-public class SqlCompilerTest extends AbstractGriffinTest {
+public class SqlCompilerImplTest extends AbstractGriffinTest {
 
-    private static final Log LOG = LogFactory.getLog(SqlCompilerTest.class);
+    private static final Log LOG = LogFactory.getLog(SqlCompilerImplTest.class);
     private static Path path;
 
     @BeforeClass
@@ -2920,10 +2920,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testExpectedKeyword() throws Exception {
         final GenericLexer lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         lexer.of("keyword1 keyword2\nkeyword3\tkeyword4");
-        SqlCompiler.expectKeyword(lexer, "keyword1");
-        SqlCompiler.expectKeyword(lexer, "keyword2");
-        SqlCompiler.expectKeyword(lexer, "keyword3");
-        SqlCompiler.expectKeyword(lexer, "keyword4");
+        SqlCompilerImpl.expectKeyword(lexer, "keyword1");
+        SqlCompilerImpl.expectKeyword(lexer, "keyword2");
+        SqlCompilerImpl.expectKeyword(lexer, "keyword3");
+        SqlCompilerImpl.expectKeyword(lexer, "keyword4");
     }
 
     @Test
@@ -3723,7 +3723,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 }
             }) {
                 try (
-                        SqlCompiler compiler = new SqlCompiler(engine);
+                        SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                         SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
 
@@ -4239,7 +4239,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testRaceToCreateEmptyTable() throws InterruptedException {
-        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+        try (SqlCompilerImpl compiler2 = new SqlCompilerImpl(engine)) {
             AtomicInteger index = new AtomicInteger();
             AtomicInteger success = new AtomicInteger();
 
@@ -5125,7 +5125,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }) {
 
             try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(sql, sqlExecutionContext);

@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -175,7 +175,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
                     try {
-                        final SqlCompiler updateCompiler = new SqlCompiler(engine, snapshotAgent);
+                        final SqlCompilerImpl updateCompiler = new SqlCompilerImpl(engine, snapshotAgent);
                         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
@@ -223,7 +223,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     });
 
                     try {
-                        final SqlCompiler readerCompiler = new SqlCompiler(engine, snapshotAgent);
+                        final SqlCompilerImpl readerCompiler = new SqlCompilerImpl(engine, snapshotAgent);
                         barrier.await();
                         try (TableReader rdr = getReader("up")) {
                             while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {

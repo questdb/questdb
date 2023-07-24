@@ -2750,7 +2750,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void postCompile(
-                SqlCompiler compiler,
+                SqlCompilerImpl compiler,
                 CompiledQuery cq,
                 CharSequence text
         ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
@@ -2789,7 +2789,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public void preCompile(SqlCompiler compiler) {
+        public void preCompile(SqlCompilerImpl compiler) {
             sendRNQ = true;
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;

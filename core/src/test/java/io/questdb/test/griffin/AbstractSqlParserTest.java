@@ -24,28 +24,28 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class AbstractSqlParserTest extends AbstractGriffinTest {
     private static void assertSyntaxError(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             String query,
             int position,
             String contains,
@@ -118,7 +118,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
+    private void assertColumnNames(SqlCompilerImpl compiler, String query, String... columns) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
             RecordMetadata metadata = factory.getMetadata();

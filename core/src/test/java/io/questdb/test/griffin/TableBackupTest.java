@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
@@ -73,7 +73,7 @@ public class TableBackupTest {
     private CharSequence backupRoot;
     private Path finalBackupPath;
     private int finalBackupPathLen;
-    private SqlCompiler mainCompiler;
+    private SqlCompilerImpl mainCompiler;
     private CairoConfiguration mainConfiguration;
     private CairoEngine mainEngine;
     private SqlExecutionContext mainSqlExecutionContext;
@@ -111,7 +111,7 @@ public class TableBackupTest {
             int partitionBy,
             boolean isWal,
             int numRows,
-            @NotNull SqlCompiler compiler,
+            @NotNull SqlCompilerImpl compiler,
             @NotNull SqlExecutionContext context
     ) throws SqlException {
         executeSqlStmt(
@@ -127,7 +127,7 @@ public class TableBackupTest {
     public static void executeInsertGeneratorStmt(
             TableToken tableToken,
             int size,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         executeSqlStmt("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', compiler, sqlExecutionContext);
@@ -202,7 +202,7 @@ public class TableBackupTest {
             }
         };
         mainEngine = new CairoEngine(mainConfiguration);
-        mainCompiler = new SqlCompiler(mainEngine);
+        mainCompiler = new SqlCompilerImpl(mainEngine);
         mainSqlExecutionContext = TestUtils.createSqlExecutionCtx(mainEngine);
         File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
         Assert.assertTrue(confRoot.mkdirs());
@@ -427,7 +427,7 @@ public class TableBackupTest {
         });
     }
 
-    private static void executeSqlStmt(CharSequence stmt, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static void executeSqlStmt(CharSequence stmt, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (OperationFuture future = compiler.compile(stmt, sqlExecutionContext).execute(null)) {
             future.await();
         }
@@ -542,7 +542,7 @@ public class TableBackupTest {
         try (
                 CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
                 SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                SqlCompiler compiler = new SqlCompiler(engine)
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
         ) {
             compiler.compile(sql, context).execute(null).await();
             drainWalQueue(engine);
@@ -574,13 +574,13 @@ public class TableBackupTest {
 
     private void selectAll(TableToken tableToken, boolean backup, MutableCharSink sink) throws Exception {
         CairoEngine engine = mainEngine;
-        SqlCompiler compiler = mainCompiler;
+        SqlCompilerImpl compiler = mainCompiler;
         SqlExecutionContext context = mainSqlExecutionContext;
         try {
             if (backup) {
                 engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
                 context = TestUtils.createSqlExecutionCtx(engine);
-                compiler = new SqlCompiler(engine);
+                compiler = new SqlCompilerImpl(engine);
             }
             TestUtils.printSql(compiler, context, tableToken.getTableName(), sink);
         } finally {

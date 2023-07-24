@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -65,7 +65,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
         );
     }
 
-    private void createTablesToJoin(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void createTablesToJoin(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // ASKS
         compiler.compile(
                 "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
@@ -91,7 +91,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (
-                    SqlCompiler compiler = new SqlCompiler(engine, null);
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine, null);
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 createTablesToJoin(compiler, sqlExecutionContext);

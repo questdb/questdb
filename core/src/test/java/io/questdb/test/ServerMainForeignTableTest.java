@@ -31,7 +31,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
@@ -108,7 +108,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -142,7 +142,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -181,7 +181,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // create table with some data
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -225,7 +225,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // check content of table after sym-linking it
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -250,8 +250,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler0 = new SqlCompiler(qdb.getEngine());
-                    SqlCompiler compiler1 = new SqlCompiler(qdb.getEngine())
+                    SqlCompilerImpl compiler0 = new SqlCompilerImpl(qdb.getEngine());
+                    SqlCompilerImpl compiler1 = new SqlCompilerImpl(qdb.getEngine())
             ) {
                 CairoEngine engine2 = qdb.getEngine();
                 try (SqlExecutionContext context0 = createSqlExecutionCtx(engine2)) {
@@ -311,7 +311,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -336,7 +336,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -372,7 +372,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -407,7 +407,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -442,8 +442,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler0 = new SqlCompiler(qdb.getEngine());
-                    SqlCompiler compiler1 = new SqlCompiler(qdb.getEngine())
+                    SqlCompilerImpl compiler0 = new SqlCompilerImpl(qdb.getEngine());
+                    SqlCompilerImpl compiler1 = new SqlCompilerImpl(qdb.getEngine())
             ) {
                 CairoEngine engine2 = qdb.getEngine();
                 try (SqlExecutionContext context0 = createSqlExecutionCtx(engine2)
@@ -539,7 +539,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     private static void assertTableExists(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             TableToken tableToken,
             boolean inVolume
@@ -567,7 +567,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private Thread concurrentTableCreator(
             String threadName,
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             CyclicBarrier startBarrier,
             SOCountDownLatch haltLatch,
@@ -597,7 +597,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private TableToken createPopulateTable(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             String tableName,
             boolean isWal,

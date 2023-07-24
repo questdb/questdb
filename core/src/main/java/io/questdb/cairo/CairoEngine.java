@@ -161,7 +161,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
         // todo: propagate Snapshot Agent
-        this.sqlCompilerPool = new SqlCompilerPool(this, null);
+        this.sqlCompilerPool = new SqlCompilerPool(this, configuration.getFactoryProvider(), null);
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
@@ -569,6 +569,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
         return writerPool.get(tableToken, lockReason);
+    }
+
+    public void initialized() {
+
     }
 
     public boolean isTableDropped(TableToken tableToken) {

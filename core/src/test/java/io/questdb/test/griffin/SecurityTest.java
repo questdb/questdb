@@ -50,7 +50,7 @@ public class SecurityTest extends AbstractGriffinTest {
     private static final AtomicInteger nCheckInterruptedCalls = new AtomicInteger();
     private static long circuitBreakerCallLimit = Long.MAX_VALUE;
     private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
-    private static SqlCompiler memoryRestrictedCompiler;
+    private static SqlCompilerImpl memoryRestrictedCompiler;
     private static CairoEngine memoryRestrictedEngine;
     private static SqlExecutionContext readOnlyExecutionContext;
 
@@ -179,7 +179,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         -1,
                         dummyCircuitBreaker
                 );
-        memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine);
+        memoryRestrictedCompiler = new SqlCompilerImpl(memoryRestrictedEngine);
     }
 
     @AfterClass
@@ -243,7 +243,7 @@ public class SecurityTest extends AbstractGriffinTest {
                             return backupDir.getAbsolutePath();
                         }
                     });
-                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
                 sqlExecutionContext.with(ReadOnlySecurityContext.INSTANCE, null);
@@ -1072,7 +1072,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Override
-    protected void assertQuery(SqlCompiler compiler,
+    protected void assertQuery(SqlCompilerImpl compiler,
                                String expected,
                                String query,
                                String expectedTimestamp,

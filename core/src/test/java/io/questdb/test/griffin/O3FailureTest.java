@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
@@ -594,7 +594,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         executeWithPool(0,
                 (CairoEngine engine,
-                 SqlCompiler compiler,
+                 SqlCompilerImpl compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
 
                     Assume.assumeFalse(Os.isWindows());
@@ -935,7 +935,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         executeWithPool(0,
                 (CairoEngine engine,
-                 SqlCompiler compiler,
+                 SqlCompilerImpl compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
 
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
@@ -1031,7 +1031,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void assertO3DataConsistency(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
         // create third table, which will contain both X and 1AM
@@ -1044,7 +1044,7 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext,
             String resourceName
     ) throws URISyntaxException, SqlException {
@@ -1056,7 +1056,7 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private static void assertXCountAndMax(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedMaxTimestamp
     ) throws SqlException {
@@ -1065,7 +1065,7 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private static void assertXCountAndMax(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedCount,
             CharSequence expectedMaxTimestamp
@@ -1090,7 +1090,7 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @NotNull
-    private static String prepareCountAndMaxTimestampSinks(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static String prepareCountAndMaxTimestampSinks(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.printSql(
                 compiler,
                 sqlExecutionContext,
@@ -1110,7 +1110,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testAllocateFailsAtO3OpenColumn0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -1705,7 +1705,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testAllocateToResizeLastPartition0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -1797,7 +1797,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testColumnTopLastDataOOODataFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
@@ -1959,7 +1959,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testColumnTopLastOOOPrefixFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
         compiler.compile(
@@ -2099,7 +2099,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testColumnTopMidAppendBlankColumnFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -2206,7 +2206,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testColumnTopMidAppendColumnFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
         compiler.compile(
@@ -2345,7 +2345,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testColumnTopMidDataMergeDataFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
 
@@ -2486,7 +2486,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testColumnTopMidMergeBlankColumnFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -2597,7 +2597,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testFailMergeWalFixIntoLag0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         o3MemMaxPages = 1;
@@ -2647,7 +2647,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testFailMergeWalVarIntoLag0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         o3MemMaxPages = 1;
@@ -2697,7 +2697,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testFailMoveUncommitted0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         o3MemMaxPages = 1;
@@ -2748,7 +2748,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testFailMoveWalToLag0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         o3MemMaxPages = 1;
@@ -2810,7 +2810,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testInsertAsSelectNegativeTimestamp0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -2861,7 +2861,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testInsertAsSelectNulls0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -2912,7 +2912,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testOooFollowedByAnotherOOO0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext,
             AtomicBoolean restoreDiskSpace
     ) throws SqlException {
@@ -3044,7 +3044,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testOutOfFileHandles0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         compiler.compile(
@@ -3104,7 +3104,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("create table y1 as (y) timestamp(ts) partition by DAY", executionContext);
 
         // create another compiler to be used by second pool
-        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+        try (SqlCompilerImpl compiler2 = new SqlCompilerImpl(engine)) {
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
             final AtomicInteger errorCount = new AtomicInteger();
@@ -3168,7 +3168,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testPartitionedDataAppendOODataFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -3251,7 +3251,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testPartitionedDataAppendOODataIndexedFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -3327,7 +3327,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -3406,7 +3406,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testPartitionedWithAllocationCallLimit0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -3446,7 +3446,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testTwoRowsConsistency0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -3497,7 +3497,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static void testVarColumnStress(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
 

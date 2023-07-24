@@ -28,7 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -81,7 +81,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine())
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine())
             ) {
                 CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
@@ -106,7 +106,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine())
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine())
             ) {
                 CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
@@ -142,7 +142,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
     private TableToken createPopulateTable(
             CairoConfiguration cairoConfig,
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             String tableName
     ) throws Exception {

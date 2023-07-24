@@ -25,10 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 
 @FunctionalInterface
 public interface CustomisableRunnable {
-    void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
+    void run(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
 }

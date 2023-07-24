@@ -33,7 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -140,7 +140,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl defaultCompiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -153,18 +153,18 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
 
                 CairoEngine engine = qdb.getEngine();
-                List<SqlCompiler> compilers = new ArrayList<>();
+                List<SqlCompilerImpl> compilers = new ArrayList<>();
                 List<SqlExecutionContext> contexts = new ArrayList<>();
 
                 // create/populate tables concurrently
                 for (int t = 0; t < N; t++) {
-                    compilers.add(new SqlCompiler(engine));
+                    compilers.add(new SqlCompilerImpl(engine));
                     contexts.add(createSqlExecutionCtx(engine));
                     startTableCreator(partitionBy, isWal, compilers.get(t), contexts.get(t), tableTokens, createsBarrier, expectedTotalRows, createsCompleted, errors);
                 }
                 // insert into tables concurrently
                 for (int t = 0; t < N; t++) {
-                    compilers.add(new SqlCompiler(engine));
+                    compilers.add(new SqlCompilerImpl(engine));
                     contexts.add(createSqlExecutionCtx(engine));
                     startTableWriter(t, compilers.get(t), contexts.get(t), tableTokens, expectedTotalRows, createsCompleted, writersCompleted, endWriters, errors);
                 }
@@ -202,7 +202,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             String newRoot = getLatestBackupDbRoot();
             try (
                     ServerMain qdb = new ServerMain("-d", newRoot, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompilerImpl defaultCompiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -220,7 +220,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         });
     }
 
-    private static long assertTableExists(TableToken tableToken, int partitionBy, boolean isWal, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private static long assertTableExists(TableToken tableToken, int partitionBy, boolean isWal, SqlCompilerImpl compiler, SqlExecutionContext context) throws Exception {
         CompiledQuery cc = compiler.compile(
                 "SELECT name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
                         "FROM tables() " +
@@ -267,7 +267,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     }
 
     private static void startBackupDatabase(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,
@@ -291,7 +291,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     private static void startTableCreator(
             int partitionBy,
             boolean isWal,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             AtomicReference<List<TableToken>> tableTokens,
             CyclicBarrier creatorsBarrier,
@@ -310,7 +310,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
     private static void startTableWriter(
             int tableId,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext context,
             AtomicReference<List<TableToken>> tableTokens,
             AtomicLong expectedTotalRows,

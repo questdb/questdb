@@ -1,25 +1,33 @@
 package io.questdb.cairo.pool;
 
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.*;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.std.Rnd;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
     private static final long INACTIVE_COMPILER_TTL_MILLIS = 5 * 60 * 1000L; // 5 minutes
     // todo: consider making the constants configurable
     private static final int MAX_POOL_SEGMENTS = 64;
-
     // todo: are you sure there are no side effects here? for example the dirName? at very least it's being logged
     // by the pool and that's confusing
-    private static final TableToken RED_TOKEN = new TableToken("red", "/compilers/red/", 0, false);
+    private static final TableToken TOKEN_BLUE = new TableToken("blue", "/compilers/blue/", 0, false);
+    private static final TableToken TOKEN_GREEN = new TableToken("green", "/compilers/green/", 0, false);
+    private static final TableToken TOKEN_RED = new TableToken("red", "/compilers/red/", 0, false);
+    private static final TableToken[] TOKENS = {TOKEN_RED, TOKEN_BLUE, TOKEN_GREEN};
     private final CairoEngine engine;
+    private final FactoryProvider factoryProvider;
+    private final Rnd rnd = new Rnd();
     private final DatabaseSnapshotAgent snapshotAgent;
 
-    public SqlCompilerPool(CairoEngine engine, DatabaseSnapshotAgent snapshotAgent) {
+    public SqlCompilerPool(CairoEngine engine, FactoryProvider factoryProvider, DatabaseSnapshotAgent snapshotAgent) {
         super(engine.getConfiguration(), MAX_POOL_SEGMENTS, INACTIVE_COMPILER_TTL_MILLIS);
         this.engine = engine;
+        this.factoryProvider = factoryProvider;
         this.snapshotAgent = snapshotAgent;
     }
 
@@ -27,41 +35,45 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         return super.get(getRandToken());
     }
 
-    private static TableToken getRandToken() {
-        // todo: implement actual token selection
-        // maybe random, maybe round robin, maybe something else
-        return RED_TOKEN;
+    private TableToken getRandToken() {
+        return TOKENS[rnd.nextPositiveInt() % TOKENS.length];
     }
 
     @Override
     protected byte getListenerSrc() {
+        // todo: what is this?
         return 0;
     }
 
     @Override
     protected C newTenant(TableToken tableName, Entry<C> entry, int index) {
-        return new C(engine, engine.getFunctionFactoryCache(), snapshotAgent, this, tableName, entry, index);
+        SqlCompilerImpl delegate = factoryProvider.getSqlCompilerFactory().getInstance(engine, engine.getFunctionFactoryCache(), snapshotAgent);
+        return new C(delegate, this, tableName, entry, index);
     }
 
-    public static class C extends SqlCompiler implements PoolTenant {
+    public static class C implements PoolTenant, SqlCompiler {
 
+        private final SqlCompiler delegate;
         private final int index;
         private Entry<C> entry;
         private AbstractMultiTenantPool<C> pool;
         private TableToken tableToken;
 
-        public C(CairoEngine engine,
-                 FunctionFactoryCache functionFactoryCache,
-                 DatabaseSnapshotAgent snapshotAgent,
+        public C(SqlCompiler delegate,
                  AbstractMultiTenantPool<C> pool,
                  TableToken tableToken,
                  Entry<C> entry,
                  int index) {
-            super(engine, functionFactoryCache, snapshotAgent);
+            this.delegate = delegate;
             this.pool = pool;
             this.tableToken = tableToken;
             this.entry = entry;
             this.index = index;
+        }
+
+        @Override
+        public void clear() {
+            delegate.clear();
         }
 
         @Override
@@ -72,7 +84,17 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                     return;
                 }
             }
-            super.close();
+            delegate.close();
+        }
+
+        @Override
+        public CompiledQuery compile(CharSequence s, SqlExecutionContext ctx) throws SqlException {
+            return delegate.compile(s, ctx);
+        }
+
+        @Override
+        public void compileBatch(CharSequence queryText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+            delegate.compileBatch(queryText, sqlExecutionContext, batchCallback);
         }
 
         @Override
@@ -94,6 +116,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void goodbye() {
             entry = null;
             pool = null;
+        }
+
+        @Override
+        public SqlCompilerImpl.QueryBuilder query() {
+            return delegate.query();
         }
 
         @Override

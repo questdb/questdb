@@ -27,7 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -45,7 +45,7 @@ import org.junit.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecoverVarIndexTest extends AbstractCairoTest {
-    private static SqlCompiler compiler;
+    private static SqlCompilerImpl compiler;
     private static SqlExecutionContext sqlExecutionContext;
     private final RecoverVarIndex rebuildVarColumn = new RecoverVarIndex(configuration);
     TableWriter tempWriter;
@@ -53,7 +53,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine);
+        compiler = new SqlCompilerImpl(engine);
         sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(configuration));
     }
 

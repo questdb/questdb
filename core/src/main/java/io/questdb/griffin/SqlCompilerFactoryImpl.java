@@ -31,12 +31,12 @@ public class SqlCompilerFactoryImpl implements SqlCompilerFactory {
     public static final SqlCompilerFactory INSTANCE = new SqlCompilerFactoryImpl();
 
     @Override
-    public SqlCompiler getInstance(
+    public SqlCompilerImpl getInstance(
             CairoEngine engine,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
-        return new SqlCompiler(
+        return new SqlCompilerImpl(
                 engine,
                 functionFactoryCache,
                 snapshotAgent

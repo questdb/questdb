@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
@@ -77,7 +77,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ")" +
             ", INDEX(temperature CAPACITY 4) " +
             "TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
-    protected static SqlCompiler compiler2;
+    protected static SqlCompilerImpl compiler2;
     protected static SqlExecutionContext sqlExecutionContext2;
     private static Path path;
     private static int tablePathLen;
@@ -85,7 +85,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
-        compiler2 = new SqlCompiler(engine, snapshotAgent);
+        compiler2 = new SqlCompilerImpl(engine, snapshotAgent);
         sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(dirName);

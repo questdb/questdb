@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
@@ -1123,7 +1123,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
         };
 
-        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(100000))", sqlExecutionContext);
             String query = "select i, sum(d) from tab group by i";
 
@@ -1146,7 +1146,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
         };
 
-        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
             long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
             try {
@@ -1212,7 +1212,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
         };
 
-        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(2000))", sqlExecutionContext);
             String query = "select i, sum(l) from tab group by i";
 
@@ -1249,7 +1249,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
         };
 
-        executeWithPool(WORKER_COUNT, 64, raf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(WORKER_COUNT, 64, raf, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab as " +
                     "(select rnd_double() d, x, " +
                     "rnd_int() i, " +
@@ -1305,7 +1305,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
         };
 
-        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab as (select rnd_double() d, x from long_sequence(100))", sqlExecutionContext);
             compiler.compile("alter table tab add column s symbol cache", sqlExecutionContext).execute(null).await();
             compiler.compile("insert into tab select rnd_double(), x + 1000, cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext);
@@ -1479,7 +1479,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         });
     }
 
-    private static void compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    private static void compile(SqlCompilerImpl compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
         try (OperationFuture future = cc.execute(null)) {
             future.await();
@@ -1491,7 +1491,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         return "c" + typeStr.replace("(", "").replace(")", "");
     }
 
-    private static void runCountTestWithColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
+    private static void runCountTestWithColTops(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
         compile(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
         compile(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
         compile(compiler, "alter table x add column k int", sqlExecutionContext);
@@ -1556,7 +1556,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
-    private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
+    private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
         compile(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
         compile(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
         compile(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
@@ -1600,7 +1600,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
-    private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         compiler.compile("create table tab as " +
                 "( select cast(x as int) i, " +
                 "x as l, " +
@@ -1633,7 +1633,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
-    private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static void runGroupByTest(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         compiler.compile("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
@@ -1652,7 +1652,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
-    private static void runGroupByWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static void runGroupByWithAgg(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         compiler.compile("create table tab as " +
                 "( select cast(x as int) i, " +
                 "x as l, " +
@@ -1685,7 +1685,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertRostiMemory(SqlCompiler compiler, String query, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void assertRostiMemory(SqlCompilerImpl compiler, String query, SqlExecutionContext sqlExecutionContext) throws SqlException {
         long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             try {
@@ -1801,7 +1801,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                 final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
         ) {
             try {

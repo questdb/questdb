@@ -29,7 +29,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -60,7 +60,7 @@ import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
     private final ConcurrentLinkedQueue<String> updatesQueue = new ConcurrentLinkedQueue<>();
-    private SqlCompiler[] compilers;
+    private SqlCompilerImpl[] compilers;
     private SqlExecutionContext[] executionContexts;
     private int numOfUpdateThreads;
     private int numOfUpdates;
@@ -107,7 +107,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         runTest();
     }
 
-    private void executeUpdate(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) {
+    private void executeUpdate(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) {
         while (true) {
             try {
                 LOG.info().$(sql).$();
@@ -152,10 +152,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         this.updatesDone = new SOCountDownLatch(numOfUpdateThreads);
         this.numOfUpdateThreads = numOfUpdateThreads;
 
-        compilers = new SqlCompiler[numOfUpdateThreads];
+        compilers = new SqlCompilerImpl[numOfUpdateThreads];
         executionContexts = new SqlExecutionContext[numOfUpdateThreads];
         for (int i = 0; i < numOfUpdateThreads; i++) {
-            compilers[i] = new SqlCompiler(engine, null);
+            compilers[i] = new SqlCompilerImpl(engine, null);
             executionContexts[i] = TestUtils.createSqlExecutionCtx(engine, numOfUpdateThreads);
         }
     }
@@ -179,7 +179,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
             try {
                 final Map<CharSequence, ArrayList<ColumnNameType>> columnsCache = new HashMap<>();
                 final SCSequence waitSequence = new SCSequence();
-                final SqlCompiler compiler = compilers[threadId];
+                final SqlCompilerImpl compiler = compilers[threadId];
                 final SqlExecutionContext executionContext = executionContexts[threadId];
                 while (tableNames.size() == 0) {
                     Os.pause();
@@ -233,7 +233,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         super.waitDone(sockets);
 
         // repeat all updates after all lines are guaranteed to be landed in the tables
-        final SqlCompiler compiler = compilers[0];
+        final SqlCompilerImpl compiler = compilers[0];
         final SqlExecutionContext executionContext = executionContexts[0];
         for (String sql : updatesQueue) {
             executeUpdate(compiler, executionContext, sql, null);

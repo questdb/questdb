@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 
 public interface SqlCompilerFactory {
-    SqlCompiler getInstance(
+    SqlCompilerImpl getInstance(
             CairoEngine engine,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent

@@ -33,7 +33,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -96,7 +96,7 @@ public class QuestDBTestNode {
         return cairo.snapshotAgent;
     }
 
-    public SqlCompiler getSqlCompiler() {
+    public SqlCompilerImpl getSqlCompiler() {
         return griffin.compiler;
     }
 
@@ -211,7 +211,7 @@ public class QuestDBTestNode {
 
     private static class Griffin {
         private final BindVariableService bindVariableService;
-        private final SqlCompiler compiler;
+        private final SqlCompilerImpl compiler;
         private final SqlExecutionContext sqlExecutionContext;
 
         private Griffin(Cairo cairo, SqlExecutionCircuitBreaker circuitBreaker) {

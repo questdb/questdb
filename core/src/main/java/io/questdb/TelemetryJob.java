@@ -63,7 +63,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
             telemetry.init(engine, compiler, sqlExecutionContext);
             telemetryWal.init(engine, compiler, sqlExecutionContext);
-            telemetryConfigLogger.init(compiler, sqlExecutionContext);
+            telemetryConfigLogger.init(engine, compiler, sqlExecutionContext);
         }
     }
 

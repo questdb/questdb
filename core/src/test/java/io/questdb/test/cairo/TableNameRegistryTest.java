@@ -31,7 +31,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
@@ -67,7 +67,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -97,7 +97,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         barrier.await();
                         Rnd rnd = TestUtils.generateRandom(LOG);
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -321,7 +321,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             ObjList<Thread> threads = new ObjList<>(threadCount);
 
             try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 for (int j = 0; j < tableCount; j++) {
@@ -342,7 +342,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
@@ -540,7 +540,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.isWalTable(tt3));
 
             try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile("alter table " + tt2.getTableName() + " set type bypass wal", sqlExecutionContext);

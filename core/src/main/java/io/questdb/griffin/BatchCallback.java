@@ -33,10 +33,10 @@ import io.questdb.network.QueryPausedException;
  */
 public interface BatchCallback {
     void postCompile(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             CompiledQuery cq,
             CharSequence queryText
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException;
 
-    void preCompile(SqlCompiler compiler);
+    void preCompile(SqlCompilerImpl compiler);
 }

@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Sequence;
@@ -168,7 +168,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     }
 
     private static void assertXCountAndMax(
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedMaxTimestamp
     ) throws SqlException {
@@ -184,7 +184,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     }
 
     @NotNull
-    private static String prepareCountAndMaxTimestampSinks(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static String prepareCountAndMaxTimestampSinks(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.printSql(
                 compiler,
                 sqlExecutionContext,
@@ -237,7 +237,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
     private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -321,7 +321,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
     private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -440,7 +440,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
     private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
             CairoEngine engine,
-            SqlCompiler compiler,
+            SqlCompilerImpl compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
