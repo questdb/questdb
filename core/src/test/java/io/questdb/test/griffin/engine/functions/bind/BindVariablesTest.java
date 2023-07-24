@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.*;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
@@ -47,6 +49,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.sql.PreparedStatement;
+
+import static org.junit.Assert.assertNotNull;
 
 public class BindVariablesTest extends BaseFunctionFactoryTest {
 
@@ -125,6 +131,26 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         TestUtils.assertEquals("00000000 44 47 4c 4f 47 49 46 4f 55 53 5a 4d 5a 56 51 45\n" +
                         "00000010 42 4e 44 43 51 43 45 48",
                 func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (a ipv4)", sqlExecutionContext);
+
+            CompiledQuery compiledQuery = compiler.compile("insert into x(a) values($1)", sqlExecutionContext);
+            sqlExecutionContext.getBindVariableService().getFunction(0);
+            sqlExecutionContext.getBindVariableService().setIPv4(0, "34.56.21.2");
+
+            assertNotNull(compiledQuery.getInsertOperation());
+            final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+            try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                insertMethod.execute();
+                insertMethod.commit();
+            }
+            TestUtils.assertSql(compiler, sqlExecutionContext, "x", sink, "a\n" +
+                    "34.56.21.2\n");
+        });
     }
 
     @Test

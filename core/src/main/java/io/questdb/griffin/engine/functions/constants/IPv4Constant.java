@@ -31,7 +31,7 @@ import io.questdb.std.Numbers;
 
 public class IPv4Constant extends IPv4Function implements ConstantFunction {
 
-    public static final IPv4Constant NULL = new IPv4Constant(Numbers.INT_NaN);
+    public static final IPv4Constant NULL = new IPv4Constant(Numbers.IPv4_NULL);
 
     private final int value;
 
@@ -41,11 +41,11 @@ public class IPv4Constant extends IPv4Function implements ConstantFunction {
     }
 
     public static IPv4Constant newInstance(int value) {
-        return value != Numbers.INT_NaN ? new IPv4Constant(value) : NULL;
+        return value != Numbers.IPv4_NULL ? new IPv4Constant(value) : NULL;
     }
 
     @Override
-    public int getInt(Record rec) {
+    public int getIPv4(Record rec) {
         return value;
     }
 

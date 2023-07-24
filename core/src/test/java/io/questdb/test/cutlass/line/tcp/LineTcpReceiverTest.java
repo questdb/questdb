@@ -1081,6 +1081,114 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testTcpIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                compiler.compile("create table test (" +
+                        "col ipv4, " +
+                        "ts timestamp " +
+                        ") timestamp(ts) partition by day", sqlExecutionContext);
+
+                engine.releaseInactive();
+                runInContext((receiver) -> {
+                    String lineData =
+                            "test col=\"1.1.1.1\" 631150000000000000\n" +
+                                    "test col=\"1.1.1.1\" 31152000000000000\n" +
+                                    "test col=\"1.1.1.1\" 631160000000000000\n" +
+                                    "test col=\"1.1.1.1\" 631170000000000000\n";
+                    sendLinger(lineData, "test");
+                });
+                mayDrainWalQueue();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("test"));
+                }
+
+                String expected = "col\tts\n" +
+                        "1.1.1.1\t1970-12-27T13:20:00.000000Z\n" +
+                        "1.1.1.1\t1989-12-31T23:26:40.000000Z\n" +
+                        "1.1.1.1\t1990-01-01T02:13:20.000000Z\n" +
+                        "1.1.1.1\t1990-01-01T05:00:00.000000Z\n";
+                assertTable(expected, "test");
+            }
+        });
+    }
+
+    @Test
+    public void testTcpIPv4Null() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                compiler.compile("create table test (" +
+                        "col ipv4, " +
+                        "ts timestamp " +
+                        ") timestamp(ts) partition by day", sqlExecutionContext);
+
+                engine.releaseInactive();
+                runInContext((receiver) -> {
+                    String lineData =
+                            "test col=\"0.0.0.0\" 631150000000000000\n" +
+                                    "test col=\"0.0.0.0\" 31152000000000000\n" +
+                                    "test col=\"0.0.0.0\" 631160000000000000\n" +
+                                    "test col=\"0.0.0.0\" 631170000000000000\n";
+                    sendLinger(lineData, "test");
+                });
+                mayDrainWalQueue();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("test"));
+                }
+
+                String expected = "col\tts\n" +
+                        "null\t1970-12-27T13:20:00.000000Z\n" +
+                        "null\t1989-12-31T23:26:40.000000Z\n" +
+                        "null\t1990-01-01T02:13:20.000000Z\n" +
+                        "null\t1990-01-01T05:00:00.000000Z\n";
+                assertTable(expected, "test");
+            }
+        });
+    }
+
+    @Test
+    public void testTcpIPv4Null2() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                compiler.compile("create table test (" +
+                        "col ipv4, " +
+                        "ts timestamp " +
+                        ") timestamp(ts) partition by day", sqlExecutionContext);
+
+                engine.releaseInactive();
+                runInContext((receiver) -> {
+                    String lineData =
+                            "test col=\"null\" 631150000000000000\n" +
+                                    "test col=\"null\" 31152000000000000\n" +
+                                    "test col=\"null\" 631160000000000000\n" +
+                                    "test col=\"null\" 631170000000000000\n";
+                    sendLinger(lineData, "test");
+                });
+                mayDrainWalQueue();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("test"));
+                }
+
+                String expected = "col\tts\n" +
+                        "null\t1970-12-27T13:20:00.000000Z\n" +
+                        "null\t1989-12-31T23:26:40.000000Z\n" +
+                        "null\t1990-01-01T02:13:20.000000Z\n" +
+                        "null\t1990-01-01T05:00:00.000000Z\n";
+                assertTable(expected, "test");
+            }
+        });
+    }
+
+    @Test
     public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
         int rowCount = 100;
         maxMeasurementSize = 100;

@@ -124,6 +124,9 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { return getBase().getIPv4(rec); }
+
+    @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
     }

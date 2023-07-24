@@ -60,7 +60,7 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putInt(column, SqlKeywords.isNullKeyword(value) ? Numbers.INT_NaN : parseIPv4(value));
+        row.putInt(column, SqlKeywords.isNullKeyword(value) ? Numbers.IPv4_NULL : parseIPv4(value));
     }
 
     private int parseIPv4(DirectByteCharSequence value) throws NumericException {

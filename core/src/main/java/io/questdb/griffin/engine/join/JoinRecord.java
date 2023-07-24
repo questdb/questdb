@@ -143,6 +143,14 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public int getIPv4(int col) {
+        if (col < split) {
+            return master.getIPv4(col);
+        }
+        return slave.getIPv4(col - split);
+    }
+
+    @Override
     public long getLong(int col) {
         if (col < split) {
             return master.getLong(col);

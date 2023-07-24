@@ -87,6 +87,11 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        nullFunction.getIPv4(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         nullFunction.getInt(null);
     }

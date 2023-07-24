@@ -65,6 +65,7 @@ public class RecordToRowCopierUtils {
         // [                reference   one array dimension
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
@@ -206,7 +207,6 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.INT:
-                        case ColumnType.IPv4:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
@@ -235,10 +235,9 @@ public class RecordToRowCopierUtils {
                     }
                     break;
                 case ColumnType.IPv4:
-                    asm.invokeInterface(rGetInt);
+                    asm.invokeInterface(rGetIPv4);
                     switch(toColumnTypeTag) {
                         case ColumnType.IPv4:
-                        case ColumnType.INT:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         default:
@@ -369,7 +368,6 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.INT:
-                        case ColumnType.IPv4:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
@@ -408,7 +406,6 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.INT:
-                        case ColumnType.IPv4:
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:

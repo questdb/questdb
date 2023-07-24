@@ -58,6 +58,8 @@ public interface MemoryR extends Closeable {
 
     int getInt(long offset);
 
+    int getIPv4(long offset);
+
     long getLong(long offset);
 
     void getLong256(long offset, CharSink sink);

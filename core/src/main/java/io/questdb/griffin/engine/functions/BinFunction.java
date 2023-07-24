@@ -90,6 +90,9 @@ public abstract class BinFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
+    @Override
     public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }

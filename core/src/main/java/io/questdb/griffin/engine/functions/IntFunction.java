@@ -96,6 +96,9 @@ public abstract class IntFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+
+    @Override
     public long getLong(Record rec) {
         return Numbers.intToLong(getInt(rec));
     }

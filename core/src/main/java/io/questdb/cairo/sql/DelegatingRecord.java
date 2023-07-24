@@ -97,6 +97,11 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
+    public int getIPv4(int col) {
+        return base.getIPv4(col);
+    }
+
+    @Override
     public long getLong(int col) {
         return base.getLong(col);
     }

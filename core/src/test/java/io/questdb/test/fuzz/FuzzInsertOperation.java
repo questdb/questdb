@@ -133,6 +133,10 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 row.putInt(index, isNull ? Numbers.INT_NaN : rnd.nextInt());
                                 break;
 
+                            case ColumnType.IPv4:
+                                row.putInt(index, isNull ? Numbers.IPv4_NULL : rnd.nextInt());
+                                break;
+
                             case ColumnType.LONG:
                                 row.putLong(index, isNull ? Numbers.LONG_NaN : rnd.nextLong());
                                 break;

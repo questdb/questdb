@@ -580,8 +580,10 @@ public class WalWriter implements TableWriterAPI {
                 nullers.add(() -> mem1.putFloat(Float.NaN));
                 break;
             case ColumnType.INT:
-            case ColumnType.IPv4:
                 nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
+                break;
+            case ColumnType.IPv4:
+                nullers.add(() -> mem1.putInt(Numbers.IPv4_NULL));
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:

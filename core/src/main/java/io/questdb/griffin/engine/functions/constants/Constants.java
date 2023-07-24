@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -92,6 +92,7 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.LONG128, Long128Constant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);
         nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
 
         typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
@@ -111,6 +112,7 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
 
         for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));

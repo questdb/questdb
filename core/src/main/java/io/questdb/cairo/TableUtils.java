@@ -1281,8 +1281,10 @@ public final class TableUtils {
                 Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);
                 break;
             case ColumnType.INT:
-            case ColumnType.IPv4:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                break;
+            case ColumnType.IPv4:
+                Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
                 break;
             case ColumnType.GEOINT:
                 Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);

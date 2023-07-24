@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -500,13 +500,12 @@ public class SqlUtil {
     public static int implicitCastStrAsIPv4(CharSequence value) {
         if(value != null) {
             try {
-                int test = Numbers.parseIPv4(value);
-                return test;
+                return Numbers.parseIPv4(value);
             } catch (NumericException exception) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.IPv4);
+                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
             }
         }
-        return Numbers.INT_NaN;
+        return Numbers.IPv4_NULL;
     }
 
     public static long implicitCastStrAsLong(CharSequence value) {

@@ -428,7 +428,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
                                 offset = buffer.addInt(offset, (int) entityValue);
                             } else if (entityValue == Numbers.LONG_NaN) {
-                                offset = buffer.addInt(offset, Numbers.INT_NaN);
+                                offset = buffer.addInt(offset, Numbers.IPv4_NULL);
                             } else {
                                 throw boundsError(entityValue, nEntity, ColumnType.IPv4);
                             }
@@ -469,6 +469,9 @@ class LineTcpMeasurementEvent implements Closeable {
                     final DirectByteCharSequence entityValue = entity.getValue();
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.IPv4:
+                                offset = buffer.addInt(offset, Numbers.parseIPv4Quiet(entityValue));
+                                break;
                             case ColumnType.STRING:
                                 offset = buffer.addString(offset, entityValue, parser.hasNonAsciiChars());
                                 break;
@@ -549,7 +552,6 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.INT:
-                        case ColumnType.IPv4:
                             offset = buffer.addInt(offset, entityValue);
                             break;
 

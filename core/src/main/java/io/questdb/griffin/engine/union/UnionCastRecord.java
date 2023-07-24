@@ -155,6 +155,14 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public int getIPv4(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getIPv4(recordA);
+        }
+        return castFunctionsB.getQuick(col).getIPv4(recordB);
+    }
+
+    @Override
     public long getLong(int col) {
         if (useA) {
             return castFunctionsA.getQuick(col).getLong(recordA);

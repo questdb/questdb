@@ -122,6 +122,10 @@ public class VirtualRecord implements ColumnTypes, Record {
     public int getInt(int col) {
         return getFunction(col).getInt(base);
     }
+    @Override
+    public int getIPv4(int col) {
+        return getFunction(col).getIPv4(base);
+    }
 
     @Override
     public long getLong(int col) {

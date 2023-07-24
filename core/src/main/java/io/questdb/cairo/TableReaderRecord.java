@@ -151,6 +151,16 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
+    public int getIPv4(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getColumn(absoluteColumnIndex).getIPv4(offset);
+    }
+
+    @Override
     public long getLong(int col) {
         final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(

@@ -259,6 +259,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private boolean isNegative(int argType, Object arg) {
         switch (ColumnType.tagOf(argType)) {
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 return (int) arg < 0 && (int) arg != Numbers.INT_NaN;
             case ColumnType.LONG:
                 return (long) arg < 0 && (long) arg != Numbers.LONG_NaN;
@@ -348,6 +349,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 }
                 break;
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 sink.put((Integer) value);
                 break;
             case ColumnType.BOOLEAN:

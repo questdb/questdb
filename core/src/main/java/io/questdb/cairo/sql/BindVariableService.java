@@ -308,6 +308,35 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Int
      */
     void setInt(int index) throws SqlException;
+    /**
+     * Set type of bind variable by index as integer and provide a value
+     * Distinct from int because of different null values
+     *
+     * @param index numeric index of the bind variable
+     * @param value as integer
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Int
+     */
+    void setIPv4(int index, int value) throws SqlException;
+    /**
+     * Set type of bind variable by index as integer and provide a value
+     * Distinct from int because of different null values
+     *
+     * @param index numeric index of the bind variable
+     * @param value as integer
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Int
+     */
+    void setIPv4(int index, CharSequence value) throws SqlException;
+    /**
+     * Set type of bind variable by index as binary
+     * Distinct from int because of different null values
+     *
+     * @param index numeric index of the bind variable
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Int
+     */
+    void setIPv4(int index) throws SqlException;
 
     /**
      * Set type of bind variable by index as integer and provide a value
@@ -327,6 +356,7 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with Long
      */
+
     void setLong(CharSequence name, long value) throws SqlException;
 
     /**

@@ -234,6 +234,11 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public int getIPv4(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+    }
+
+    @Override
     public long getLong(int columnIndex) {
         return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
     }

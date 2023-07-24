@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -363,18 +363,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
     private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
-        final int i = rec.getInt(col);
-        if (i == Integer.MIN_VALUE) {
+        final int i = rec.getIPv4(col);
+        if(i == Numbers.IPv4_NULL) {
             socket.put("null");
         } else {
             socket.put('"');
-            Numbers.append(socket, (i >> 24) & 0xff);
-            socket.put('.');
-            Numbers.append(socket, (i >> 16) & 0xff);
-            socket.put('.');
-            Numbers.append(socket, (i >> 8) & 0xff);
-            socket.put('.');
-            Numbers.append(socket, i & 0xff);
+            Numbers.intToIPv4Sink(socket, i);
             socket.put('"');
         }
     }

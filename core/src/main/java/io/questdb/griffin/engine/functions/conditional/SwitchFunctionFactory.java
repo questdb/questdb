@@ -103,6 +103,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             case ColumnType.CHAR:
                 return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
             case ColumnType.BYTE:
                 return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);

@@ -586,8 +586,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            boolean geoHashExpression = PredicateType.GEO_HASH == predicateContext.type;
-            serializeNull(offset, position, typeCode, geoHashExpression);
+            serializeNull(offset, position, typeCode, predicateContext.type);
             return;
         }
 
@@ -693,25 +692,35 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeNull(long offset, int position, int typeCode, boolean geoHashPredicate) throws SqlException {
+    private void serializeNull(long offset, int position, int typeCode, PredicateType predicateType) throws SqlException {
         switch (typeCode) {
             case I1_TYPE:
-                if (!geoHashPredicate) {
+                if (predicateType != PredicateType.GEO_HASH) {
                     throw SqlException.position(position).put("byte type is not nullable");
                 }
                 putOperand(offset, IMM, typeCode, GeoHashes.BYTE_NULL);
                 break;
             case I2_TYPE:
-                if (!geoHashPredicate) {
+                if (predicateType != PredicateType.GEO_HASH) {
                     throw SqlException.position(position).put("short type is not nullable");
                 }
                 putOperand(offset, IMM, typeCode, GeoHashes.SHORT_NULL);
                 break;
             case I4_TYPE:
-                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.INT_NULL : Numbers.INT_NaN);
+                switch (predicateType) {
+                    case GEO_HASH:
+                        putOperand(offset, IMM, typeCode, GeoHashes.INT_NULL);
+                        break;
+                    case IPv4:
+                        putOperand(offset, IMM, typeCode, Numbers.IPv4_NULL);
+                        break;
+                    default:
+                        putOperand(offset, IMM, typeCode, Numbers.INT_NaN);
+                        break;
+                }
                 break;
             case I8_TYPE:
-                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.NULL : Numbers.LONG_NaN);
+                putOperand(offset, IMM, typeCode, predicateType == PredicateType.GEO_HASH ? GeoHashes.NULL : Numbers.LONG_NaN);
                 break;
             case F4_TYPE:
                 putDoubleOperand(offset, typeCode, Float.NaN);
@@ -904,7 +913,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private enum PredicateType {
-        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID
+        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -1179,6 +1188,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
                     type = PredicateType.GEO_HASH;
+                    break;
+                case ColumnType.IPv4:
+                    if(type != null && type != PredicateType.IPv4) {
+                        throw SqlException.position(position)
+                                .put("non-ipv4 column in ipv4 expression: ")
+                                .put(ColumnType.nameOf(columnTypeTag));
+                    }
+                    type = PredicateType.IPv4;
                     break;
                 case ColumnType.CHAR:
                     if (type != null && type != PredicateType.CHAR) {

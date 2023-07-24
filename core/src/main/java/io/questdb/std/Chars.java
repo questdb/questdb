@@ -168,6 +168,12 @@ public final class Chars {
         return compare(r, l);
     }
 
+    public static String ipv4ToString(int ip) {
+        StringSink sink = new StringSink();
+        Numbers.intToIPv4Sink(sink, ip);
+        return sink.toString();
+    }
+
     public static boolean contains(CharSequence sequence, CharSequence term) {
         return indexOf(sequence, 0, sequence.length(), term) != -1;
     }

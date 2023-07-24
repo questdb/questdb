@@ -45,6 +45,8 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<GeoHashBindVariable> geoHashVarPool;
     private final ObjList<Function> indexedVariables = new ObjList<>();
     private final ObjectPool<IntBindVariable> intVarPool;
+
+    private final ObjectPool<IPv4BindVariable> IPv4VarPool;
     private final ObjectPool<Long256BindVariable> long256VarPool;
     private final ObjectPool<LongBindVariable> longVarPool;
     private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
@@ -58,6 +60,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.doubleVarPool = new ObjectPool<>(DoubleBindVariable::new, poolSize);
         this.floatVarPool = new ObjectPool<>(FloatBindVariable::new, poolSize);
         this.intVarPool = new ObjectPool<>(IntBindVariable::new, poolSize);
+        this.IPv4VarPool = new ObjectPool<>(IPv4BindVariable::new, poolSize);
         this.longVarPool = new ObjectPool<>(LongBindVariable::new, poolSize);
         this.timestampVarPool = new ObjectPool<>(TimestampBindVariable::new, poolSize);
         this.dateVarPool = new ObjectPool<>(DateBindVariable::new, poolSize);
@@ -78,6 +81,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         doubleVarPool.clear();
         floatVarPool.clear();
         intVarPool.clear();
+        IPv4VarPool.clear();
         longVarPool.clear();
         timestampVarPool.clear();
         dateVarPool.clear();
@@ -107,6 +111,9 @@ public class BindVariableServiceImpl implements BindVariableService {
                 return type;
             case ColumnType.INT:
                 setInt(index);
+                return type;
+            case ColumnType.IPv4:
+                setIPv4(index);
                 return type;
             case ColumnType.LONG:
                 setLong(index);
@@ -446,6 +453,37 @@ public class BindVariableServiceImpl implements BindVariableService {
         } else {
             indexedVariables.setQuick(index, function = intVarPool.next());
             ((IntBindVariable) function).value = value;
+        }
+    }
+
+    @Override
+    public void setIPv4(int index) throws SqlException {
+        setIPv4(index, Numbers.IPv4_NULL);
+    }
+
+    @Override
+    public void setIPv4(int index, int value) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setIPv40(function, value, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = IPv4VarPool.next());
+            ((IPv4BindVariable) function).value = value;
+        }
+    }
+
+    @Override
+    public void setIPv4(int index, CharSequence value) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setIPv40(function, Numbers.parseIPv4Quiet(value), index, null);
+        } else {
+            indexedVariables.setQuick(index, function = IPv4VarPool.next());
+            ((IPv4BindVariable) function).value = Numbers.parseIPv4Quiet(value);
         }
     }
 
@@ -853,6 +891,9 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.INT:
                 ((IntBindVariable) function).value = value;
                 break;
+            case ColumnType.IPv4:
+                ((IPv4BindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.IPv4_NULL;
+                break;
             case ColumnType.LONG:
                 ((LongBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
                 break;
@@ -878,6 +919,11 @@ public class BindVariableServiceImpl implements BindVariableService {
                 reportError(function, ColumnType.INT, index, name);
                 break;
         }
+    }
+
+    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = ColumnType.tagOf(function.getType());
+        ((IPv4BindVariable) function).value = value;
     }
 
     private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
@@ -995,6 +1041,9 @@ public class BindVariableServiceImpl implements BindVariableService {
                 break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
+                break;
+            case ColumnType.IPv4:
+                ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
                 break;
             case ColumnType.INT:
                 ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);

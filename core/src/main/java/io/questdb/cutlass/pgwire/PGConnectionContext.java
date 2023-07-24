@@ -510,6 +510,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bindVariableService.setInt(index, getIntUnsafe(address));
     }
 
+    public void setIPv4BindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(index, Integer.BYTES, valueLen);
+        bindVariableService.setIPv4(index, getIntUnsafe(address));
+    }
+
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLongUnsafe(address));
@@ -738,6 +743,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void appendIPv4Col(Record record, int columnIndex) {
+        int ipV4 = record.getIPv4(columnIndex);
+        if (ipV4 == Numbers.IPv4_NULL) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.intToIPv4Sink(responseAsciiSink, ipV4);
+            responseAsciiSink.putLenEx(a);
+        }
+    }
+
     private void appendLong256Column(Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
         if (long256Value.getLong0() == Numbers.LONG_NaN &&
@@ -794,6 +810,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     break;
                 case ColumnType.INT:
                     appendIntCol(record, i);
+                    break;
+                case ColumnType.IPv4:
+                    appendIPv4Col(record, i);
                     break;
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:

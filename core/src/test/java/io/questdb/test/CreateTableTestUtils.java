@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -93,8 +93,7 @@ public class CreateTableTestUtils {
                         .col("j", ColumnType.SYMBOL)
                         .col("k", ColumnType.BOOLEAN)
                         .col("l", ColumnType.BINARY)
-                        .col("m", ColumnType.UUID)
-                        .col("n", ColumnType.IPv4);
+                        .col("m", ColumnType.UUID);
                 TestUtils.create(model, engine);
             }
         } catch (RuntimeException e) {
@@ -206,7 +205,7 @@ public class CreateTableTestUtils {
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp().col("IPv4", ColumnType.IPv4);
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp();
 
     }
 

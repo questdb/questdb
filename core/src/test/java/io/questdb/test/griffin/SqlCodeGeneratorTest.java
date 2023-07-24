@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * <p>
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- *
+ * <p>
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- *
+ * <p>
  *  http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -55,6 +56,59 @@ import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
 public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
+    public void IPv4NullTest() throws Exception {
+        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values(null)");
+        assertSql("test", "col\n" +
+                "null\n");
+    }
+
+    @Test
+    public void alterTableIPv4NullCol() throws Exception {
+        compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values ('0.0.0.1')");
+        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
+        }
+
+        assertSql("test", "col1\tcol2\n" +
+                "0.0.0.1\tnull\n");
+    }
+
+    @Test
+    public void ipv4NullTest() throws Exception {
+        compiler.compile("create table x (b ipv4)", sqlExecutionContext);
+        executeInsert("insert into x values('128.0.0.0')");
+        executeInsert("insert into x values('0.0.0.0')");
+
+        assertSql("x", "b\n" +
+                "128.0.0.0\n" +
+                "null\n");
+    }
+
+    @Test
+    public void testAggregateByIPv4() throws Exception {
+        assertQuery("ip\tsum\n" +
+                        "0.0.0.2\t7360\n" +
+                        "0.0.0.4\t10105\n" +
+                        "0.0.0.3\t9230\n" +
+                        "0.0.0.5\t11739\n" +
+                        "0.0.0.1\t11644\n",
+                "select ip, sum (bytes) from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000) time" +
+                        "  from long_sequence(100)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
         assertQuery("k1\ta\tk\n" +
                         "1970-01-01T00:00:00.000000Z\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
@@ -69,161 +123,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "  from long_sequence(3)" +
                         ") timestamp(k)",
                 "k",
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntToIpv4_NO_WAL() throws Exception {
-
-            compiler.compile("create table x as (select x::int from long_sequence(10))", sqlExecutionContext);
-            compiler.compile("create table y (a ipv4)", sqlExecutionContext);
-
-            engine.releaseInactive();
-
-            assertQuery("a\n" +
-                            '"' + "0.0.0.1" + '"' + '\n' +
-                            '"' + "0.0.0.2" + '"' + '\n' +
-                            '"' + "0.0.0.3" + '"' + '\n' +
-                            '"' + "0.0.0.4" + '"' + '\n' +
-                            '"' + "0.0.0.5" + '"' + '\n' +
-                            '"' + "0.0.0.6" + '"' + '\n' +
-                            '"' + "0.0.0.7" + '"' + '\n' +
-                            '"' + "0.0.0.8" + '"' + '\n' +
-                            '"' + "0.0.0.9" + '"' + '\n' +
-                            '"' + "0.0.0.10" + '"' + '\n',
-                    "select * from y",
-                    "insert into y select * from x",
-                    null,
-                    true,
-                    true
-            );
-    }
-
-    @Test
-    public void testShortToIpv4_NO_WAL() throws Exception {
-
-        compiler.compile("create table x as (select x::short from long_sequence(10))", sqlExecutionContext);
-        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
-
-        engine.releaseInactive();
-
-        assertQuery("a\n" +
-                        '"' + "0.0.0.1" + '"' + '\n' +
-                        '"' + "0.0.0.2" + '"' + '\n' +
-                        '"' + "0.0.0.3" + '"' + '\n' +
-                        '"' + "0.0.0.4" + '"' + '\n' +
-                        '"' + "0.0.0.5" + '"' + '\n' +
-                        '"' + "0.0.0.6" + '"' + '\n' +
-                        '"' + "0.0.0.7" + '"' + '\n' +
-                        '"' + "0.0.0.8" + '"' + '\n' +
-                        '"' + "0.0.0.9" + '"' + '\n' +
-                        '"' + "0.0.0.10" + '"' + '\n',
-                "select * from y",
-                "insert into y select * from x",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testByteToIpv4_NO_WAL() throws Exception {
-
-        compiler.compile("create table x as (select x::byte from long_sequence(10))", sqlExecutionContext);
-        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
-
-        engine.releaseInactive();
-
-        assertQuery("a\n" +
-                        '"' + "0.0.0.1" + '"' + '\n' +
-                        '"' + "0.0.0.2" + '"' + '\n' +
-                        '"' + "0.0.0.3" + '"' + '\n' +
-                        '"' + "0.0.0.4" + '"' + '\n' +
-                        '"' + "0.0.0.5" + '"' + '\n' +
-                        '"' + "0.0.0.6" + '"' + '\n' +
-                        '"' + "0.0.0.7" + '"' + '\n' +
-                        '"' + "0.0.0.8" + '"' + '\n' +
-                        '"' + "0.0.0.9" + '"' + '\n' +
-                        '"' + "0.0.0.10" + '"' + '\n',
-                "select * from y",
-                "insert into y select * from x",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testStringToIpv4_NO_WAL() throws Exception {
-
-        compiler.compile("create table x (b string)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into x values('0.0.0.7')");
-        executeInsert("insert into x values('0.0.0.8')");
-        executeInsert("insert into x values('0.0.0.9')");
-        executeInsert("insert into x values('0.0.0.10')");
-        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
-
-        engine.releaseInactive();
-
-        assertQuery("a\n" +
-                        '"' + "0.0.0.1" + '"' + '\n' +
-                        '"' + "0.0.0.2" + '"' + '\n' +
-                        '"' + "0.0.0.3" + '"' + '\n' +
-                        '"' + "0.0.0.4" + '"' + '\n' +
-                        '"' + "0.0.0.5" + '"' + '\n' +
-                        '"' + "0.0.0.6" + '"' + '\n' +
-                        '"' + "0.0.0.7" + '"' + '\n' +
-                        '"' + "0.0.0.8" + '"' + '\n' +
-                        '"' + "0.0.0.9" + '"' + '\n' +
-                        '"' + "0.0.0.10" + '"' + '\n',
-                "select * from y",
-                "insert into y select * from x",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIPv4ToInt_NO_WAL() throws Exception {
-
-        compiler.compile("create table x (b IPv4)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into x values('0.0.0.7')");
-        executeInsert("insert into x values('0.0.0.8')");
-        executeInsert("insert into x values('0.0.0.9')");
-        executeInsert("insert into x values('0.0.0.10')");
-        compiler.compile("create table y (a int)", sqlExecutionContext);
-
-        engine.releaseInactive();
-
-        assertQuery("a\n" +
-                        "1" + '\n' +
-                        "2" + '\n' +
-                        "3" + '\n' +
-                        "4" + '\n' +
-                        "5" + '\n' +
-                        "6" + '\n' +
-                        "7" + '\n' +
-                        "8" + '\n' +
-                        "9" + '\n' +
-                        "10" + '\n',
-                "select * from y",
-                "insert into y select * from x",
-                null,
                 true,
                 true
         );
@@ -659,6 +558,57 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateAsSelectCastIPv4ToStr() throws Exception {
+        assertSql("select rnd_ipv4()::string from long_sequence(10)", "cast\n" +
+                "187.139.150.80\n" +
+                "18.206.96.238\n" +
+                "92.80.211.65\n" +
+                "212.159.205.29\n" +
+                "4.98.173.21\n" +
+                "199.122.166.85\n" +
+                "79.15.250.138\n" +
+                "35.86.82.23\n" +
+                "111.98.117.250\n" +
+                "205.123.179.216\n");
+    }
+
+    @Test
+    public void testCreateAsSelectCastStrToIPv4() throws Exception {
+
+        compiler.compile("create table x as (select x::string col from long_sequence(0))", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into x values('0.0.0.7')");
+        executeInsert("insert into x values('0.0.0.8')");
+        executeInsert("insert into x values('0.0.0.9')");
+        executeInsert("insert into x values('0.0.0.10')");
+
+        engine.releaseInactive();
+
+        assertQuery("col\n" +
+                        "0.0.0.1" + '\n' +
+                        "0.0.0.2" + '\n' +
+                        "0.0.0.3" + '\n' +
+                        "0.0.0.4" + '\n' +
+                        "0.0.0.5" + '\n' +
+                        "0.0.0.6" + '\n' +
+                        "0.0.0.7" + '\n' +
+                        "0.0.0.8" + '\n' +
+                        "0.0.0.9" + '\n' +
+                        "0.0.0.10" + '\n',
+                "select * from y",
+                "create table y as (x), cast(col as ipv4)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testCreateTableAsSelectUsesQueryTimestamp() throws Exception {
         assertQuery(
                 "a\tb\tt\n" +
@@ -1086,6 +1036,66 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             true
                     );
                 });
+    }
+
+    @Test
+    public void testExplicitCastIPv4ToInt() throws Exception {
+        assertSql("select rnd_ipv4()::int from long_sequence(10)", "cast\n" +
+                "315515118\n" +
+                "-727724771\n" +
+                "-948263339\n" +
+                "592859671\n" +
+                "-847531048\n" +
+                "-2041844972\n" +
+                "-1575378703\n" +
+                "1545253512\n" +
+                "1573662097\n" +
+                "339631474\n");
+    }
+
+    @Test
+    public void testExplicitCastIntToIPv4() throws Exception {
+        assertSql("select rnd_int()::ipv4 from long_sequence(10)", "cast\n" +
+                "18.206.96.238\n" +
+                "212.159.205.29\n" +
+                "199.122.166.85\n" +
+                "35.86.82.23\n" +
+                "205.123.179.216\n" +
+                "134.75.235.20\n" +
+                "162.25.160.241\n" +
+                "92.26.178.136\n" +
+                "93.204.45.145\n" +
+                "20.62.93.114\n");
+    }
+
+    @Test
+    public void testExplicitCastStrToIPv4() throws Exception {
+        assertSql("select rnd_ipv4()::string::ipv4 from long_sequence(10)", "cast\n" +
+                "18.206.96.238\n" +
+                "212.159.205.29\n" +
+                "199.122.166.85\n" +
+                "35.86.82.23\n" +
+                "205.123.179.216\n" +
+                "134.75.235.20\n" +
+                "162.25.160.241\n" +
+                "92.26.178.136\n" +
+                "93.204.45.145\n" +
+                "20.62.93.114\n");
+    }
+
+    @Test
+    public void testExplicitCastStrToIPv4Null() throws Exception {
+        assertSql("select rnd_str()::ipv4 from long_sequence(10)", "cast\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n");
     }
 
     @Test
@@ -2093,6 +2103,64 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFirstIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select first(ip) from test", "first\n" +
+                "10.5.96.238\n");
+    }
+
+    @Test
+    public void testFullJoinIPv4() throws Exception {
+        compiler.setFullFatJoins(true);
+        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))", sqlExecutionContext);
+        assertSql("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip", "count\tip\tip2\tcount2\n" +
+                "1\t12.5.9.227\t12.5.9.227\t2\n" +
+                "1\t12.5.9.23\t12.5.9.23\t2\n" +
+                "1\t12.5.9.145\t12.5.9.145\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.115\t12.5.9.115\t2\n" +
+                "1\t12.5.9.216\t12.5.9.216\t2\n" +
+                "1\t12.5.9.216\t12.5.9.216\t2\n" +
+                "1\t12.5.9.216\t12.5.9.216\t2\n" +
+                "1\t12.5.9.48\t12.5.9.48\t2\n" +
+                "1\t12.5.9.228\t12.5.9.228\t2\n" +
+                "1\t12.5.9.228\t12.5.9.228\t2\n" +
+                "1\t12.5.9.117\t12.5.9.117\t2\n" +
+                "1\t12.5.9.179\t12.5.9.179\t2\n" +
+                "1\t12.5.9.48\t12.5.9.48\t2\n" +
+                "1\t12.5.9.26\t12.5.9.26\t2\n" +
+                "1\t12.5.9.240\t12.5.9.240\t2\n" +
+                "1\t12.5.9.194\t12.5.9.194\t2\n" +
+                "1\t12.5.9.137\t12.5.9.137\t2\n" +
+                "1\t12.5.9.179\t12.5.9.179\t2\n" +
+                "1\t12.5.9.179\t12.5.9.179\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.159\t12.5.9.159\t2\n" +
+                "1\t12.5.9.215\t12.5.9.215\t2\n" +
+                "1\t12.5.9.184\t12.5.9.184\t2\n" +
+                "1\t12.5.9.46\t12.5.9.46\t2\n" +
+                "1\t12.5.9.184\t12.5.9.184\t2\n" +
+                "1\t12.5.9.147\t12.5.9.147\t2\n" +
+                "1\t12.5.9.152\t12.5.9.152\t2\n" +
+                "1\t12.5.9.28\t12.5.9.28\t2\n" +
+                "1\t12.5.9.20\t12.5.9.20\t2\n" +
+                "1\t12.5.9.20\t12.5.9.20\t2\n");
+        compiler.setFullFatJoins(false);
+    }
+
+    @Test
+    public void testFullJoinIPv4Fails() throws Exception {
+        compiler.setFullFatJoins(true);
+        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))", sqlExecutionContext);
+        engine.releaseInactive();
+        assertFailure("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.count", null, 76, "join column type mismatch");
+        compiler.setFullFatJoins(false);
+    }
+
+    @Test
     public void testGreaterNoOpFilter() throws Exception {
         assertQuery("c0\n",
                 "select t7.c0 from t7 where t7.c0 > t7.c0",
@@ -2165,6 +2233,925 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select count(count), ip from test group by ip", "count\tip\n" +
+                "1\t10.5.96.238\n" +
+                "6\tnull\n" +
+                "1\t10.5.173.21\n" +
+                "1\t10.5.250.138\n" +
+                "1\t10.5.76.40\n" +
+                "1\t10.5.20.236\n" +
+                "1\t10.5.95.15\n" +
+                "1\t10.5.132.196\n" +
+                "1\t10.5.93.114\n" +
+                "1\t10.5.121.252\n" +
+                "1\t10.5.249.199\n" +
+                "1\t10.5.212.34\n" +
+                "1\t10.5.236.196\n" +
+                "1\t10.5.170.235\n" +
+                "1\t10.5.45.159\n");
+    }
+
+    @Test
+    public void testGroupByIPv42() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
+                "1\t10.5.96.238\n" +
+                "6\tnull\n" +
+                "1\t10.5.173.21\n" +
+                "1\t10.5.250.138\n" +
+                "1\t10.5.76.40\n" +
+                "1\t10.5.20.236\n" +
+                "1\t10.5.95.15\n" +
+                "1\t10.5.132.196\n" +
+                "1\t10.5.93.114\n" +
+                "1\t10.5.121.252\n" +
+                "1\t10.5.249.199\n" +
+                "1\t10.5.212.34\n" +
+                "1\t10.5.236.196\n" +
+                "1\t10.5.170.235\n" +
+                "1\t10.5.45.159\n");
+    }
+
+    @Test
+    public void testGroupByIPv43() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
+                "4\t10.5.6.2\n" +
+                "6\tnull\n" +
+                "1\t10.5.6.1\n" +
+                "5\t10.5.6.0\n" +
+                "4\t10.5.6.3\n");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnet() throws Exception {
+        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values('12.67.45.3')");
+        executeInsert("insert into test values('160.5.22.8')");
+        executeInsert("insert into test values('240.110.88.22')");
+        executeInsert("insert into test values('1.6.2.0')");
+        executeInsert("insert into test values('255.255.255.255')");
+        executeInsert("insert into test values('0.0.0.0')");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/20'", sink, "col\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/1'", sink, "col\n" +
+                "12.67.45.3\n" +
+                "1.6.2.0\n" +
+                "null\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '255.6.8.10/8'", sink, "col\n" +
+                "255.255.255.255\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/0'", sink, "col\n" +
+                "12.67.45.3\n" +
+                "160.5.22.8\n" +
+                "240.110.88.22\n" +
+                "1.6.2.0\n" +
+                "255.255.255.255\n" +
+                "null\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0/32'", sink, "col\n" +
+                "1.6.2.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0'", sink, "col\n" +
+                "1.6.2.0\n");
+
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetAndMask() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,1000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where ip <<= '0.0.0/24'", "ip\n" +
+                "0.0.0.167\n" +
+                "0.0.0.182\n" +
+                "0.0.0.108\n" +
+                "0.0.0.95\n" +
+                "0.0.0.12\n" +
+                "0.0.0.71\n" +
+                "0.0.0.10\n" +
+                "0.0.0.238\n" +
+                "0.0.0.105\n" +
+                "0.0.0.203\n" +
+                "0.0.0.86\n" +
+                "0.0.0.100\n" +
+                "0.0.0.144\n" +
+                "0.0.0.173\n" +
+                "0.0.0.121\n" +
+                "0.0.0.231\n" +
+                "0.0.0.181\n" +
+                "0.0.0.218\n" +
+                "0.0.0.34\n" +
+                "0.0.0.90\n" +
+                "null\n" +
+                "0.0.0.161\n" +
+                "0.0.0.188\n" +
+                "null\n" +
+                "0.0.0.29\n" +
+                "0.0.0.159\n");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0.1/hello'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.1/hello");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails2() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/hello'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/hello");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails3() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0.0/65'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails4() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/65'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails5() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0.0/-1'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFails6() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/-1'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFailsChars() throws Exception {
+        assertFailure("select * from test where ip <<= 'apple'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: apple");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFailsNetmaskOverflow() throws Exception {
+        assertFailure("select * from test where ip <<= '85.7.36/74'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFailsNums() throws Exception {
+        assertFailure("select * from test where ip <<= '8573674'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 8573674");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetFailsOverflow() throws Exception {
+        assertFailure("select * from test where ip <<= '256.256.256.256'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 256.256.256.256");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetIncorrectMask() throws Exception {
+        assertFailure("select * from test where ip <<= '0.0.0/32'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/32");
+    }
+
+    @Test
+    public void testIPv4ContainsEqSubnetNoMask() throws Exception {
+
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where ip <<= '0.0.0.4'", "ip\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnet() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where ip << '0.0.0.1'", "ip\n");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnet2() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where ip << '0.0.0.1/32'", "ip\n");
+    }
+
+    @Test
+    public void testIPv4ContainsSubnet3() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))", sqlExecutionContext);
+        assertSql("select * from test where ip << '0.0.0.1/24'", "ip\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n");
+    }
+
+    @Test
+    public void testIPv4EqArgsSwapped() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0.1' = ip", "ip\n" +
+                "0.0.0.1\n");
+    }
+
+    @Test
+    public void testIPv4EqNegated() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
+
+        assertSql("select * from test where ip != '0.0.0.1'", "ip\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "null\n" +
+                "0.0.0.4\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "null\n" +
+                "0.0.0.3\n" +
+                "0.0.0.2\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "null\n" +
+                "null\n");
+    }
+
+    @Test
+    public void testIPv4EqNegated2() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0.1' != ip", "ip\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "null\n" +
+                "0.0.0.4\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "null\n" +
+                "0.0.0.3\n" +
+                "0.0.0.2\n" +
+                "null\n" +
+                "0.0.0.5\n" +
+                "0.0.0.4\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "null\n" +
+                "null\n");
+    }
+
+    @Test
+    public void testIPv4EqNull() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where ip = null", "ip\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n" +
+                "null\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnet() throws Exception {
+        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values('12.67.45.3')");
+        executeInsert("insert into test values('160.5.22.8')");
+        executeInsert("insert into test values('240.110.88.22')");
+        executeInsert("insert into test values('1.6.2.0')");
+        executeInsert("insert into test values('255.255.255.255')");
+        executeInsert("insert into test values('0.0.0.0')");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/20' >>= col", sink, "col\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/1' >>= col", sink, "col\n" +
+                "12.67.45.3\n" +
+                "1.6.2.0\n" +
+                "null\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '255.6.8.10/8' >>= col", sink, "col\n" +
+                "255.255.255.255\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/0' >>= col", sink, "col\n" +
+                "12.67.45.3\n" +
+                "160.5.22.8\n" +
+                "240.110.88.22\n" +
+                "1.6.2.0\n" +
+                "255.255.255.255\n" +
+                "null\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0/32' >>= col", sink, "col\n" +
+                "1.6.2.0\n");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0' >>= col", sink, "col\n" +
+                "1.6.2.0\n");
+
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetAndMask() throws Exception {
+        compiler.compile("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0/24' >>= ip", "ip\n" +
+                "0.0.0.115\n" +
+                "0.0.0.208\n" +
+                "0.0.0.110\n" +
+                "0.0.0.90\n" +
+                "0.0.0.53\n" +
+                "0.0.0.143\n" +
+                "0.0.0.246\n" +
+                "0.0.0.158\n" +
+                "0.0.0.237\n" +
+                "0.0.0.220\n" +
+                "0.0.0.184\n" +
+                "0.0.0.103\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFails() throws Exception {
+        assertFailure("select * from test where '0.0.0.1/hello' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.1/hello");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFails2() throws Exception {
+        assertFailure("select * from test where '0.0.0/hello' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/hello");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFails3() throws Exception {
+        assertFailure("select * from test where '0.0.0.0/65' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFails4() throws Exception {
+        assertFailure("select * from test where '0.0.0/65' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/65");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFails5() throws Exception {
+        assertFailure("select * from test where '0.0.0.0/-1' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFails6() throws Exception {
+        assertFailure("select * from test where '0.0.0/-1' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/-1");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFailsChars() throws Exception {
+        assertFailure("select * from test where 'apple' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: apple");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFailsNetmaskOverflow() throws Exception {
+        assertFailure("select * from test where '85.7.36/74' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFailsNums() throws Exception {
+        assertFailure("select * from test where '8573674' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 8573674");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetFailsOverflow() throws Exception {
+        assertFailure("select * from test where '256.256.256.256' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 256.256.256.256");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetIncorrectMask() throws Exception {
+        assertFailure("select * from test where '0.0.0/32' >>= ip", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1000,2000,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 18, "invalid argument: 0.0.0/32");
+    }
+
+    @Test
+    public void testIPv4NegContainsEqSubnetNoMask() throws Exception {
+
+        compiler.compile("create table test as (select rnd_int(0,5,2)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+
+        assertSql("select * from test where '0.0.0.4' >>= ip", "ip\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n" +
+                "0.0.0.4\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsSubnet() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where '0.0.0.1' >> ip", "ip\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsSubnet2() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
+        assertSql("select * from test where '0.0.0.1/32' >> ip", "ip\n");
+    }
+
+    @Test
+    public void testIPv4NegContainsSubnet3() throws Exception {
+        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))", sqlExecutionContext);
+        assertSql("select * from test where '0.0.0.1/24' >> ip", "ip\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.2\n" +
+                "0.0.0.1\n");
+    }
+
+    @Test
+    public void testIPv4StringUnionFails() throws Exception {
+        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
+        compiler.compile("create table y (col2 string)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into y values('0.0.0.1')");
+        executeInsert("insert into y values('0.0.0.2')");
+        executeInsert("insert into y values('0.0.0.3')");
+        executeInsert("insert into y values('0.0.0.4')");
+        executeInsert("insert into y values('0.0.0.5')");
+
+        engine.releaseInactive();
+
+        assertFailure("select col1 from x union select col2 from y", null, 25, "unsupported cast [column=col2, from=STRING, to=IPv4]");
+    }
+
+    @Test
+    public void testIPv4Union() throws Exception {
+        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
+        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into y values('0.0.0.1')");
+        executeInsert("insert into y values('0.0.0.2')");
+        executeInsert("insert into y values('0.0.0.3')");
+        executeInsert("insert into y values('0.0.0.4')");
+        executeInsert("insert into y values('0.0.0.5')");
+
+        assertSql("select col1 from x union select col2 from y", "col1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.3\n" +
+                "0.0.0.4\n" +
+                "0.0.0.5\n");
+    }
+
+    @Test
+    public void testImplicitCastBinaryToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_bin() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: BINARY -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastBoolToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_boolean() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: BOOLEAN -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastByteToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_byte() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: BYTE -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastCharToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_char() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: CHAR -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastDateToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_date() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: DATE -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastDoubleToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_double() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: DOUBLE -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastFloatToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_float() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: FLOAT -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToBinary() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col binary)",
+                21,
+                "inconvertible types: IPv4 -> BINARY [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToBool() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col boolean)",
+                21,
+                "inconvertible types: IPv4 -> BOOLEAN [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToByte() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col byte)",
+                21,
+                "inconvertible types: IPv4 -> BYTE [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToChar() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col char)",
+                21,
+                "inconvertible types: IPv4 -> CHAR [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToDate() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col date)",
+                21,
+                "inconvertible types: IPv4 -> DATE [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToDouble() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col double)",
+                21,
+                "inconvertible types: IPv4 -> DOUBLE [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToFloat() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col float)",
+                21,
+                "inconvertible types: IPv4 -> FLOAT [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToInt() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col int)",
+                21,
+                "inconvertible types: IPv4 -> INT [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToLong() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col long)",
+                21,
+                "inconvertible types: IPv4 -> LONG [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToLong128() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col long128)",
+                21,
+                "inconvertible types: IPv4 -> LONG128 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToLong256() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col long256)",
+                21,
+                "inconvertible types: IPv4 -> LONG256 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToShort() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col short)",
+                21,
+                "inconvertible types: IPv4 -> SHORT [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToStr() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col string)",
+                21,
+                "inconvertible types: IPv4 -> STRING [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToSymbol() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col symbol)",
+                21,
+                "inconvertible types: IPv4 -> SYMBOL [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToTimestamp() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col timestamp)",
+                21,
+                "inconvertible types: IPv4 -> TIMESTAMP [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToUUID() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col uuid)",
+                21,
+                "inconvertible types: IPv4 -> UUID [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIntToIPv4() throws Exception {
+
+        assertFailure("insert into y select rnd_int() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: INT -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIntToStr() throws Exception {
+        assertFailure("insert into y select rnd_int() col from long_sequence(10)",
+                "create table y (col string)",
+                21,
+                "inconvertible types: INT -> STRING [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastLong256ToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_long256() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: LONG256 -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastLongToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_long() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: LONG -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastShortToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_short() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: SHORT -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
     public void testImplicitCastStrToDouble() throws Exception {
         assertQuery("column\tprice\n" +
                         "80.43224099968394\t0.8043224099968393\n" +
@@ -2190,6 +3177,102 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testImplicitCastStrToIpv4() throws Exception {
+
+        compiler.compile("create table x (b string)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into x values('0.0.0.7')");
+        executeInsert("insert into x values('0.0.0.8')");
+        executeInsert("insert into x values('0.0.0.9')");
+        executeInsert("insert into x values('0.0.0.10')");
+        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
+
+        engine.releaseInactive();
+
+        assertQuery("a\n" +
+                        "0.0.0.1" + '\n' +
+                        "0.0.0.2" + '\n' +
+                        "0.0.0.3" + '\n' +
+                        "0.0.0.4" + '\n' +
+                        "0.0.0.5" + '\n' +
+                        "0.0.0.6" + '\n' +
+                        "0.0.0.7" + '\n' +
+                        "0.0.0.8" + '\n' +
+                        "0.0.0.9" + '\n' +
+                        "0.0.0.10" + '\n',
+                "select * from y",
+                "insert into y select * from x",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testImplicitCastSymbolToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_symbol(4,4,4,2) col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: SYMBOL -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastTimestampToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_timestamp(10,100000,356) col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: TIMESTAMP -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastUUIDToIPv4() throws Exception {
+        assertFailure("insert into y select rnd_uuid4() col from long_sequence(10)",
+                "create table y (col ipv4)",
+                21,
+                "inconvertible types: UUID -> IPv4 [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testInnerJoinIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('1.1.1.1/32', 0) ip, 1 count from long_sequence(5))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))", sqlExecutionContext);
+        assertSql("select test.count, test2.count2 from test inner join test2 on test2.ip2 = test.ip", "count\tcount2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n" +
+                "1\t2\n");
     }
 
     @Test
@@ -2384,6 +3467,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "100\t100\n"
             );
         });
+    }
+
+    @Test
+    public void testLastIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))", sqlExecutionContext);
+        assertSql("select sym, last(ip) from test", "sym\tlast\n" +
+                "$a\t10.5.237.229\n" +
+                "ac\t10.5.235.200\n" +
+                "ab\tnull\n");
     }
 
     @Test
@@ -3863,6 +4955,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByIPv4() throws Exception {
+        assertQuery("ip\tbytes\ttime\n" +
+                        "0.0.0.4\t269\t1970-01-01T00:00:08.700000Z\n" +
+                        "0.0.0.3\t660\t1970-01-01T00:00:09.000000Z\n" +
+                        "0.0.0.5\t624\t1970-01-01T00:00:09.600000Z\n" +
+                        "0.0.0.1\t25\t1970-01-01T00:00:09.800000Z\n" +
+                        "0.0.0.2\t326\t1970-01-01T00:00:09.900000Z\n",
+                "select * from test latest by ip",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000) time" +
+                        "  from long_sequence(100)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
     public void testLatestByIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr(0, "HYRX");
@@ -5259,7 +6373,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH] are supported in LATEST BY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY";
         assertCompile(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
@@ -5393,6 +6507,79 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "2019-10-22T23:00:33.400000Z\tMiami\tOmron\t18.90154105169603\n"
             );
         });
+    }
+
+    @Test
+    public void testLeftJoinIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('1.1.1.1/16', 0) ip, 1 count from long_sequence(5))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))", sqlExecutionContext);
+        assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
+                "1.1.96.238\tnull\t1\tNaN\n" +
+                "1.1.50.227\tnull\t1\tNaN\n" +
+                "1.1.89.171\tnull\t1\tNaN\n" +
+                "1.1.82.23\tnull\t1\tNaN\n" +
+                "1.1.76.40\tnull\t1\tNaN\n");
+    }
+
+    @Test
+    public void testLeftJoinIPv42() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(50))", sqlExecutionContext);
+        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))", sqlExecutionContext);
+        assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
+                "12.5.9.238\tnull\t1\tNaN\n" +
+                "12.5.9.227\tnull\t1\tNaN\n" +
+                "12.5.9.171\tnull\t1\tNaN\n" +
+                "12.5.9.23\tnull\t1\tNaN\n" +
+                "12.5.9.40\tnull\t1\tNaN\n" +
+                "12.5.9.236\tnull\t1\tNaN\n" +
+                "12.5.9.15\tnull\t1\tNaN\n" +
+                "12.5.9.136\tnull\t1\tNaN\n" +
+                "12.5.9.145\tnull\t1\tNaN\n" +
+                "12.5.9.114\t12.5.9.114\t1\t2\n" +
+                "12.5.9.243\tnull\t1\tNaN\n" +
+                "12.5.9.229\tnull\t1\tNaN\n" +
+                "12.5.9.120\tnull\t1\tNaN\n" +
+                "12.5.9.160\tnull\t1\tNaN\n" +
+                "12.5.9.196\tnull\t1\tNaN\n" +
+                "12.5.9.235\tnull\t1\tNaN\n" +
+                "12.5.9.159\t12.5.9.159\t1\t2\n" +
+                "12.5.9.81\tnull\t1\tNaN\n" +
+                "12.5.9.196\tnull\t1\tNaN\n" +
+                "12.5.9.108\tnull\t1\tNaN\n" +
+                "12.5.9.173\tnull\t1\tNaN\n" +
+                "12.5.9.76\tnull\t1\tNaN\n" +
+                "12.5.9.126\tnull\t1\tNaN\n" +
+                "12.5.9.248\tnull\t1\tNaN\n" +
+                "12.5.9.226\t12.5.9.226\t1\t2\n" +
+                "12.5.9.115\tnull\t1\tNaN\n" +
+                "12.5.9.98\tnull\t1\tNaN\n" +
+                "12.5.9.200\tnull\t1\tNaN\n" +
+                "12.5.9.247\tnull\t1\tNaN\n" +
+                "12.5.9.216\tnull\t1\tNaN\n" +
+                "12.5.9.48\tnull\t1\tNaN\n" +
+                "12.5.9.202\tnull\t1\tNaN\n" +
+                "12.5.9.50\tnull\t1\tNaN\n" +
+                "12.5.9.228\tnull\t1\tNaN\n" +
+                "12.5.9.210\tnull\t1\tNaN\n" +
+                "12.5.9.7\tnull\t1\tNaN\n" +
+                "12.5.9.4\tnull\t1\tNaN\n" +
+                "12.5.9.135\tnull\t1\tNaN\n" +
+                "12.5.9.117\tnull\t1\tNaN\n" +
+                "12.5.9.43\t12.5.9.43\t1\t2\n" +
+                "12.5.9.43\t12.5.9.43\t1\t2\n" +
+                "12.5.9.179\t12.5.9.179\t1\t2\n" +
+                "12.5.9.179\t12.5.9.179\t1\t2\n" +
+                "12.5.9.142\tnull\t1\tNaN\n" +
+                "12.5.9.75\tnull\t1\tNaN\n" +
+                "12.5.9.239\tnull\t1\tNaN\n" +
+                "12.5.9.48\tnull\t1\tNaN\n" +
+                "12.5.9.100\t12.5.9.100\t1\t2\n" +
+                "12.5.9.100\t12.5.9.100\t1\t2\n" +
+                "12.5.9.100\t12.5.9.100\t1\t2\n" +
+                "12.5.9.26\tnull\t1\tNaN\n" +
+                "12.5.9.240\tnull\t1\tNaN\n" +
+                "12.5.9.192\tnull\t1\tNaN\n" +
+                "12.5.9.181\tnull\t1\tNaN\n");
     }
 
     @Test
@@ -5986,6 +7173,40 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "XIO\t14.830552335848957\t1970-01-04T09:00:00.000000Z\n",
                 true);
     }
+
+//    @Test
+//    public void testOrderByIPv4Ascending() throws Exception {
+//        assertQuery("",
+//                "select * from test order by ip",
+//                "create table test as " +
+//                        "(" +
+//                        "  select" +
+//                        "    rnd_ipv4 ip," +
+//                        "    rnd_int(0,1000,0) bytes," +
+//                        "    timestamp_sequence(0,100000000) ts" +
+//                        "  from long_sequence(50)" +
+//                        ")",
+//                null,
+//                true,
+//                true);
+//    }
+//
+//    @Test
+//    public void testOrderByIPv4Descending() throws Exception {
+//        assertQuery("",
+//                "select * from test order by ip DESC",
+//                "create table test as " +
+//                        "(" +
+//                        "  select" +
+//                        "    rnd_ipv4 ip," +
+//                        "    rnd_int(0,1000,0) bytes," +
+//                        "    timestamp_sequence(0,100000000) ts" +
+//                        "  from long_sequence(50)" +
+//                        ")",
+//                null,
+//                true,
+//                true);
+//    }
 
     @Test
     public void testOrderByLong256AndChar() throws Exception {
@@ -6825,6 +8046,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRndIPv4() throws Exception {
+        assertSql("select rnd_ipv4('12.6/16', 0) from long_sequence(10)", "rnd_ipv4\n" +
+                "12.6.96.238\n" +
+                "12.6.50.227\n" +
+                "12.6.89.171\n" +
+                "12.6.82.23\n" +
+                "12.6.76.40\n" +
+                "12.6.20.236\n" +
+                "12.6.95.15\n" +
+                "12.6.178.136\n" +
+                "12.6.45.145\n" +
+                "12.6.93.114\n");
+    }
+
+    @Test
+    public void testRndIPv42() throws Exception {
+        assertSql("select rnd_ipv4('12.6.8/16', 0) from long_sequence(10)", "rnd_ipv4\n" +
+                "12.6.96.238\n" +
+                "12.6.50.227\n" +
+                "12.6.89.171\n" +
+                "12.6.82.23\n" +
+                "12.6.76.40\n" +
+                "12.6.20.236\n" +
+                "12.6.95.15\n" +
+                "12.6.178.136\n" +
+                "12.6.45.145\n" +
+                "12.6.93.114\n");
+    }
+
+    @Test
     public void testSampleByFillLinearEmptyCursor() throws Exception {
         assertQuery("b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
@@ -6913,6 +8164,73 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "k",
                 true
         );
+    }
+
+    @Test
+    public void testSampleByIPv4() throws Exception {
+        assertQuery("ip\tts\tsum\n" +
+                        "0.0.0.2\t1970-01-01T00:00:00.000000Z\t23\n" +
+                        "0.0.0.4\t1970-01-01T00:01:30.000000Z\t167\n" +
+                        "0.0.0.3\t1970-01-01T00:03:00.000000Z\t7\n" +
+                        "0.0.0.3\t1970-01-01T00:05:00.000000Z\t522\n" +
+                        "0.0.0.4\t1970-01-01T00:06:30.000000Z\t827\n" +
+                        "0.0.0.5\t1970-01-01T00:08:00.000000Z\t424\n" +
+                        "0.0.0.4\t1970-01-01T00:10:00.000000Z\t539\n" +
+                        "0.0.0.5\t1970-01-01T00:11:30.000000Z\t904\n" +
+                        "0.0.0.3\t1970-01-01T00:13:00.000000Z\t136\n" +
+                        "0.0.0.5\t1970-01-01T00:15:00.000000Z\t810\n" +
+                        "0.0.0.5\t1970-01-01T00:16:30.000000Z\t528\n" +
+                        "0.0.0.5\t1970-01-01T00:18:00.000000Z\t95\n" +
+                        "0.0.0.4\t1970-01-01T00:20:00.000000Z\t619\n" +
+                        "0.0.0.3\t1970-01-01T00:21:30.000000Z\t369\n" +
+                        "0.0.0.1\t1970-01-01T00:23:00.000000Z\t906\n" +
+                        "0.0.0.4\t1970-01-01T00:25:00.000000Z\t71\n" +
+                        "0.0.0.4\t1970-01-01T00:26:30.000000Z\t334\n" +
+                        "0.0.0.3\t1970-01-01T00:28:00.000000Z\t563\n" +
+                        "0.0.0.2\t1970-01-01T00:30:00.000000Z\t906\n" +
+                        "0.0.0.5\t1970-01-01T00:31:30.000000Z\t238\n" +
+                        "0.0.0.3\t1970-01-01T00:33:00.000000Z\t986\n" +
+                        "0.0.0.4\t1970-01-01T00:35:00.000000Z\t598\n" +
+                        "0.0.0.3\t1970-01-01T00:36:30.000000Z\t574\n" +
+                        "0.0.0.3\t1970-01-01T00:38:00.000000Z\t740\n" +
+                        "0.0.0.5\t1970-01-01T00:40:00.000000Z\t37\n" +
+                        "0.0.0.3\t1970-01-01T00:41:30.000000Z\t594\n" +
+                        "0.0.0.5\t1970-01-01T00:43:00.000000Z\t180\n" +
+                        "0.0.0.5\t1970-01-01T00:45:00.000000Z\t606\n" +
+                        "0.0.0.5\t1970-01-01T00:46:30.000000Z\t877\n" +
+                        "0.0.0.5\t1970-01-01T00:48:00.000000Z\t308\n" +
+                        "0.0.0.4\t1970-01-01T00:50:00.000000Z\t807\n" +
+                        "0.0.0.5\t1970-01-01T00:51:30.000000Z\t470\n" +
+                        "0.0.0.4\t1970-01-01T00:53:00.000000Z\t345\n" +
+                        "0.0.0.1\t1970-01-01T00:55:00.000000Z\t711\n" +
+                        "0.0.0.1\t1970-01-01T00:56:30.000000Z\t735\n" +
+                        "0.0.0.2\t1970-01-01T00:58:00.000000Z\t173\n" +
+                        "0.0.0.3\t1970-01-01T01:00:00.000000Z\t162\n" +
+                        "0.0.0.2\t1970-01-01T01:01:30.000000Z\t345\n" +
+                        "0.0.0.2\t1970-01-01T01:03:00.000000Z\t417\n" +
+                        "0.0.0.4\t1970-01-01T01:05:00.000000Z\t181\n" +
+                        "0.0.0.5\t1970-01-01T01:06:30.000000Z\t697\n" +
+                        "0.0.0.4\t1970-01-01T01:08:00.000000Z\t34\n" +
+                        "0.0.0.4\t1970-01-01T01:10:00.000000Z\t935\n" +
+                        "0.0.0.1\t1970-01-01T01:11:30.000000Z\t887\n" +
+                        "0.0.0.2\t1970-01-01T01:13:00.000000Z\t99\n" +
+                        "0.0.0.1\t1970-01-01T01:15:00.000000Z\t428\n" +
+                        "0.0.0.4\t1970-01-01T01:16:30.000000Z\t328\n" +
+                        "0.0.0.1\t1970-01-01T01:18:00.000000Z\t924\n" +
+                        "0.0.0.2\t1970-01-01T01:20:00.000000Z\t480\n" +
+                        "0.0.0.4\t1970-01-01T01:21:30.000000Z\t883\n",
+                "select ip, ts, sum(bytes) from test sample by 30s order by 2,1",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ") timestamp(ts)",
+                "ts",
+                true,
+                false);
     }
 
     @Test
@@ -7637,6 +8955,81 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateTableIPv4ToString() throws Exception {
+        compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
+        executeInsert("insert into test values('0.0.0.1')");
+        executeInsert("insert into test values('0.0.0.2')");
+        executeInsert("insert into test values('0.0.0.3')");
+        executeInsert("insert into test values('0.0.0.4')");
+        executeInsert("insert into test values('0.0.0.5')");
+        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            compiler.compile("alter table test add col2 string", sqlExecutionContext).getAlterOperation().apply(w, true);
+        }
+        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
+            op.withContext(sqlExecutionContext);
+            op.apply(w, true);
+        }
+        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
+                "0.0.0.1\t0.0.0.1\n" +
+                "0.0.0.2\t0.0.0.2\n" +
+                "0.0.0.3\t0.0.0.3\n" +
+                "0.0.0.4\t0.0.0.4\n" +
+                "0.0.0.5\t0.0.0.5\n");
+    }
+
+    @Test
+    public void testUpdateTableIPv4ToStringWal() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test as (" +
+                    "select " +
+                    " rnd_ipv4 col1, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+
+            compile("alter table test add column col2 string", sqlExecutionContext);
+            compile("update test set col2 = col1", sqlExecutionContext);
+
+            drainWalQueue();
+
+            String allRows = "col1\tts\tcol2\n" +
+                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\t187.139.150.80\n" +
+                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\t18.206.96.238\n" +
+                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\t92.80.211.65\n" +
+                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29\n" +
+                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21\n";
+
+            assertSql("test", allRows);
+        });
+    }
+
+    @Test
+    public void testUpdateTableStringToIPv4() throws Exception {
+        compiler.compile("create table test (col1 string)", sqlExecutionContext);
+        executeInsert("insert into test values('0.0.0.1')");
+        executeInsert("insert into test values('0.0.0.2')");
+        executeInsert("insert into test values('0.0.0.3')");
+        executeInsert("insert into test values('0.0.0.4')");
+        executeInsert("insert into test values('0.0.0.5')");
+        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
+        }
+        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
+            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
+            op.withContext(sqlExecutionContext);
+            op.apply(w, true);
+        }
+        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
+                "0.0.0.1\t0.0.0.1\n" +
+                "0.0.0.2\t0.0.0.2\n" +
+                "0.0.0.3\t0.0.0.3\n" +
+                "0.0.0.4\t0.0.0.4\n" +
+                "0.0.0.5\t0.0.0.5\n");
+    }
+
+    @Test
     public void testUtf8TableName() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -7839,6 +9232,213 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testWalIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test as (" +
+                    "select " +
+                    " rnd_ipv4 col1, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            String allRows = "col1\tts\n" +
+                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\n" +
+                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\n" +
+                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\n" +
+                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\n" +
+                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\n";
+
+            assertSql("test", allRows);
+        });
+    }
+
+    @Test
+    public void testWhereIPv4() throws Exception {
+        assertQuery("ip\tbytes\tk\n" +
+                        "0.0.0.1\t906\t1970-01-01T00:23:20.000000Z\n" +
+                        "0.0.0.1\t711\t1970-01-01T00:55:00.000000Z\n" +
+                        "0.0.0.1\t735\t1970-01-01T00:56:40.000000Z\n" +
+                        "0.0.0.1\t887\t1970-01-01T01:11:40.000000Z\n" +
+                        "0.0.0.1\t428\t1970-01-01T01:15:00.000000Z\n" +
+                        "0.0.0.1\t924\t1970-01-01T01:18:20.000000Z\n" +
+                        "0.0.0.1\t188\t1970-01-01T01:26:40.000000Z\n" +
+                        "0.0.0.1\t368\t1970-01-01T01:40:00.000000Z\n" +
+                        "0.0.0.1\t746\t1970-01-01T01:50:00.000000Z\n" +
+                        "0.0.0.1\t482\t1970-01-01T01:56:40.000000Z\n" +
+                        "0.0.0.1\t660\t1970-01-01T02:00:00.000000Z\n" +
+                        "0.0.0.1\t519\t1970-01-01T02:01:40.000000Z\n" +
+                        "0.0.0.1\t255\t1970-01-01T02:03:20.000000Z\n" +
+                        "0.0.0.1\t841\t1970-01-01T02:05:00.000000Z\n" +
+                        "0.0.0.1\t240\t1970-01-01T02:13:20.000000Z\n" +
+                        "0.0.0.1\t777\t1970-01-01T02:18:20.000000Z\n" +
+                        "0.0.0.1\t597\t1970-01-01T02:23:20.000000Z\n" +
+                        "0.0.0.1\t30\t1970-01-01T02:26:40.000000Z\n" +
+                        "0.0.0.1\t814\t1970-01-01T02:36:40.000000Z\n" +
+                        "0.0.0.1\t511\t1970-01-01T02:41:40.000000Z\n" +
+                        "0.0.0.1\t25\t1970-01-01T02:43:20.000000Z\n",
+                "select * from test where ip = '0.0.0.1'",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(100)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false);
+    }
+
+    @Test
+    public void testWhereIPv4Var() throws Exception {
+        assertQuery("ip1\tip2\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "null\tnull\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "null\tnull\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "null\tnull\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "null\tnull\n" +
+                        "null\tnull\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "null\tnull\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.8\t0.0.0.8\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "null\tnull\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "null\tnull\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "null\tnull\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "null\tnull\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.2\t0.0.0.2\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.3\t0.0.0.3\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "null\tnull\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.5\t0.0.0.5\n" +
+                        "0.0.0.4\t0.0.0.4\n" +
+                        "0.0.0.6\t0.0.0.6\n" +
+                        "0.0.0.8\t0.0.0.8\n",
+                "select * from test where ip1 = ip2",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(0,9,0)::ipv4 ip1," +
+                        "    rnd_int(0,9,0)::ipv4::string ip2" +
+                        "  from long_sequence(1000)" +
+                        ")",
+                null,
+                true,
+                false);
+    }
+
+    @Test
+    public void testWhereInvalidIP() throws Exception {
+        assertFailure("select * from test where ip = 'hello'", "create table test as " +
+                "(" +
+                "  select" +
+                "    rnd_int(1,5,0)::ipv4 ip," +
+                "    rnd_int(0,1000,0) bytes," +
+                "    timestamp_sequence(0,100000000) k" +
+                "  from long_sequence(100)" +
+                ") timestamp(k)", 30, "not a valid IP address: hello");
+
     }
 
     @Test

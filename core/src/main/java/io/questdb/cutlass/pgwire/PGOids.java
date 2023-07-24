@@ -45,6 +45,7 @@ public class PGOids {
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
+    public static final int BINARY_TYPE_IPv4 = (1 << 31) | ColumnType.IPv4;
     public static final int PG_BOOL = 16;
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;
@@ -64,6 +65,7 @@ public class PGOids {
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
+    public static final int PG_INET = 869;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
@@ -139,6 +141,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);
