@@ -66,7 +66,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final int WAL_APPLY_FAILED = -2;
     private static final int WAL_APPLY_IGNORE_ERROR = -1;
     private final CairoEngine engine;
-    private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
@@ -538,17 +537,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 return Long.MAX_VALUE;
             }
 
-            boolean finished;
             try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                finished = applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
-                lastWriterTxn = writer.getAppliedSeqTxn();
+                applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
+                lastWriterTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 //noinspection StringEquality
                 if (tableBusy.getReason() != NO_LOCK_REASON
                         && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
                         && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
                     LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
+                    // This is abnormal termination but table is not set to suspended state.
+                    // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
+                    engine.notifyWalTxnRepublisher(tableToken);
                 }
                 // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
                 // We don't suspend table by virtue of having initial value on lastWriterTxn. It will either be
@@ -556,10 +557,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 return lastWriterTxn;
             }
 
-            long updatedLastWriterTxn = -1;
-            if (!finished || lastWriterTxn < (updatedLastWriterTxn = engine.getTableSequencerAPI().lastTxn(tableToken))) {
-                long notifyTxn = updatedLastWriterTxn > -1 ? updatedLastWriterTxn : engine.getTableSequencerAPI().lastTxn(tableToken);
-                engine.notifyWalTxnCommitted(tableToken, notifyTxn);
+            if (engine.getTableSequencerAPI().setApplied(tableToken, lastWriterTxn)) {
+                engine.notifyWalTxnCommitted(tableToken);
             }
         } catch (CairoException ex) {
             if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
@@ -580,36 +579,26 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final TableToken tableToken;
-        final long seqTxn;
 
         try {
             WalTxnNotificationTask task = queue.get(cursor);
             tableToken = task.getTableToken();
-            seqTxn = task.getTxn();
         } finally {
             // Don't hold the queue until the all the transactions applied to the table
             subSeq.done(cursor);
         }
 
-        final int tableId = tableToken.getTableId();
-        if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
-            // Check, maybe we already processed this table to higher txn.
-            final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
-            if (txn > -1L) {
-                lastAppliedSeqTxns.put(tableId, txn);
-            } else if (txn == WAL_APPLY_FAILED) {
-                // Set processed transaction marker as Long.MAX_VALUE - 1
-                // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
-                // and is picked up for processing by this apply job.
-                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);
-                try {
-                    engine.getTableSequencerAPI().suspendTable(tableToken);
-                } catch (CairoException e) {
-                    LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
-                }
+        // Check, maybe we already processed this table to higher txn.
+        final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
+        if (txn == WAL_APPLY_FAILED) {
+            // Set processed transaction marker as Long.MAX_VALUE - 1
+            // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
+            // and is picked up for processing by this apply job.
+            try {
+                engine.getTableSequencerAPI().suspendTable(tableToken);
+            } catch (CairoException e) {
+                LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
             }
-        } else {
-            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableToken).$(", txn=").$(seqTxn).I$();
         }
         return true;
     }

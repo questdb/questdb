@@ -36,12 +36,13 @@ import org.jetbrains.annotations.NotNull;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
-    public static final int ILLEGAL_OPERATION = -101;
     public static final int METADATA_VALIDATION = -100;
+    public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
+    private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
+    private static final int TABLE_SUSPENDED = TABLE_DROPPED - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final int ERRNO_ACCESS_DENIED_WIN = 5;
-    private static final int TABLE_DROPPED = -102;
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
