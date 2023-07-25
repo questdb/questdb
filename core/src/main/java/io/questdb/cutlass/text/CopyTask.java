@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -858,7 +859,7 @@ public class CopyTask {
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
             TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);
-            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0);
+            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0, AllowAllSecurityContext.INSTANCE);
 
             try (
                     TableWriter writer = new TableWriter(

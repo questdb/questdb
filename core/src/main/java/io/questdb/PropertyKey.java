@@ -134,6 +134,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
+    CAIRO_SQL_COPY_ID_SUPPLIER("cairo.sql.copy.id.supplier"),
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
