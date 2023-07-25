@@ -62,11 +62,13 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         private AbstractMultiTenantPool<C> pool;
         private TableToken tableToken;
 
-        public C(SqlCompiler delegate,
-                 AbstractMultiTenantPool<C> pool,
-                 TableToken tableToken,
-                 Entry<C> entry,
-                 int index) {
+        public C(
+                SqlCompiler delegate,
+                AbstractMultiTenantPool<C> pool,
+                TableToken tableToken,
+                Entry<C> entry,
+                int index
+        ) {
             this.delegate = delegate;
             this.pool = pool;
             this.tableToken = tableToken;

@@ -605,7 +605,7 @@ public final class TestUtils {
     }
 
     public static void assertSql(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
             MutableCharSink sink,
@@ -1308,7 +1308,7 @@ public final class TestUtils {
     }
 
     public static void printSql(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
             MutableCharSink sink
