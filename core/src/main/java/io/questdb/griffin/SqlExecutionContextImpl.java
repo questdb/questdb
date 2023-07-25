@@ -55,6 +55,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
     private boolean columnPreTouchEnabled = true;
+    private boolean containsSecret;
     private int jitMode;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
@@ -77,6 +78,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
+        this.containsSecret = false;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -97,6 +99,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             boolean baseSupportsRandomAccess
     ) {
         analyticContext.of(partitionByRecord, partitionBySink, partitionByKeyTypes, ordered, baseSupportsRandomAccess);
+    }
+
+    @Override
+    public boolean containsSecret() {
+        return containsSecret;
+    }
+
+    @Override
+    public void containsSecret(boolean containsSecret) {
+        this.containsSecret = containsSecret;
     }
 
     @Override
@@ -244,6 +256,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
+        this.containsSecret = false;
         return this;
     }
 
@@ -275,6 +288,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        this.containsSecret = false;
         return this;
     }
 
