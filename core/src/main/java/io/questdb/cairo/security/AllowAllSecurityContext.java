@@ -86,7 +86,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     @Override
     public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
-    
+
     @Override
     public void authorizeAlterTableSetDedup(TableToken tableToken) {
     }
@@ -224,12 +224,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public CharSequence getEntityName() {
-        return Constants.USER_NAME;
-    }
-
-    @Override
     public String getPrincipal() {
-        return null;
+        return Constants.USER_NAME;
     }
 }

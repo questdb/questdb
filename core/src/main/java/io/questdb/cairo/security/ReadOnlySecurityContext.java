@@ -269,12 +269,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public CharSequence getEntityName() {
-        return Constants.USER_NAME;
-    }
-
-    @Override
     public String getPrincipal() {
-        return null;
+        return Constants.USER_NAME;
     }
 }
