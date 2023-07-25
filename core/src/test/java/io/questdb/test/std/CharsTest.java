@@ -504,32 +504,42 @@ public class CharsTest {
     @Test
     public void testUtf8toUtf16() {
         StringSink utf16Sink = new StringSink();
+        String empty = "";
+        String ascii = "abc";
+        String cyrillic = "абв";
+        String chinese = "你好";
+        String emoji = "😀";
+        String mixed = "abcабв你好😀";
+        String[] strings = {empty, ascii, cyrillic, chinese, emoji, mixed};
+        byte[] terminators = {':', '-', ' ', '\0'};
         try (DirectByteCharSink utf8Sink = new DirectByteCharSink(4)) {
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "abc", "abc", (byte) ':', 3);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "abc:", "abc", (byte) ':', 3);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "abc:def", "abc", (byte) ':', 3);
-            // cyrillic - 2 byte code points
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "абв", "абв", (byte) ':', 6);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "абв:", "абв", (byte) ':', 6);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "абв:где", "абв", (byte) ':', 6);
-            // chinese
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "你好", "你好", (byte) ':', 6);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "你好:", "你好", (byte) ':', 6);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "你好:再见", "你好", (byte) ':', 6);
-            // emoji
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "😀", "😀", (byte) ':', 4);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "😀:", "😀", (byte) ':', 4);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "😀:😁", "😀", (byte) ':', 4);
-            // emoji + cyrillic
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "😀абв", "😀абв", (byte) ':', 10);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "😀абв:", "😀абв", (byte) ':', 10);
-            assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, "😀абв:где", "😀абв", (byte) ':', 10);
-
-
+            for (String left : strings) {
+                for (String right : strings) {
+                    for (byte terminator : terminators) {
+                        // test with terminator (left + terminator + right)
+                        String input = left + (char) terminator + right;
+                        int expectedUtf8ByteRead = left.getBytes(StandardCharsets.UTF_8).length;
+                        assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, input, left, terminator, expectedUtf8ByteRead);
+                    }
+                    for (byte terminator : terminators) {
+                        //test without terminator (left + right)
+                        String input = left + right;
+                        int expectedUtf8ByteRead = input.getBytes(StandardCharsets.UTF_8).length;
+                        assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, input, input, terminator, expectedUtf8ByteRead);
+                    }
+                }
+            }
         }
     }
 
-    private static void assertUtf8ToUtf16WithTerminator(DirectByteCharSink utf8Sink, StringSink utf16Sink, String inputString, String expectedDecodedString, byte terminator, int expectedUtf8ByteRead) {
+    private static void assertUtf8ToUtf16WithTerminator(
+            DirectByteCharSink utf8Sink,
+            StringSink utf16Sink,
+            String inputString,
+            String expectedDecodedString,
+            byte terminator,
+            int expectedUtf8ByteRead
+    ) {
         utf8Sink.clear();
         utf16Sink.clear();
 

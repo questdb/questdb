@@ -1069,6 +1069,9 @@ public final class Chars {
      * When input sequence is invalid, it returns -1 and the sink is left in undefined state and should be cleared before
      * next use.
      *
+     * @param seq        input sequence encoded in UTF8
+     * @param sink       sink to write UTF16 characters to
+     * @param terminator terminator byte, must be a valid ASCII character
      * @return number of bytes read or -1 if input sequence is invalid.
      */
     public static int utf8toUtf16(ByteSequence seq, CharSinkBase sink, byte terminator) {
