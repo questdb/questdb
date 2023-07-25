@@ -63,10 +63,8 @@ if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ 
     if [ "$DO_CHOWN" = "true" ]; then
         find_and_own_dir $QUESTDB_UID $QUESTDB_GID
     fi
-    echo "Executing: gosu $QUESTDB_UID:$QUESTDB_GID $@"
     exec gosu $QUESTDB_UID:$QUESTDB_GID "$@"
 fi
 
 echo "Running as $(id -un 2>/dev/null) user"
-echo "Executing: $@"
 exec "$@"
