@@ -163,6 +163,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getO3LastPartitionMaxSplits() {
+        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
+    }
+
+    @Override
     public long getO3MaxLag() {
         return overrides.getO3MaxLag() >= 0 ? overrides.getO3MaxLag() : super.getO3MaxLag();
     }
@@ -173,11 +178,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getO3LastPartitionMaxSplits() {
-        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
-    }
-
-    @Override
     public int getPageFrameReduceQueueCapacity() {
         return overrides.getPageFrameReduceQueueCapacity() < 0 ? super.getPageFrameReduceQueueCapacity() : overrides.getPageFrameReduceQueueCapacity();
     }
@@ -185,6 +185,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getPageFrameReduceShardCount() {
         return overrides.getPageFrameReduceShardCount() < 0 ? super.getPageFrameReduceShardCount() : overrides.getPageFrameReduceShardCount();
+    }
+
+    @Override
+    public long getPartitionO3SplitMinSize() {
+        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
     }
 
     @Override
@@ -319,11 +324,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public long getPartitionO3SplitMinSize() {
-        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
-    }
-
-    @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
         return overrides.getWriterAsyncCommandBusyWaitTimeout() < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : overrides.getWriterAsyncCommandBusyWaitTimeout();
     }
@@ -346,6 +346,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return overrides.isIoURingEnabled() != null ? overrides.isIoURingEnabled() : super.isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isMultiKeyDedupEnabled() {
+        return true;
     }
 
     @Override

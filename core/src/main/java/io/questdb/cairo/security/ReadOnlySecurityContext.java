@@ -96,6 +96,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableSetDedup(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeAlterTableSetType(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -260,24 +265,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void onColumnAdded(TableToken tableToken, CharSequence columnName) {
-    }
-
-    @Override
-    public void onColumnRenamed(CharSequence tableName, CharSequence fromColumnName, CharSequence toColumnName) {
-
-    }
-
-    @Override
-    public void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    @Override
-    public void onTableCreated(TableToken tableToken) {
-    }
-
-    @Override
-    public void onTableRenamed(CharSequence fromTableName, CharSequence toTableName) {
-
+    public String getPrincipal() {
+        return null;
     }
 }

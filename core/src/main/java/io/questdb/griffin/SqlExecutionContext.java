@@ -56,6 +56,14 @@ public interface SqlExecutionContext extends Closeable {
             boolean baseSupportsRandomAccess
     );
 
+    default void containsSecret(boolean b) {
+    }
+
+    default boolean containsSecret() {
+        return false;
+    }
+
+
     AnalyticContext getAnalyticContext();
 
     default Rnd getAsyncRandom() {
@@ -141,6 +149,10 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isTimestampRequired();
 
+    default boolean isUninterruptible() {
+        return false;
+    }
+
     boolean isWalApplication();
 
     void popTimestampRequiredFlag();
@@ -160,9 +172,5 @@ public interface SqlExecutionContext extends Closeable {
     void setRandom(Rnd rnd);
 
     default void storeTelemetry(short event, short origin) {
-    }
-
-    default boolean isUninterruptible() {
-        return false;
     }
 }

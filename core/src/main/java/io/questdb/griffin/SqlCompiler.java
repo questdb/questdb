@@ -77,7 +77,7 @@ public class SqlCompiler implements Closeable {
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
     protected final CairoEngine engine;
-    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -107,6 +107,10 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
+    protected CharSequence query;
+    protected boolean queryContainsSecret;
+    protected long queryLogfd;
+    protected boolean queryLogged;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
@@ -216,7 +220,7 @@ public class SqlCompiler implements Closeable {
         lexer.of(query);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, query);
+        compileInner(executionContext, query, true);
         return compiledQuery;
     }
 
@@ -245,9 +249,6 @@ public class SqlCompiler implements Closeable {
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
-
-        LOG.info().$("batch [text=").$(query).I$();
-
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
@@ -270,10 +271,19 @@ public class SqlCompiler implements Closeable {
                 try {
                     batchCallback.preCompile(this);
                     clear(); // we don't use normal compile here because we can't reset existing lexer
-                    CompiledQuery current = compileInner(executionContext, query);
+
+                    CompiledQuery current;
+                    CharSequence currentQuery;
+
+                    try {
+                        current = compileInner(executionContext, query, false);
+                    } finally {
+                        currentQuery = query.subSequence(position, goToQueryEnd());
+                        // try to log query even if exception is thrown 
+                        logQuery(currentQuery);
+                    }
                     // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
                     // some code in postCompile might need full text of current query
-                    CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
                     batchCallback.postCompile(this, current, currentQuery);
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {
@@ -309,6 +319,10 @@ public class SqlCompiler implements Closeable {
     @TestOnly
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
+    }
+
+    public boolean shouldLog(KeywordBasedExecutor executor) {
+        return true;
     }
 
     @TestOnly
@@ -354,7 +368,7 @@ public class SqlCompiler implements Closeable {
         if (tok == null || !SqlKeywords.isTableKeyword(tok)) {
             return unknownAlterStatement(executionContext, tok);
         }
-
+        logQuery();
         final int tableNamePosition = lexer.getPosition();
         tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
@@ -366,9 +380,7 @@ public class SqlCompiler implements Closeable {
 
             if (SqlKeywords.isAddKeyword(tok)) {
                 securityContext.authorizeAlterTableAddColumn(tableToken);
-                final CompiledQuery cq = alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
-                securityContext.onColumnsAdded(tableToken, cq.getAlterOperation().getExtraStrInfo());
-                return cq;
+                return alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
@@ -544,6 +556,20 @@ public class SqlCompiler implements Closeable {
                     return compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+                }
+            } else if (SqlKeywords.isDedupKeyword(tok) || SqlKeywords.isDeduplicateKeyword(tok)) {
+                executionContext.getSecurityContext().authorizeAlterTableSetDedup(tableToken);
+                tok = expectToken(lexer, "'dedup columns'");
+
+                if (SqlKeywords.isDisableKeyword(tok)) {
+                    AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
+                            tableNamePosition,
+                            tableToken
+                    );
+                    return compiledQuery.ofAlter(setDedup.build());
+                } else {
+                    lexer.unparseLast();
+                    return alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, true, lexer);
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
@@ -724,7 +750,8 @@ public class SqlCompiler implements Closeable {
                     Numbers.ceilPow2(symbolCapacity),
                     cache,
                     indexed,
-                    Numbers.ceilPow2(indexValueBlockCapacity)
+                    Numbers.ceilPow2(indexValueBlockCapacity),
+                    false
             );
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -809,6 +836,78 @@ public class SqlCompiler implements Closeable {
         alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
         securityContext.authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         return compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private CompiledQuery alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, boolean status, GenericLexer lexer) throws SqlException {
+        if (!tableMetadata.isWalEnabled()) {
+            throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
+        }
+        AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
+                tableNamePosition,
+                tableToken,
+                status
+        );
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        boolean tsIncludedInDedupColumns = false;
+        int dedupColumns = 0;
+
+        if (tok == null || !isUpsertKeyword(tok)) {
+            throw SqlException.position(lexer.getPosition()).put("expected 'upsert'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isKeysKeyword(tok)) {
+            throw SqlException.position(lexer.getPosition()).put("expected 'keys'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && Chars.equals(tok, '(')) {
+            tok = SqlUtil.fetchNext(lexer);
+
+            while (tok != null && !Chars.equals(tok, ')')) {
+                final CharSequence columnName = tok;
+
+                validateLiteral(lexer.getPosition(), tok);
+                int colIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                if (colIndex < 0) {
+                    throw SqlException.position(lexer.getPosition()).put("deduplicate column not found [column=").put(columnName).put(']');
+                }
+
+                if (colIndex == tableMetadata.getTimestampIndex()) {
+                    tsIncludedInDedupColumns = true;
+                } else {
+                    int columnType = tableMetadata.getColumnType(colIndex);
+                    if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
+                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                    }
+                }
+                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
+                dedupColumns++;
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && Chars.equals(tok, ',')) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+            }
+
+            if (!Chars.equals(tok, ')')) {
+                throw SqlException.position(lexer.getPosition()).put("')' expected");
+            }
+
+            if (!tsIncludedInDedupColumns) {
+                throw SqlException.position(lexer.getPosition()).put("deduplicate key list must include dedicated timestamp column");
+            }
+
+            if (dedupColumns > 0 && !configuration.isMultiKeyDedupEnabled()) {
+                throw SqlException.position(lexer.getPosition()).put("multiple key deduplication is not supported");
+            }
+
+        } else {
+            throw SqlException.$(lexer.getPosition(), "deduplication column list expected");
+        }
+        return compiledQuery.ofAlter(setDedup.build());
     }
 
     private CompiledQuery alterTableDropColumn(
@@ -1214,7 +1313,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext, CharSequence query) throws SqlException {
+    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext, CharSequence query, boolean doLog) throws SqlException {
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
@@ -1226,11 +1325,23 @@ public class SqlCompiler implements Closeable {
 
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         CompiledQuery cq = null;
+        this.queryLogged = !doLog;
+        this.queryContainsSecret = false;
+        executionContext.containsSecret(false);
+        if (doLog) {
+            this.query = query;
+            this.queryLogfd = executionContext.getRequestFd();
+        }
+
         if (executor != null) {
+            if (shouldLog(executor)) {
+                logQuery();
+            }
             // an executor can return null as a fallback to execution model
             cq = executor.execute(executionContext);
         }
         if (cq == null) {
+            logQuery();
             cq = compileUsingModel(executionContext);
         }
         final short type = cq.getType();
@@ -2647,10 +2758,28 @@ public class SqlCompiler implements Closeable {
         alterOperationBuilder.clear();
         backupAgent.clear();
         functionParser.clear();
+        query = null;
+        queryLogged = false;
+        queryLogfd = -1;
+        queryContainsSecret = false;
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
+    }
+
+    protected void logQuery(CharSequence currentQuery) {
+        if (!queryContainsSecret) {
+            queryLogged = true;
+            LOG.info().$("parse [fd=").$(queryLogfd).$(", q=").utf8(currentQuery).I$();
+        }
+    }
+
+    protected void logQuery() {
+        if (!queryLogged && !queryContainsSecret) {
+            queryLogged = true;
+            LOG.info().$("parse [fd=").$(queryLogfd).$(", q=").utf8(query).I$();
+        }
     }
 
     protected void registerKeywordBasedExecutors() {
@@ -2671,39 +2800,22 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
 
         keywordBasedExecutors.put("truncate", truncateTables);
-        keywordBasedExecutors.put("TRUNCATE", truncateTables);
         keywordBasedExecutors.put("alter", alterTable);
-        keywordBasedExecutors.put("ALTER", alterTable);
         keywordBasedExecutors.put("reindex", reindexTable);
-        keywordBasedExecutors.put("REINDEX", reindexTable);
         keywordBasedExecutors.put("set", compileSet);
-        keywordBasedExecutors.put("SET", compileSet);
         keywordBasedExecutors.put("begin", compileBegin);
-        keywordBasedExecutors.put("BEGIN", compileBegin);
         keywordBasedExecutors.put("commit", compileCommit);
-        keywordBasedExecutors.put("COMMIT", compileCommit);
         keywordBasedExecutors.put("rollback", compileRollback);
-        keywordBasedExecutors.put("ROLLBACK", compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("DISCARD", compileSet);
         keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("CLOSE", compileSet);  //no-op
         keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("UNLISTEN", compileSet);  //no-op
         keywordBasedExecutors.put("reset", compileSet);  //no-op
-        keywordBasedExecutors.put("RESET", compileSet);  //no-op
         keywordBasedExecutors.put("drop", dropStatement);
-        keywordBasedExecutors.put("DROP", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
-        keywordBasedExecutors.put("BACKUP", sqlBackup);
         keywordBasedExecutors.put("show", sqlShow);
-        keywordBasedExecutors.put("SHOW", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("VACUUM", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
-        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
-        keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
     }
 
     @SuppressWarnings({"unused"})
@@ -2836,6 +2948,11 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return model.isDedupKey(columnIndex);
         }
 
         @Override

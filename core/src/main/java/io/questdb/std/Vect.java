@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.BinarySearch;
+
 public final class Vect {
 
     public static native double avgDoubleAcc(long pInt, long count, long pCount);
@@ -42,7 +44,7 @@ public final class Vect {
         // Note: high is inclusive!
         long index = binarySearch64Bit(pData, value, low, high, scanDirection);
         if (index < 0) {
-            return (-index - 1) - 1;
+            return (-index - 1) - (scanDirection == BinarySearch.SCAN_UP ? 0 : 1);
         }
         return index;
     }
@@ -68,12 +70,23 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
-    public static native void flattenIndex(long pIndex, long count);
+    public static native long dedupSortedTimestampIndex(long inIndexAddr, long count, long outIndexAddr);
 
-    public static void freeMergedIndex(long pIndex, long indexSize) {
-        freeMergedIndex(pIndex);
-        Unsafe.recordMemAlloc(-indexSize, MemoryTag.NATIVE_O3);
+    public static long dedupSortedTimestampIndexChecked(long inIndexAddr, long count, long outIndexAddr) {
+        long dedupCount = dedupSortedTimestampIndex(inIndexAddr, count, outIndexAddr);
+        assert dedupCount >= 0 : "unsorted data passed to deduplication";
+        return dedupCount;
     }
+
+    public static native long dedupSortedTimestampIndexRebase(long inIndexAddr, long count, long outIndexAddr);
+
+    public static long dedupSortedTimestampIndexRebaseChecked(long inIndexAddr, long count, long outIndexAddr) {
+        long dedupCount = dedupSortedTimestampIndexRebase(inIndexAddr, count, outIndexAddr);
+        assert dedupCount >= 0 : "unsorted data passed to deduplication";
+        return dedupCount;
+    }
+
+    public static native void flattenIndex(long pIndex, long count);
 
     public static native long getPerformanceCounter(int index);
 
@@ -110,8 +123,6 @@ public final class Vect {
 
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
-    public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
-
     public static native double maxDouble(long pDouble, long count);
 
     public static native int maxInt(long pInt, long count);
@@ -142,6 +153,16 @@ public final class Vect {
 
     public static native void memset(long dst, long len, int value);
 
+    public static native long mergeDedupTimestampWithLongIndexAsc(
+            long pSrc,
+            long srcLo,
+            long srcHiInclusive,
+            long pIndex,
+            long indexLo,
+            long indexHiInclusive,
+            long pDestIndex
+    );
+
     public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {
         if (count < 2) {
             throw new IllegalArgumentException("Count of indexes to merge should at least be 2.");
@@ -162,8 +183,7 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    //caller must call freeMergedIndexes !!!
-    public static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
+    public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);
 
     public static native double minDouble(long pDouble, long count);
 
@@ -257,8 +277,6 @@ public final class Vect {
     public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
-
-    private static native void freeMergedIndex(long pIndex);
 
     private static native int memcmp(long src, long dst, long len);
 
