@@ -473,13 +473,13 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         };
     }
 
-    enum Mode {
+    public enum Mode {
         SIMPLE("simple"),
         EXTENDED("extended"),
         EXTENDED_FOR_PREPARED("extendedForPrepared"),
         EXTENDED_CACHE_EVERYTHING("extendedCacheEverything");
 
-        final String value;
+        public final String value;
 
         Mode(String value) {
             this.value = value;

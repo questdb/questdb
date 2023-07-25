@@ -24,9 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -61,6 +59,7 @@ public class Bootstrap {
     private final Log log;
     private final Metrics metrics;
     private final String rootDirectory;
+    private final CairoEngineFactory cairoEngineFactory;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -70,8 +69,9 @@ public class Bootstrap {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
-        this.banner = bootstrapConfiguration.getBanner();
-        this.buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
+        banner = bootstrapConfiguration.getBanner();
+        cairoEngineFactory = bootstrapConfiguration.getCairoEngineFactory();
+        buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
 
         // non /server.conf properties
         final CharSequenceObjHashMap<String> argsMap = processArgs(args);
@@ -330,6 +330,10 @@ public class Bootstrap {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    public CairoEngineFactory getCairoEngineFactory() {
+        return cairoEngineFactory;
     }
 
     public String getRootDirectory() {

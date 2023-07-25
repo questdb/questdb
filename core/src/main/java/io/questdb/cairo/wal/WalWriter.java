@@ -37,6 +37,7 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -1457,7 +1458,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                SqlExecutionContext executionContext
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1564,7 +1566,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                SqlExecutionContext executionContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
@@ -1600,6 +1603,10 @@ public class WalWriter implements TableWriterAPI {
 
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
+                    }
+
+                    if (executionContext != null) {
+                        executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), metadata.getTableToken(), columnName);
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {

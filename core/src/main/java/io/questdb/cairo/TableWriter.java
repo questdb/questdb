@@ -40,10 +40,7 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.DropIndexOperator;
-import io.questdb.griffin.PurgingOperator;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.UpdateOperatorImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -416,7 +413,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isIndexed,
                 indexValueBlockCapacity,
                 false,
-                isDedupKey
+                isDedupKey,
+                null
+        );
+    }
+
+    @Override
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isDedupKey,
+            SqlExecutionContext executionContext
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                false,
+                isDedupKey,
+                executionContext
         );
     }
 
@@ -458,7 +480,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
-            boolean isDedupKey
+            boolean isDedupKey,
+            SqlExecutionContext executionContext
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -547,6 +570,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
+        }
+
+        if (executionContext != null) {
+            executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), tableToken, columnName);
         }
     }
 
@@ -843,7 +870,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall writing because of that.
             // Schedule async purge and continue
-            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
+            LOG.critical().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
                     .utf8(tableToken.getTableName())
                     .$(", txn=").$(lastCommittedTxn)
                     .$(", error=").$(ex.getFlyweightMessage())

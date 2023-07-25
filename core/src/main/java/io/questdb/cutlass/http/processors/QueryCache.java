@@ -84,7 +84,9 @@ public final class QueryCache implements Closeable {
 
     public RecordCursorFactory poll(CharSequence sql) {
         final RecordCursorFactory factory = cache.poll(sql);
-        log(factory == null ? "miss" : "hit", sql);
+        if (factory != null) {
+            log("hit", sql);
+        }
         return factory;
     }
 
