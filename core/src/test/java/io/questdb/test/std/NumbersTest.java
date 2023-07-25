@@ -891,6 +891,51 @@ public class NumbersTest {
     }
 
     @Test
+    public void testParseIPv4LeadingDots() throws Exception {
+        Assert.assertEquals("1.2.3.4", Chars.ipv4ToString(Numbers.parseIPv4(".....1.2.3.4")));
+    }
+
+    @Test
+    public void testParseIPv4LeadingDots2() throws Exception {
+        Assert.assertEquals("1.2.3.4", Chars.ipv4ToString(Numbers.parseIPv4(".1.2.3.4")));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4LeadingDots3() throws Exception {
+        Numbers.parseIPv4("...a.1.2.3.4");
+    }
+
+    @Test
+    public void testParseIPv4TrailingDots() throws Exception {
+        Assert.assertEquals("1.2.3.4", Chars.ipv4ToString(Numbers.parseIPv4("1.2.3.4......")));
+    }
+
+    @Test
+    public void testParseIPv4TrailingDots2() throws Exception {
+        Assert.assertEquals("1.2.3.4", Chars.ipv4ToString(Numbers.parseIPv4("1.2.3.4.")));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4TrailingDots3() throws Exception {
+        Numbers.parseIPv4("1.2.3.4...a.");
+    }
+
+    @Test
+    public void testParseIPv4LeadingAndTrailingDots() throws Exception {
+        Assert.assertEquals("1.2.3.4", Chars.ipv4ToString(Numbers.parseIPv4(".....1.2.3.4......")));
+    }
+
+    @Test
+    public void testParseIPv4LeadingAndTrailingDots2() throws Exception {
+        Assert.assertEquals("1.2.3.4", Chars.ipv4ToString(Numbers.parseIPv4(".1.2.3.4.")));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4MiddleDots() throws Exception {
+        Numbers.parseIPv4("1..2..3..4");
+    }
+
+    @Test
     public void testParseIPv4_0() throws Exception {
         Assert.assertEquals(84413540, Numbers.parseIPv4_0("5.8.12.100", 0, 10));
         Assert.assertEquals(204327201, Numbers.parseIPv4_0("12.45.201.33", 0, 12));

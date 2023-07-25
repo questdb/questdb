@@ -873,13 +873,20 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        final char sign = sequence.charAt(0);
+        final char sign = sequence.charAt(lo);
 
         if(notDigit(sign)){
-            throw NumericException.INSTANCE;
+            if(sign == '.'){
+                lo++;
+                while(sequence.charAt(lo) == '.') {
+                    lo++;
+                }
+            } else {
+                throw NumericException.INSTANCE;
+            }
         }
 
-        while((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+        while((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
             num = parseInt(sequence, lo, hi);
 
             if(num > 255) {
@@ -895,7 +902,21 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        num = parseInt(sequence, lo, lim);
+        if((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+            num = parseInt(sequence, lo, hi);
+            hi++;
+            while(hi < lim) {
+                if(sequence.charAt(hi) == '.') {
+                    hi++;
+                }
+                else {
+                    throw NumericException.INSTANCE;
+                }
+            }
+        }
+        else {
+            num = parseInt(sequence, lo, lim);
+        }
 
         if(num > 255) {
             throw NumericException.INSTANCE;
