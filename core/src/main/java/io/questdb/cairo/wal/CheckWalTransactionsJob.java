@@ -59,9 +59,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
-    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long txn) {
+    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long seqTxn) {
         if (
-                txn < 0 && TableUtils.exists(
+                seqTxn < 0 && TableUtils.exists(
                         ff,
                         threadLocalPath,
                         dbRoot,
@@ -72,7 +72,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             engine.notifyWalTxnCommitted(tableToken);
         } else {
             if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
-                if (engine.getTableSequencerAPI().notifyCommit(tableToken, txn)) {
+                if (engine.getTableSequencerAPI().notifyOnCheck(tableToken, seqTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
             } else {
@@ -81,7 +81,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                     threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
                     try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
                         TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                        if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader2.getSeqTxn(), txn)) {
+                        if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader2.getSeqTxn(), seqTxn)) {
                             engine.notifyWalTxnCommitted(tableToken);
                         }
                     }

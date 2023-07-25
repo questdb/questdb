@@ -217,7 +217,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     // Returns true if the application is finished and false if it's early terminated
-    private boolean applyOutstandingWalTransactions(
+    private void applyOutstandingWalTransactions(
             TableToken tableToken,
             TableWriter writer,
             CairoEngine engine,
@@ -302,7 +302,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                         case DROP_TABLE_WALID:
                             engine.notifyDropped(tableToken);
-                            return tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
+                            tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
+                            return;
 
                         case 0:
                             throw CairoException.critical(0)
@@ -371,7 +372,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
-                return finishedAll;
             } finally {
                 Misc.free(structuralChangeCursor);
             }
@@ -538,7 +538,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 return lastWriterTxn;
             }
 
-            if (engine.getTableSequencerAPI().setApplied(tableToken, lastWriterTxn)) {
+            if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn)) {
                 engine.notifyWalTxnCommitted(tableToken);
             }
         } catch (CairoException ex) {
@@ -569,12 +569,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        // Check, maybe we already processed this table to higher txn.
         final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
         if (txn == WAL_APPLY_FAILED) {
-            // Set processed transaction marker as Long.MAX_VALUE - 1
-            // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
-            // and is picked up for processing by this apply job.
             try {
                 engine.getTableSequencerAPI().suspendTable(tableToken);
             } catch (CairoException e) {

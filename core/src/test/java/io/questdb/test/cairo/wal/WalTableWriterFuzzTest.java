@@ -752,7 +752,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 start += rowCount * tsIncrement + 1;
                 addRowsToWal(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
 
-                drainWalQueue();
+                drainWalQueue(true);
+                new CheckWalTransactionsJob(engine).runSerially();
+
+                drainWalQueue(false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -948,6 +951,35 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         executeOperation("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows, CompiledQuery.ALTER);
         if (tableId > 0) {
             drainWalQueue();
+        }
+    }
+
+    protected static void drainWalQueue(boolean cleanup) throws IOException {
+        class QueueCleanerJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
+            public QueueCleanerJob(CairoEngine engine) {
+                super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
+            }
+
+            @Override
+            public void close() throws IOException {
+            }
+
+            @Override
+            protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+                try {
+                    queue.get(cursor);
+                } finally {
+                    subSeq.done(cursor);
+                }
+                return true;
+            }
+        }
+
+        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1, null);
+        try {
+            job.drain(0);
+        } finally {
+            ((Closeable) job).close();
         }
     }
 }

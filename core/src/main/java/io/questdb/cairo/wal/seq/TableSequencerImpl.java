@@ -395,7 +395,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void notifyTxnCommitted(long txn) {
-        if (txn == Long.MAX_VALUE || seqTxnTracker.notifyCommit(txn)) {
+        if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
         }
     }

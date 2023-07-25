@@ -636,7 +636,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void notifyWalTxnRepublisher(TableToken tableToken) {
-        tableSequencerAPI.setApplied(tableToken, -1);
+        tableSequencerAPI.notifyCommitReadable(tableToken, -1);
         unpublishedWalTxnCount.incrementAndGet();
     }
 
@@ -692,6 +692,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void removeTableToken(TableToken tableToken) {
         tableNameRegistry.purgeToken(tableToken);
+        tableSequencerAPI.purgeTxnTracker(tableToken.getDirName());
         PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(

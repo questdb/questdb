@@ -38,18 +38,46 @@ public class SeqTxnTracker {
     private volatile int suspendedState = 0;
     private volatile long writerTxn = -1;
 
-    public boolean initTxns(long writerTxn, long seqTxn, boolean isSuspended) {
+    public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
         Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
-        Unsafe.cas(this, SEQ_TXN_OFFSET, -1, seqTxn);
-        Unsafe.cas(this, WRITER_TXN_OFFSET, -1, writerTxn);
-        return this.suspendedState > 0;
+        long seqTxn = this.seqTxn;
+        while (seqTxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, seqTxn, newSeqTxn)) {
+            seqTxn = this.seqTxn;
+        }
+        long writerTxn = this.writerTxn;
+        while (writerTxn < this.writerTxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, writerTxn, newWriterTxn)) {
+            writerTxn = this.writerTxn;
+        }
+        return this.suspendedState > 0 && this.seqTxn > this.writerTxn;
     }
 
     public boolean isInitialised() {
         return writerTxn != -1;
     }
 
-    public boolean notifyCommit(long newSeqTxn) {
+    public boolean notifyCommitReadable(long newWriterTxn) {
+        // This is only called under TableWriter lock
+        // with no threads race
+        writerTxn = newWriterTxn;
+        if (newWriterTxn > -1) {
+            suspendedState = 1;
+        }
+        return newWriterTxn < seqTxn;
+    }
+
+    public boolean notifyOnCheck(long newSeqTxn) {
+        // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
+        // to run ApplyWal2TableJob for the table
+        long stxn = seqTxn;
+        while (newSeqTxn > stxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+            stxn = seqTxn;
+        }
+        return writerTxn < seqTxn && suspendedState > 0;
+    }
+
+    public boolean notifyOnCommit(long newSeqTxn) {
+        // Updates seqTxn and returns true if the commit should post notification
+        // to run ApplyWal2TableJob for the table
         long stxn = seqTxn;
 
         while (newSeqTxn > stxn) {
@@ -61,14 +89,6 @@ public class SeqTxnTracker {
             stxn = seqTxn;
         }
         return false;
-    }
-
-    public boolean setApplied(long newWriterTxn) {
-        // This is only called under TableWriter lock
-        // with no threads race
-        writerTxn = newWriterTxn;
-        suspendedState = 1;
-        return newWriterTxn < seqTxn;
     }
 
     public void setSuspended() {
