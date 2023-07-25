@@ -277,7 +277,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(tableToken);
         }
 
-        securityContext.onTableCreated(tableToken);
+        onTableCreated(securityContext, tableToken);
         return tableToken;
     }
 
@@ -648,6 +648,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void notifyWalTxnRepublisher() {
         unpublishedWalTxnCount.incrementAndGet();
+    }
+
+    public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+    }
+
+    public void onTableCreated(SecurityContext securityContext, TableToken tableToken) {
     }
 
     public void registerTableToken(TableToken tableToken) {

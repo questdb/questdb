@@ -159,6 +159,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public void ofAlterUser() {
+        of(ALTER_USER);
+    }
+
     public void ofBackupTable() {
         of(BACKUP_TABLE);
     }
@@ -183,6 +187,10 @@ public class CompiledQueryImpl implements CompiledQuery {
     public void ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
         of(CREATE_TABLE_AS_SELECT, null, tableToken);
         this.affectedRowsCount = affectedRowsCount;
+    }
+
+    public void ofCreateUser() {
+        of(CREATE_USER);
     }
 
     public void ofDeallocate(CharSequence statementName) {

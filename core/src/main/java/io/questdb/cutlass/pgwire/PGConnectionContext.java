@@ -62,8 +62,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final char STATUS_IDLE = 'I';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IN_TRANSACTION = 'T';
+    public static final String TAG_ALTER_ROLE = "ALTER ROLE";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
+    public static final String TAG_CREATE_ROLE = "CREATE ROLE";
     // create as select tag
     public static final String TAG_CTAS = "CTAS";
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
@@ -150,6 +152,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean isPausedQuery = false;
     private long maxRows;
     private int parsePhaseBindVariableCount;
+    private boolean queryContainsSecret;
     //command tag used when returning row count to client,
     //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
     private CharSequence queryTag;
@@ -221,6 +224,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
+        this.queryContainsSecret = false;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
         this.securityContextFactory = factoryProvider.getSecurityContextFactory();
     }
@@ -308,6 +312,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         isPausedQuery = false;
         isEmptyQuery = false;
         clearSuspendEvent();
+        queryContainsSecret = false;
     }
 
     @Override
@@ -1140,9 +1145,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private boolean compileQuery(@Transient SqlCompiler compiler) throws SqlException {
+    private boolean compileQuery(@Transient SqlCompiler compiler, boolean doLog) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
-
             // try insert, peek because this is our private cache
             // and we do not want to remove statement from it
             typesAndInsert = typesAndInsertCache.peek(queryText);
@@ -1151,6 +1155,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // poll this cache because it is shared and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
+                logQuery(doLog);
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return false;
@@ -1159,6 +1164,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
+                logQuery(doLog);
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
                 typesAndUpdateIsCached = true;
@@ -1168,6 +1174,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
+                logQuery(doLog);
                 LOG.info().$("query cache used [fd=").$(fd).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
@@ -1180,6 +1187,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
             processCompiledQuery(cc);
         } else {
+            logQuery(doLog);
             isEmptyQuery = true;
         }
 
@@ -1232,7 +1240,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
             // it's fine to compile pseudo-SELECT queries multiple times since they must be executed lazily
-            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_PSEUDO_SELECT && typesAndSelect == null));
+            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS ||
+                    (queryTag == TAG_PSEUDO_SELECT && typesAndSelect == null) ||
+                    queryTag == TAG_ALTER_ROLE || queryTag == TAG_CREATE_ROLE);
+            wrapper.queryContainsSecret = queryContainsSecret;
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -1563,6 +1574,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return true;
     }
 
+    private void logQuery(boolean doLog) {
+        if (doLog) {
+            LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(queryText).I$();
+        }
+    }
+
     /**
      * Returns address of where parsing stopped. If there are remaining bytes left
      * in the buffer they need to be passed again in parse function along with
@@ -1683,9 +1700,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8toUtf16(lo, hi, e)) {
             queryText = characterStore.toImmutable();
-
-            LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(queryText).I$();
-            compileQuery(compiler);
+            compileQuery(compiler, true);
             return;
         }
         LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -2012,6 +2027,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processCompiledQuery(CompiledQuery cq) throws SqlException {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
+        queryContainsSecret = false;
 
         switch (cq.getType()) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
@@ -2080,6 +2096,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             case CompiledQuery.ROLLBACK:
                 queryTag = TAG_ROLLBACK;
                 transactionState = ROLLING_BACK_TRANSACTION;
+                break;
+            case CompiledQuery.ALTER_USER:
+                queryTag = TAG_ALTER_ROLE;
+                queryContainsSecret = sqlExecutionContext.containsSecret();
+                break;
+            case CompiledQuery.CREATE_USER:
+                queryTag = TAG_CREATE_ROLE;
+                queryContainsSecret = sqlExecutionContext.containsSecret();
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
@@ -2547,7 +2571,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
-                    compileQuery(compiler);
+                    compileQuery(compiler, false);
                     buildSelectColumnTypes();
                     applyLatestBindColumnFormats();
                 } catch (Throwable e) {
@@ -2563,11 +2587,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             @Nullable @Transient SqlCompiler compiler
     ) throws SqlException {
         queryText = wrapper.queryText;
-        LOG.debug().$("wrapper query [q=`").$(wrapper.queryText).$("`]").$();
+        if (!wrapper.queryContainsSecret) {
+            LOG.debug().$("wrapper query [q=`").$(wrapper.queryText).$("`]").$();
+        }
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (!wrapper.alreadyExecuted && compileQuery(compiler) && typesAndSelect != null) {
+        if (!wrapper.alreadyExecuted && compileQuery(compiler, false) && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
         // We'll have to compile/execute the statement next time.
@@ -2708,6 +2734,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         public final IntList selectColumnTypes = new IntList();
         // Used for statements that are executed as a part of compilation (PREPARE), such as DDLs.
         public boolean alreadyExecuted = false;
+        public boolean queryContainsSecret = false;
         public CharSequence queryText = null;
 
         @Override
@@ -2738,7 +2765,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
             try {
                 PGConnectionContext.this.queryText = text;
-                LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
                 processCompiledQuery(cq);
 
                 if (typesAndSelect != null) {

@@ -49,6 +49,7 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
+    public static final String HIDDEN = "hidden";
     static final int QUERY_METADATA = 2;
     static final int QUERY_METADATA_SUFFIX = 3;
     static final int QUERY_PREFIX = 1;
@@ -74,6 +75,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
+    private boolean containsSecret;
     private long count;
     private boolean countRows = false;
     private RecordCursor cursor;
@@ -150,6 +152,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         skip = 0;
         count = 0;
         stop = 0;
+        containsSecret = false;
     }
 
     @Override
@@ -210,6 +213,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return query;
     }
 
+    public CharSequence getQueryOrHidden() {
+        return containsSecret ? HIDDEN : query;
+    }
+
     public short getQueryType() {
         return queryType;
     }
@@ -245,7 +252,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void logSqlError(FlyweightMessageContainer container) {
-        info().$("sql error [q=`").utf8(query)
+        info().$("sql error [q=`").utf8(getQueryOrHidden())
                 .$("`, at=").$(container.getPosition())
                 .$(", message=`").utf8(container.getFlyweightMessage()).$('`').$(']').$();
     }
@@ -255,12 +262,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$("[compiler: ").$(compilerNanos)
                 .$(", count: ").$(recordCountNanos)
                 .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
-                .$(", q=`").utf8(query)
+                .$(", q=`").utf8(getQueryOrHidden())
                 .$("`]").$();
     }
 
     public void setCompilerNanos(long compilerNanos) {
         this.compilerNanos = compilerNanos;
+    }
+
+    public void setContainsSecret(boolean containsSecret) {
+        this.containsSecret = containsSecret;
     }
 
     public void setOperationFuture(OperationFuture fut) {

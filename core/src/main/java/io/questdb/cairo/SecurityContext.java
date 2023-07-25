@@ -30,6 +30,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@SuppressWarnings("unused")
 public interface SecurityContext {
 
     void assumeServiceAccount(CharSequence serviceAccountName);
@@ -131,10 +132,6 @@ public interface SecurityContext {
     void exitServiceAccount(CharSequence serviceAccountName);
 
     CharSequence getEntityName();
-
-    void onColumnAdded(TableToken tableToken, CharSequence columnName);
-
-    void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
-
-    void onTableCreated(TableToken tableToken);
+    
+    String getPrincipal();
 }
