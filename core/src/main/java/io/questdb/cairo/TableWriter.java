@@ -690,9 +690,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        long result = alterOp.apply(this, contextAllowsAnyStructureChanges);
-        alterOp.notifySecurityContext();
-        return result;
+        return alterOp.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
@@ -2009,7 +2007,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void renameColumn(@NotNull CharSequence currentName, @NotNull CharSequence newName) {
+    public void renameColumn(@NotNull CharSequence currentName,
+                             @NotNull CharSequence newName,
+                             SqlExecutionContext executionContext) {
         checkDistressed();
         checkColumnName(newName);
 
@@ -2056,6 +2056,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (index == metadata.getTimestampIndex()) {
             designatedTimestampColumnName = Chars.toString(newName);
+        }
+
+        if (executionContext != null) {
+            executionContext.getCairoEngine().onColumnRenamed(executionContext.getSecurityContext(), tableToken.getTableName(), currentName, newName);
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();

@@ -642,7 +642,14 @@ public class CairoEngine implements Closeable, WriterSource {
     public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
     }
 
+    public void onColumnRenamed(SecurityContext securityContext, CharSequence tableName, CharSequence fromColumnName, CharSequence toColumnName) {
+
+    }
+
     public void onTableCreated(SecurityContext securityContext, TableToken tableToken) {
+    }
+
+    public void onTableRenamed(SecurityContext securityContext, CharSequence fromTableName, CharSequence toTableName) {
     }
 
     public void registerTableToken(TableToken tableToken) {
@@ -743,7 +750,6 @@ public class CairoEngine implements Closeable, WriterSource {
                                 memory, configuration.getFilesFacade(),
                                 toTableToken.getTableName()
                         );
-                        securityContext.onTableRenamed(fromTableName, toTableName);
                     } finally {
                         if (renamed) {
                             tableNameRegistry.replaceAlias(fromTableToken, toTableToken);
@@ -775,7 +781,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     } finally {
                         unlock(securityContext, fromTableToken, null, false);
                     }
-                    securityContext.onTableRenamed(fromTableName, toTableName);
                     tableNameRegistry.dropTable(fromTableToken);
                 } else {
                     LOG.error()
@@ -786,6 +791,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     throw EntryUnavailableException.instance(lockedReason);
                 }
             }
+
+            onTableRenamed(securityContext, fromTableName, toTableName);
+
             return toTableToken;
         } else {
             LOG.error().$("cannot rename, table does not exist [table=").utf8(fromTableName).I$();

@@ -247,16 +247,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    public void notifySecurityContext() {
-        if (sqlExecutionContext == null) {
-            return;
-        }
-
-        if (command == RENAME_COLUMN) {
-            sqlExecutionContext.getSecurityContext().onColumnRenamed(tableToken.getTableName(), extraStrInfo.getStrA(0), extraStrInfo.getStrA(1));
-        }
-    }
-
     public AlterOperation of(
             short command,
             TableToken tableToken,
@@ -470,7 +460,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         while (i < n) {
             CharSequence columnName = activeExtraStrInfo.getStrA(i++);
             CharSequence newName = activeExtraStrInfo.getStrB(i++);
-            svc.renameColumn(columnName, newName);
+            svc.renameColumn(columnName, newName, sqlExecutionContext);
         }
     }
 
