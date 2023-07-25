@@ -69,25 +69,25 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     @Test
     public void testConversionToBoolean() throws Exception {
         testConversionToType("BOOLEAN", "testCol\ttime\n" +
-                "true\t2016-06-13T17:43:50.100424Z\n" +
-                "false\t2016-06-13T17:43:50.100425Z\n"
+                "true\t2016-06-13T17:43:50.100425Z\n" +
+                "false\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
     @Test
     public void testConversionToByte() throws Exception {
         testConversionToType("BYTE", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
+                "100\t2016-06-13T17:43:50.100419Z\n" +
+                "-100\t2016-06-13T17:43:50.100420Z\n" +
+                "1\t2016-06-13T17:43:50.100425Z\n" +
+                "0\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
     @Test
     public void testConversionToChar() throws Exception {
         testConversionToType("CHAR", "testCol\ttime\n" +
-                "q\t2016-06-13T17:43:50.100417Z\n"
+                "q\t2016-06-13T17:43:50.100418Z\n"
         );
     }
 
@@ -95,98 +95,98 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     public void testConversionToCharStringToCharCastAllowed() throws Exception {
         stringToCharCastAllowed = true;
         testConversionToType("CHAR", "testCol\ttime\n" +
-                "q\t2016-06-13T17:43:50.100416Z\n" +
                 "q\t2016-06-13T17:43:50.100417Z\n" +
-                "1\t2016-06-13T17:43:50.100427Z\n"
+                "q\t2016-06-13T17:43:50.100418Z\n" +
+                "1\t2016-06-13T17:43:50.100428Z\n" +
+                "1\t2016-06-13T17:43:50.100429Z\n"
         );
     }
 
     @Test
     public void testConversionToDate() throws Exception {
         testConversionToType("DATE", "testCol\ttime\n" +
-                "1970-01-01T00:00:00.100Z\t2016-06-13T17:43:50.100418Z\n" +
-                "1969-12-31T23:59:59.900Z\t2016-06-13T17:43:50.100419Z\n" +
-                "2016-06-13T17:43:50.101Z\t2016-06-13T17:43:50.100426Z\n"
+                "1970-01-01T00:00:00.100Z\t2016-06-13T17:43:50.100419Z\n" +
+                "1969-12-31T23:59:59.900Z\t2016-06-13T17:43:50.100420Z\n" +
+                "2016-06-13T17:43:50.101Z\t2016-06-13T17:43:50.100427Z\n"
         );
     }
 
     @Test
     public void testConversionToDouble() throws Exception {
         testConversionToType("DOUBLE", "testCol\ttime\n" +
-                "100.0\t2016-06-13T17:43:50.100418Z\n" +
-                "-100.0\t2016-06-13T17:43:50.100419Z\n" +
-                "123.0\t2016-06-13T17:43:50.100421Z\n" +
-                "-54.0\t2016-06-13T17:43:50.100422Z\n" +
-                "23.3\t2016-06-13T17:43:50.100423Z\n" +
-                "1.0\t2016-06-13T17:43:50.100424Z\n" +
-                "0.0\t2016-06-13T17:43:50.100425Z\n"
+                "100.0\t2016-06-13T17:43:50.100419Z\n" +
+                "-100.0\t2016-06-13T17:43:50.100420Z\n" +
+                "123.0\t2016-06-13T17:43:50.100422Z\n" +
+                "-54.0\t2016-06-13T17:43:50.100423Z\n" +
+                "23.3\t2016-06-13T17:43:50.100424Z\n" +
+                "1.0\t2016-06-13T17:43:50.100425Z\n" +
+                "0.0\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
     @Test
     public void testConversionToFloat() throws Exception {
         testConversionToType("FLOAT", "testCol\ttime\n" +
-                "100.0000\t2016-06-13T17:43:50.100418Z\n" +
-                "-100.0000\t2016-06-13T17:43:50.100419Z\n" +
-                "123.0000\t2016-06-13T17:43:50.100421Z\n" +
-                "-54.0000\t2016-06-13T17:43:50.100422Z\n" +
-                "23.3000\t2016-06-13T17:43:50.100423Z\n" +
-                "1.0000\t2016-06-13T17:43:50.100424Z\n" +
-                "0.0000\t2016-06-13T17:43:50.100425Z\n"
+                "100.0000\t2016-06-13T17:43:50.100419Z\n" +
+                "-100.0000\t2016-06-13T17:43:50.100420Z\n" +
+                "123.0000\t2016-06-13T17:43:50.100422Z\n" +
+                "-54.0000\t2016-06-13T17:43:50.100423Z\n" +
+                "23.3000\t2016-06-13T17:43:50.100424Z\n" +
+                "1.0000\t2016-06-13T17:43:50.100425Z\n" +
+                "0.0000\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
     @Test
     public void testConversionToGeoHash() throws Exception {
         testConversionToType("GEOHASH(7c)", "testCol\ttime\n" +
-                "questdb\t2016-06-13T17:43:50.100416Z\n" +
-                "\t2016-06-13T17:43:50.100417Z\n" +
-                "\t2016-06-13T17:43:50.100427Z\n");
+                "questdb\t2016-06-13T17:43:50.100417Z\n");
     }
 
     @Test
     public void testConversionToInt() throws Exception {
         testConversionToType("INT", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
+                "100\t2016-06-13T17:43:50.100419Z\n" +
+                "-100\t2016-06-13T17:43:50.100420Z\n" +
+                "1\t2016-06-13T17:43:50.100425Z\n" +
+                "0\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
     @Test
     public void testConversionToLong() throws Exception {
         testConversionToType("LONG", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
+                "100\t2016-06-13T17:43:50.100419Z\n" +
+                "-100\t2016-06-13T17:43:50.100420Z\n" +
+                "1\t2016-06-13T17:43:50.100425Z\n" +
+                "0\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
     @Test
     public void testConversionToLong256() throws Exception {
         testConversionToType("LONG256", "testCol\ttime\n" +
-                "0x0150\t2016-06-13T17:43:50.100420Z\n"
+                "0x0150\t2016-06-13T17:43:50.100421Z\n"
         );
     }
 
     @Test
     public void testConversionToShort() throws Exception {
         testConversionToType("SHORT", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
+                "100\t2016-06-13T17:43:50.100419Z\n" +
+                "-100\t2016-06-13T17:43:50.100420Z\n" +
+                "1\t2016-06-13T17:43:50.100425Z\n" +
+                "0\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
     @Test
     public void testConversionToString() throws Exception {
         testConversionToType("STRING", "testCol\ttime\n" +
-                "questdbb\t2016-06-13T17:43:50.100416Z\n" +
-                "q\t2016-06-13T17:43:50.100417Z\n" +
-                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n"
+                "questdbb\t2016-06-13T17:43:50.100417Z\n" +
+                "q\t2016-06-13T17:43:50.100418Z\n" +
+                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100428Z\n" +
+                "1.1.1.1\t2016-06-13T17:43:50.100429Z\n"
         );
     }
 
@@ -208,38 +208,46 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "T\t2016-06-13T17:43:50.100411Z\n" +
                 "false\t2016-06-13T17:43:50.100412Z\n" +
                 "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n" +
+                "12.6.4.2	2016-06-13T17:43:50.100414Z\n" +
                 (symbolAsFieldSupported
-                        ? "questdb\t2016-06-13T17:43:50.100414Z\n" +
-                        "q\t2016-06-13T17:43:50.100415Z\n"
+                        ? "questdb\t2016-06-13T17:43:50.100415Z\n" +
+                        "q\t2016-06-13T17:43:50.100416Z\n"
                         : "") +
-                "questdbb\t2016-06-13T17:43:50.100416Z\n" +
-                "q\t2016-06-13T17:43:50.100417Z\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "0x0150\t2016-06-13T17:43:50.100420Z\n" +
-                "123\t2016-06-13T17:43:50.100421Z\n" +
-                "-54\t2016-06-13T17:43:50.100422Z\n" +
-                "23.3\t2016-06-13T17:43:50.100423Z\n" +
-                "T\t2016-06-13T17:43:50.100424Z\n" +
-                "false\t2016-06-13T17:43:50.100425Z\n" +
-                "1465839830101500\t2016-06-13T17:43:50.100426Z\n" +
-                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n"
+                "questdbb\t2016-06-13T17:43:50.100417Z\n" +
+                "q\t2016-06-13T17:43:50.100418Z\n" +
+                "100\t2016-06-13T17:43:50.100419Z\n" +
+                "-100\t2016-06-13T17:43:50.100420Z\n" +
+                "0x0150\t2016-06-13T17:43:50.100421Z\n" +
+                "123\t2016-06-13T17:43:50.100422Z\n" +
+                "-54\t2016-06-13T17:43:50.100423Z\n" +
+                "23.3\t2016-06-13T17:43:50.100424Z\n" +
+                "T\t2016-06-13T17:43:50.100425Z\n" +
+                "false\t2016-06-13T17:43:50.100426Z\n" +
+                "1465839830101500\t2016-06-13T17:43:50.100427Z\n" +
+                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100428Z\n" +
+                "1.1.1.1\t2016-06-13T17:43:50.100429Z\n"
         );
     }
 
     @Test
     public void testConversionToTimestamp() throws Exception {
         testConversionToType("TIMESTAMP", "testCol\ttime\n" +
-                "1970-01-01T00:00:00.000100Z\t2016-06-13T17:43:50.100418Z\n" +
-                "1969-12-31T23:59:59.999900Z\t2016-06-13T17:43:50.100419Z\n" +
-                "2016-06-13T17:43:50.101500Z\t2016-06-13T17:43:50.100426Z\n"
+                "1970-01-01T00:00:00.000100Z\t2016-06-13T17:43:50.100419Z\n" +
+                "1969-12-31T23:59:59.999900Z\t2016-06-13T17:43:50.100420Z\n" +
+                "2016-06-13T17:43:50.101500Z\t2016-06-13T17:43:50.100427Z\n"
         );
+    }
+
+    @Test
+    public void testConversionToIPv4() throws Exception {
+        testConversionToType("IPv4", "testCol\ttime\n" +
+                "1.1.1.1\t2016-06-13T17:43:50.100429Z\n");
     }
 
     @Test
     public void testConversionToUuid() throws Exception {
         testConversionToType("UUID", "testCol\ttime\n" +
-                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n"
+                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100428Z\n"
         );
     }
 
@@ -287,7 +295,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         String table = "convTest";
         testConversion(table,
                 "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time) partition by day" + (walEnabled ? " WAL;" : ";"),
-                table + ",testCol=questdb " + nextTime() + "\n" +
+                        table + ",testCol=questdb " + nextTime() + "\n" +
                         table + ",testCol=q " + nextTime() + "\n" +
                         table + ",testCol=\"questdbb\" " + nextTime() + "\n" +
                         table + ",testCol=\"q\" " + nextTime() + "\n" +
@@ -300,6 +308,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                         table + ",testCol=T " + nextTime() + "\n" +
                         table + ",testCol=false " + nextTime() + "\n" +
                         table + ",testCol=1465839830101500200t " + nextTime() + "\n" +
+                        table + ",testCol=12.6.4.2 " + nextTime() + "\n" +
                         table + " testCol=questdb " + nextTime() + "\n" +
                         table + " testCol=q " + nextTime() + "\n" +
                         table + " testCol=\"questdbb\" " + nextTime() + "\n" +
@@ -313,7 +322,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                         table + " testCol=T " + nextTime() + "\n" +
                         table + " testCol=false " + nextTime() + "\n" +
                         table + " testCol=1465839830101500t " + nextTime() + "\n" +
-                        table + " testCol=\"11111111-1111-1111-1111-111111111111\" " + nextTime() + "\n",
+                        table + " testCol=\"11111111-1111-1111-1111-111111111111\" " + nextTime() + "\n" +
+                        table + " testCol=\"1.1.1.1\" " + nextTime() + "\n",
                 expected
         );
     }

@@ -422,20 +422,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
-
-                        case ColumnType.IPv4: {
-                            final long entityValue = entity.getLongValue();
-                            if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
-                                offset = buffer.addInt(offset, (int) entityValue);
-                            } else if (entityValue == Numbers.LONG_NaN) {
-                                offset = buffer.addInt(offset, Numbers.IPv4_NULL);
-                            } else {
-                                throw boundsError(entityValue, nEntity, ColumnType.IPv4);
-                            }
-                            break;
-                        }
-
-
                         default:
                             throw castError("integer", columnWriterIndex, colType, entity.getName());
                     }
@@ -470,7 +456,12 @@ class LineTcpMeasurementEvent implements Closeable {
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.IPv4:
-                                offset = buffer.addInt(offset, Numbers.parseIPv4Quiet(entityValue));
+                                if(Numbers.parseIPv4QuietTCP(entityValue) != -1) {
+                                    offset = buffer.addInt(offset, Numbers.parseIPv4Quiet(entityValue));
+                                }
+                                else {
+                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                }
                                 break;
                             case ColumnType.STRING:
                                 offset = buffer.addString(offset, entityValue, parser.hasNonAsciiChars());
@@ -512,7 +503,11 @@ class LineTcpMeasurementEvent implements Closeable {
                                 throw castError("string", columnWriterIndex, colType, entity.getName());
                         }
                     } else {
-                        offset = buffer.addGeoHash(offset, entityValue, colTypeMeta);
+                        try {
+                            offset = buffer.addGeoHash(offset, entityValue, colTypeMeta);
+                        } catch (NumericException e) {
+                            throw castError("string", columnWriterIndex, colType, entity.getName());
+                        }
                     }
                     break;
                 }

@@ -862,6 +862,18 @@ public final class Numbers {
         }
     }
 
+    public static int parseIPv4QuietTCP(CharSequence sequence)
+    {
+        try {
+            if (sequence == null || sequence.length() == 0) {
+                return IPv4_NULL;
+            }
+            return parseIPv4(sequence);
+        } catch (NumericException e) {
+            return -1;
+        }
+    }
+
     public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
         int hi;
         int lo = p;

@@ -860,6 +860,32 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDuplicateFieldIPv4() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=\"1.1.1.1\" 1465839830100400200\n" +
+                            table + ",location=us-midwest temperature=\"1.1.1.1\" 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=\"1.1.1.1\",temperature=\"2.2.2.2\" 1465839830101400200\n" +
+                            table + ",location=us-midwest temperature=\"1.1.1.1\" 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=\"1.1.1.1\" 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=\"1.1.1.1\" 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=\"1.1.1.1\" 1465839830102500200\n";
+            handleIO();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t1.1.1.1\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t1.1.1.1\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t1.1.1.1\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t1.1.1.1\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t1.1.1.1\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t1.1.1.1\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t1.1.1.1\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateFieldInFirstRow() throws Exception {
         String table = "dupField";
         runInContext(() -> {
