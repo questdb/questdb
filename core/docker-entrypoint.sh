@@ -53,8 +53,8 @@ else
         echo "Found config arguments $@"
         set -- $JAVA_COMMAND "$@"
     elif [ "$1" = "/app/bin/java" ]; then
-        echo "Java binary arguments found, Non default arguments config run"
-        set -- $JVM_PREPEND "$@"
+        echo "Java binary argument found in command, ignoring on-demand JVM arguments, start with fully-customized arguments"
+        set -- "$@"
     fi
 fi
 
