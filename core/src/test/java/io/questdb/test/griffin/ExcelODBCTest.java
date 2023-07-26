@@ -32,7 +32,7 @@ public class ExcelODBCTest extends AbstractGriffinTest {
 
     @Test
     public void testGetTableMetaDataQ1() throws SqlException {
-        compiler.compile("create table mytab (a int, b float)", sqlExecutionContext);
+        ddl("create table mytab (a int, b float)");
         assertQuery12(
                 "nspname\trelname\tattname\tatttypid\ttypname\tattnum\tattlen\tatttypmod\tattnotnull\trelhasrules\trelkind\toid\tpg_get_expr\tswitch\ttyptypmod\trelhasoids\tattidentity\trelhassubclass\n" +
                         "public\tmytab\ta\t23\tint4\t1\t4\t0\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n" +

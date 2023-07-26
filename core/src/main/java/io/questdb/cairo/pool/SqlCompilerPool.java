@@ -84,6 +84,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
         @Override
         public void close() {
+            // revert any debug flags
+            setFullFatJoins(false);
             final AbstractMultiTenantPool<C> pool = this.pool;
             if (pool != null && entry != null) {
                 if (pool.returnToPool(this)) {

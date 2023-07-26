@@ -29,11 +29,11 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -278,13 +278,10 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private static void createTableWithColumnTops(String createTable, String tableName) throws SqlException {
-        compiler.compile(
-                createTable,
-                sqlExecutionContext
-        );
-        compiler.compile("alter table " + tableName + " add column день symbol", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table " + tableName + " add column str string", sqlExecutionContext).execute(null).await();
-        compiler.compile(
+        ddl(createTable);
+        alter("alter table " + tableName + " add column день symbol");
+        alter("alter table " + tableName + " add column str string");
+        ddl(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -292,10 +289,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         ", timestamp_sequence('1970-01-05T02:30', " + Timestamps.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
-                        " from long_sequence(10),",
-                sqlExecutionContext
+                        " from long_sequence(10),"
         );
-        compiler.compile(
+        ddl(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -303,8 +299,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         ", timestamp_sequence('1970-01-01T01:30', " + Timestamps.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
-                        " from long_sequence(36)",
-                sqlExecutionContext
+                        " from long_sequence(36)"
         );
     }
 
@@ -313,7 +308,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         long seed0 = rnd.getSeed0();
         long seed1 = rnd.getSeed1();
 
-        compiler.compile(
+        ddl(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -321,10 +316,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         ", timestamp_sequence('1970-01-05T04:25', " + Timestamps.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
-                        " from long_sequence(10),",
-                sqlExecutionContext
+                        " from long_sequence(10),"
         );
-        compiler.compile(
+        ddl(
                 "insert into " + tableName + " " +
                         "select " +
                         " x" +
@@ -332,8 +326,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         ", timestamp_sequence('1970-01-01T01:27', " + Timestamps.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
-                        " from long_sequence(36)",
-                sqlExecutionContext
+                        " from long_sequence(36)"
         );
 
         rnd.reset(seed0, seed1);
@@ -363,16 +356,16 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         engine.releaseAllWriters();
 
         // Insert some data
-        compiler.compile("insert into t_year select " +
+        ddl("insert into t_year select " +
                 appendCommonColumns() +
                 ", timestamp_sequence('2021-01-01', 200000000L) ts" +
-                " from long_sequence(5)", sqlExecutionContext);
+                " from long_sequence(5)");
 
         // Insert same data to have O3 append tested
-        compiler.compile("insert into t_year select " +
+        ddl("insert into t_year select " +
                 appendCommonColumns() +
                 ", timestamp_sequence('2020-01-01', 200000000L) ts" +
-                " from long_sequence(5)", sqlExecutionContext);
+                " from long_sequence(5)");
 
         if (withColTopO3) {
             insertData("t_col_top_ooo_day");
@@ -401,7 +394,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "127\tY\t19592\t224361\t37963\t0.6930\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z\n");
 
         if (withColTopO3) {
-            TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = 'a'", sink,
+            assertSql("t_col_top_ooo_day where день = 'a'",
                     "x\tm\tts\tдень\tstr\n" +
                             "1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ\n" +
                             "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
@@ -427,7 +420,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
 
         if (withWalTxn) {
-            TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day_wal where ts > '1970-01-05T04:25'", sink,
+            assertSql("t_col_top_ooo_day_wal where ts > '1970-01-05T04:25'",
                     "x\tm\tts\tдень\tstr\n" +
                             "3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE\n" +
                             "2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR\n" +
@@ -484,13 +477,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 "29\t\t1987-09-30T11:36:40.000000Z\t29\n" +
                 "30\te\t1988-05-18T23:10:00.000000Z\t30\n";
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_year where y = null", sink, part1Expected);
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_year where y != null", sink, part2Expected);
+        assertSql("t_col_top_year where y = null",  part1Expected);
+        assertSql("t_col_top_year where y != null",  part2Expected);
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_none where y = null", sink, part1Expected);
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_none where y != null", sink, part2Expected);
+        assertSql( "t_col_top_none where y = null",  part1Expected);
+        assertSql("t_col_top_none where y != null", part2Expected);
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день where день = null", sink,
+        assertSql( "t_col_top_день where день = null", 
                 "x\tm\tts\tдень\n" +
                         "1\tc\t1970-01-01T00:33:20.000000Z\tNaN\n" +
                         "2\tb\t1970-01-01T06:06:40.000000Z\tNaN\n" +
@@ -508,7 +501,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "14\tb\t1970-01-04T00:46:40.000000Z\tNaN\n" +
                         "15\t\t1970-01-04T06:20:00.000000Z\tNaN\n");
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день where день != null", sink,
+        assertSql("t_col_top_день where день != null", 
                 "x\tm\tts\tдень\n" +
                         "16\te\t1970-01-03T07:36:40.000000Z\t16\n" +
                         "17\tf\t1970-01-03T08:10:00.000000Z\t17\n" +
@@ -528,13 +521,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertColTopsO3() throws SqlException {
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where m = 'c' and день = 'a'", sink,
+        assertSql("t_col_top_ooo_day where m = 'c' and день = 'a'", 
                 "x\tm\tts\tдень\tstr\n" +
                         "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
                         "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
                         "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n");
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where m != null limit -20", sink,
+        assertSql( "t_col_top_ooo_day where m != null limit -20", 
                 "x\tm\tts\tдень\tstr\n" +
                         "55\tc\t1970-01-03T07:00:00.000000Z\t\t\n" +
                         "56\ta\t1970-01-03T08:00:00.000000Z\t\t\n" +
@@ -557,7 +550,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "78\tb\t1970-01-04T06:00:00.000000Z\t\t\n" +
                         "79\ta\t1970-01-04T07:00:00.000000Z\t\t\n");
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = null and m != null limit -20", sink,
+        assertSql( "t_col_top_ooo_day where день = null and m != null limit -20", 
                 "x\tm\tts\tдень\tstr\n" +
                         "71\tc\t1970-01-03T23:00:00.000000Z\t\t\n" +
                         "72\tb\t1970-01-04T00:00:00.000000Z\t\t\n" +
@@ -580,7 +573,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "96\ta\t1970-01-05T00:00:00.000000Z\t\t\n" +
                         "7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR\n");
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = 'a'", sink,
+        assertSql("t_col_top_ooo_day where день = 'a'", 
                 "x\tm\tts\tдень\tstr\n" +
                         "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
                         "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
@@ -622,11 +615,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private void assertDay() throws SqlException {
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_day where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "77\tW\t-29635\t36806\t39204\t0.0244\t0.4452645911659644\t1974-10-14T05:22:22.780Z\t1970-01-01T00:00:00.181107Z\tJJDSR\tbbbbbb\ttrue\t\t0xd89fec5fab3f4af1a0ca0ec5d6448e2d798d79cb982de744b96a662a0b9f32d7\t00000000 aa 41 c5 55 ef\t1970-06-12T00:56:40.000000Z\n" +
                         "63\tI\t-32736\t467385\t-76685\tNaN\t0.31674150508412846\t1975-03-23T06:58:43.118Z\t1970-01-01T00:00:00.400171Z\tVIRB\t\tfalse\t\t0xf6f008b8e0bd93ffe884685ca40e1575d3389fdb74d0af7b8e349d4900aaf080\t00000000 1e 18\t1970-07-28T08:03:20.000000Z\n" +
@@ -636,11 +626,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "117\tY\t-14561\tNaN\t-89408\t0.0626\t0.6810629367436306\t1980-11-24T14:57:59.806Z\t1969-12-31T23:59:59.009732Z\tXVBHB\taaa\tfalse\t\t0xc8d5d8e5f9c2007489b7325f72e6f3d0a2402a0318a5834ee45764d96505b53b\t\t1971-11-03T07:10:00.000000Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_day order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
@@ -648,11 +635,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "c\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_day",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "108\tJ\t-11076\tNaN\t29326\t0.1656\t0.18227834647927288\t1973-07-03T11:43:25.390Z\t1969-12-31T23:59:58.122080Z\t\tc\tfalse\tbbbbbb\t0xef8b237502911d607b2c40a4af457c366e7571b9df3a7c23e8da1ba561cec298\t\t1970-01-01T00:03:20.000000Z\n" +
                         "56\tJ\t-20167\t278104\t-3552\t0.5223\tNaN\t1976-09-08T12:29:54.721Z\t1969-12-31T23:59:58.405688Z\tLEOOT\t\tfalse\tbbbbbb\t0x778a900a82a7b55e93023940ab7f1c09b5899bf0ee7c97de971dba16373fc809\t00000000 5d fd 71 5b f4\t1970-01-24T03:36:40.000000Z\n" +
@@ -689,11 +673,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private void assertDayO3() throws SqlException {
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_day_ooo where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "113\tD\t-5450\t304258\t-35463\tNaN\tNaN\t\t1970-01-01T00:00:00.098394Z\tBGNP\t\tfalse\t\t0x77e1be06c460b246870c47c1891e7fd0ac87f7392b452025c6125e52fbd1dca5\t00000000 9a 09 23 b7 fe e0 66 8e ab be\t1970-01-01T00:56:40.000000Z\n" +
                         "21\tU\t9394\t116017\t28613\t0.9541\t0.4462835932759871\t\t1969-12-31T23:59:52.698389Z\tJKUJD\tbbbbbb\ttrue\t\t0x77ff57ae7d4edbc04e01b7136579e35b6825ef23c1058aa9773e4dc6440131c1\t\t1970-01-24T04:30:00.000000Z\n" +
@@ -705,11 +686,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "66\tD\t-5300\t814924\t23886\t0.7993\t0.6834975299862411\t\t1969-12-31T23:59:55.960730Z\tRUCW\t\ttrue\t\t0xe6e8724e0d55db8bc5c2baab99008d37d61065128bd9ac80cdc779c297ba2d9b\t00000000 7d bf aa 4e c7 70 67 76\t1970-11-21T01:50:00.000000Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_day_ooo order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
@@ -717,11 +695,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "c\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_day_ooo",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "67\tD\t4054\t129626\t-74037\t0.7730\t0.7504751831632615\t1973-12-02T23:46:21.858Z\t\tTRJK\tc\ttrue\tc\t0xadab9269a1afcfa8a209c923df856c3267c5f44b36a8e8be5304bb5970a2cbf4\t00000000 39 ae 3a 61 47 59\t1970-01-01T00:03:20.000000Z\n" +
                         "113\tD\t-5450\t304258\t-35463\tNaN\tNaN\t\t1970-01-01T00:00:00.098394Z\tBGNP\t\tfalse\t\t0x77e1be06c460b246870c47c1891e7fd0ac87f7392b452025c6125e52fbd1dca5\t00000000 9a 09 23 b7 fe e0 66 8e ab be\t1970-01-01T00:56:40.000000Z\n" +
@@ -755,11 +730,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "116\tW\t1209\tNaN\t-54703\t0.3827\t0.8336512245695875\t1973-04-20T21:58:44.387Z\t1969-12-31T23:59:57.953146Z\tWQLO\t\ttrue\taaa\t0x63d3edab19deae0e8de4fd1623e40b3592c091ab093e983862af3f4b563813ce\t00000000 21 13\t1970-11-21T02:43:20.000000Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "o3_0",
-                sink,
                 "a\tb\tt\n" +
                         "\t\t2014-09-10T01:00:00.000000Z\n" +
                         "\t\t2014-09-10T01:00:00.000000Z\n" +
@@ -967,7 +939,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private void assertMissingPartitions() throws SqlException {
         compile("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день_missing_parts where день = null", sink,
+        assertSql(
+                "t_col_top_день_missing_parts where день = null",
                 "x\tm\tts\tдень\n" +
                         "6\tc\t1970-01-02T04:20:00.000000Z\tNaN\n" +
                         "7\tb\t1970-01-02T09:53:20.000000Z\tNaN\n" +
@@ -976,9 +949,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "10\tc\t1970-01-03T02:33:20.000000Z\tNaN\n" +
                         "11\tb\t1970-01-03T08:06:40.000000Z\tNaN\n" +
                         "12\tb\t1970-01-03T13:40:00.000000Z\tNaN\n" +
-                        "13\tb\t1970-01-03T19:13:20.000000Z\tNaN\n");
+                        "13\tb\t1970-01-03T19:13:20.000000Z\tNaN\n"
+        );
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день_missing_parts where день != null", sink,
+        assertSql(
+                "t_col_top_день_missing_parts where день != null",
                 "x\tm\tts\tдень\n" +
                         "16\te\t1970-01-03T07:36:40.000000Z\t16\n" +
                         "17\tf\t1970-01-03T08:10:00.000000Z\t17\n" +
@@ -998,11 +973,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertMonth() throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_month where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "119\tV\t3178\t837756\t-81585\t0.7627\t0.5219904713000894\t1978-05-08T19:14:22.368Z\t1969-12-31T23:59:59.756314Z\tNCPVU\tbbbbbb\tfalse\t\t0x92e216e13e061220bcc73ae25c8f5957ced00e989db8c99c77b67aaf034c0258\t00000000 5f a3 32\t1970-01-01T00:03:20.000000Z\n" +
                         "121\tR\t-32248\t396050\t-35751\t0.7817\t0.9959337662774681\t\t1969-12-31T23:59:58.588233Z\tDVQMI\tc\ttrue\t\t0xa5bb89788829b308c718693d412ea1d96036838211b943c2609c2d1104b89752\t00000000 31 5e e0\t1970-08-20T11:36:40.000000Z\n" +
@@ -1014,11 +986,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "103\tL\t18557\tNaN\t-19361\t0.1200\tNaN\t1970-08-08T18:27:58.955Z\t1969-12-31T23:59:58.439595Z\t\tc\ttrue\t\t0xbc7827bb6dc3ce15b85b002a9fea625b95bdcc28b3dfce1e85524b903924c9c2\t00000000 18 e2 56 c6 ce\t1988-05-18T23:10:00.000000Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_month order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
@@ -1026,20 +995,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "c\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select count() from t_month",
-                sink,
                 "count\n" +
                         "30\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_month",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "119\tV\t3178\t837756\t-81585\t0.7627\t0.5219904713000894\t1978-05-08T19:14:22.368Z\t1969-12-31T23:59:59.756314Z\tNCPVU\tbbbbbb\tfalse\t\t0x92e216e13e061220bcc73ae25c8f5957ced00e989db8c99c77b67aaf034c0258\t00000000 5f a3 32\t1970-01-01T00:03:20.000000Z\n" +
                         "121\tR\t-32248\t396050\t-35751\t0.7817\t0.9959337662774681\t\t1969-12-31T23:59:58.588233Z\tDVQMI\tc\ttrue\t\t0xa5bb89788829b308c718693d412ea1d96036838211b943c2609c2d1104b89752\t00000000 31 5e e0\t1970-08-20T11:36:40.000000Z\n" +
@@ -1075,11 +1038,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertMonthO3() throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_month_ooo where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "76\tC\t-6159\tNaN\t-47298\tNaN\t0.04029576739795815\t1980-04-06T13:17:02.619Z\t1969-12-31T23:59:58.847174Z\tLCDE\taaa\ttrue\t\t0x8e5ff8afa4bb22ba555224aff85d7ae59e70afeef8bf7911cd2730f82982745b\t00000000 4f f8 0b 28 e3 e1 8a\t1970-01-10T06:16:40.000000Z\n" +
                         "89\tR\t16737\t700506\tNaN\t0.8182\t0.48212733968742016\t1975-11-12T07:08:04.487Z\t1969-12-31T23:59:54.459793Z\tOCZXQ\tbbbbbb\tfalse\t\t0xace30dd772e713688fbec5064d883f3d63e84502157622acae3baa02ee6dc8b4\t00000000 73 ac 38 fe\t1970-02-18T14:43:20.000000Z\n" +
@@ -1090,11 +1050,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "74\tZ\t25607\tNaN\t-28785\t0.1262\t0.040739265188051266\t1976-02-23T13:06:41.835Z\t1969-12-31T23:59:57.049228Z\tPNVF\taaa\ttrue\t\t0x363a46a2eb524da5414d7fa89ef213b068d1deba7f3c9494b1ba038517282210\t00000000 d1 d8 bf 0f 44\t1970-03-11T10:43:20.000000Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_month_ooo order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
@@ -1102,20 +1059,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "c\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select count() from t_month_ooo",
-                sink,
                 "count\n" +
                         "30\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_month_ooo",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "52\tT\t16706\t68378\t-78657\t0.4283\t0.7036706174814127\t1979-08-31T00:24:50.963Z\t1970-01-01T00:00:00.025861Z\t\tc\ttrue\taaa\t0xdef84e0878262440d0ba4a828304a4a587b372b44bb0b41a4b2afd479b9f1a5d\t00000000 5e 40 a1 90 1a 89 45\t1970-01-01T00:03:20.000000Z\n" +
                         "75\tO\t-24469\t329502\t68133\t0.2097\t0.16862809174782356\t1979-08-24T21:09:47.607Z\t1969-12-31T23:59:54.013525Z\tNXOT\t\tfalse\tc\t0x7b989002d6aa701281bbcd72bd1f7e608e4adc097857a6bc65e761ec15e1c225\t00000000 a5 81\t1970-01-03T07:36:40.000000Z\n" +
@@ -1151,11 +1102,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertNone() throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_none where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "35\tN\t-27680\t935010\t96731\t0.3982\t0.6951385535362276\t1977-06-23T09:50:16.611Z\t1969-12-31T23:59:56.584555Z\tUMMZS\taaa\tfalse\t\t0x6282dda91ca20ccda519bc9c0850a07eaa0106bdfb6d9cb66a8b4eb2174a93ff\t00000000 66 94 89\t1970-01-01T00:00:00.000100Z\n" +
                         "123\tW\t-9190\t4359\t53700\t0.5512\t0.7751886508004251\t\t1969-12-31T23:59:56.997792Z\t\taaa\ttrue\t\t0xb53a88f6d83626dbba48ceb2cd9f1f07ae01938cee1007258d8b20fb9ccc2ead\t00000000 33 6e\t1970-01-01T00:03:20.000100Z\n" +
@@ -1166,11 +1114,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "72\tR\t-30107\t357231\tNaN\t0.8622\t0.2232959099494619\t1980-03-14T04:19:57.116Z\t1969-12-31T23:59:58.790561Z\tTDTF\taaa\tfalse\t\t0xdb80a4d5776e596386f3c6ec12ee8cfe67efb684ddbe470d799808408f62675f\t\t1970-01-01T01:13:20.000100Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_none order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
@@ -1178,20 +1123,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "c\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select count() from t_none",
-                sink,
                 "count\n" +
                         "30\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_none",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "35\tN\t-27680\t935010\t96731\t0.3982\t0.6951385535362276\t1977-06-23T09:50:16.611Z\t1969-12-31T23:59:56.584555Z\tUMMZS\taaa\tfalse\t\t0x6282dda91ca20ccda519bc9c0850a07eaa0106bdfb6d9cb66a8b4eb2174a93ff\t00000000 66 94 89\t1970-01-01T00:00:00.000100Z\n" +
                         "123\tW\t-9190\t4359\t53700\t0.5512\t0.7751886508004251\t\t1969-12-31T23:59:56.997792Z\t\taaa\ttrue\t\t0xb53a88f6d83626dbba48ceb2cd9f1f07ae01938cee1007258d8b20fb9ccc2ead\t00000000 33 6e\t1970-01-01T00:03:20.000100Z\n" +
@@ -1227,11 +1166,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertNoneNts() throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_none_nts where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\n" +
                         "120\tB\t10795\t469264\t11722\t0.6260\tNaN\t\t1969-12-31T23:59:55.466926Z\tQSRL\taaa\tfalse\t\t0x2f171b3f06f6387d2fd2b4a60ba2ba3b45430a38ef1cd9dc5bee3da4840085a6\t00000000 92 fe 69 38 e1 77 9a e7 0c 89\n" +
                         "71\tB\t18904\t857617\t31118\t0.1834\t0.6455967424250787\t1976-10-15T11:00:30.016Z\t1970-01-01T00:00:00.254417Z\tKRGII\taaa\ttrue\t\t0x3eef3f158e0843624d0fa2564c3517679a2dfd07dad695f78d5c4bed8432de98\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60\n" +
@@ -1241,31 +1177,22 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "27\tJ\t-15254\t978974\t-36356\t0.7911\t0.7128505998532723\t1976-03-14T08:19:05.571Z\t1969-12-31T23:59:56.726487Z\tPZNYV\t\ttrue\t\t0x39af691594d0654567af4ec050eea188b8074532ac9f3c87c68ce6f3720e2b62\t00000000 20 13\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select count() from t_none_nts",
-                sink,
                 "count\n" +
                         "30\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_none_nts order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
                         "bbbbbb\n" +
                         "c\n"
         );
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_none_nts",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\n" +
                         "76\tT\t-11455\t269293\t-12569\tNaN\t0.9344604857394011\t1975-06-01T05:39:43.711Z\t1969-12-31T23:59:54.300840Z\tXGZS\t\tfalse\tbbbbbb\t0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t\n" +
                         "84\tG\t21781\t18201\t-29318\t0.8757\t0.1985581797355932\t1972-06-01T21:02:08.250Z\t1969-12-31T23:59:59.060058Z\tWLPDX\tbbbbbb\tfalse\taaa\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\t00000000 30 78\n" +
@@ -1301,10 +1228,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertWalTxn() throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "t_col_top_ooo_day_wal where день = 'a'", sink,
+        assertSql(
+                "t_col_top_ooo_day_wal where день = 'a'",
                 "x\tm\tts\tдень\tstr\n" +
                         "1\tb\t1970-01-01T01:30:00.000000Z\ta\tUVFMQXL\n" +
                         "4\t\t1970-01-01T04:30:00.000000Z\ta\tTOKMJCP\n" +
@@ -1323,11 +1248,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertYear() throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_year where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "92\tF\t28028\tNaN\tNaN\t0.2554\t0.18371611611756045\t1981-02-16T02:44:16.585Z\t1969-12-31T23:59:59.627107Z\t\tc\ttrue\t\t0x9de662c110ea4073e8728187e8352d5fc9d79f015b315fe985b29ab573d60b7d\t\t1982-09-04T15:10:00.000000Z\n" +
                         "27\tZ\t16702\t241981\t-97518\tNaN\t0.11513682045365181\t1978-06-15T03:10:19.987Z\t1969-12-31T23:59:56.486114Z\tPWGBN\tc\tfalse\t\t0x57f7ca4006c25f277854b37a145d2d6eb1a2709c5a91109c72459255ef20260d\t\t2001-09-09T01:50:00.000000Z\n" +
@@ -1336,11 +1258,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "83\tL\t-32289\t127321\t40837\t0.1335\t0.515824820198022\t\t1969-12-31T23:59:53.582959Z\tKFMO\taaa\tfalse\t\t0x8131875cd498c4b888762e985137f4e843b8167edcd59cf345c105202f875495\t\t2109-06-06T22:16:40.000000Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_year order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
@@ -1348,20 +1267,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "c\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select count() from t_year",
-                sink,
                 "count\n" +
                         "30\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_year",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "112\tY\t18252\t527691\t-61919\t0.6010\t0.11234979325337158\t1979-08-14T20:45:18.393Z\t1969-12-31T23:59:59.440365Z\tLVKR\tbbbbbb\tfalse\taaa\t0x8d70ff24aa6bc1ef633fa3240281dbf15c141df8f68b896d654ad128c2cc260e\t\t1970-01-01T00:03:20.000000Z\n" +
                         "89\tM\t10579\t312660\t-34472\t0.4381\t0.9857252839045136\t1976-10-12T22:39:24.028Z\t1969-12-31T23:59:55.269914Z\tXWLUK\taaa\tfalse\tc\t0xead0f34ae4973cadeecfae4b49c48a80ebc4fdd2342465cac8cc5c88521b09ee\t\t1976-05-03T19:36:40.000000Z\n" +
@@ -1397,11 +1310,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertYearO3() throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_year_ooo where m = null",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "30\tY\t28953\t940414\tNaN\t0.1489\t0.7201409952630464\t1973-04-19T19:30:20.534Z\t1969-12-31T23:59:52.777697Z\tCINNT\tc\ttrue\t\t0xa95f8be5525f99c26e4a67960aea1b73283d2a67ee18dcd8598b67e75160219d\t00000000 34 9c\t1972-07-14T22:16:40.000000Z\n" +
                         "20\tG\t-32702\t466493\t10882\t0.5512\t0.9010953692323533\t1972-07-20T02:41:59.050Z\t1969-12-31T23:59:52.899932Z\tIMDCR\tbbbbbb\ttrue\t\t0xcf43b4a50c2f74dc88b0b3ebba859e225933bd4072be924aadb205299e434030\t\t1972-07-14T22:16:40.000000Z\n" +
@@ -1411,11 +1321,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "30\tH\t-39\tNaN\t-59605\t0.2678\t0.9748023951436231\t1970-07-07T01:26:05.143Z\t1969-12-31T23:59:56.029262Z\tPMYE\t\ttrue\t\t0x3b483074de6cc58a4dbde91603ddb6977f61d7b6275ba8735566b5b68a4470c8\t00000000 88 ed d7\t1978-11-15T17:50:00.000000Z\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select distinct k from t_year_ooo order by k",
-                sink,
                 "k\n" +
                         "\n" +
                         "aaa\n" +
@@ -1423,20 +1330,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "c\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "select count() from t_year_ooo",
-                sink,
                 "count\n" +
                         "30\n"
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertSql(
                 "t_year_ooo",
-                sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "30\tE\t14468\t886907\tNaN\t0.8858\t0.31572235047445973\t1981-01-11T21:58:27.911Z\t1970-01-01T00:00:00.415843Z\tVBRV\t\ttrue\tbbbbbb\t0x96cc4fbcf71c771f8c667acbcfd84633b80d15f0235584bbbc044a6042cc92e7\t00000000 a6 c4 93 ba e3 49 e9 00 72 9a\t1970-01-01T00:03:20.000000Z\n" +
                         "113\tU\t-2695\t631042\t86722\t0.8057\t0.22402711640228767\t1980-05-14T09:54:57.177Z\t1969-12-31T23:59:52.124262Z\tFRWQ\tc\tfalse\taaa\t0x5a7919272adc71e952998dfe330e0c8444b617902e3a8304aaeb546ee505d2fc\t00000000 7a 9e 98 62 91 37 59 e6 c6\t1970-01-01T00:03:20.000000Z\n" +
@@ -1503,110 +1404,99 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void generateMigrationTables() throws SqlException, NumericException {
-        compiler.compile(
+        ddl(
                 "create table t_none_nts as (" +
                         "select" +
                         commonColumns() +
                         " from long_sequence(30)," +
-                        "), index(m)",
-                sqlExecutionContext
+                        "), index(m)"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_none as (" +
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(100, 200000000L) ts" +
                         " from long_sequence(30)," +
-                        "), index(m) timestamp(ts) partition by NONE",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by NONE"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_day as (" +
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 2000000000000L) ts" +
                         " from long_sequence(30)," +
-                        "), index(m) timestamp(ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by DAY"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_month as (" +
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 20000000000000L) ts" +
                         " from long_sequence(30)," +
-                        "), index(m) timestamp(ts) partition by MONTH",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by MONTH"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_year as (" +
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 200000000000000L) ts" +
                         " from long_sequence(30)," +
-                        "), index(m) timestamp(ts) partition by YEAR",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by YEAR"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_day_ooo as (" +
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(16 * 200000000L + 200000000L, 2000000000000L) ts" +
                         " from long_sequence(15)" +
-                        "), index(m) timestamp(ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by DAY"
         );
 
-        compiler.compile("insert into t_day_ooo " +
+        ddl("insert into t_day_ooo " +
                         "select " +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 2000000000000L) ts" +
-                        " from long_sequence(15)",
-                sqlExecutionContext
+                        " from long_sequence(15)"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_month_ooo as (" +
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(16 * 200000000000L + 200000000L, 200000000000L) ts" +
                         " from long_sequence(15)" +
-                        "), index(m) timestamp(ts) partition by MONTH",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by MONTH"
         );
 
-        compiler.compile("insert into t_month_ooo " +
+        ddl("insert into t_month_ooo " +
                         "select " +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 200000000000L) ts" +
-                        " from long_sequence(15)",
-                sqlExecutionContext
+                        " from long_sequence(15)"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_year_ooo as (" +
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 20000000000000L) ts" +
                         " from long_sequence(15)," +
-                        "), index(m) timestamp(ts) partition by YEAR",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by YEAR"
         );
 
-        compiler.compile("insert into t_year_ooo " +
+        ddl("insert into t_year_ooo " +
                         "select " +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 20000000000000L) ts" +
-                        " from long_sequence(15)",
-                sqlExecutionContext
+                        " from long_sequence(15)"
         );
 
-        compiler.compile("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY", sqlExecutionContext);
+        ddl("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY");
 
         try (TableWriter w = getWriter("o3_0")) {
             TableWriter.Row r;
@@ -1641,62 +1531,56 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        compiler.compile(
+        ddl(
                 "create table t_col_top_year as (" +
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
                         ", timestamp_sequence(200000000L, 20000000000000L) ts" +
                         " from long_sequence(15)," +
-                        "), index(m) timestamp(ts) partition by YEAR",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by YEAR"
         );
 
-        compiler.compile("alter table t_col_top_year add column y long", sqlExecutionContext).execute(null).await();
-        compiler.compile("insert into t_col_top_year " +
+        alter("alter table t_col_top_year add column y long");
+        ddl("insert into t_col_top_year " +
                         "select " +
                         " x + 15 as x" +
                         ", rnd_symbol('d', 'e', 'f', null) as m" +
                         ", timestamp_sequence(200000000L + 15 * 20000000000000L, 20000000000000L) ts" +
                         ", x + 15 as y" +
-                        " from long_sequence(15)",
-                sqlExecutionContext
+                        " from long_sequence(15)"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_col_top_none as (" +
                         "select x, m, ts from t_col_top_year where x <= 15" +
-                        "), index(m) timestamp(ts) partition by NONE",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by NONE"
         );
 
-        compiler.compile("alter table t_col_top_none add column y long", sqlExecutionContext).execute(null).await();
-        compiler.compile("insert into t_col_top_none " +
+        alter("alter table t_col_top_none add column y long", sqlExecutionContext);
+        ddl("insert into t_col_top_none " +
                         "select x, m, ts, y from t_col_top_year where x > 15" +
-                        " from long_sequence(15)",
-                sqlExecutionContext
+                        " from long_sequence(15)"
         );
 
-        compiler.compile(
+        ddl(
                 "create table t_col_top_день as (" +
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
                         ", timestamp_sequence(2000000000L, 20000000000L) ts" +
                         " from long_sequence(15)," +
-                        "), index(m) timestamp(ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by DAY"
         );
 
-        compiler.compile("alter table t_col_top_день add column день long", sqlExecutionContext).execute(null).await();
-        compiler.compile("insert into t_col_top_день " +
+        alter("alter table t_col_top_день add column день long");
+        ddl("insert into t_col_top_день " +
                         "select " +
                         " x + 15 as x" +
                         ", rnd_symbol('d', 'e', 'f', null) as m" +
                         ", timestamp_sequence(200000000L + 10 * 20000000000L, 2000000000L) ts" +
                         ", x + 15 as y" +
-                        " from long_sequence(15)",
-                sqlExecutionContext
+                        " from long_sequence(15)"
         );
 
         createTableWithColumnTops("create table t_col_top_ooo_day as (" +

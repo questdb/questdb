@@ -29,7 +29,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -47,27 +46,24 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     @Test
     public void testAlterReadonlyFails() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table dups as" +
-                        " (select timestamp_sequence(0, 1000000) ts," +
-                        " cast(x as int) x" +
-                        " from long_sequence(5))" +
-                        " timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+            ddl("create table dups as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY WAL");
 
-                SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
-                        ReadOnlySecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1
-                        , null
-                );
+            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+                    ReadOnlySecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1
+                    , null
+            );
 
-                try {
-                    compiler.compile("Alter table dups dedup upsert keys(ts)", roExecutionContext);
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
-                }
+            try {
+                fail("Alter table dups dedup upsert keys(ts)", roExecutionContext);
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }
         });
     }
@@ -282,7 +278,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testEnableDedupDroppedColumnColumnFails() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameStr = testName.getMethodName();
-            compile("create table " + tableNameStr + " as (" +
+            ddl("create table " + tableNameStr + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -313,17 +309,15 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 }
             }
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("ALTER TABLE " + tableNameStr + " drop column sym", sqlExecutionContext);
-                try (TableWriter tw = getWriter(tableToken)) {
-                    LongList columnIndexes = new LongList();
-                    columnIndexes.add(1);
-                    try {
-                        tw.enableDeduplicationWithUpsertKeys(columnIndexes);
-                        Assert.assertFalse(tw.isDeduplicationEnabled());
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
-                    }
+            alter("ALTER TABLE " + tableNameStr + " drop column sym");
+            try (TableWriter tw = getWriter(tableToken)) {
+                LongList columnIndexes = new LongList();
+                columnIndexes.add(1);
+                try {
+                    tw.enableDeduplicationWithUpsertKeys(columnIndexes);
+                    Assert.assertFalse(tw.isDeduplicationEnabled());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
                 }
             }
         });

@@ -34,10 +34,8 @@ public class IntersectTest extends AbstractGriffinTest {
     @Test
     public void testIntersectDuplicateColumnException() throws Exception {
         assertMemoryLeak(() -> {
-            final String sql1 = "create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))";
-            compiler.compile(sql1, sqlExecutionContext);
-            final String sql2 = "create table y as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(20))";
-            compiler.compile(sql2, sqlExecutionContext);
+            ddl("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            ddl("create table y as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(20))");
 
             final String expected = "i\ts\n" +
                     "4\tB\n" +
@@ -48,7 +46,7 @@ public class IntersectTest extends AbstractGriffinTest {
                     "1\tA\n";
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile("(select i,s from x) intersect (select i,first(s) from y)", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("(select i,s from x) intersect (select i,first(s) from y)")) {
                 assertCursor(expected, factory, true, false);
             }
         });
@@ -98,7 +96,7 @@ public class IntersectTest extends AbstractGriffinTest {
                     "-772867311\tfalse\tQ\t0.7653255982993546\tNaN\t681\t2015-05-07T02:45:07.603Z\t\t4794469881975683047\t1970-01-01T02:30:00.000000Z\t31\t00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
                     "00000010 a0 dd\tVTNPIW\t0x2d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe19b2faa4e8255a0d\tP\n";
 
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                             "(" +
                             "select" +
                             " rnd_int() a," +
@@ -117,18 +115,17 @@ public class IntersectTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(20))",
-                    sqlExecutionContext
+                            " long_sequence(20))"
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = fact("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile("create table y as " +
+            ddl("create table y as " +
                             "(" +
                             "select" +
                             " rnd_int() a," +
@@ -147,11 +144,10 @@ public class IntersectTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(10))",
-                    sqlExecutionContext
+                            " long_sequence(10))"
             );
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile("select * from x intersect y", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select * from x intersect y")) {
                 assertCursor(expected2, factory, true, false);
             }
         });
@@ -172,38 +168,35 @@ public class IntersectTest extends AbstractGriffinTest {
             final String expected2 = "t\n" +
                     "MOTORBIKE\n";
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'MOTORBIKE') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = fact("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'MOTORBIKE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
-                            " FROM long_sequence(13) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(13) x)"
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile("select distinct t from x intersect y intersect z", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select distinct t from x intersect y intersect z")) {
                 assertCursor(expected2, factory, true, false);
             }
         });

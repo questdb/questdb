@@ -25,21 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -905,14 +902,15 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         return tsk;
     }
 
-    private void update(String query) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-            try (OperationFuture fut = cq.execute(null)) {
-                fut.await();
-            }
-        }
+    private void update(String updateSql) throws SqlException {
+        alter(updateSql);
+//        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+//            final CompiledQuery cq = compiler.compile(updateSql, sqlExecutionContext);
+//            Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
+//            try (OperationFuture fut = cq.execute(null)) {
+//                fut.await();
+//            }
+//        }
     }
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {

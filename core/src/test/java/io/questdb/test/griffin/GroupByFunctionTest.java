@@ -807,9 +807,9 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testNestedGroupByFn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
-            try (RecordCursorFactory ignored = compiler.compile("select sym, max(sum(x + min(x)) - avg(x)) from test", sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.fail();
+            ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            try {
+                fail("select sym, max(sum(x + min(x)) - avg(x)) from test");
             } catch (SqlException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
             }
@@ -819,11 +819,9 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testNonNestedGroupByFn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
-            try (RecordCursorFactory ignored = compiler.compile("select sym, max(x) - (min(x) + 1) from test", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            try (RecordCursorFactory ignored = fact("select sym, max(x) - (min(x) + 1) from test")) {
                 Assert.assertTrue(true);
-            } catch (SqlException e) {
-                Assert.fail();
             }
         });
     }

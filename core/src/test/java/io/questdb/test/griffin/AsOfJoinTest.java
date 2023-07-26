@@ -39,65 +39,52 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoinAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile(
-                        "CREATE TABLE fx_rate (" +
-                                "    ts TIMESTAMP, " +
-                                "    code SYMBOL CAPACITY 128 NOCACHE, " +
-                                "    rate INT" +
-                                ") timestamp(ts)",
-                        sqlExecutionContext
-                );
-                executeInsert("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
+            ddl(
+                    "CREATE TABLE fx_rate (" +
+                            "    ts TIMESTAMP, " +
+                            "    code SYMBOL CAPACITY 128 NOCACHE, " +
+                            "    rate INT" +
+                            ") timestamp(ts)",
+                    sqlExecutionContext
+            );
+            executeInsert("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
 
-                compiler.compile(
-                        "CREATE TABLE trades (" +
-                                "    ts TIMESTAMP, " +
-                                "    price INT, " +
-                                "    qty INT, " +
-                                "    flag INT, " +
-                                "    fx_rate_code SYMBOL CAPACITY 128 NOCACHE" +
-                                ") timestamp(ts);",
-                        sqlExecutionContext
-                );
-                executeInsert("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
-                executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
-                executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
+            ddl(
+                    "CREATE TABLE trades (" +
+                            "    ts TIMESTAMP, " +
+                            "    price INT, " +
+                            "    qty INT, " +
+                            "    flag INT, " +
+                            "    fx_rate_code SYMBOL CAPACITY 128 NOCACHE" +
+                            ") timestamp(ts);",
+                    sqlExecutionContext
+            );
+            executeInsert("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
+            executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
+            executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
 
-                String query =
-                        "SELECT\n" +
-                                "  SUM(CASE WHEN t.flag = 0 THEN 0.9 * (t.price * f.rate) ELSE 0.0 END)," +
-                                "  SUM(CASE WHEN t.flag = 1 THEN 0.7 * (t.price * f.rate) ELSE 0.0 END)," +
-                                "  SUM(CASE WHEN t.flag = 2 THEN 0.2 * (t.price * f.rate) ELSE 0.0 END)" +
-                                "FROM  " +
-                                "  trades t " +
-                                "ASOF JOIN fx_rate f on f.code = t.fx_rate_code";
+            String query =
+                    "SELECT\n" +
+                            "  SUM(CASE WHEN t.flag = 0 THEN 0.9 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 1 THEN 0.7 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 2 THEN 0.2 * (t.price * f.rate) ELSE 0.0 END)" +
+                            "FROM  " +
+                            "  trades t " +
+                            "ASOF JOIN fx_rate f on f.code = t.fx_rate_code";
 
-                String expected = "SUM\tSUM1\tSUM2\n" +
-                        "900.0\t700.0\t200.0\n";
+            String expected = "SUM\tSUM1\tSUM2\n" +
+                    "900.0\t700.0\t200.0\n";
 
-                printSqlResult(expected, query, null, false, true);
-            }
+            printSqlResult(expected, query, null, false, true);
         });
     }
 
     @Test
     public void testAsOfJoinCombinedWithInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile(
-                        "create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
-                        sqlExecutionContext
-                );
-                compiler.compile(
-                        "create table t2 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
-                        sqlExecutionContext
-                );
-                compiler.compile(
-                        "create table t3 (id long, ts timestamp) timestamp(ts) partition by day;",
-                        sqlExecutionContext
-                );
-            }
+            ddl("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            ddl("create table t2 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            ddl("create table t3 (id long, ts timestamp) timestamp(ts) partition by day;");
 
             final String query = "SELECT *\n" +
                     "FROM (\n" +
@@ -116,12 +103,10 @@ public class AsOfJoinTest extends AbstractGriffinTest {
 
     @Test
     public void testAsOfJoinDynamicTimestamp() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile(
-                    "create table positions2 as (" +
-                            "select x, cast(x * 1000000L as TIMESTAMP) time from long_sequence(10)" +
-                            ") timestamp(time)", sqlExecutionContext);
-        }
+        ddl(
+                "create table positions2 as (" +
+                        "select x, cast(x * 1000000L as TIMESTAMP) time from long_sequence(10)" +
+                        ") timestamp(time)");
 
         assertSql("select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x\n" +
                         "from \n" +
@@ -279,25 +264,14 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // ASKS
-                compiler.compile(
-                        "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
-                        sqlExecutionContext
-                );
-            }
+            // ASKS
+            ddl("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
             executeInsert("insert into asks values(100, 0)");
             executeInsert("insert into asks values(101, 2);");
             executeInsert("insert into asks values(102, 4);");
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // BIDS
-                compiler.compile(
-                        "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
-                        sqlExecutionContext
-                );
-            }
+            // BIDS
+            ddl("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
             executeInsert("insert into bids values(101, 1);");
             executeInsert("insert into bids values(102, 3);");
             executeInsert("insert into bids values(103, 5);");
@@ -325,16 +299,8 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoinOnEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile(
-                        "create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
-                        sqlExecutionContext
-                );
-                compiler.compile(
-                        "create table t2 (id long, ts timestamp) timestamp(ts) partition by day;",
-                        sqlExecutionContext
-                );
-            }
+            ddl("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            ddl("create table t2 (id long, ts timestamp) timestamp(ts) partition by day;");
 
             final String query = "SELECT * FROM t1 \n" +
                     "ASOF JOIN t2 ON id;";
@@ -454,7 +420,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 //tabY
-                compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+                ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
                 executeInsert("insert into tabY values ('A', 1, 10000)");
                 executeInsert("insert into tabY values ('A', 2, 20000)");
                 executeInsert("insert into tabY values ('A', 3, 30000)");
@@ -503,29 +469,27 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinForEqTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)", sqlExecutionContext);
-                executeInsert("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
-                executeInsert("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
-                executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
-                executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
-                executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
-                executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
-                executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
-                executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
+            ddl("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)");
+            executeInsert("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
-                String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
-                        "2021-07-26T02:36:02.566000Z\t1\tNaN\tNaN\n" +
-                        "2021-07-26T02:36:03.094000Z\t2\t1\t1\n" +
-                        "2021-07-26T02:36:03.097000Z\t3\t2\t1\n" +
-                        "2021-07-26T02:36:03.097000Z\t4\t2\t2\n" +
-                        "2021-07-26T02:36:03.097000Z\t5\t2\t3\n" +
-                        "2021-07-26T02:36:03.097000Z\t6\t2\t4\n" +
-                        "2021-07-26T02:36:03.098000Z\t7\t6\t1\n" +
-                        "2021-07-26T02:36:03.098000Z\t8\t6\t2\n";
-                String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
-                printSqlResult(expected, query, "ts", false, true);
-            }
+            String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
+                    "2021-07-26T02:36:02.566000Z\t1\tNaN\tNaN\n" +
+                    "2021-07-26T02:36:03.094000Z\t2\t1\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t3\t2\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t4\t2\t2\n" +
+                    "2021-07-26T02:36:03.097000Z\t5\t2\t3\n" +
+                    "2021-07-26T02:36:03.097000Z\t6\t2\t4\n" +
+                    "2021-07-26T02:36:03.098000Z\t7\t6\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t8\t6\t2\n";
+            String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
+            printSqlResult(expected, query, "ts", false, true);
         });
     }
 
@@ -646,8 +610,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                         "timestamp",
                         false,
                         true
-
-
                 );
             }
         });
@@ -656,46 +618,36 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            // ASKS
+            ddl("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
+            executeInsert("insert into asks values(100, 0)");
+            executeInsert("insert into asks values(101, 3);");
+            executeInsert("insert into asks values(102, 4);");
 
-                // ASKS
-                compiler.compile(
-                        "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
-                        sqlExecutionContext
-                );
-                executeInsert("insert into asks values(100, 0)");
-                executeInsert("insert into asks values(101, 3);");
-                executeInsert("insert into asks values(102, 4);");
+            // BIDS
+            ddl("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
+            executeInsert("insert into bids values(101, 0);");
+            executeInsert("insert into bids values(102, 3);");
+            executeInsert("insert into bids values(103, 5);");
 
-                // BIDS
-                compiler.compile(
-                        "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
-                        sqlExecutionContext
-                );
-                executeInsert("insert into bids values(101, 0);");
-                executeInsert("insert into bids values(102, 3);");
-                executeInsert("insert into bids values(103, 5);");
+            String query =
+                    "SELECT \n" +
+                            "    b.timebid timebid,\n" +
+                            "    a.timeask timeask, \n" +
+                            "    b.b b, \n" +
+                            "    a.a a\n" +
+                            "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
+                            "    LT JOIN\n" +
+                            "(select a.ask a, a.ts timeask from asks a) a\n" +
+                            "WHERE (b.timebid != a.timeask);";
 
-                String query =
-                        "SELECT \n" +
-                                "    b.timebid timebid,\n" +
-                                "    a.timeask timeask, \n" +
-                                "    b.b b, \n" +
-                                "    a.a a\n" +
-                                "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
-                                "    LT JOIN\n" +
-                                "(select a.ask a, a.ts timeask from asks a) a\n" +
-                                "WHERE (b.timebid != a.timeask);";
+            String expected = "timebid\ttimeask\tb\ta\n" +
+                    "1970-01-01T00:00:00.000000Z\t\t101\tNaN\n" +
+                    "1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000000Z\t102\t100\n" +
+                    "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102\n";
 
-                String expected = "timebid\ttimeask\tb\ta\n" +
-                        "1970-01-01T00:00:00.000000Z\t\t101\tNaN\n" +
-                        "1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000000Z\t102\t100\n" +
-                        "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102\n";
-
-                printSqlResult(expected, query, "timebid", false, false);
-            }
+            printSqlResult(expected, query, "timebid", false, false);
         });
-
     }
 
     //select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
@@ -791,26 +743,18 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinOnEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile(
-                        "create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;",
-                        sqlExecutionContext
-                );
-                compiler.compile(
-                        "create table t2 (id long, ts timestamp) timestamp(ts) partition by day;",
-                        sqlExecutionContext
-                );
+            ddl("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            ddl("create table t2 (id long, ts timestamp) timestamp(ts) partition by day;");
 
-                final String query = "SELECT * FROM t1 \n" +
-                        "LT JOIN t2 ON id;";
-                final String expected = "id\tts\tid1\tts1\n" +
-                        "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
-                        "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
-                        "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
-                        "4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
-                        "5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
-                printSqlResult(expected, query, "ts", false, true);
-            }
+            final String query = "SELECT * FROM t1 \n" +
+                    "LT JOIN t2 ON id;";
+            final String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
+            printSqlResult(expected, query, "ts", false, true);
         });
     }
 
@@ -905,181 +849,173 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinOneTableKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                //tabY
-                compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-                executeInsert("insert into tabY values ('A', 1, 10000)");
-                executeInsert("insert into tabY values ('A', 2, 20000)");
-                executeInsert("insert into tabY values ('A', 3, 30000)");
-                executeInsert("insert into tabY values ('B', 1, 30000)");
-                executeInsert("insert into tabY values ('B', 2, 40000)");
-                executeInsert("insert into tabY values ('B', 3, 50000)");
-                //check tables
-                String ex = "tag\tx\tts\n" +
-                        "A\t1\t1970-01-01T00:00:00.010000Z\n" +
-                        "A\t2\t1970-01-01T00:00:00.020000Z\n" +
-                        "A\t3\t1970-01-01T00:00:00.030000Z\n" +
-                        "B\t1\t1970-01-01T00:00:00.030000Z\n" +
-                        "B\t2\t1970-01-01T00:00:00.040000Z\n" +
-                        "B\t3\t1970-01-01T00:00:00.050000Z\n";
-                printSqlResult(ex, "tabY", "ts", true, true);
-                // test
-                ex = "tag\thi\tlo\n" +
-                        "A\t1\tNaN\n" +
-                        "A\t2\t1\n" +
-                        "A\t3\t2\n" +
-                        "B\t1\tNaN\n" +
-                        "B\t2\t1\n" +
-                        "B\t3\t2\n";
-                String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-                printSqlResult(ex, query, null, false, true);
-            }
+            //tabY
+            ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
+            executeInsert("insert into tabY values ('A', 1, 10000)");
+            executeInsert("insert into tabY values ('A', 2, 20000)");
+            executeInsert("insert into tabY values ('A', 3, 30000)");
+            executeInsert("insert into tabY values ('B', 1, 30000)");
+            executeInsert("insert into tabY values ('B', 2, 40000)");
+            executeInsert("insert into tabY values ('B', 3, 50000)");
+            //check tables
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t1\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.040000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.050000Z\n";
+            printSqlResult(ex, "tabY", "ts", true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "A\t1\tNaN\n" +
+                    "A\t2\t1\n" +
+                    "A\t3\t2\n" +
+                    "B\t1\tNaN\n" +
+                    "B\t2\t1\n" +
+                    "B\t3\t2\n";
+            String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
+            printSqlResult(ex, query, null, false, true);
         });
     }
 
     @Test
     public void testLtJoinOneTableKeyedV2() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                //tabY
-                compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-                executeInsert("insert into tabY values ('A', 1, 10000)");
-                executeInsert("insert into tabY values ('A', 2, 20000)");
-                executeInsert("insert into tabY values ('A', 3, 30000)");
-                executeInsert("insert into tabY values ('B', 1, 40000)");
-                executeInsert("insert into tabY values ('B', 2, 50000)");
-                executeInsert("insert into tabY values ('B', 3, 60000)");
-                //check tables
-                String ex = "tag\tx\tts\n" +
-                        "A\t1\t1970-01-01T00:00:00.010000Z\n" +
-                        "A\t2\t1970-01-01T00:00:00.020000Z\n" +
-                        "A\t3\t1970-01-01T00:00:00.030000Z\n" +
-                        "B\t1\t1970-01-01T00:00:00.040000Z\n" +
-                        "B\t2\t1970-01-01T00:00:00.050000Z\n" +
-                        "B\t3\t1970-01-01T00:00:00.060000Z\n";
-                printSqlResult(ex, "tabY", "ts", true, true);
-                // test
-                ex = "tag\thi\tlo\n" +
-                        "A\t1\tNaN\n" +
-                        "A\t2\t1\n" +
-                        "A\t3\t2\n" +
-                        "B\t1\tNaN\n" +
-                        "B\t2\t1\n" +
-                        "B\t3\t2\n";
-                String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-                printSqlResult(ex, query, null, false, true);
-            }
+            //tabY
+            ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
+            executeInsert("insert into tabY values ('A', 1, 10000)");
+            executeInsert("insert into tabY values ('A', 2, 20000)");
+            executeInsert("insert into tabY values ('A', 3, 30000)");
+            executeInsert("insert into tabY values ('B', 1, 40000)");
+            executeInsert("insert into tabY values ('B', 2, 50000)");
+            executeInsert("insert into tabY values ('B', 3, 60000)");
+            //check tables
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t1\t1970-01-01T00:00:00.040000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.050000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.060000Z\n";
+            printSqlResult(ex, "tabY", "ts", true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "A\t1\tNaN\n" +
+                    "A\t2\t1\n" +
+                    "A\t3\t2\n" +
+                    "B\t1\tNaN\n" +
+                    "B\t2\t1\n" +
+                    "B\t3\t2\n";
+            String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
+            printSqlResult(ex, query, null, false, true);
         });
     }
 
     @Test
     public void testLtJoinSequenceGap() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                //create table
-                compiler.compile("create table tab as " +
-                        "(" +
-                        "select " +
-                        "rnd_symbol('AA', 'BB') tag," +
-                        " x, " +
-                        " timestamp_sequence(0, 10000) ts" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(ts) partition by DAY", sqlExecutionContext);
-                //insert
-                executeInsert("insert into tab values ('CC', 24, 210000)");
-                executeInsert("insert into tab values ('CC', 25, 220000)");
-                String ex = "tag\tx\tts\n" +
-                        "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
-                        "BB\t3\t1970-01-01T00:00:00.020000Z\n" +
-                        "BB\t4\t1970-01-01T00:00:00.030000Z\n" +
-                        "BB\t5\t1970-01-01T00:00:00.040000Z\n" +
-                        "BB\t6\t1970-01-01T00:00:00.050000Z\n" +
-                        "AA\t7\t1970-01-01T00:00:00.060000Z\n" +
-                        "BB\t8\t1970-01-01T00:00:00.070000Z\n" +
-                        "AA\t9\t1970-01-01T00:00:00.080000Z\n" +
-                        "AA\t10\t1970-01-01T00:00:00.090000Z\n" +
-                        "AA\t11\t1970-01-01T00:00:00.100000Z\n" +
-                        "AA\t12\t1970-01-01T00:00:00.110000Z\n" +
-                        "AA\t13\t1970-01-01T00:00:00.120000Z\n" +
-                        "BB\t14\t1970-01-01T00:00:00.130000Z\n" +
-                        "BB\t15\t1970-01-01T00:00:00.140000Z\n" +
-                        "AA\t16\t1970-01-01T00:00:00.150000Z\n" +
-                        "AA\t17\t1970-01-01T00:00:00.160000Z\n" +
-                        "BB\t18\t1970-01-01T00:00:00.170000Z\n" +
-                        "BB\t19\t1970-01-01T00:00:00.180000Z\n" +
-                        "AA\t20\t1970-01-01T00:00:00.190000Z\n" +
-                        "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
-                        "CC\t25\t1970-01-01T00:00:00.220000Z\n";
-                String query = "tab";
-                printSqlResult(ex, query, "ts", true, true);
-                // test
-                ex = "tag\thi\tlo\n" +
-                        "CC\t24\t20\n";
-                query = "select a.tag, a.x hi, b.x lo " +
-                        "from tab a " +
-                        "lt join tab b " +
-                        "where a.x > b.x + 1";
-                printSqlResult(ex, query, null, false, false);
-            }
+            //create table
+            ddl("create table tab as " +
+                    "(" +
+                    "select " +
+                    "rnd_symbol('AA', 'BB') tag," +
+                    " x, " +
+                    " timestamp_sequence(0, 10000) ts" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ") timestamp(ts) partition by DAY");
+            //insert
+            executeInsert("insert into tab values ('CC', 24, 210000)");
+            executeInsert("insert into tab values ('CC', 25, 220000)");
+            String ex = "tag\tx\tts\n" +
+                    "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
+                    "BB\t3\t1970-01-01T00:00:00.020000Z\n" +
+                    "BB\t4\t1970-01-01T00:00:00.030000Z\n" +
+                    "BB\t5\t1970-01-01T00:00:00.040000Z\n" +
+                    "BB\t6\t1970-01-01T00:00:00.050000Z\n" +
+                    "AA\t7\t1970-01-01T00:00:00.060000Z\n" +
+                    "BB\t8\t1970-01-01T00:00:00.070000Z\n" +
+                    "AA\t9\t1970-01-01T00:00:00.080000Z\n" +
+                    "AA\t10\t1970-01-01T00:00:00.090000Z\n" +
+                    "AA\t11\t1970-01-01T00:00:00.100000Z\n" +
+                    "AA\t12\t1970-01-01T00:00:00.110000Z\n" +
+                    "AA\t13\t1970-01-01T00:00:00.120000Z\n" +
+                    "BB\t14\t1970-01-01T00:00:00.130000Z\n" +
+                    "BB\t15\t1970-01-01T00:00:00.140000Z\n" +
+                    "AA\t16\t1970-01-01T00:00:00.150000Z\n" +
+                    "AA\t17\t1970-01-01T00:00:00.160000Z\n" +
+                    "BB\t18\t1970-01-01T00:00:00.170000Z\n" +
+                    "BB\t19\t1970-01-01T00:00:00.180000Z\n" +
+                    "AA\t20\t1970-01-01T00:00:00.190000Z\n" +
+                    "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
+                    "CC\t25\t1970-01-01T00:00:00.220000Z\n";
+            String query = "tab";
+            printSqlResult(ex, query, "ts", true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "CC\t24\t20\n";
+            query = "select a.tag, a.x hi, b.x lo " +
+                    "from tab a " +
+                    "lt join tab b " +
+                    "where a.x > b.x + 1";
+            printSqlResult(ex, query, null, false, false);
         });
     }
 
     @Test
     public void testLtJoinSequenceGapOnKey() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                //create table
-                compiler.compile("create table tab as " +
-                        "(" +
-                        "select " +
-                        "rnd_symbol('AA', 'BB') tag," +
-                        " x, " +
-                        " timestamp_sequence(0, 10000) ts" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(ts) partition by DAY", sqlExecutionContext);
-                //insert
-                executeInsert("insert into tab values ('CC', 24, 210000)");
-                executeInsert("insert into tab values ('CC', 25, 220000)");
-                String ex = "tag\tx\tts\n" +
-                        "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
-                        "BB\t3\t1970-01-01T00:00:00.020000Z\n" +
-                        "BB\t4\t1970-01-01T00:00:00.030000Z\n" +
-                        "BB\t5\t1970-01-01T00:00:00.040000Z\n" +
-                        "BB\t6\t1970-01-01T00:00:00.050000Z\n" +
-                        "AA\t7\t1970-01-01T00:00:00.060000Z\n" +
-                        "BB\t8\t1970-01-01T00:00:00.070000Z\n" +
-                        "AA\t9\t1970-01-01T00:00:00.080000Z\n" +
-                        "AA\t10\t1970-01-01T00:00:00.090000Z\n" +
-                        "AA\t11\t1970-01-01T00:00:00.100000Z\n" +
-                        "AA\t12\t1970-01-01T00:00:00.110000Z\n" +
-                        "AA\t13\t1970-01-01T00:00:00.120000Z\n" +
-                        "BB\t14\t1970-01-01T00:00:00.130000Z\n" +
-                        "BB\t15\t1970-01-01T00:00:00.140000Z\n" +
-                        "AA\t16\t1970-01-01T00:00:00.150000Z\n" +
-                        "AA\t17\t1970-01-01T00:00:00.160000Z\n" +
-                        "BB\t18\t1970-01-01T00:00:00.170000Z\n" +
-                        "BB\t19\t1970-01-01T00:00:00.180000Z\n" +
-                        "AA\t20\t1970-01-01T00:00:00.190000Z\n" +
-                        "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
-                        "CC\t25\t1970-01-01T00:00:00.220000Z\n";
-                String query = "tab";
-                printSqlResult(ex, query, "ts", true, true);
-                // test
-                ex = "tag\thi\tlo\n" +
-                        "AA\t7\t2\n" +
-                        "BB\t8\t6\n" +
-                        "AA\t9\t7\n" +
-                        "BB\t14\t8\n" +
-                        "AA\t16\t13\n" +
-                        "BB\t18\t15\n" +
-                        "AA\t20\t17\n";
-                query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
-                printSqlResult(ex, query, null, false, false);
-            }
+            //create table
+            ddl("create table tab as " +
+                    "(" +
+                    "select " +
+                    "rnd_symbol('AA', 'BB') tag," +
+                    " x, " +
+                    " timestamp_sequence(0, 10000) ts" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ") timestamp(ts) partition by DAY");
+            //insert
+            executeInsert("insert into tab values ('CC', 24, 210000)");
+            executeInsert("insert into tab values ('CC', 25, 220000)");
+            String ex = "tag\tx\tts\n" +
+                    "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
+                    "BB\t3\t1970-01-01T00:00:00.020000Z\n" +
+                    "BB\t4\t1970-01-01T00:00:00.030000Z\n" +
+                    "BB\t5\t1970-01-01T00:00:00.040000Z\n" +
+                    "BB\t6\t1970-01-01T00:00:00.050000Z\n" +
+                    "AA\t7\t1970-01-01T00:00:00.060000Z\n" +
+                    "BB\t8\t1970-01-01T00:00:00.070000Z\n" +
+                    "AA\t9\t1970-01-01T00:00:00.080000Z\n" +
+                    "AA\t10\t1970-01-01T00:00:00.090000Z\n" +
+                    "AA\t11\t1970-01-01T00:00:00.100000Z\n" +
+                    "AA\t12\t1970-01-01T00:00:00.110000Z\n" +
+                    "AA\t13\t1970-01-01T00:00:00.120000Z\n" +
+                    "BB\t14\t1970-01-01T00:00:00.130000Z\n" +
+                    "BB\t15\t1970-01-01T00:00:00.140000Z\n" +
+                    "AA\t16\t1970-01-01T00:00:00.150000Z\n" +
+                    "AA\t17\t1970-01-01T00:00:00.160000Z\n" +
+                    "BB\t18\t1970-01-01T00:00:00.170000Z\n" +
+                    "BB\t19\t1970-01-01T00:00:00.180000Z\n" +
+                    "AA\t20\t1970-01-01T00:00:00.190000Z\n" +
+                    "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
+                    "CC\t25\t1970-01-01T00:00:00.220000Z\n";
+            String query = "tab";
+            printSqlResult(ex, query, "ts", true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "AA\t7\t2\n" +
+                    "BB\t8\t6\n" +
+                    "AA\t9\t7\n" +
+                    "BB\t14\t8\n" +
+                    "AA\t16\t13\n" +
+                    "BB\t18\t15\n" +
+                    "AA\t20\t17\n";
+            query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
+            printSqlResult(ex, query, null, false, false);
         });
     }
 
@@ -1284,7 +1220,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 );
 
                 String query = "select sym_a, sym_b from tab_a a " + joinType + " tab_b b on sym_a = sym_b";
-                try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursorFactory factory = fact(query)) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         io.questdb.cairo.sql.Record record = cursor.getRecord();
                         RecordMetadata metadata = factory.getMetadata();

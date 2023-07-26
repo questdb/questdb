@@ -24,17 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class FullFatJoinNoLeakTest extends AbstractCairoTest {
+public class FullFatJoinNoLeakTest extends AbstractGriffinTest {
 
     @Test
     public void testAsOfJoinNoLeak() throws Exception {
@@ -66,24 +63,18 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
         );
     }
 
-    private void createTablesToJoin(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void createTablesToJoin() throws SqlException {
         // ASKS
-        compiler.compile(
-                "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
-                sqlExecutionContext
-        );
-        TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(100, 0)");
-        TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(101, 2);");
-        TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(102, 4);");
+        ddl("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
+        executeInsert("insert into asks values(100, 0)");
+        executeInsert("insert into asks values(101, 2);");
+        executeInsert("insert into asks values(102, 4);");
 
         // BIDS
-        compiler.compile(
-                "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
-                sqlExecutionContext
-        );
-        TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(101, 1);");
-        TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(102, 3);");
-        TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(103, 5);");
+        ddl("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
+        executeInsert("insert into bids values(101, 1);");
+        executeInsert("insert into bids values(102, 3);");
+        executeInsert("insert into bids values(103, 5);");
     }
 
     private void testJoinThrowsLimitOverflowException(String sql) throws Exception {
@@ -91,14 +82,9 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
         configOverrideSqlJoinMetadataMaxResizes(0);
 
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                createTablesToJoin(compiler, sqlExecutionContext);
-                compiler.setFullFatJoins(true);
-                compiler.compile(sql, sqlExecutionContext);
-                Assert.fail("Expected LimitOverflowException is not thrown");
+            try {
+                createTablesToJoin();
+                fail(sql, sqlExecutionContext, true);
             } catch (LimitOverflowException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
                 Assert.assertFalse(ex.isCritical());

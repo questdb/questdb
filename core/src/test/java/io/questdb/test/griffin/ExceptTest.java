@@ -73,7 +73,7 @@ public class ExceptTest extends AbstractGriffinTest {
                     "-1433178628\tfalse\tW\t0.9246085617322545\t0.9217\t578\t2015-06-28T14:27:36.686Z\t\t7861908914614478025\t1970-01-01T05:00:00.000000Z\t32\t00000000 0e 98 0a 8a 0b 1e c4 fd a2 9e b3 77 f8 f6 78\tRPXZSFXUNYQXT\t0x98065c0bf90d68899f5ac37d91bde62260af712d2a1cbb23579b0bab5109229c\tI\n" +
                     "94087085\ttrue\tY\t0.5675831821917149\t0.4634\t872\t2015-11-16T04:04:55.664Z\tPEHN\t8951464047863942551\t1970-01-01T05:16:40.000000Z\t26\t00000000 33 3f b2 67 da 98 47 47 bf 4f ea 5f 48 ed\tDDCIHCNP\t0x680d2fd4ebf181c6960658463c4b85af603e1494ba44804a7fa40f7e4efac82e\tP\n";
 
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                             "(" +
                             "select" +
                             " rnd_int() a," +
@@ -97,13 +97,13 @@ public class ExceptTest extends AbstractGriffinTest {
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = fact("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile("create table y as " +
+            ddl("create table y as " +
                             "(" +
                             "select" +
                             " rnd_int() a," +
@@ -122,12 +122,11 @@ public class ExceptTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(10))",
-                    sqlExecutionContext
+                            " long_sequence(10))"
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile("select * from x except y", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select * from x except y")) {
                 assertCursor(expected2, factory, true, false);
             }
         });
@@ -148,39 +147,36 @@ public class ExceptTest extends AbstractGriffinTest {
             final String expected2 = "t\n" +
                     "CAR\n";
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'MOTORBIKE') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = fact("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'MOTORBIKE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
-                            " FROM long_sequence(13) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(13) x)"
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile("select distinct t from x except y except z", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select distinct t from x except y except z")) {
                 assertCursor(expected2, factory, true, false);
             }
         });
