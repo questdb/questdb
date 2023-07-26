@@ -452,23 +452,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table a ( i int, ts timestamp) timestamp(ts)");
             compile("create table b ( i int, ts timestamp) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try {
-                    compiler.setFullFatJoins(true);
-                    assertPlan("select * " +
-                                    "from a " +
-                                    "asof join b on a.i = b.i",
-                            "SelectedRecord\n" +
-                                    "    AsOf Join\n" +
-                                    "      condition: b.i=a.i\n" +
-                                    "        DataFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: a\n" +
-                                    "        DataFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: b\n");
-                } finally {
-                    compiler.setFullFatJoins(false);
-                }
+                compiler.setFullFatJoins(true);
+                assertPlan("select * " +
+                                "from a " +
+                                "asof join b on a.i = b.i",
+                        "SelectedRecord\n" +
+                                "    AsOf Join\n" +
+                                "      condition: b.i=a.i\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: a\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: b\n");
             }
         });
     }
@@ -1336,12 +1332,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 expected = expected.replace("JIT ", "");
             }
 
-            try {
-                assertQuery(expected, "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
-                        "create table a ( l long)", null, false, true);
-            } finally {
-                compiler.setFullFatJoins(false);
-            }
+            assertQuery(expected, "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
+                    "create table a ( l long)", null, false, true);
         }
     }
 
@@ -1496,27 +1488,23 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testFullFatHashJoin0() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(true);
-            try {
-                assertPlan("create table a ( l long)",
-                        "select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
-                        "SelectedRecord\n" +
-                                "    Filter filter: 0<a.l+b.l\n" +
-                                "        Hash Join\n" +
-                                "          condition: b.l=a.l\n" +
-                                "            DataFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: a\n" +
-                                "            Hash\n" +
-                                "                Async JIT Filter\n" +
-                                "                  limit: 4\n" +
-                                "                  filter: 10<l\n" +
-                                "                  workers: 1\n" +
-                                "                    DataFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: a\n");
-            } finally {
-                compiler.setFullFatJoins(false);
-            }
+            assertPlan("create table a ( l long)",
+                    "select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
+                    "SelectedRecord\n" +
+                            "    Filter filter: 0<a.l+b.l\n" +
+                            "        Hash Join\n" +
+                            "          condition: b.l=a.l\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "            Hash\n" +
+                            "                Async JIT Filter\n" +
+                            "                  limit: 4\n" +
+                            "                  filter: 10<l\n" +
+                            "                  workers: 1\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: a\n");
         }
     }
 
@@ -1524,23 +1512,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testFullFatHashJoin1() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(true);
-            try {
-                assertPlan("create table a ( l long)",
-                        "select * from a join (select l from a limit 40) on l",
-                        "SelectedRecord\n" +
-                                "    Hash Join\n" +
-                                "      condition: _xQdbA1.l=a.l\n" +
-                                "        DataFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: a\n" +
-                                "        Hash\n" +
-                                "            Limit lo: 40\n" +
-                                "                DataFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: a\n");
-            } finally {
-                compiler.setFullFatJoins(false);
-            }
+            assertPlan("create table a ( l long)",
+                    "select * from a join (select l from a limit 40) on l",
+                    "SelectedRecord\n" +
+                            "    Hash Join\n" +
+                            "      condition: _xQdbA1.l=a.l\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        Hash\n" +
+                            "            Limit lo: 40\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: a\n");
         }
     }
 
@@ -1548,22 +1532,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testFullFatHashJoin2() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(true);
-            try {
-                assertPlan("create table a ( l long)",
-                        "select * from a left join a a1 on l",
-                        "SelectedRecord\n" +
-                                "    Hash Outer Join\n" +
-                                "      condition: a1.l=a.l\n" +
-                                "        DataFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: a\n" +
-                                "        Hash\n" +
-                                "            DataFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: a\n");
-            } finally {
-                compiler.setFullFatJoins(false);
-            }
+            assertPlan("create table a ( l long)",
+                    "select * from a left join a a1 on l",
+                    "SelectedRecord\n" +
+                            "    Hash Outer Join\n" +
+                            "      condition: a1.l=a.l\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
         }
     }
 
@@ -2325,30 +2305,26 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try {
-                    compiler.setFullFatJoins(true);
-                    assertPlan("select * " +
-                                    "from taba " +
-                                    "inner join tabb on a1=b1 " +
-                                    "asof join tabc on b1=c1",
-                            "SelectedRecord\n" +
-                                    "    AsOf Join\n" +
-                                    "      condition: c1=b1\n" +
-                                    "        Hash Join\n" +
-                                    "          condition: b1=a1\n" +
-                                    "            DataFrame\n" +
-                                    "                Row forward scan\n" +
-                                    "                Frame forward scan on: taba\n" +
-                                    "            Hash\n" +
-                                    "                DataFrame\n" +
-                                    "                    Row forward scan\n" +
-                                    "                    Frame forward scan on: tabb\n" +
-                                    "        DataFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: tabc\n");
-                } finally {
-                    compiler.setFullFatJoins(false);
-                }
+                compiler.setFullFatJoins(true);
+                assertPlan("select * " +
+                                "from taba " +
+                                "inner join tabb on a1=b1 " +
+                                "asof join tabc on b1=c1",
+                        "SelectedRecord\n" +
+                                "    AsOf Join\n" +
+                                "      condition: c1=b1\n" +
+                                "        Hash Join\n" +
+                                "          condition: b1=a1\n" +
+                                "            DataFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                DataFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: tabc\n");
             }
         });
     }
@@ -3084,12 +3060,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEquality8() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try {
-                compiler.setFullFatJoins(true);
-                testHashAndAsofJoin(false);
-            } finally {
-                compiler.setFullFatJoins(false);
-            }
+            compiler.setFullFatJoins(true);
+            testHashAndAsofJoin(false);
         }
     }
 
@@ -3452,23 +3424,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table b ( i int, ts timestamp) timestamp(ts)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try {
-                    compiler.setFullFatJoins(true);
-                    assertPlan("select * " +
-                                    "from a " +
-                                    "Lt Join b on a.i = b.i",
-                            "SelectedRecord\n" +
-                                    "    Lt Join\n" +
-                                    "      condition: b.i=a.i\n" +
-                                    "        DataFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: a\n" +
-                                    "        DataFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: b\n");
-                } finally {
-                    compiler.setFullFatJoins(false);
-                }
+                compiler.setFullFatJoins(true);
+                assertPlan("select * " +
+                                "from a " +
+                                "Lt Join b on a.i = b.i",
+                        "SelectedRecord\n" +
+                                "    Lt Join\n" +
+                                "      condition: b.i=a.i\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: a\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: b\n");
             }
         });
     }

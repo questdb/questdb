@@ -19,14 +19,14 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     QueryBuilder query();
 
     @TestOnly
-    ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException;
+    void setEnableJitNullChecks(boolean value);
 
     @TestOnly
     void setFullFatJoins(boolean fullFatJoins);
 
     @TestOnly
-    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;
+    ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException;
 
     @TestOnly
-    void setEnableJitNullChecks(boolean value);
+    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;
 }

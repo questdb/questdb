@@ -47,26 +47,22 @@ public class RecordCursorMemoryUsageTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(1000)) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try {
-                    compiler.setFullFatJoins(true);
-                    try (RecordCursorFactory factory = compiler.compile("select * from tab t1 asof join tab t2;", sqlExecutionContext).getRecordCursorFactory()) {
-                        long freeDuring;
-                        long memDuring;
+                compiler.setFullFatJoins(true);
+                try (RecordCursorFactory factory = compiler.compile("select * from tab t1 asof join tab t2;", sqlExecutionContext).getRecordCursorFactory()) {
+                    long freeDuring;
+                    long memDuring;
 
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            freeDuring = Unsafe.getFreeCount();
-                            memDuring = getMemUsedByFactories();
-                            TestUtils.drainCursor(cursor);
-                        }
-
-                        long memAfter = getMemUsedByFactories();
-                        long freeAfter = Unsafe.getFreeCount();
-
-                        Assert.assertTrue(memAfter < memDuring);
-                        Assert.assertTrue(freeAfter > freeDuring);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        freeDuring = Unsafe.getFreeCount();
+                        memDuring = getMemUsedByFactories();
+                        TestUtils.drainCursor(cursor);
                     }
-                } finally {
-                    compiler.setFullFatJoins(false);
+
+                    long memAfter = getMemUsedByFactories();
+                    long freeAfter = Unsafe.getFreeCount();
+
+                    Assert.assertTrue(memAfter < memDuring);
+                    Assert.assertTrue(freeAfter > freeDuring);
                 }
             }
         });

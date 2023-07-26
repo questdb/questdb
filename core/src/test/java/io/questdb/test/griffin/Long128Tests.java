@@ -65,8 +65,7 @@ public class Long128Tests extends AbstractGriffinTest {
                     false,
                     true
             );
-        }
-        );
+        });
     }
 
     @Test
