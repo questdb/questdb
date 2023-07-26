@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.WhereClauseSymbolEstimator;
 import io.questdb.griffin.model.QueryModel;
@@ -301,11 +302,13 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
         for (String column : columns) {
             columnIndexes.add(metadata.getColumnIndexQuiet(column));
         }
-        return e.estimate(
-                column -> column,
-                compiler.testParseExpression(whereClause, queryModel),
-                metadata,
-                columnIndexes
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return e.estimate(
+                    column -> column,
+                    compiler.testParseExpression(whereClause, queryModel),
+                    metadata,
+                    columnIndexes
+            );
+        }
     }
 }
