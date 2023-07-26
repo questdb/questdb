@@ -932,7 +932,17 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         printSqlResult3(expected, query, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false, null);
     }
 
-    protected static void printSqlResult(Supplier<? extends CharSequence> expectedSupplier, CharSequence query, CharSequence expectedTimestamp, CharSequence ddl2, CharSequence expected2, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable, CharSequence expectedPlan) throws SqlException {
+    protected static void printSqlResult(
+            Supplier<? extends CharSequence> expectedSupplier,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            CharSequence ddl2,
+            CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean expectSize,
+            boolean sizeCanBeVariable,
+            CharSequence expectedPlan
+    ) throws SqlException {
         snapshotMemoryUsage();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
