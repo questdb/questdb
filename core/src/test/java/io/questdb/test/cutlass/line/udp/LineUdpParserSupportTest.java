@@ -224,24 +224,26 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
     @Test
     public void testPutIPv4BadValueIsTreatedAsNull() throws Exception {
         testColumnType(
-                ColumnType.INT,
+                ColumnType.IPv4,
                 "column\tlocation\ttimestamp\n" +
-                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
-                        "5\t\t1970-01-01T00:00:04.000000Z\n",
+                        "1.1.1.1\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "null\t\t1970-01-01T00:00:02.000000Z\n" +
+                        "12.25.6.8\tsp052w\t1970-01-01T00:00:03.000000Z\n" +
+                        "null\t\t1970-01-01T00:00:04.000000Z\n",
                 (sender) -> {
                     sender.metric(tableName)
-                            .field(targetColumnName, Long.MAX_VALUE)
+                            .field(targetColumnName, "1.1.1.1")
                             .field(locationColumnName, "sp052w")
                             .$(1000000000);
                     sender.metric(tableName)
-                            .field(targetColumnName, 300.12)
+                            .field(targetColumnName, "")
                             .$(2000000000);
                     sender.metric(tableName)
-                            .field(targetColumnName, "not a number")
+                            .field(targetColumnName, "12.25.6.8")
                             .field(locationColumnName, "sp052w12")
                             .$(3000000000L);
                     sender.metric(tableName)
-                            .field(targetColumnName, 5)
+                            .field(targetColumnName, "null")
                             .$(4000000000L);
                     sender.flush();
                 });

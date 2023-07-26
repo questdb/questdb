@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- * <p>
+ *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- * <p>
+ *
  *  http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -626,6 +626,7 @@ public final class Numbers {
         int delim = Chars.indexOf(sequence, 0, '/');
         int subnet, netmask, broadcast;
 
+        // no netmask provided
         if(delim == -1) {
             return -2;
         }
@@ -637,6 +638,7 @@ public final class Numbers {
             return -2;
         }
 
+        //sets all remaining bits to the right of the subnet
         broadcast = ~(allBits << (32 - netmask));
         broadcast = (broadcast | subnet);
 
@@ -648,16 +650,19 @@ public final class Numbers {
         int mid = Chars.indexOf(sequence, 0, '/') + 1;
         int bits;
 
-        if(mid == 0) { //if no netmask provided, default to netmask of 255.255.255.255 (0xffffffff)
+        //if no netmask provided, default to netmask of 255.255.255.255 (0xffffffff)
+        if(mid == 0) {
             return netmask;
         }
 
         try{
             bits = parseInt0(sequence, mid, sequence.length());
 
-            if(bits == 0) { //if netmask 0 provided, return 0 (calling func will evaluate to true)
+            //if netmask 0 provided, return 0 (calling func will evaluate to true)
+            if(bits == 0) {
                 return 0;
             }
+
             if(bits < 0 || bits > 32) {
                 throw NumericException.INSTANCE;
             }
@@ -666,10 +671,11 @@ public final class Numbers {
             netmask = (netmask << bits);
 
         } catch (NumericException e) {
-            return -2; //catch triggered by invalid int following '/' - calling func will throw sql exception (-2 used as sentinel bc 0xffffffff (which is valid) is -1)
+            //catch triggered by invalid netmask - calling func will throw sql exception (-2 used as sentinel because -1 is valid (0xffffffff))
+            return -2;
         }
 
-        return netmask; //all goes to plan + correct netmask is returned
+        return netmask;
     }
 
     public static int getIPv4Subnet(CharSequence sequence)  {
@@ -678,14 +684,15 @@ public final class Numbers {
         int ipv4, netmask;
 
         try{
-
             netmask = getIPv4Netmask(sequence);
 
-            if(netmask == -2) { // true if invalid int follows '/' - calling func will throw sql exception (-2 used as sentinel bc 0xffffffff (which is valid) is -1)
+            // invalid netmask - calling func will throw sql exception (-2 used as sentinel because -1 is valid (0xffffffff))
+            if(netmask == -2) {
                 return netmask;
             }
 
-            if(mid == -1) { // true if no netmask provided (i.e. no '/' found in CharSequence) - subnet is therefore same as the parsed argument
+            // true if no netmask provided (i.e. no '/' found in CharSequence) - subnet is therefore same as the parsed argument
+            if(mid == -1) {
                 return parseIPv4(sequence);
             }
 
@@ -693,10 +700,11 @@ public final class Numbers {
             subnet = ipv4 & netmask;
 
         } catch (NumericException e) {
-            return parseSubnet(sequence); //catch triggered by invalid ipv4 - try parsing it as subnet, if invalid subnet, -2 will be returned + exception will be thrown by calling func
+            //catch triggered by invalid ipv4 - try parsing it as subnet, if invalid subnet, -2 will be returned + exception will be thrown by calling func
+            return parseSubnet(sequence);
         }
 
-        return subnet; //all goes to plan + correct subnet is returned
+        return subnet;
     }
 
     public static int hexToDecimal(int c) throws NumericException {
@@ -745,12 +753,13 @@ public final class Numbers {
         return Numbers.LONG_NaN;
     }
 
-    public static long ipv4ToLong(int value) {
-        return value & (-1L >>> 32);
-    }
-
     public static long interleaveBits(long x, long y) {
         return spreadBits(x) | (spreadBits(y) << 1);
+    }
+
+    // leaves first 32 bits unset - remaining 32 bits are the ip address
+    public static long ipv4ToLong(int value) {
+        return value & (-1L >>> 32);
     }
 
     public static boolean isFinite(double d) {
@@ -849,6 +858,16 @@ public final class Numbers {
         }
         return parseIPv4_0(sequence, 0, sequence.length());
     }
+    public static int parseIPv4UDP(CharSequence sequence) throws NumericException {
+        if(sequence == null || sequence.length() == 0) {
+            return IPv4_NULL;
+        }
+        // discards quote marks around ip address
+        if(sequence.charAt(0) == '"' && sequence.charAt(sequence.length() - 1) == '"') {
+            return parseIPv4_0(sequence, 1, sequence.length() - 1);
+        }
+        return parseIPv4_0(sequence, 0, sequence.length());
+    }
 
     public static int parseIPv4Quiet(CharSequence sequence)
     {
@@ -864,6 +883,8 @@ public final class Numbers {
 
     public static int parseIPv4QuietTCP(CharSequence sequence)
     {
+        // "null" string is not a null ip address if received via ilp
+        // via ilp, null ips are either null, empty strings or "0.0.0.0"
         try {
             if (sequence == null || sequence.length() == 0) {
                 return IPv4_NULL;
@@ -887,6 +908,7 @@ public final class Numbers {
 
         final char sign = sequence.charAt(lo);
 
+        // removes any leading dots
         if(notDigit(sign)){
             if(sign == '.'){
                 lo++;
@@ -914,6 +936,7 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
+        // removes any trailing dots
         if((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
             num = parseInt(sequence, lo, hi);
             hi++;
@@ -1400,6 +1423,7 @@ public final class Numbers {
             if(num > 255) {
                 throw NumericException.INSTANCE;
             }
+            // each byte goes to left-most pos in int - accounts for issues that arise from parsing variable length subnets
             ipv4 = ipv4 | (num << ((4-i) * 8));
             count++;
             i++;
@@ -1416,7 +1440,8 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        if(count == 0) { //if netmask is full byte longer than subnet
+        //if netmask is full byte longer than subnet
+        if(count == 0) {
             if(netmask >= 16) {
                 throw NumericException.INSTANCE;
             }
@@ -1424,13 +1449,16 @@ public final class Numbers {
             num = (num << 24) & checker;
             return num;
         }
-        else if(count == 1 && netmask >= 24) { //if netmask is a full byte longer than subnet
+        //if netmask is a full byte longer than subnet
+        else if(count == 1 && netmask >= 24) {
             throw NumericException.INSTANCE;
         }
-        else if(count == 2 && netmask >= 32) { //if netmask is a full byte longer than subnet
+        //if netmask is a full byte longer than subnet
+        else if(count == 2 && netmask >= 32) {
             throw NumericException.INSTANCE;
         }
-        else if(count == 3 && netmask > 32) { //if netmask is a full byte longer than subnet
+        //if netmask is a full byte longer than subnet
+        else if(count == 3 && netmask > 32) {
             throw NumericException.INSTANCE;
         }
 
