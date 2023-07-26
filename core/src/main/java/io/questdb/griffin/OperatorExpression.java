@@ -66,7 +66,6 @@ public final class OperatorExpression {
         add(new OperatorExpression("like", 7, true, BINARY, false));
         add(new OperatorExpression("ilike", 7, true, BINARY, false));
         add(new OperatorExpression("within", 7, true, SET, false));
-
     }};
 
     static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>() {{

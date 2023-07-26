@@ -35,7 +35,6 @@ import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.*;
-import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -361,10 +360,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private static boolean isCompatibleCase(int from, int to) {
-        if(isIPv4Cast(from, to))
-            return true;
-
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
+        return (castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to)))
+                || (isIPv4Cast(from, to));
     }
 
     private static boolean isIPv4Cast(int from, int to) {
@@ -1357,7 +1354,7 @@ public class SqlCompiler implements Closeable {
             logQuery();
             cq = compileUsingModel(executionContext);
         }
-         final short type = cq.getType();
+        final short type = cq.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
             cq.withSqlStatement(Chars.toString(query));
         }
@@ -2325,7 +2322,7 @@ public class SqlCompiler implements Closeable {
                 int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
                 int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
-                if ((virtualColumnType != tableColumnType) && (!isIPv4UpdateCast(virtualColumnType, tableColumnType))) { //might come back + change - quick fix to allow conversion between string + ipv4
+                if ((virtualColumnType != tableColumnType) && (!isIPv4UpdateCast(virtualColumnType, tableColumnType))) {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         // get column position
                         ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();

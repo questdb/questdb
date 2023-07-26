@@ -113,7 +113,7 @@ public class LineTcpEventBuffer {
         return address + Float.BYTES + Byte.BYTES;
     }
 
-    public long addGeoHash(long address, DirectByteCharSequence value, int colTypeMeta)  {
+    public long addGeoHash(long address, DirectByteCharSequence value, int colTypeMeta) {
         long geohash;
         try {
             geohash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), Numbers.decodeLowShort(colTypeMeta));

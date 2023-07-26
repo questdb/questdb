@@ -120,17 +120,13 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public int getInt(int col) {
-        return getFunction(col).getInt(base);
-    }
-    @Override
     public int getIPv4(int col) {
         return getFunction(col).getIPv4(base);
     }
 
     @Override
-    public long getLongIPv4(int col) {
-        return Numbers.ipv4ToLong(getFunction(col).getIPv4(base));
+    public int getInt(int col) {
+        return getFunction(col).getInt(base);
     }
 
     @Override
@@ -161,6 +157,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public Long256 getLong256B(int col) {
         return getFunction(col).getLong256B(base);
+    }
+
+    @Override
+    public long getLongIPv4(int col) {
+        return Numbers.ipv4ToLong(getIPv4(col));
     }
 
     @Override

@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {
+    private final ObjectPool<IPv4BindVariable> IPv4VarPool;
     private final ObjectPool<BooleanBindVariable> booleanVarPool;
     private final ObjectPool<ByteBindVariable> byteVarPool;
     private final ObjectPool<CharBindVariable> charVarPool;
@@ -45,8 +46,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<GeoHashBindVariable> geoHashVarPool;
     private final ObjList<Function> indexedVariables = new ObjList<>();
     private final ObjectPool<IntBindVariable> intVarPool;
-
-    private final ObjectPool<IPv4BindVariable> IPv4VarPool;
     private final ObjectPool<Long256BindVariable> long256VarPool;
     private final ObjectPool<LongBindVariable> longVarPool;
     private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
@@ -427,36 +426,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setInt(CharSequence name, int value) throws SqlException {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            final IntBindVariable function;
-            namedVariables.putAt(index, name, function = intVarPool.next());
-            function.value = value;
-        } else {
-            setInt0(namedVariables.valueAtQuick(index), value, -1, name);
-        }
-    }
-
-    @Override
-    public void setInt(int index) throws SqlException {
-        setInt(index, Numbers.INT_NaN);
-    }
-
-    @Override
-    public void setInt(int index, int value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
-        // variable exists
-        Function function = indexedVariables.getQuick(index);
-        if (function != null) {
-            setInt0(function, value, index, null);
-        } else {
-            indexedVariables.setQuick(index, function = intVarPool.next());
-            ((IntBindVariable) function).value = value;
-        }
-    }
-
-    @Override
     public void setIPv4(int index) throws SqlException {
         setIPv4(index, Numbers.IPv4_NULL);
     }
@@ -484,6 +453,36 @@ public class BindVariableServiceImpl implements BindVariableService {
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
             ((IPv4BindVariable) function).value = Numbers.parseIPv4Quiet(value);
+        }
+    }
+
+    @Override
+    public void setInt(CharSequence name, int value) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final IntBindVariable function;
+            namedVariables.putAt(index, name, function = intVarPool.next());
+            function.value = value;
+        } else {
+            setInt0(namedVariables.valueAtQuick(index), value, -1, name);
+        }
+    }
+
+    @Override
+    public void setInt(int index) throws SqlException {
+        setInt(index, Numbers.INT_NaN);
+    }
+
+    @Override
+    public void setInt(int index, int value) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setInt0(function, value, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = intVarPool.next());
+            ((IntBindVariable) function).value = value;
         }
     }
 
@@ -879,6 +878,11 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = ColumnType.tagOf(function.getType());
+        ((IPv4BindVariable) function).value = value;
+    }
+
     private static void setInt0(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
@@ -919,11 +923,6 @@ public class BindVariableServiceImpl implements BindVariableService {
                 reportError(function, ColumnType.INT, index, name);
                 break;
         }
-    }
-
-    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        ((IPv4BindVariable) function).value = value;
     }
 
     private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {

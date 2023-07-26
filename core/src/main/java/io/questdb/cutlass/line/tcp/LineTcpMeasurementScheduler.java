@@ -534,10 +534,10 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         if (geoHashBits == 0) { // not geohash
                             switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.IPv4:
-                                    if(Numbers.parseIPv4QuietTCP(entityValue) !=-2) {
-                                        r.putInt(columnIndex, Numbers.parseIPv4Quiet(entityValue));
-                                    }
-                                    else {
+                                    int value = Numbers.parseIPv4QuietTCP(entityValue);
+                                    if (value != -2) {
+                                        r.putInt(columnIndex, value);
+                                    } else {
                                         throw castError("string", i, colType, ent.getName());
                                     }
                                     break;

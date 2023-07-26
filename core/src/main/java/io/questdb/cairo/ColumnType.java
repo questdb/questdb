@@ -321,6 +321,10 @@ public final class ColumnType {    //@formatter:off
                 || (fromTag == GEOSHORT && toTag == GEOBYTE);
     }
 
+    private static boolean isIPv4Cast(int fromType, int toType) {
+        return (fromType == STRING && toType == IPv4);
+    }
+
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         return (fromType == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6)
@@ -358,10 +362,6 @@ public final class ColumnType {    //@formatter:off
                 || (fromType == CHAR && toType == SYMBOL)
                 || (fromType == CHAR && toType == STRING)
                 || (fromType == UUID && toType == STRING);
-    }
-
-    private static boolean isIPv4Cast(int fromType, int toType) {
-        return (fromType == STRING && toType == IPv4); //|| (fromType == IPv4 && toType == STRING)
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

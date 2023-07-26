@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -65,7 +64,7 @@ public interface FunctionFactory {
      * <li>J = long128</li>
      * <li>Z = uuid</li>
      * <li>w = string array</li>
-     * <li> x = ipv4</li>
+     * <li>x = ipv4</li>
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and

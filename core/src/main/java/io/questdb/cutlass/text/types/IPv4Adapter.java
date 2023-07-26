@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
+
 public final class IPv4Adapter extends AbstractTypeAdapter {
 
     public static final IPv4Adapter INSTANCE = new IPv4Adapter();
@@ -44,10 +45,12 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(DirectByteCharSequence text) {
-        if(text.length() < 7)
+        if (text.length() < 7)
             return false;
         if (Numbers.notDigit(text.charAt(0))) {
-            return false;
+            if (text.charAt(0) != '.') {
+                return false;
+            }
         }
 
         try {

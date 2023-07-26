@@ -422,6 +422,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
+
                         default:
                             throw castError("integer", columnWriterIndex, colType, entity.getName());
                     }
@@ -456,10 +457,10 @@ class LineTcpMeasurementEvent implements Closeable {
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.IPv4:
-                                if(Numbers.parseIPv4QuietTCP(entityValue) != -2) {
-                                    offset = buffer.addInt(offset, Numbers.parseIPv4Quiet(entityValue));
-                                }
-                                else {
+                                int value = Numbers.parseIPv4QuietTCP(entityValue);
+                                if (value != -2) {
+                                    offset = buffer.addInt(offset, value);
+                                } else {
                                     throw castError("string", columnWriterIndex, colType, entity.getName());
                                 }
                                 break;

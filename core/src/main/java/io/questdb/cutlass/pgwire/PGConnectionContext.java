@@ -510,11 +510,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bindVariableService.setInt(index, getIntUnsafe(address));
     }
 
-    public void setIPv4BindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(index, Integer.BYTES, valueLen);
-        bindVariableService.setIPv4(index, getIntUnsafe(address));
-    }
-
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLongUnsafe(address));
@@ -720,6 +715,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void appendIPv4Col(Record record, int columnIndex) {
+        int value = record.getIPv4(columnIndex);
+        if (value == Numbers.IPv4_NULL) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.intToIPv4Sink(responseAsciiSink, value);
+            responseAsciiSink.putLenEx(a);
+        }
+    }
+
     private void appendIntCol(Record record, int i) {
         final int intValue = record.getInt(i);
         if (intValue != Numbers.INT_NaN) {
@@ -740,17 +746,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseAsciiSink.bump(8);
         } else {
             responseAsciiSink.setNullValue();
-        }
-    }
-
-    private void appendIPv4Col(Record record, int columnIndex) {
-        int ipV4 = record.getIPv4(columnIndex);
-        if (ipV4 == Numbers.IPv4_NULL) {
-            responseAsciiSink.setNullValue();
-        } else {
-            final long a = responseAsciiSink.skip();
-            Numbers.intToIPv4Sink(responseAsciiSink, ipV4);
-            responseAsciiSink.putLenEx(a);
         }
     }
 

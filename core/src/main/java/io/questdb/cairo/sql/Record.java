@@ -162,15 +162,6 @@ public interface Record {
     }
 
     /**
-     * Gets the value of an integer column by index
-     *
-     * @param col numeric index of the column
-     * @return 32-bit integer
-     */
-    default int getInt(int col) {
-        throw new UnsupportedOperationException();
-    }
-    /**
      * Gets the value of an IPv4 column by index
      * Distinct from getInt(int col) because INT and IPv4 have different null values
      *
@@ -181,15 +172,14 @@ public interface Record {
     default int getIPv4(int col) {
         throw new UnsupportedOperationException();
     }
+
     /**
-     * Gets the value of an IPv4 column by index
-     * Distinct from getInt(int col) because INT and IPv4 have different null values
+     * Gets the value of an integer column by index
      *
      * @param col numeric index of the column
      * @return 32-bit integer
      */
-
-    default long getLongIPv4(int col) {
+    default int getInt(int col) {
         throw new UnsupportedOperationException();
     }
 
@@ -199,7 +189,6 @@ public interface Record {
      * @param col numeric index of the column
      * @return 64-bit signed integer
      */
-
     default long getLong(int col) {
         throw new UnsupportedOperationException();
     }
@@ -241,6 +230,18 @@ public interface Record {
      * @return unsigned 256-bit integer
      */
     default Long256 getLong256B(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of an IPv4 column by index as a long (only needed for sorting)
+     * Distinct from getInt(int col) because INT and IPv4 have different null values
+     *
+     * @param col numeric index of the column
+     * @return 64-bit integer
+     */
+
+    default long getLongIPv4(int col) {
         throw new UnsupportedOperationException();
     }
 

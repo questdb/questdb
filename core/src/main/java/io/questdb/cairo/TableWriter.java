@@ -7823,7 +7823,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
-
         /**
          * Writes UTF8-encoded string to WAL. As the name of the function suggest the storage format is
          * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
@@ -8083,7 +8082,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void  putInt(int columnIndex, int value) {
+        public void putInt(int columnIndex, int value) {
             getPrimaryColumn(columnIndex).putInt(value);
             setRowValueNotNull(columnIndex);
         }

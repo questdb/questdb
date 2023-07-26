@@ -22,7 +22,6 @@
  *
  ******************************************************************************/
 
-
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
