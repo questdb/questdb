@@ -534,7 +534,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         if (geoHashBits == 0) { // not geohash
                             switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.IPv4:
-                                    if(Numbers.parseIPv4QuietTCP(entityValue) !=-1) {
+                                    if(Numbers.parseIPv4QuietTCP(entityValue) !=-2) {
                                         r.putInt(columnIndex, Numbers.parseIPv4Quiet(entityValue));
                                     }
                                     else {
@@ -576,7 +576,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 DirectByteCharSequence value = ent.getValue();
                                 geoHash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), geoHashBits);
                             } catch (NumericException e) {
-                                throw castError("string", i, colType, ent.getName());
+                                geoHash = GeoHashes.NULL;
                             }
                             r.putGeoHash(columnIndex, geoHash);
                         }

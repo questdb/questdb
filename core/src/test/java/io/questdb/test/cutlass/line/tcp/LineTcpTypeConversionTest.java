@@ -140,7 +140,10 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     @Test
     public void testConversionToGeoHash() throws Exception {
         testConversionToType("GEOHASH(7c)", "testCol\ttime\n" +
-                "questdb\t2016-06-13T17:43:50.100417Z\n");
+                "questdb\t2016-06-13T17:43:50.100417Z\n" +
+                "\t2016-06-13T17:43:50.100418Z\n" +
+                "\t2016-06-13T17:43:50.100428Z\n" +
+                "\t2016-06-13T17:43:50.100429Z\n");
     }
 
     @Test

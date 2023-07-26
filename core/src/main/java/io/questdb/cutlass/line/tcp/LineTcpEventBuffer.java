@@ -113,9 +113,13 @@ public class LineTcpEventBuffer {
         return address + Float.BYTES + Byte.BYTES;
     }
 
-    public long addGeoHash(long address, DirectByteCharSequence value, int colTypeMeta) throws NumericException {
+    public long addGeoHash(long address, DirectByteCharSequence value, int colTypeMeta)  {
         long geohash;
-        geohash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), Numbers.decodeLowShort(colTypeMeta));
+        try {
+            geohash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), Numbers.decodeLowShort(colTypeMeta));
+        } catch (NumericException e) {
+            geohash = GeoHashes.NULL;
+        }
         switch (Numbers.decodeHighShort(colTypeMeta)) {
             default:
                 checkCapacity(address, Long.BYTES + Byte.BYTES);

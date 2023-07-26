@@ -870,7 +870,7 @@ public final class Numbers {
             }
             return parseIPv4(sequence);
         } catch (NumericException e) {
-            return -1;
+            return -2;
         }
     }
 

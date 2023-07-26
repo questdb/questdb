@@ -456,7 +456,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.IPv4:
-                                if(Numbers.parseIPv4QuietTCP(entityValue) != -1) {
+                                if(Numbers.parseIPv4QuietTCP(entityValue) != -2) {
                                     offset = buffer.addInt(offset, Numbers.parseIPv4Quiet(entityValue));
                                 }
                                 else {
@@ -503,11 +503,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 throw castError("string", columnWriterIndex, colType, entity.getName());
                         }
                     } else {
-                        try {
-                            offset = buffer.addGeoHash(offset, entityValue, colTypeMeta);
-                        } catch (NumericException e) {
-                            throw castError("string", columnWriterIndex, colType, entity.getName());
-                        }
+                        offset = buffer.addGeoHash(offset, entityValue, colTypeMeta);
                     }
                     break;
                 }
