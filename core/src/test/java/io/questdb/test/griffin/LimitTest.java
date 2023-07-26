@@ -230,13 +230,11 @@ public class LimitTest extends AbstractGriffinTest {
     @Test
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table t1 (ts timestamp, id symbol)", sqlExecutionContext);
-                executeInsert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
-                assertQueryAndCache("ts\tid\n" +
-                                "1970-01-01T00:00:00.000004Z\tabc\n",
-                        "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true);
-            }
+            ddl("create table t1 (ts timestamp, id symbol)");
+            executeInsert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
+            assertQueryAndCache("ts\tid\n" +
+                            "1970-01-01T00:00:00.000004Z\tabc\n",
+                    "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true);
         });
     }
 
@@ -254,20 +252,15 @@ public class LimitTest extends AbstractGriffinTest {
     @Test
     public void testNegativeLimitEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile(
-                        "create table y (sym symbol, ts timestamp) timestamp(ts) partition by day",
-                        sqlExecutionContext
-                );
+            ddl("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
 
-                assertQuery(
-                        "sym\tts\n",
-                        "y where sym = 'googl' limit -3",
-                        "ts",
-                        true,
-                        false
-                );
-            }
+            assertQuery(
+                    "sym\tts\n",
+                    "y where sym = 'googl' limit -3",
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -279,34 +272,32 @@ public class LimitTest extends AbstractGriffinTest {
         pageFrameMaxRows = 64;
         final int N = pageFrameMaxRows * 5;
 
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile("create table y as (" +
-                    "select" +
-                    " cast(x as int) i," +
-                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                    " from long_sequence(" + N + ")" +
-                    ") timestamp(timestamp)", sqlExecutionContext);
+        ddl("create table y as (" +
+                "select" +
+                " cast(x as int) i," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                " from long_sequence(" + N + ")" +
+                ") timestamp(timestamp)");
 
-            String query = "select * from y where i % 64 = 1 limit -1";
-            String expected = "i\ttimestamp\n" +
-                    "257\t2018-01-01T08:34:00.000000Z\n";
-            assertQuery(expected, query, "timestamp", true, true);
+        String query = "select * from y where i % 64 = 1 limit -1";
+        String expected = "i\ttimestamp\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
 
-            query = "select * from y where i % 64 = 1 limit -2";
-            expected = "i\ttimestamp\n" +
-                    "193\t2018-01-01T06:26:00.000000Z\n" +
-                    "257\t2018-01-01T08:34:00.000000Z\n";
-            assertQuery(expected, query, "timestamp", true, true);
+        query = "select * from y where i % 64 = 1 limit -2";
+        expected = "i\ttimestamp\n" +
+                "193\t2018-01-01T06:26:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
 
-            query = "select * from y where i % 64 < 3 limit -5";
-            expected = "i\ttimestamp\n" +
-                    "194\t2018-01-01T06:28:00.000000Z\n" +
-                    "256\t2018-01-01T08:32:00.000000Z\n" +
-                    "257\t2018-01-01T08:34:00.000000Z\n" +
-                    "258\t2018-01-01T08:36:00.000000Z\n" +
-                    "320\t2018-01-01T10:40:00.000000Z\n";
-            assertQuery(expected, query, "timestamp", true, true);
-        }
+        query = "select * from y where i % 64 < 3 limit -5";
+        expected = "i\ttimestamp\n" +
+                "194\t2018-01-01T06:28:00.000000Z\n" +
+                "256\t2018-01-01T08:32:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n" +
+                "258\t2018-01-01T08:36:00.000000Z\n" +
+                "320\t2018-01-01T10:40:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
     }
 
     @Test
@@ -314,44 +305,42 @@ public class LimitTest extends AbstractGriffinTest {
         // Here we verify that the implicit timestamp descending order is preserved
         // by negative limit clause even if it spans multiple page frames.
 
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            pageFrameMaxRows = 64;
-            final int N = pageFrameMaxRows * 5;
+        pageFrameMaxRows = 64;
+        final int N = pageFrameMaxRows * 5;
 
-            compiler.compile("create table y as (" +
-                    "select" +
-                    " cast(x as int) i," +
-                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                    " from long_sequence(" + N + ")" +
-                    ") timestamp(timestamp) partition by hour", sqlExecutionContext);
+        ddl("create table y as (" +
+                "select" +
+                " cast(x as int) i," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                " from long_sequence(" + N + ")" +
+                ") timestamp(timestamp) partition by hour");
 
-            String query = "select * from y where i % 64 = 1 limit -1";
-            String expected = "i\ttimestamp\n" +
-                    "257\t2018-01-01T08:34:00.000000Z\n";
-            assertQuery(expected, query, "timestamp", true, true);
+        String query = "select * from y where i % 64 = 1 limit -1";
+        String expected = "i\ttimestamp\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
 
-            query = "select * from y where i % 64 = 1 limit -2";
-            expected = "i\ttimestamp\n" +
-                    "193\t2018-01-01T06:26:00.000000Z\n" +
-                    "257\t2018-01-01T08:34:00.000000Z\n";
-            assertQuery(expected, query, "timestamp", true, true);
+        query = "select * from y where i % 64 = 1 limit -2";
+        expected = "i\ttimestamp\n" +
+                "193\t2018-01-01T06:26:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
 
-            query = "select * from y where i % 64 < 3 limit -5";
-            expected = "i\ttimestamp\n" +
-                    "194\t2018-01-01T06:28:00.000000Z\n" +
-                    "256\t2018-01-01T08:32:00.000000Z\n" +
-                    "257\t2018-01-01T08:34:00.000000Z\n" +
-                    "258\t2018-01-01T08:36:00.000000Z\n" +
-                    "320\t2018-01-01T10:40:00.000000Z\n";
-            assertQuery(expected, query, "timestamp", true, true);
-        }
+        query = "select * from y where i % 64 < 3 limit -5";
+        expected = "i\ttimestamp\n" +
+                "194\t2018-01-01T06:28:00.000000Z\n" +
+                "256\t2018-01-01T08:32:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n" +
+                "258\t2018-01-01T08:36:00.000000Z\n" +
+                "320\t2018-01-01T10:40:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
     }
 
     @Test
     public void testNegativeLimitOnIndexedSymbolFilter() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile(
+                ddl(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -359,8 +348,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " round(rnd_double(0), 3) price," +
                                 " cast(x * 120000000 as timestamp) timestamp" +
                                 " from long_sequence(30)" +
-                                "), index(sym) timestamp(timestamp) partition by month",
-                        sqlExecutionContext
+                                "), index(sym) timestamp(timestamp) partition by month"
                 );
 
                 executeInsert("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
@@ -402,40 +390,37 @@ public class LimitTest extends AbstractGriffinTest {
                         "12\tmsft\t0.661\t2018-01-01T00:24:00.000000Z\ttrue\tO\t0.01396079545983997\t0.8136\t345\t2015-08-18T10:31:42.373Z\tVTJW\t5045825384817367685\t1970-01-01T03:03:20.000000Z\t23\t00000000 51 9d 5d 28 ac 02 2e fe 05 3b 94 5f ec d3 dc f8\n" +
                         "00000010 43\tJCTIZKYFLUHZ\n";
 
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    compiler.compile(
-                            "create table y as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                    " round(rnd_double(0), 3) price," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str(1,1,2) c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(0, 1000000000) k," +
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n" +
-                                    " from long_sequence(30)" +
-                                    ") timestamp(timestamp)",
-                            sqlExecutionContext
-                    );
+                ddl(
+                        "create table y as (" +
+                                "select" +
+                                " cast(x as int) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str(1,1,2) c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(0, 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                );
 
-                    bindVariableService.setLong("lo", 4);
-                    bindVariableService.setInt("hi", 8);
+                bindVariableService.setLong("lo", 4);
+                bindVariableService.setInt("hi", 8);
 
-                    assertQueryAndCache(expected1, query, "timestamp", true, false);
-                    bindVariableService.setLong("lo", 6);
-                    bindVariableService.setInt("hi", 12);
+                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                bindVariableService.setLong("lo", 6);
+                bindVariableService.setInt("hi", 12);
 
-                    assertQueryAndCache(expected2, query, "timestamp", true, false);
-                }
+                assertQueryAndCache(expected2, query, "timestamp", true, false);
             } finally {
                 engine.clear();
             }
@@ -635,36 +620,33 @@ public class LimitTest extends AbstractGriffinTest {
                         "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
                         "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    compiler.compile(
-                            "create table y as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                    " round(rnd_double(0), 3) price," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str(1,1,2) c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(0, 1000000000) k," +
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n" +
-                                    " from long_sequence(30)" +
-                                    ") timestamp(timestamp)",
-                            sqlExecutionContext
-                    );
+                ddl(
+                        "create table y as (" +
+                                "select" +
+                                " cast(x as int) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str(1,1,2) c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(0, 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                );
 
-                    bindVariableService.setLong(0, 4);
-                    assertQueryAndCache(expected1, query, "timestamp", true, false);
-                    bindVariableService.setLong(0, 6);
-                    assertQueryAndCache(expected2, query, "timestamp", true, false);
-                }
+                bindVariableService.setLong(0, 4);
+                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                bindVariableService.setLong(0, 6);
+                assertQueryAndCache(expected2, query, "timestamp", true, false);
             } finally {
                 engine.clear();
             }
@@ -692,86 +674,7 @@ public class LimitTest extends AbstractGriffinTest {
                         "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
                         "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    compiler.compile(
-                            "create table y as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                    " round(rnd_double(0), 3) price," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str(1,1,2) c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(0, 1000000000) k," +
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n" +
-                                    " from long_sequence(30)" +
-                                    ") timestamp(timestamp)",
-                            sqlExecutionContext
-                    );
-
-                    bindVariableService.setLong("lim", 4);
-                    assertQueryAndCache(expected1, query, "timestamp", true, false);
-                    bindVariableService.setLong("lim", 6);
-                    assertQueryAndCache(expected2, query, "timestamp", true, false);
-                }
-            } finally {
-                engine.clear();
-            }
-        });
-    }
-
-    @Test
-    public void testTopRange() throws Exception {
-        String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
-                "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
-                "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
-
-        String query = "select * from y limit 4,6";
-        testLimit(expected, expected, query);
-    }
-
-    private void testInvalidNegativeLimit() throws Exception {
-        int maxLimit = configuration.getSqlMaxNegativeLimit();
-
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile("create table y as (" +
-                    "select" +
-                    " cast(x as int) i," +
-                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                    " from long_sequence(100)" +
-                    ") timestamp(timestamp)", sqlExecutionContext);
-
-            String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
-            int expectedPosition = 34;
-
-            String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
-            try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    Assert.fail();
-                }
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-                Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
-            }
-        }
-    }
-
-    private void testLimit(String expected1, String expected2, String query) throws Exception {
-        testLimit(expected1, expected2, query, false);
-    }
-
-    private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile(
+                ddl(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -791,57 +694,125 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        sqlExecutionContext
+                                ") timestamp(timestamp)"
                 );
 
-                assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
-
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        sqlExecutionContext
-                );
-
-                assertQuery(expected2, query, "timestamp", true, expectSize);
+                bindVariableService.setLong("lim", 4);
+                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                bindVariableService.setLong("lim", 6);
+                assertQueryAndCache(expected2, query, "timestamp", true, false);
+            } finally {
+                engine.clear();
             }
         });
     }
 
-    private void testLimitMinusOne() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile("create table t1 (ts timestamp, id symbol)", sqlExecutionContext);
+    @Test
+    public void testTopRange() throws Exception {
+        String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
+                "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
-            String inserts = "insert into t1 values (0L, 'abc')\n" +
-                    "insert into t1 values (2L, 'a1')\n" +
-                    "insert into t1 values (3L, 'abc')\n" +
-                    "insert into t1 values (4L, 'abc')\n" +
-                    "insert into t1 values (5L, 'a2')";
+        String query = "select * from y limit 4,6";
+        testLimit(expected, expected, query);
+    }
 
-            for (String sql : inserts.split("\\r?\\n")) {
-                executeInsert(sql);
+    private void testInvalidNegativeLimit() throws Exception {
+        int maxLimit = configuration.getSqlMaxNegativeLimit();
+
+        ddl("create table y as (" +
+                "select" +
+                " cast(x as int) i," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                " from long_sequence(100)" +
+                ") timestamp(timestamp)");
+
+        String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
+        int expectedPosition = 34;
+
+        String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
+        try (final RecordCursorFactory factory = fact(query)) {
+            try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                Assert.fail();
             }
-
-            assertQueryAndCache("ts\tid\n" +
-                    "1970-01-01T00:00:00.000004Z\tabc\n", "select * from t1 where id = 'abc' limit -1", null, true, true);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
         }
+    }
+
+    private void testLimit(String expected1, String expected2, String query) throws Exception {
+        testLimit(expected1, expected2, query, false);
+    }
+
+    private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
+
+            assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
+
+            executeInsert(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
+
+            assertQuery(expected2, query, "timestamp", true, expectSize);
+        });
+    }
+
+    private void testLimitMinusOne() throws Exception {
+        ddl("create table t1 (ts timestamp, id symbol)");
+
+        String inserts = "insert into t1 values (0L, 'abc')\n" +
+                "insert into t1 values (2L, 'a1')\n" +
+                "insert into t1 values (3L, 'abc')\n" +
+                "insert into t1 values (4L, 'abc')\n" +
+                "insert into t1 values (5L, 'a2')";
+
+        for (String sql : inserts.split("\\r?\\n")) {
+            executeInsert(sql);
+        }
+
+        assertQueryAndCache("ts\tid\n" +
+                "1970-01-01T00:00:00.000004Z\tabc\n", "select * from t1 where id = 'abc' limit -1", null, true, true);
     }
 }

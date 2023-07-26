@@ -29,7 +29,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
-import org.junit.*;
 
 /**
  * OS specific test that verifies errors returned on snapshot statement execution on Windows.
@@ -71,10 +70,9 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
     @Test
     public void testSnapshotPrepare() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ddl("create table test (ts timestamp, name symbol, val int)");
             try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
+                fail("snapshot prepare");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
             }

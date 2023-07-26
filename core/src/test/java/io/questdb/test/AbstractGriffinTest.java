@@ -1084,14 +1084,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false)
-    }
-
-    protected void assertQueryFullFat(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoin);
-            assertQuery6(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
-        }
+        assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
     }
 
     protected void assertQuery(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
@@ -1160,6 +1153,13 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         ) {
             compiler.setFullFatJoins(fullFatJoins);
             assertFactoryCursor5(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize);
+        }
+    }
+
+    protected void assertQueryFullFat(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoin);
+            assertQuery6(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
         }
     }
 

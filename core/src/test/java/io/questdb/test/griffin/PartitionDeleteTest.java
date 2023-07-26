@@ -36,9 +36,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class PartitionDeleteTest extends AbstractGriffinTest {
+
     @Test
     public void testBCSequence() throws SqlException, NumericException {
-        compiler.compile("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY", sqlExecutionContext);
+        ddl("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY");
         engine.releaseAllWriters();
 
         try (TableWriter w = newTableWriter(configuration, "events", metrics)) {

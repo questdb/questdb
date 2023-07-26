@@ -34,7 +34,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
 
 public class OrderByTimeoutTest extends AbstractGriffinTest {
 
@@ -121,7 +120,7 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     }
 
     private static void testSql(int breakTestLimit, String sql) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact(sql)) {
             for (int i = 0; i < breakTestLimit; i++) {
                 breakConnection = i;
                 try {

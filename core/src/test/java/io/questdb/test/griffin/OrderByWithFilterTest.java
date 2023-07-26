@@ -684,7 +684,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext).execute(null).await();
+                compile(query);
             }
         });
     }

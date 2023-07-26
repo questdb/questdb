@@ -26,8 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
@@ -604,11 +602,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                 }
             });
         }
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try (OperationFuture create = compiler.compile(createTable, context).execute(null)) {
-                create.await();
-            }
-        }
+        ddl(createTable);
         if (isWal) {
             drainWalQueue();
             returned.await();

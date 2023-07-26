@@ -61,7 +61,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 sink.clear();
                 sink.put("users");
                 sink.put(" where sequence > :low and sequence < :high latest on timestamp partition by id");
-                try (RecordCursorFactory rcf = compiler.compile(sink, executionContext).getRecordCursorFactory()) {
+                try (RecordCursorFactory rcf = compile(sink, executionContext).getRecordCursorFactory()) {
                     bindVariableService.setLong("low", 0);
                     bindVariableService.setLong("high", N + 1);
                     Misc.free(rcf.getCursor(executionContext));
@@ -87,7 +87,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
-            compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
+            compile(compiler, "create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
             try {
                 try (TableWriter writer = getWriter("users")) {

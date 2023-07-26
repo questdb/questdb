@@ -59,7 +59,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByBindVariable() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
         assertFailure(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
@@ -71,11 +71,11 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     //with where clause
     @Test
     public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
-        compiler.compile("create table x ( " +
+        ddl("create table x ( " +
                 "    sym1 symbol," +
                 "    sym2 symbol," +
                 "    bid int," +
-                "    ask int )", sqlExecutionContext);
+                "    ask int )");
         engine.releaseAllWriters();
 
         String query = "select sym1, avg(bid) avgBid " +
@@ -218,7 +218,8 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                     null,
                     true,
                     true
-        );});
+            );
+        });
     }
 
     @Test
@@ -244,7 +245,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByJoinReference() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
         assertQuery(
                 "id\tref\tref1\tsum\n",
@@ -258,7 +259,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByJoinReferenceNonSelected() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
         assertFailure(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
@@ -269,8 +270,8 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByJoinStringConst() throws Exception {
-        compiler.compile("create table x (id int, ref int, ref3 int)", sqlExecutionContext);
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table x (id int, ref int, ref3 int)");
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
         String query = "select 'x' z, sum(val) from x join y on (id) group by 'y'";
         assertQuery("z\tsum\n", query, null, true);

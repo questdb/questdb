@@ -30,7 +30,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -64,7 +63,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             // create table with 800 points at 2020-02-03 sharp
             // and 200 points in at 2020-02-03T01
-            compiler.compile(
+            ddl(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -72,22 +71,20 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             " rnd_str(5,16,2) as str," +
                             " cast(" + start + " + (x / 800) * 60 * 60 * 1000000L  as timestamp) ts" +
                             " from long_sequence(1000)" +
-                            ") timestamp (ts) partition by DAY",
-                    sqlExecutionContext
+                            ") timestamp (ts) partition by DAY"
             );
 
             rowCount = assertRowCount(1000, rowCount);
 
             // Split at 2020-02-03
-            compiler.compile(
+            executeInsert(
                     "insert into x " +
                             "select" +
                             " cast(x as int) * 1000000 i," +
                             " -x - 1000000L as j," +
                             " rnd_str(5,16,2) as str," +
                             " cast('2020-02-03' as timestamp) ts" +
-                            " from long_sequence(10)",
-                    sqlExecutionContext
+                            " from long_sequence(10)"
             );
 
             rowCount = assertRowCount(1010, rowCount);
@@ -97,15 +94,14 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     "2020-02-03\n");
 
             // Split at 2020-02-03T01
-            compiler.compile(
+            executeInsert(
                     "insert into x " +
                             "select" +
                             " cast(x as int) * 1000000 i," +
                             " -x - 1000000L as j," +
                             " rnd_str(5,16,2) as str," +
                             " cast('2020-02-03T00:30' as timestamp) ts" +
-                            " from long_sequence(10)",
-                    sqlExecutionContext
+                            " from long_sequence(10)"
             );
 
             // Check that the partition is split
@@ -282,7 +278,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
             node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
-            compiler.compile(
+            ddl(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -290,14 +286,13 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             " rnd_str(5,16,2) as str," +
                             " cast(" + start + " + (x / 2) * 60 * 60 * 1000000L  as timestamp) ts" +
                             " from long_sequence(2*24)" +
-                            ") timestamp (ts) partition by DAY",
-                    sqlExecutionContext
+                            ") timestamp (ts) partition by DAY"
             );
 
-            CompiledQuery cc = compiler.compile("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", sqlExecutionContext);
-            try (RecordCursorFactory cursorFactory = cc.getRecordCursorFactory();
-                 // Open reader
-                 RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            try (
+                    RecordCursorFactory cursorFactory = fact("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
+                    // Open reader
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 // Check that the originally open reader does not see these changes
                 sink.clear();
@@ -310,15 +305,14 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
-                compiler.compile(
+                executeInsert(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
                                 " -x - 1000000L as j," +
                                 " rnd_str(5,16,2) as str," +
                                 " timestamp_sequence('2020-02-03T17', 60*1000000L) ts" +
-                                " from long_sequence(1)",
-                        sqlExecutionContext
+                                " from long_sequence(1)"
                 );
 
                 // Check that the originally open reader does not see these changes
@@ -328,15 +322,14 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
-                compiler.compile(
+                executeInsert(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
                                 " -x - 1000000L as j," +
                                 " rnd_str(5,16,2) as str," +
                                 " timestamp_sequence('2020-02-03T17', 60*1000000L) ts" +
-                                " from long_sequence(1)",
-                        sqlExecutionContext
+                                " from long_sequence(1)"
                 );
 
                 // Check that the originally open reader does not see these changes
@@ -364,7 +357,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
             node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
-            compiler.compile(
+            ddl(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -372,14 +365,13 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             " rnd_str(5,16,2) as str," +
                             " cast(" + start + " + (x / 2) * 60 * 60 * 1000000L  as timestamp) ts" +
                             " from long_sequence(2*24)" +
-                            ") timestamp (ts) partition by DAY",
-                    sqlExecutionContext
+                            ") timestamp (ts) partition by DAY"
             );
 
-            CompiledQuery cc = compiler.compile("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", sqlExecutionContext);
-            try (RecordCursorFactory cursorFactory = cc.getRecordCursorFactory();
-                 // Open reader
-                 RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
+            try (
+                    RecordCursorFactory cursorFactory = fact("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
+                    // Open reader
+                    RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 // Check that the originally open reader does not see these changes
                 sink.clear();
@@ -392,15 +384,14 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
-                compiler.compile(
+                executeInsert(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
                                 " -x - 1000000L as j," +
                                 " rnd_str(5,16,2) as str," +
                                 " timestamp_sequence('2020-02-03T17:30', 60*1000000L) ts" +
-                                " from long_sequence(1)",
-                        sqlExecutionContext
+                                " from long_sequence(1)"
                 );
 
                 // Check that the originally open reader does not see these changes
@@ -410,15 +401,14 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
-                compiler.compile(
+                executeInsert(
                         "insert into x " +
                                 "select" +
                                 " cast(x as int) * 1000000 i," +
                                 " -x - 1000000L as j," +
                                 " rnd_str(5,16,2) as str," +
                                 " timestamp_sequence('2020-02-03T17:15', 60*1000000L) ts" +
-                                " from long_sequence(1)",
-                        sqlExecutionContext
+                                " from long_sequence(1)"
                 );
 
                 // Check that the originally open reader does not see these changes

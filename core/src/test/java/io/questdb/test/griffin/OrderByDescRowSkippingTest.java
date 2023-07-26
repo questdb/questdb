@@ -840,10 +840,8 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
 
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (String query : queries) {
-                    compiler.compile(query, sqlExecutionContext);
-                }
+            for (String query : queries) {
+                compile(query);
             }
         });
     }

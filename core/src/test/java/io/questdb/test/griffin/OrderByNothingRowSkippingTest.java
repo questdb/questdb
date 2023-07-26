@@ -162,7 +162,7 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext);
+                compile(query);
             }
         });
     }

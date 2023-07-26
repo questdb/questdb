@@ -97,7 +97,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
 
     private void assertO3MaxLagValues() throws SqlException {
         TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                 sink,
@@ -107,7 +107,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
     }
 
     private void createTable() throws SqlException {
-        compiler.compile("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
-                "PARTITION BY DAY WITH maxUncommittedRows=250000, o3MaxLag=240s", sqlExecutionContext);
+        ddl("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
+                "PARTITION BY DAY WITH maxUncommittedRows=250000, o3MaxLag=240s");
     }
 }

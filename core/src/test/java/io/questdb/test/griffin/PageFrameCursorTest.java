@@ -41,17 +41,16 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table x as (select" +
-                                    " rnd_int() a," +
-                                    " rnd_str() b," +
-                                    " timestamp_sequence(0, 100000000) t" +
-                                    " from long_sequence(1000)" +
-                                    ") timestamp (t) partition by DAY",
-                            sqlExecutionContext
+                    ddl("create table x as (select" +
+                            " rnd_int() a," +
+                            " rnd_str() b," +
+                            " timestamp_sequence(0, 100000000) t" +
+                            " from long_sequence(1000)" +
+                            ") timestamp (t) partition by DAY"
                     );
 
                     TestUtils.printSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "select b from x",
                             sink
@@ -61,7 +60,7 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
                     // header
                     actualSink.put("b\n");
 
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = fact("x")) {
 
                         // test that we can read string column without using index
                         try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
@@ -101,30 +100,28 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
     public void testVarColumnWithColumnTop() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table x as (select" +
-                                    " rnd_int() a," +
-                                    " rnd_str() b," +
-                                    " timestamp_sequence(to_timestamp('2022-01-13T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) t" +
-                                    " from long_sequence(10)" +
-                                    ") timestamp (t) partition by DAY",
-                            sqlExecutionContext
+                    ddl("create table x as (select" +
+                            " rnd_int() a," +
+                            " rnd_str() b," +
+                            " timestamp_sequence(to_timestamp('2022-01-13T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) t" +
+                            " from long_sequence(10)" +
+                            ") timestamp (t) partition by DAY"
                     );
 
-                    compiler.compile("alter table x add column c string", sqlExecutionContext).execute(null).await();
+                    alter("alter table x add column c string");
 
-                    compiler.compile(
+                    executeInsert(
                             "insert into x " +
                                     "select" +
                                     " rnd_int() a," +
                                     " rnd_str() b," +
                                     " timestamp_sequence(to_timestamp('2022-01-13T00:00:01', 'yyyy-MM-ddTHH:mm:ss'), 100000L) t," +
                                     " rnd_str() c" +
-                                    " from long_sequence(10)",
-                            sqlExecutionContext
+                                    " from long_sequence(10)"
                     );
 
                     TestUtils.printSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "select b from x",
                             sink
@@ -134,8 +131,7 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
                     // header
                     actualSink.put("b\n");
 
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-
+                    try (RecordCursorFactory factory = fact("x")) {
                         // test that we can read string column without using index
                         try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                             PageFrame frame;

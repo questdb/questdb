@@ -27,9 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.std.NumericException;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,7 +38,7 @@ public class SimpleTableTest extends AbstractGriffinTest {
     @Test
     public void testTimeStampWithTimezone() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table t (timestamp timestamp) timestamp(timestamp);", sqlExecutionContext);
+            ddl("create table t (timestamp timestamp) timestamp(timestamp);");
             executeInsert("insert into t values (1);");
 
             String expected1 = "time\n" +
@@ -47,7 +47,7 @@ public class SimpleTableTest extends AbstractGriffinTest {
             assertSql("select timestamp time from t;", expected1);
 
             try {
-                compiler.compile("select timestamp with time zone from t;", sqlExecutionContext);
+                fail("select timestamp with time zone from t;");
             } catch (SqlException e) {
                 Assert.assertEquals(31, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
