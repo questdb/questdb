@@ -27,11 +27,11 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.std.Chars;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -53,7 +53,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table xyz(time timestamp, cast2 geohash(8c)) timestamp(time) partition by DAY;";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "touch\n{\"data_pages\": 2, \"index_key_pages\":0, \"index_values_pages\": 0}\n";
@@ -68,7 +68,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table xyz(time timestamp, cast geohash(8c)) timestamp(time) partition by DAY;";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "time\tcast\n" +
@@ -99,7 +99,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -122,7 +122,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -142,7 +142,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -161,7 +161,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -181,7 +181,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -201,7 +201,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -221,7 +221,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -241,7 +241,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -261,7 +261,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -281,7 +281,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -301,7 +301,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -321,7 +321,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -340,7 +340,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -359,7 +359,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -379,7 +379,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -399,7 +399,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -418,7 +418,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -437,7 +437,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -457,7 +457,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -477,12 +477,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected = "min\tmax\tcount\n\t\t0\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where nts < '2020-01-01'");
@@ -495,7 +495,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -514,7 +514,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -533,7 +533,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -553,7 +553,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -572,7 +572,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -591,7 +591,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -618,7 +618,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             final long hour = Timestamps.HOUR_MICROS;
 
             String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             long start = 0;
             List<Object[]> datesArr = new ArrayList<>();
             SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
@@ -627,7 +627,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             for (int i = 0; i < iterations; i++) {
                 String insert = "insert into xts " +
                         "select timestamp_sequence(" + start + "L, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")";
-                compiler.compile(insert, sqlExecutionContext);
+                executeInsert(insert);
                 for (long ts = 0; ts < count; ts++) {
                     long nextTs = start + ts * hour;
                     datesArr.add(new Object[]{nextTs, formatter.format(nextTs / 1000L)});
@@ -658,7 +658,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
@@ -683,7 +683,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             final int count = 200;
             String createStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
             SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -802,11 +802,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            executeInsert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-20T00:00:00.000000Z\n" +
@@ -828,11 +828,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            executeInsert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-12-19T00:00:00.000000Z\n" +
@@ -854,11 +854,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            executeInsert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-26T00:00:00.000000Z\n" +
@@ -880,11 +880,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            executeInsert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2023-11-19T00:00:00.000000Z\n" +
@@ -940,7 +940,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -966,7 +966,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -1002,12 +1002,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // between constants
@@ -1173,12 +1173,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'");
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'");
@@ -1194,12 +1194,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // not in period
@@ -1266,12 +1266,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
             assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
@@ -1283,12 +1283,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // between constants
@@ -1303,12 +1303,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // >
@@ -1382,12 +1382,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('invalid' as symbol) and cast('2020-01-01' as symbol)");
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol)");
@@ -1403,12 +1403,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
+            ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            executeInsert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
             assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (NaN)");
@@ -1478,8 +1478,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     private void assertTimestampTtFailedQuery0(String expectedError, String query) {
         try {
-            compiler.compile(query, sqlExecutionContext);
-            Assert.fail();
+            fail(query);
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
         }

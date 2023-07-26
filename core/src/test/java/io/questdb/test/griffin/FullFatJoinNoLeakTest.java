@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -91,7 +92,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 createTablesToJoin(compiler, sqlExecutionContext);

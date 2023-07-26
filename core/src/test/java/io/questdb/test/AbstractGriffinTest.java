@@ -825,6 +825,11 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @NotNull
+    protected static CompiledQuery compile(CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return alter(query, sqlExecutionContext);
+    }
+
+    @NotNull
     protected static CompiledQuery compile(SqlCompiler compiler, CharSequence query) throws SqlException {
         return compile(compiler, query, sqlExecutionContext);
     }
@@ -1076,10 +1081,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     protected void assertQueryPlain(String expected, String query) throws SqlException {
         snapshotMemoryUsage();
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-        ) {
+        try (RecordCursorFactory factory = fact(query)) {
             assertFactoryCursor5(expected, null, factory, true, sqlExecutionContext, true);
         }
     }
@@ -1099,11 +1101,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertSqlRunWithJit(CharSequence query) throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-            try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-                Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
-            }
+        CompiledQuery cc = compile(query);
+        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
+            Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
         }
     }
 
@@ -1151,23 +1151,20 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
                 Path path = new Path().of(configuration.getRoot()).concat(tableToken);
-                SqlCompiler compiler = engine.getSqlCompiler()
         ) {
             TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
             for (int i = 0; i < insertIterations; i++) {
-                compiler.compile(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount), sqlExecutionContext);
+                executeInsert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
             }
         }
         return tableToken;
     }
 
     protected void executeOperation(QuestDBTestNode node, String query, int opType) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            CompiledQuery cq = compiler.compile(query, node.getSqlExecutionContext());
-            Assert.assertEquals(opType, cq.getType());
-            try (OperationFuture fut = cq.execute(eventSubSequence)) {
-                fut.await();
-            }
+        CompiledQuery cq = compile(query, node.getSqlExecutionContext());
+        Assert.assertEquals(opType, cq.getType());
+        try (OperationFuture fut = cq.execute(eventSubSequence)) {
+            fut.await();
         }
     }
 

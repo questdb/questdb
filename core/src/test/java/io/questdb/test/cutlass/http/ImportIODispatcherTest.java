@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
@@ -942,7 +941,7 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     private void setupSql(CairoEngine engine) {
-        compiler = new SqlCompilerImpl(engine);
+        compiler = engine.getSqlCompiler();
         sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(engine.getConfiguration()));
     }
 

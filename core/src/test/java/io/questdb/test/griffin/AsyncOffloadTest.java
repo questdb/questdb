@@ -41,7 +41,6 @@ import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -198,12 +197,12 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     final String query = "SELECT column1 FROM test1 WHERE to_lowercase(column1) = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'";
 
-                    final SqlCompilerImpl[] compilers = new SqlCompilerImpl[threadCount];
+                    final SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
                     for (int i = 0; i < threadCount; i++) {
                         // Each factory should use a dedicated compiler instance, so that they don't
                         // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = new SqlCompilerImpl(engine);
+                        compilers[i] = engine.getSqlCompiler();
                         factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
                     }
 
@@ -549,13 +548,13 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-                    SqlCompilerImpl[] compilers = new SqlCompilerImpl[threadCount];
+                    SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
 
                     for (int i = 0; i < threadCount; i++) {
                         // Each factory should use a dedicated compiler instance, so that they don't
                         // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = new SqlCompilerImpl(engine);
+                        compilers[i] = engine.getSqlCompiler();
                         factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
                         Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
                     }

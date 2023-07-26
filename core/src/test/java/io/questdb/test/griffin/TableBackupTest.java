@@ -31,7 +31,6 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
@@ -48,7 +47,6 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
@@ -132,7 +130,7 @@ public class TableBackupTest {
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        executeSqlStmt(engine, "INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')',  sqlExecutionContext);
+        executeSqlStmt(engine, "INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', sqlExecutionContext);
     }
 
     public static String testTableName(String tableName, String tableNameSuffix) {
@@ -204,7 +202,7 @@ public class TableBackupTest {
             }
         };
         mainEngine = new CairoEngine(mainConfiguration);
-        mainCompiler = new SqlCompilerImpl(mainEngine);
+        mainCompiler = mainEngine.getSqlCompiler();
         mainSqlExecutionContext = TestUtils.createSqlExecutionCtx(mainEngine);
         File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
         Assert.assertTrue(confRoot.mkdirs());
@@ -547,7 +545,7 @@ public class TableBackupTest {
         try (
                 CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
                 SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
+                SqlCompiler compiler = engine.getSqlCompiler()
         ) {
             compiler.compile(sql, context).execute(null).await();
             drainWalQueue(engine);
@@ -585,7 +583,7 @@ public class TableBackupTest {
             if (backup) {
                 engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
                 context = TestUtils.createSqlExecutionCtx(engine);
-                compiler = new SqlCompilerImpl(engine);
+                compiler = engine.getSqlCompiler();
             }
             TestUtils.printSql(compiler, context, tableToken.getTableName(), sink);
         } finally {

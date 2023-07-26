@@ -33,7 +33,7 @@ public class TruncateUncachedSymbolTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("CREATE TABLE\n" +
+                    ddl("CREATE TABLE\n" +
                             "positions(\n" +
                             "\ttime timestamp, \n" +
                             "\tuuid symbol cache, \n" +
@@ -52,7 +52,7 @@ public class TruncateUncachedSymbolTest extends AbstractGriffinTest {
                             "\thash5i int,\n" +
                             "\thash6i int\n" +
                             ")\n" +
-                            "timestamp(time);", sqlExecutionContext);
+                            "timestamp(time);");
                     alter("alter TABLE positions ALTER COLUMN hash6 ADD INDEX", sqlExecutionContext);
                     executeInsert("INSERT INTO positions\n" +
                             "VALUES(\n" +
@@ -75,7 +75,7 @@ public class TruncateUncachedSymbolTest extends AbstractGriffinTest {
                             ");");
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "positions",
                             sink,
@@ -83,10 +83,10 @@ public class TruncateUncachedSymbolTest extends AbstractGriffinTest {
                                     "2020-01-08T17:55:42.000000Z\t123e4567-e89b-12d3-a456-426614174000\t54.1803268\t7.8889438\tu\tu1\tu1t\tu1ts\tu1ts5\tu1ts5x\t1\t2\t3\t4\t5\t6\n"
                     );
 
-                    compiler.compile("truncate table positions", sqlExecutionContext);
+                    ddl("truncate table positions");
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "positions",
                             sink,

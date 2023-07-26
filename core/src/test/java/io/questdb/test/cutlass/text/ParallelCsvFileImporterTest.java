@@ -41,7 +41,6 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
 
 import java.io.File;
 import java.util.*;
@@ -2824,8 +2823,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             CairoConfiguration configuration
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount();
-        try (final CairoEngine engine = new CairoEngine(configuration);
-             final SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = engine.getSqlCompiler()
+        ) {
 
             try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                 try {
@@ -2988,7 +2989,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @FunctionalInterface
     interface TextImportRunnable {
-        void run(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
+        void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
 
     static class IndexChunk {

@@ -29,7 +29,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.LineUdpSender;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
@@ -196,7 +196,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();

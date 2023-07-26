@@ -606,6 +606,18 @@ public final class TestUtils {
     }
 
     public static void assertSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
+    }
+
+    public static void assertSql(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
@@ -1100,7 +1112,7 @@ public final class TestUtils {
         }
     }
 
-    public static CharSequence insertFromSelectPopulateTableStmt(
+    public static String insertFromSelectPopulateTableStmt(
             TableModel tableModel,
             int totalRows,
             String startDate,
@@ -1168,7 +1180,7 @@ public final class TestUtils {
         }
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
-        return insertFromSelect;
+        return insertFromSelect.toString();
     }
 
     public static int maxDayOfMonth(int month) {

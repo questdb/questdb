@@ -86,7 +86,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         };
         assertMemoryLeak(ff, () -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -94,8 +94,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
                 compile("alter table testPurge drop column x");
 
@@ -121,7 +120,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     public void testVacuumPurgesColumnVersionsAfterColumnDrop() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -129,8 +128,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
                 compile("alter table testPurge drop column x");
 
@@ -156,7 +154,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     public void testVacuumPurgesColumnVersionsAsync() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -164,8 +162,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
                 String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
                 String[] files = {"sym2.d", "sym2.k", "sym2.v"};
@@ -211,7 +208,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
             currentMicros = 0;
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -219,8 +216,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
 
                 try (TableReader rdr = getReader("testPurge")) {
@@ -247,7 +243,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
             currentMicros = 0;
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge1 as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -255,11 +251,10 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
 
-                compiler.compile(
+                ddl(
                         "create table testPurge2 as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -267,8 +262,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
 
                 try (
@@ -297,7 +291,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumSyncFailsQueueSize() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table testPurge as" +
                             " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                             " x," +
@@ -305,8 +299,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                             " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                             " rnd_symbol('1', '2', '3', '4') sym2" +
                             " from long_sequence(5)), index(sym2)" +
-                            " timestamp(ts) PARTITION BY DAY",
-                    sqlExecutionContext
+                            " timestamp(ts) PARTITION BY DAY"
             );
 
             try (TableReader rdr = getReader("testPurge")) {
@@ -336,7 +329,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
             currentMicros = 0;
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -344,8 +337,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
                 compile("alter table testPurge drop column x");
                 compile("alter table testPurge add column x int");
@@ -456,7 +448,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+        final CompiledQuery cq = compile(query);
         Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
         try (OperationFuture fut = cq.execute(null)) {
             fut.await();

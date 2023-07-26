@@ -28,10 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
@@ -229,7 +226,7 @@ public class LatestByParallelTest extends AbstractTest {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount();
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
+                final SqlCompiler compiler = engine.getSqlCompiler()
         ) {
             try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
             ) {

@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -766,7 +766,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "tableExistAlready";
         runInContext(() -> {
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(
@@ -802,7 +802,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "tableExistAlready";
         runInContext(() -> {
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(
@@ -994,7 +994,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "tableExistAlready";
         runInContext(() -> {
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(
@@ -1030,7 +1030,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "dupField";
         runInContext(() -> {
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(
@@ -1601,7 +1601,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         autoCreateNewColumns = false;
         disconnectOnError = true;
         try (
-                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                SqlCompiler compiler = engine.getSqlCompiler();
                 SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
             compiler.compile(
@@ -1657,7 +1657,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
 
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
@@ -1890,7 +1890,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "retention";
         runInContext(() -> {
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(

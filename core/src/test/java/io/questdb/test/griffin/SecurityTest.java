@@ -41,7 +41,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -50,7 +49,7 @@ public class SecurityTest extends AbstractGriffinTest {
     private static final AtomicInteger nCheckInterruptedCalls = new AtomicInteger();
     private static long circuitBreakerCallLimit = Long.MAX_VALUE;
     private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
-    private static SqlCompilerImpl memoryRestrictedCompiler;
+    private static SqlCompiler memoryRestrictedCompiler;
     private static CairoEngine memoryRestrictedEngine;
     private static SqlExecutionContext readOnlyExecutionContext;
 
@@ -175,7 +174,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         -1,
                         dummyCircuitBreaker
                 );
-        memoryRestrictedCompiler = new SqlCompilerImpl(memoryRestrictedEngine);
+        memoryRestrictedCompiler = memoryRestrictedEngine.getSqlCompiler();
     }
 
     @AfterClass

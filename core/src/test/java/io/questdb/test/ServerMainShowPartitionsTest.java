@@ -30,6 +30,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -116,7 +117,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompilerImpl defaultCompiler = new SqlCompilerImpl(qdb.getEngine());
+                    SqlCompiler defaultCompiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -133,10 +134,10 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 int numThreads = 5;
                 SOCountDownLatch completed = new SOCountDownLatch(numThreads);
                 AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
-                List<SqlCompilerImpl> compilers = new ArrayList<>(numThreads);
+                List<SqlCompiler> compilers = new ArrayList<>(numThreads);
                 List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine());
                     compilers.add(compiler);
                     contexts.add(context);
@@ -172,7 +173,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     private static void assertShowPartitions(
             String finallyExpected,
             TableToken tableToken,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext context
     ) throws SqlException {
         try (

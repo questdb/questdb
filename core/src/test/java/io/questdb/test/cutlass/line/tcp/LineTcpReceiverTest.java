@@ -39,7 +39,7 @@ import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -60,7 +60,6 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -1037,7 +1036,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile("create table weather as (" +

@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
@@ -226,24 +226,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 10);
 
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\t$1\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true,
-                            true
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = fact("select x, $1 from long_sequence(2)")) {
+                assertCursor("x\t$1\n" +
+                                "1\t10\n" +
+                                "2\t10\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -251,24 +245,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong("y", 10);
+            bindVariableService.clear();
+            bindVariableService.setLong("y", 10);
 
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\t:y\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true,
-                            true
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = fact("select x, :y from long_sequence(2)")) {
+                assertCursor("x\t:y\n" +
+                                "1\t10\n" +
+                                "2\t10\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -276,25 +264,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect3() throws Exception {
         assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 10);
 
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
-
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\t$1\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true,
-                            true
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = fact("select x, $1 from long_sequence(2)")) {
+                assertCursor("x\t$1\n" +
+                                "1\t10\n" +
+                                "2\t10\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -302,24 +283,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 10);
 
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
-
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = $1", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\n" +
-                                    "10\n",
-                            factory,
-                            true,
-                            false
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = fact("select x from long_sequence(100) where x = $1")) {
+                assertCursor("x\n" +
+                                "10\n",
+                        factory,
+                        true,
+                        false
+                );
             }
         });
     }
@@ -327,10 +301,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
+            ddl("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY");
             try {
-                compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
-                Assert.fail();
+                fail("select * from alcatel_traffic_tmp where deviceName in ($n1)");
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
@@ -619,7 +592,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testCreateTableIfNotExists() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 10; i++) {
-                compiler.compile("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
+                fact("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
             }
         });
 
@@ -656,7 +629,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCached() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            }
 
             engine.clear();
 
@@ -669,10 +644,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                compiler.compile("create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
+                compile(compiler, "create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
                 try (TableReader reader = engine.getReader("y")) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
@@ -684,10 +659,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            }
+
             try {
-                compiler.compile("create table y as (x), cast(col as symbol capacity 100000000)", sqlExecutionContext);
-                Assert.fail();
+                fail("create table y as (x), cast(col as symbol capacity 100000000)");
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "max cached symbol capacity");
@@ -700,9 +677,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            }
 
-            compiler.compile("create table y as (x), cast(col as symbol nocache)", sqlExecutionContext);
+            ddl("create table y as (x), cast(col as symbol nocache)");
 
             try (TableReader reader = getReader("y")) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
@@ -1845,7 +1824,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        compiler.compile("drop table tab", sqlExecutionContext);
+        fact("drop table tab", sqlExecutionContext);
 
         assertQuery13(
                 "min\tmax\n" +
@@ -1984,26 +1963,26 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "b\t65\n" +
                     "c\t75\n";
 
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_symbol('a','b','c') s," +
                     " timestamp_sequence(0, 1000000000) k" +
                     " from long_sequence(200)" +
-                    ") timestamp(k) partition by DAY", sqlExecutionContext);
+                    ") timestamp(k) partition by DAY");
 
             String query = "select s, count() from x order by s";
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(query)) {
                 assertCursor("s\tcount\n" + expectedData, factory, true, true);
             }
 
             query = "select s as symbol, count() from x order by symbol";
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("symbol\tcount\n" + expectedData, factory, true, true);
             }
 
             query = "select s as symbol, count() as cnt from x group by symbol order by symbol";
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("symbol\tcnt\n" + expectedData, factory, true, true);
             }
         });
@@ -2050,8 +2029,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testJoinOnExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
-            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
+            ddl("create table l as( select x from long_sequence(100) )");
+            ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
                     compiler,
@@ -2166,8 +2145,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testJoinWhereExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
-            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
+            ddl("create table l as( select x from long_sequence(100) )");
+            ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
                     compiler,
@@ -2590,38 +2569,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips where id > 0 latest on ts partition by vendor order by ts",
                             sink,
@@ -2751,7 +2727,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile(
+                    ddl(
                             "create table x as (" +
                                     "select" +
                                     " rnd_symbol(113, 4, 4, 2) s," +
@@ -2760,8 +2736,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     " (rnd_double()*180.0 - 90.0) lat, " +
                                     " rnd_geohash(40) geo8" +
                                     " from long_sequence(1000)" +
-                                    "), index(s) timestamp (ts) partition by DAY",
-                            sqlExecutionContext
+                                    "), index(s) timestamp (ts) partition by DAY"
                     );
                     try {
                         assertQuery("time\tuuid\thash\n",
@@ -3187,38 +3162,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedListMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') latest on ts partition by vendor order by ts",
                             sink,
@@ -3323,38 +3295,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips latest on ts partition by vendor order by ts",
                             sink,
@@ -3419,38 +3388,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    executeInsert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips latest on ts partition by vendor order by ts",
                             sink,
@@ -3503,13 +3469,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByAllValueIndexedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(\n" +
+            ddl("create table balances(\n" +
                     "cust_id SYMBOL index,\n" +
                     "balance_ccy SYMBOL,\n" +
                     "balance DOUBLE,\n" +
                     "timestamp TIMESTAMP\n" +
                     ")\n" +
-                    "timestamp(timestamp)", sqlExecutionContext);
+                    "timestamp(timestamp)");
 
             executeInsert("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
             executeInsert("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
@@ -3665,23 +3631,21 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration);
-                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
-                    compiler.compile(("create table x as " +
+                    compiler.compile("create table x as " +
                                     "(" +
                                     "select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 100000000000) k from" +
                                     " long_sequence(200)" +
-                                    ") timestamp(k) partition by DAY"),
+                                    ") timestamp(k) partition by DAY",
                             sqlExecutionContext);
 
                     AbstractGriffinTest.refreshTablesInBaseEngine();
-                    try (final RecordCursorFactory factory = compiler.compile(
-                            "select * from x where b = 'PEHN' and a < 22 latest on k partition by b",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile("select * from x where b = 'PEHN' and a < 22 latest on k partition by b", sqlExecutionContext).getRecordCursorFactory()) {
                         try {
                             assertCursor(
                                     "a\tb\tk\n" +
@@ -4505,13 +4469,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
+            ddl("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
                     "    ts timestamp, " +
                     "    other_ts timestamp" +
-                    ") timestamp(ts) partition by day", sqlExecutionContext);
+                    ") timestamp(ts) partition by day");
 
             executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
             executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
@@ -4580,13 +4544,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
+            ddl("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
                     "    ts timestamp, " +
                     "    other_ts timestamp" +
-                    ") timestamp(ts) partition by day", sqlExecutionContext);
+                    ") timestamp(ts) partition by day");
 
             executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
             executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
@@ -5149,18 +5113,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinDoesNotRequireTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE sensors (ID LONG, make STRING, city STRING);", sqlExecutionContext);
-            compiler.compile(
+            ddl("create TABLE sensors (ID LONG, make STRING, city STRING);");
+            executeInsert(
                     "INSERT INTO sensors\n" +
                             "SELECT\n" +
                             "    x ID, --increasing integer\n" +
                             "    rnd_str('Eberle', 'Honeywell', 'Omron', 'United Automation', 'RS Pro') make,\n" +
                             "    rnd_str('New York', 'Miami', 'Boston', 'Chicago', 'San Francisco') city\n" +
-                            "FROM long_sequence(10000) x;",
-                    sqlExecutionContext
+                            "FROM long_sequence(10000) x;"
             );
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE readings\n" +
                             "AS(\n" +
                             "    SELECT\n" +
@@ -5170,8 +5133,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "        rnd_long(0, 10000, 0) sensorId\n" +
                             "    FROM long_sequence(10000000) x)\n" +
                             "TIMESTAMP(ts)\n" +
-                            "PARTITION BY MONTH;",
-                    sqlExecutionContext
+                            "PARTITION BY MONTH;"
             );
 
             TestUtils.assertSql(
@@ -5266,9 +5228,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
+            ddl("create table x as (select x from long_sequence(10))");
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile("x limit -9223372036854775807-1, -1", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("x limit -9223372036854775807-1, -1")) {
                 assertCursor("x\n" +
                                 "1\n" +
                                 "2\n" +
@@ -5441,22 +5403,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testNamedBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong("var", 10);
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = :var", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor(
-                            "x\n" +
-                                    "10\n",
-                            factory,
-                            true,
-                            false
-                    );
-                }
+            bindVariableService.clear();
+            bindVariableService.setLong("var", 10);
+
+            try (RecordCursorFactory factory = fact("select x from long_sequence(100) where x = :var")) {
+                assertCursor(
+                        "x\n" +
+                                "10\n",
+                        factory,
+                        true,
+                        false
+                );
             }
         });
     }
@@ -6654,7 +6611,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testRecordJoinExpansion() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x(a int)", sqlExecutionContext);
+            ddl("create table x(a int)");
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
@@ -6983,8 +6940,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectDistinctWithColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table my_table as (select x as id from long_sequence(1))", sqlExecutionContext).getType();
-            try (RecordCursorFactory factory = compiler.compile("select distinct id as foo from my_table", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table my_table as (select x as id from long_sequence(1))");
+            try (RecordCursorFactory factory = fact("select distinct id as foo from my_table")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
                 assertCursor("foo\n" +
@@ -6996,8 +6953,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectDistinctWithColumnAliasAndTableFunction() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (id long)", sqlExecutionContext).getType());
-            try (RecordCursorFactory factory = compiler.compile("select distinct x as foo from long_sequence(1)", sqlExecutionContext).getRecordCursorFactory()) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (id long)", sqlExecutionContext).getType());
+            }
+
+            try (RecordCursorFactory factory = fact("select distinct x as foo from long_sequence(1)")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
 
@@ -7071,12 +7031,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectExpectedOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
+            ddl("create table tab(" +
                     "    id symbol index, " +
                     "    name symbol index, " +
                     "    value double, " +
                     "    ts timestamp" +
-                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ") timestamp(ts) partition by DAY");
             executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
             executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
             executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
@@ -7118,8 +7078,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectFromAliasedTable() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (sym int, id long)", sqlExecutionContext).getType());
-            try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", sqlExecutionContext).getRecordCursorFactory()) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (sym int, id long)", sqlExecutionContext).getType());
+            }
+            try (RecordCursorFactory factory = fact("select sum(a.sym) yo, a.id from my_table a")) {
                 Assert.assertNotNull(factory);
             }
         });
@@ -7129,7 +7091,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSelectUndefinedBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.clear();
-            try (RecordCursorFactory factory = compiler.compile("select $1+x, $2 from long_sequence(10)", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select $1+x, $2 from long_sequence(10)")) {
                 sink.clear();
                 factory.getMetadata().toJson(sink);
                 TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"column\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"$2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}", sink);
@@ -7218,8 +7180,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testStrippingRowId() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x (a int)", sqlExecutionContext);
-            RecordCursorFactory factory = compiler.compile("select * from '*!*x'", sqlExecutionContext).getRecordCursorFactory();
+            ddl("create table x (a int)");
+            RecordCursorFactory factory = fact("select * from '*!*x'");
             Assert.assertNotNull(factory);
             try {
                 Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
@@ -7271,8 +7233,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised1() throws Exception {
-        String ddl = "create table x (ds double)";
-        compiler.compile(ddl, sqlExecutionContext);
+        ddl("create table x (ds double)");
 
         executeInsertStatement(1.0);
         executeInsertStatement(2.0);
@@ -7280,8 +7241,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised2() throws Exception {
-        String ddl = "create table x (ds double)";
-        compiler.compile(ddl, sqlExecutionContext);
+        ddl("create table x (ds double)");
 
         executeInsertStatement(1.0);
         executeInsertStatement(1.0);
@@ -7297,8 +7257,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised3() throws Exception {
-        String ddl = "create table x (ds double)";
-        compiler.compile(ddl, sqlExecutionContext);
+        ddl("create table x (ds double)");
 
         executeInsertStatement(1.0);
         executeInsertStatement(1.0);
@@ -7354,12 +7313,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         maxOpenPartitions = 2;
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            ddl("create table x as (" +
                     "select" +
                     " rnd_symbol('foo','bar') s," +
                     " timestamp_sequence(0, 10000000000) ts" +
                     " from long_sequence(50)" +
-                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ") timestamp(ts) partition by DAY");
 
             // we need have more partitions than maxOpenPartitions for this test
             assertSql(
@@ -7399,9 +7358,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampCrossReference() throws Exception {
-        compiler.compile("create table x (val double, t timestamp)", sqlExecutionContext);
-        compiler.compile("create table y (timestamp timestamp, d double)", sqlExecutionContext);
-        compiler.compile("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)", sqlExecutionContext);
+        ddl("create table x (val double, t timestamp)");
+        ddl("create table y (timestamp timestamp, d double)");
+        executeInsert("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)");
 
         // to shut up memory leak check
         engine.clear();
@@ -7471,8 +7430,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPropagation() throws Exception {
-        compiler.compile("create table readings (sensorId int)", sqlExecutionContext);
-        compiler.compile("create table sensors (ID int, make symbol, city symbol)", sqlExecutionContext);
+        ddl("create table readings (sensorId int)");
+        ddl("create table sensors (ID int, make symbol, city symbol)");
         assertQuery(
                 "sensorId\tsensId\tmake\tcity\n",
                 "SELECT * FROM readings JOIN(SELECT ID sensId, make, city FROM sensors) ON readings.sensorId = sensId",
@@ -7485,7 +7444,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testUtf8TableName() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("CREATE TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);", sqlExecutionContext);
+                    ddl("create TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);");
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
@@ -7766,11 +7725,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     private void createGeoHashTable(int chars) throws SqlException {
-        compiler.compile(
-                String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
-                        ", index(uuid) timestamp(time) partition by DAY",
-                sqlExecutionContext
-        );
+        ddl(String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) + ", index(uuid) timestamp(time) partition by DAY");
+
         executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
         executeInsert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
         executeInsert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
@@ -7799,7 +7755,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     private void createRndGeoHashBitsTable() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -7809,13 +7765,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_geohash(7) bits7," +
                         " rnd_geohash(9) bits9" +
                         " from long_sequence(10000)" +
-                        "), index(s) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(s) timestamp (ts) partition by DAY"
         );
     }
 
     private void createRndGeoHashTable() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -7826,8 +7781,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_geohash(25) geo4," +
                         " rnd_geohash(40) geo8" +
                         " from long_sequence(10000)" +
-                        "), index(s) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(s) timestamp (ts) partition by DAY"
         );
     }
 
@@ -7848,31 +7802,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableInIndexedLookup(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                            "time TIMESTAMP, " +
-                            "slot SYMBOL, " +
-                            "port SYMBOL, " +
-                            "downStream DOUBLE, " +
-                            "upStream DOUBLE" +
-                            ") timestamp(time) partition by DAY",
-                    sqlExecutionContext);
-            compiler.compile("create table src as (" +
-                            "    select rnd_symbol(15000, 4,4,0) sym, " +
-                            "           timestamp_sequence(0, 100000) ts, " +
-                            "           rnd_double() val " +
-                            "    from long_sequence(500)" +
-                            ")",
-                    sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
-                    sqlExecutionContext);
+            ddl("create TABLE 'alcatel_traffic_tmp' (" +
+                    "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
+                    "time TIMESTAMP, " +
+                    "slot SYMBOL, " +
+                    "port SYMBOL, " +
+                    "downStream DOUBLE, " +
+                    "upStream DOUBLE" +
+                    ") timestamp(time) partition by DAY");
+            ddl("create table src as (" +
+                    "    select rnd_symbol(15000, 4,4,0) sym, " +
+                    "           timestamp_sequence(0, 100000) ts, " +
+                    "           rnd_double() val " +
+                    "    from long_sequence(500)" +
+                    ")");
+            executeInsert("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
             // =
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName in $1",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = fact("select * from alcatel_traffic_tmp where deviceName in $1")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 sink.clear();
@@ -7886,12 +7832,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             }
             // !=
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = fact("select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 sink.clear();
@@ -7911,31 +7852,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableInLookupList(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                            "time TIMESTAMP, " +
-                            "slot SYMBOL, " +
-                            "port SYMBOL, " +
-                            "downStream DOUBLE, " +
-                            "upStream DOUBLE" +
-                            ") timestamp(time) partition by DAY",
-                    sqlExecutionContext);
-            compiler.compile("create table src as (" +
-                            "    select rnd_symbol(15000, 4,4,0) sym, " +
-                            "           timestamp_sequence(0, 100000) ts, " +
-                            "           rnd_double() val " +
-                            "    from long_sequence(500)" +
-                            ")",
-                    sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
-                    sqlExecutionContext);
+            ddl("create TABLE 'alcatel_traffic_tmp' (" +
+                    "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
+                    "time TIMESTAMP, " +
+                    "slot SYMBOL, " +
+                    "port SYMBOL, " +
+                    "downStream DOUBLE, " +
+                    "upStream DOUBLE" +
+                    ") timestamp(time) partition by DAY");
+            ddl("create table src as (" +
+                    "    select rnd_symbol(15000, 4,4,0) sym, " +
+                    "           timestamp_sequence(0, 100000) ts, " +
+                    "           rnd_double() val " +
+                    "    from long_sequence(500)" +
+                    ")");
+            executeInsert("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
             // in
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName in ($1,$2)",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = fact("select * from alcatel_traffic_tmp where deviceName in ($1,$2)")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
@@ -7951,12 +7884,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             }
             // not in
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName not in ($1,$2) and time < '1970-01-01T00:00:00.300000Z'",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = fact("select * from alcatel_traffic_tmp where deviceName not in ($1,$2) and time < '1970-01-01T00:00:00.300000Z'")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
@@ -7977,65 +7905,57 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService)
-            ) {
-                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
-                AbstractGriffinTest.refreshTablesInBaseEngine();
-                bindVariableService.clear();
-                try (RecordCursorFactory factory = compiler.compile("xy where v " + keyword + " $1", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table xy as (select rnd_str() v from long_sequence(100))");
+            AbstractGriffinTest.refreshTablesInBaseEngine();
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = fact("xy where v " + keyword + " $1")) {
+                bindVariableService.setStr(0, "MBE%");
+                assertCursor("v\n" +
+                                "MBEZGHW\n",
+                        factory,
+                        true,
+                        false
+                );
 
-                    bindVariableService.setStr(0, "MBE%");
-                    assertCursor("v\n" +
-                                    "MBEZGHW\n",
-                            factory,
-                            true,
-                            false
-                    );
+                bindVariableService.setStr(0, "Z%");
+                assertCursor("v\n" +
+                                "ZSQLDGLOG\n" +
+                                "ZLUOG\n" +
+                                "ZLCBDMIG\n" +
+                                "ZJYYFLSVI\n" +
+                                "ZWEVQTQO\n" +
+                                "ZSFXUNYQ\n",
+                        factory,
+                        true,
+                        false
+                );
 
-                    bindVariableService.setStr(0, "Z%");
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            false
-                    );
-
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            false
-                    );
+                assertCursor("v\n" +
+                                "ZSQLDGLOG\n" +
+                                "ZLUOG\n" +
+                                "ZLCBDMIG\n" +
+                                "ZJYYFLSVI\n" +
+                                "ZWEVQTQO\n" +
+                                "ZSFXUNYQ\n",
+                        factory,
+                        true,
+                        false
+                );
 
 
-                    bindVariableService.setStr(0, null);
-                    assertCursor("v\n",
-                            factory,
-                            true,
-                            false
-                    );
-                }
+                bindVariableService.setStr(0, null);
+                assertCursor("v\n",
+                        factory,
+                        true,
+                        false
+                );
             }
         });
     }
 
     private void testFilterWithSymbolBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8043,9 +7963,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(20)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
@@ -8060,7 +7980,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testFilterWithSymbolBindVariableNotEquals(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8068,9 +7988,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(5)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
@@ -8088,7 +8008,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
+            ddl(ddl);
 
             executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
             executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
@@ -8124,7 +8044,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByKeyValueWithBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8132,11 +8052,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(50)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = fact(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
@@ -8150,7 +8068,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByKeyValuesWithBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8158,11 +8076,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(50)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = fact(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "66.97969295620055\tVTJW\t1970-02-13T23:33:20.000000Z\n" +
@@ -8177,7 +8093,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByMultiColumnPlusFilter(CharSequence ddl) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
+            ddl(ddl);
+
             executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
             executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
@@ -8240,7 +8157,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
+            ddl(ddl);
 
             executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
             executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
@@ -8278,7 +8195,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     private void testLatestBySupportedColumnTypes(CharSequence ddl) throws Exception {
         assertMemoryLeak(() -> {
             // supported: [BOOLEAN, CHAR, INT, LONG, LONG256, STRING, SYMBOL]
-            compiler.compile(ddl, sqlExecutionContext);
+            ddl(ddl);
+
             executeInsert("insert into tab values (false, cast(24814 as short), 24814, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'ORANGE', '123', '1970-01-01T00:00:01.000000Z')");
             executeInsert("insert into tab values (true, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'A', 'COCO', 'XoXoX', '1970-01-01T00:00:02.000000Z')");
             executeInsert("insert into tab values (true, cast(14817 as short), 14817, 3614738589890112276, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'Q', null, 'XoXoX', '1970-01-01T00:00:03.000000Z')");

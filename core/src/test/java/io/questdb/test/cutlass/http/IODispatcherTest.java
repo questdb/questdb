@@ -33,10 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -64,7 +61,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
 import org.junit.rules.Timeout;
 
 import java.io.InputStream;
@@ -1147,7 +1143,7 @@ public class IODispatcherTest extends AbstractTest {
                 )
                 .run((engine) -> {
                             try (
-                                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                                    SqlCompiler compiler = engine.getSqlCompiler();
                                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                             ) {
                                 compiler.compile("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
@@ -1229,7 +1225,7 @@ public class IODispatcherTest extends AbstractTest {
                 )
                 .run((engine) -> {
                             try (
-                                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                                    SqlCompiler compiler = engine.getSqlCompiler();
                                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                             ) {
                                 compiler.compile("create table test (col_a int, col_b long)", executionContext);
@@ -1619,7 +1615,7 @@ public class IODispatcherTest extends AbstractTest {
                 )
                 .run((engine) -> {
                             try (
-                                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                                    SqlCompiler compiler = engine.getSqlCompiler();
                                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                             ) {
                                 compiler.compile("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
@@ -1845,7 +1841,7 @@ public class IODispatcherTest extends AbstractTest {
                 )
                 .run((engine) -> {
                             try (
-                                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                                    SqlCompiler compiler = engine.getSqlCompiler();
                                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                             ) {
                                 compiler.compile("create table test (geo1 geohash(1c), geo2 geohash(3c), geo4 geohash(6c), geo8 geohash(12c), geo2b geohash(2b))", executionContext);
@@ -1929,7 +1925,7 @@ public class IODispatcherTest extends AbstractTest {
                 )
                 .run((engine) -> {
                             try (
-                                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                                    SqlCompiler compiler = engine.getSqlCompiler();
                                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                             ) {
                                 sendAndReceive(
@@ -3887,7 +3883,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine) -> {
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", executionContext);
@@ -4701,7 +4697,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
                 .run((engine) -> {
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
@@ -4733,7 +4729,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withQueryTimeout(timeout)
                 .run((engine) -> {
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
@@ -7411,7 +7407,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
                 .run((engine) -> {
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
@@ -7444,7 +7440,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withQueryTimeout(timeout)
                 .run((engine) -> {
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
@@ -8282,7 +8278,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTempFolder(root)
                 .run(engine -> {
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         compiler.compile("create table y as (\n" +

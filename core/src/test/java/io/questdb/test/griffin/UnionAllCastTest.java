@@ -605,11 +605,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptDoubleFloat() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            ddl("create table events1 (contact symbol, groupid float, eventid string)");
             executeInsert("insert into events1 values ('1', 1.5, 'flash')");
             executeInsert("insert into events1 values ('2', 1.5, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events2 values ('1', 1.5, 'flash')");
             executeInsert("insert into events2 values ('2', 1.5, 'stand')");
 
@@ -628,13 +628,13 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            ddl("create table events1 (contact symbol, groupid float, eventid string)");
             executeInsert("insert into events1 values ('1', 1.5, 'flash')");
             executeInsert("insert into events1 values ('2', 1.5, 'stand')");
             executeInsert("insert into events1 values ('1', 1.6, 'stand')");
             executeInsert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events2 values ('1', 1.5, 'flash')");
             executeInsert("insert into events2 values ('2', 1.5, 'stand')");
 
@@ -655,11 +655,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptFloatDouble() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events1 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events1 values ('1', 1.5, 'flash')");
             executeInsert("insert into events1 values ('2', 1.5, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            ddl("create table events2 (contact symbol, groupid float, eventid string)");
             executeInsert("insert into events2 values ('1', 1.5, 'flash')");
             executeInsert("insert into events2 values ('2', 1.5, 'stand')");
 
@@ -678,13 +678,13 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events1 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events1 values ('1', 1.5, 'flash')");
             executeInsert("insert into events1 values ('2', 1.5, 'stand')");
             executeInsert("insert into events1 values ('1', 1.6, 'stand')");
             executeInsert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events2 values ('1', 1.5, 'flash')");
             executeInsert("insert into events2 values ('2', 1.5, 'stand')");
 
@@ -1445,13 +1445,13 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testIntersectDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            ddl("create table events1 (contact symbol, groupid float, eventid string)");
             executeInsert("insert into events1 values ('1', 1.5, 'flash')");
             executeInsert("insert into events1 values ('2', 1.5, 'stand')");
             executeInsert("insert into events1 values ('1', 1.6, 'stand')");
             executeInsert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events2 values ('1', 1.5, 'flash')");
             executeInsert("insert into events2 values ('2', 1.5, 'stand')");
 
@@ -1472,13 +1472,13 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testIntersectSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events1 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events1 values ('1', 1.5, 'flash')");
             executeInsert("insert into events1 values ('2', 1.5, 'stand')");
             executeInsert("insert into events1 values ('1', 1.6, 'stand')");
             executeInsert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
             executeInsert("insert into events2 values ('1', 1.5, 'flash')");
             executeInsert("insert into events2 values ('2', 1.5, 'stand')");
 

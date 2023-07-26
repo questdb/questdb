@@ -31,7 +31,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -46,7 +46,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -201,7 +200,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics.health());
             try (
                     LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);

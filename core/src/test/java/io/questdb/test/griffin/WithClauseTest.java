@@ -109,18 +109,18 @@ public class WithClauseTest extends AbstractGriffinTest {
     @Test
     public void testWithLatestByFilterGroup() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table contact_events2 as (\n" +
+            ddl"create table contact_events2 as (\n" +
                     "  select cast(x as SYMBOL) _id,\n" +
                     "    rnd_symbol('c1', 'c2', 'c3', 'c4') contactid, \n" +
                     "    CAST(x as Timestamp) timestamp, \n" +
                     "    rnd_symbol('g1', 'g2', 'g3', 'g4') groupId \n" +
                     "from long_sequence(500)) \n" +
-                    "timestamp(timestamp)", sqlExecutionContext);
+                    "timestamp(timestamp)");
 
             // this is deliberately shuffled column in select to check that correct metadata is used on filtering
             // latest by queries
             TestUtils.printSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select groupId, _id, contactid, timestamp, _id from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp",
                     sink

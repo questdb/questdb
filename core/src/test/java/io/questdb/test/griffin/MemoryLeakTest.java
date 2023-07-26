@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -84,7 +84,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
 
     private void populateUsersTable(CairoEngine engine, int n) throws SqlException {
         try (
-                final SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);

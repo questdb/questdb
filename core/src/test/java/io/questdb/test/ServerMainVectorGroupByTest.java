@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
@@ -81,7 +82,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine())
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler()
             ) {
                 CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
@@ -106,7 +107,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(qdb.getEngine())
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler()
             ) {
                 CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)

@@ -27,7 +27,10 @@ package io.questdb.test.griffin;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
@@ -7491,7 +7494,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration, Metrics.disabled());
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
+                    SqlCompiler compiler = engine.getSqlCompiler()
             ) {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
                 try {

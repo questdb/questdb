@@ -26,9 +26,9 @@ package io.questdb.test;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
@@ -65,7 +65,7 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     TelemetryJob ignored = new TelemetryJob(engine);
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
@@ -84,7 +84,7 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(
@@ -224,7 +224,7 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 refVersion.set("1.0");

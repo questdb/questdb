@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -150,12 +150,12 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            compiler.compile("create table up as" +
+            ddl("create table up as" +
                     " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
                     " 0 as x" +
                     " from long_sequence(5))" +
                     " timestamp(ts)" +
-                    (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""), sqlExecutionContext);
+                    (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
 
             Thread tick = new Thread(() -> {
                 while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
@@ -175,7 +175,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
                     try {
-                        final SqlCompilerImpl updateCompiler = new SqlCompilerImpl(engine);
+                        final SqlCompiler updateCompiler = engine.getSqlCompiler();
                         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
@@ -223,7 +223,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     });
 
                     try {
-                        final SqlCompilerImpl readerCompiler = new SqlCompilerImpl(engine);
+                        final SqlCompiler readerCompiler = engine.getSqlCompiler();
                         barrier.await();
                         try (TableReader rdr = getReader("up")) {
                             while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
@@ -231,8 +231,9 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                                 assertReader(rdr, expectedValues, validators);
                                 Os.sleep(1);
                             }
+                        } finally {
+                            readerCompiler.close();
                         }
-                        readerCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("reader error ").$(th).$();
                         exceptions.add(th);

@@ -97,7 +97,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         compilers = new SqlCompilerImpl[numOfDropThreads];
         executionContexts = new SqlExecutionContext[numOfDropThreads];
         for (int i = 0; i < numOfDropThreads; i++) {
-            compilers[i] = new SqlCompilerImpl(engine);
+            compilers[i] = engine.getSqlCompiler();
             executionContexts[i] = TestUtils.createSqlExecutionCtx(engine, numOfDropThreads);
         }
     }

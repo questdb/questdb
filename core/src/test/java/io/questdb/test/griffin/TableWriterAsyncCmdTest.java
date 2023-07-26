@@ -39,12 +39,12 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -94,13 +94,13 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             SCSequence tempSequence = new SCSequence();
             try (TableWriter writer = getWriter("product")) {
                 for (int i = 0; i < engineEventQueue; i++) {
-                    CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
+                    CompiledQuery cc = compile("ALTER TABLE product add column column" + i + " int");
                     executeNoWait(tempSequence, cc);
                     writer.tick();
                 }
 
                 // Add column when event queue is stalled
-                CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
+                CompiledQuery cc = compile("ALTER TABLE product add column column5 int");
                 try (OperationFuture fut = cc.execute(tempSequence)) {
                     fut.await(0);
                     writer.tick();
@@ -135,12 +135,12 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             // Block table
             try (TableWriter ignored = getWriter("product")) {
                 for (int i = 0; i < engineCmdQueue; i++) {
-                    CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
+                    CompiledQuery cc = compile("ALTER TABLE product add column column" + i + " int");
                     executeNoWait(tempSequence, cc);
                 }
 
                 try {
-                    CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
+                    CompiledQuery cc = compile("ALTER TABLE product add column column5 int");
                     try (OperationFuture ignored1 = cc.execute(tempSequence)) {
                         Assert.fail();
                     }
@@ -149,7 +149,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 }
             } // Unblock table
 
-            CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
+            CompiledQuery cc = compile("ALTER TABLE product add column column5 int");
             try (OperationFuture fut = cc.execute(tempSequence)) {
                 // Should execute in sync since writer is unlocked
                 Assert.assertEquals(QUERY_COMPLETE, fut.getStatus());
@@ -176,7 +176,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             OperationFuture fut;
             // Block table
             try (TableWriter ignored = getWriter("product")) {
-                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
+                CompiledQuery cc = compile("ALTER TABLE product drop column to_remove");
                 fut = cc.execute(commandReplySequence);
             } // Unblock table
 
@@ -210,7 +210,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             OperationFuture fut;
             // Block table
             try (TableWriter ignored = getWriter("product")) {
-                CompiledQuery cc = compiler.compile("ALTER TABLE product drop partition LIST '2020-01-01'", sqlExecutionContext);
+                CompiledQuery cc = compile("ALTER TABLE product drop partition LIST '2020-01-01'");
                 fut = cc.execute(commandReplySequence);
             } // Unblock table
 
@@ -242,7 +242,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
             // Block table
             try (TableWriter writer = getWriter("product")) {
-                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
+                CompiledQuery cc = compile("ALTER TABLE product drop column to_remove");
                 try (OperationFuture fut = cc.execute(new SCSequence())) {
                     writer.tick(true);
 
@@ -255,7 +255,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     }
                 }
             } // Unblock table
-            try (OperationFuture operationFuture = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null)) {
+            try (OperationFuture operationFuture = compile("ALTER TABLE product drop column to_remove").execute(null)) {
                 int status = operationFuture.getStatus();
                 Assert.assertEquals(QUERY_COMPLETE, status);
             }
@@ -307,7 +307,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
-                    CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
+                    CompiledQuery cc = compile("alter table product alter column name cache");
                     fut = cc.execute(commandReplySequence);
 
                     // Add 1 row
@@ -365,7 +365,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
-                    CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
+                    CompiledQuery cc = compile("alter table product alter column name cache");
                     fut = cc.execute(commandReplySequence);
                     writer.tick();
                 }
@@ -393,7 +393,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try {
 
                 try (TableWriter ignored = getWriter("product")) {
-                    CompiledQuery cc = compiler.compile("alter table product rename column name to name1, timestamp to timestamp1", sqlExecutionContext);
+                    CompiledQuery cc = compile("alter table product rename column name to name1, timestamp to timestamp1");
                     fut = cc.execute(commandReplySequence);
                 }
                 fut.await();
@@ -420,7 +420,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
             // Get the lock so command has to be serialized to writer command queue
             try (TableWriter ignored = getWriter("product")) {
-                CompiledQuery cc = compiler.compile("ALTER TABLE product add column colTest int", sqlExecutionContext);
+                CompiledQuery cc = compile("ALTER TABLE product add column colTest int");
                 try {
                     cc.execute(commandReplySequence).close();
                     Assert.fail();
@@ -440,7 +440,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             // Block event queue with stale sequence
             try (TableWriter writer = getWriter("product")) {
                 for (int i = 0; i < 2 * engineEventQueue; i++) {
-                    CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
+                    CompiledQuery cc = compile("ALTER TABLE product add column column" + i + " int");
                     try (OperationFuture fut = cc.execute(commandReplySequence)) {
                         writer.tick();
                         fut.await();

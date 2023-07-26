@@ -41,7 +41,7 @@ public class TrailingDigitsTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     TestUtils.printSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "select * from (select 111.1111111 as val)",
                             sink
@@ -81,7 +81,7 @@ public class TrailingDigitsTest extends AbstractGriffinTest {
             String numStr = new String(s);
             String expected = "val\n" + numStr + "\n";
             TestUtils.printSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select * from (select " + numStr + " as val)",
                     sink

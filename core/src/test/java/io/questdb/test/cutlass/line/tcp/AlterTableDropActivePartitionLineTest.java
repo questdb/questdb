@@ -30,7 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -208,7 +208,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 // check size
                 try (
                         SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                        SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
+                        SqlCompiler compiler = engine.getSqlCompiler()
                 ) {
                     TestUtils.assertSql(
                             compiler,

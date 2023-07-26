@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -199,7 +199,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 }
             } else {
                 try (
-                        SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                        SqlCompiler compiler = engine.getSqlCompiler();
                         SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
                     final String sql = tableName + " where timestamp > " + timestampMark;
@@ -339,7 +339,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }
 
         try (
-                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                SqlCompiler compiler = engine.getSqlCompiler();
                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
             final String sql = tableName + " where timestamp > " + timestampMark;

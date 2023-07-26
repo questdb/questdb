@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
@@ -103,7 +102,7 @@ public class EmbeddedApiTest {
                 try {
                     // number of cores is current thread + workers in the pool
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 2)
                     ) {
 
@@ -146,7 +145,7 @@ public class EmbeddedApiTest {
             try (
                     final CairoEngine engine = new CairoEngine(configuration);
                     final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                    final SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
+                    final SqlCompiler compiler = engine.getSqlCompiler()
             ) {
                 compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
                 try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
@@ -203,7 +202,7 @@ public class EmbeddedApiTest {
                 for (int i = 0; i < iterations; i++) {
                     try (
                             final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                            final SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            final SqlCompiler compiler = engine.getSqlCompiler();
                             final RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory();
                             final RecordCursor cursor = factory.getCursor(ctx)
                     ) {
@@ -246,7 +245,7 @@ public class EmbeddedApiTest {
                 for (int i = 0; i < iterations; i++) {
                     try (
                             final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                            final SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
+                            final SqlCompiler compiler = engine.getSqlCompiler()
                     ) {
                         compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts) partition by HOUR", ctx);
                         try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {

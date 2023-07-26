@@ -152,7 +152,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         compilers = new SqlCompilerImpl[numOfUpdateThreads];
         executionContexts = new SqlExecutionContext[numOfUpdateThreads];
         for (int i = 0; i < numOfUpdateThreads; i++) {
-            compilers[i] = new SqlCompilerImpl(engine);
+            compilers[i] = engine.getSqlCompiler();
             executionContexts[i] = TestUtils.createSqlExecutionCtx(engine, numOfUpdateThreads);
         }
     }

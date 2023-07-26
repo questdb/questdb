@@ -31,9 +31,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TrickTableReloadTest extends AbstractGriffinTest {
+
     @Test
     public void testSymbolAddAndReaderReload() throws SqlException {
-        compiler.compile("create table x (a int, b int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+        ddl("create table x (a int, b int, ts timestamp) timestamp(ts) partition by DAY");
 
         getWriter("x").close();
         engine.releaseAllWriters();

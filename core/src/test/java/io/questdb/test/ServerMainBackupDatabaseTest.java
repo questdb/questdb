@@ -44,7 +44,6 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -141,7 +140,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompilerImpl defaultCompiler = new SqlCompilerImpl(qdb.getEngine());
+                    SqlCompiler defaultCompiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();

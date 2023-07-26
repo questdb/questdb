@@ -29,7 +29,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.*;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
@@ -2722,7 +2722,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             ddl("create table test (col_a int, col_b long)");
             alter("alter table test drop column col_a");
-            alter( "alter table test add column col_a long");
+            alter("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -3056,45 +3056,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
         return pathElements[pathElements.length - 1];
     }
 
-    private void playText(
-            CairoEngine engine,
-            TextLoader textLoader,
-            String text,
-            final int firstBufSize,
-            String expected,
-            ByteManipulator manipulator,
-            CharSequence expectedMetadata,
-            long expectedParsedLineCount,
-            long expectedWrittenLineCount,
-            boolean skipLinesWithExtraValues
-    ) throws Exception {
-        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
-        boolean forceHeader = textLoader.isForceHeaders();
-        byte delimiter = textLoader.getColumnDelimiter();
-        playText0(textLoader, text, firstBufSize, manipulator);
-        sink.clear();
-        textLoader.getMetadata().toJson(sink);
-        TestUtils.assertEquals(expectedMetadata, sink);
-        Assert.assertEquals("parsed line count", expectedParsedLineCount, textLoader.getParsedLineCount());
-        Assert.assertEquals("written line count", expectedWrittenLineCount, textLoader.getWrittenLineCount());
-        assertTable(expected);
-        textLoader.clear();
-
-        try (TableWriter writer = getWriter(engine, "test")) {
-            writer.truncate();
-        }
-
-        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
-        textLoader.setForceHeaders(forceHeader);
-        if (delimiter > 0) {
-            textLoader.configureColumnDelimiter(delimiter);
-        }
-        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        playText0(textLoader, text, firstBufSize, manipulator);
-        assertTable(expected);
-        textLoader.clear();
-    }
-
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws TextException {
         byte[] bytes = text.getBytes(Files.UTF_8);
         int len = bytes.length;
@@ -3196,11 +3157,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
-    protected void assertTable(String expected) throws SqlException {
-        refreshTablesInBaseEngine();
-        assertSql("test", expected);
-    }
-
     private void assertTimestampAsLong(String nominatedTimestamp, String expectedMeta) throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
@@ -3216,8 +3172,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
-
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table test(StrSym symbol, ts timestamp) " + nominatedTimestamp, sqlExecutionContext);
                 engine.releaseAllWriters();
             }
@@ -3231,7 +3186,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 "CMP1\t1970-04-26T17:46:40.000002Z\n" +
                                 "CMP2\t1970-04-26T17:46:40.000003Z\n" +
                                 "CMP1\t1970-04-26T17:46:40.000004Z\n";
-
 
                         String csv = "StrSym,ts\n" +
                                 "CMP1,10000000000000\n" +
@@ -3461,6 +3415,45 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void playText(
+            CairoEngine engine,
+            TextLoader textLoader,
+            String text,
+            final int firstBufSize,
+            String expected,
+            ByteManipulator manipulator,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues
+    ) throws Exception {
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        boolean forceHeader = textLoader.isForceHeaders();
+        byte delimiter = textLoader.getColumnDelimiter();
+        playText0(textLoader, text, firstBufSize, manipulator);
+        sink.clear();
+        textLoader.getMetadata().toJson(sink);
+        TestUtils.assertEquals(expectedMetadata, sink);
+        Assert.assertEquals("parsed line count", expectedParsedLineCount, textLoader.getParsedLineCount());
+        Assert.assertEquals("written line count", expectedWrittenLineCount, textLoader.getWrittenLineCount());
+        assertTable(expected);
+        textLoader.clear();
+
+        try (TableWriter writer = getWriter(engine, "test")) {
+            writer.truncate();
+        }
+
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        textLoader.setForceHeaders(forceHeader);
+        if (delimiter > 0) {
+            textLoader.configureColumnDelimiter(delimiter);
+        }
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+        playText0(textLoader, text, firstBufSize, manipulator);
+        assertTable(expected);
+        textLoader.clear();
+    }
+
+    private void playText(
             TextLoader textLoader,
             String text,
             final int firstBufSize,
@@ -3526,6 +3519,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 expectedWrittenLineCount,
                 skipLinesWithExtraValues
         );
+    }
+
+    protected void assertTable(String expected) throws SqlException {
+        refreshTablesInBaseEngine();
+        assertSql("test", expected);
     }
 
     @FunctionalInterface

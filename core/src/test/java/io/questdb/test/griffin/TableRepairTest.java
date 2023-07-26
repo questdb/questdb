@@ -37,17 +37,13 @@ public class TableRepairTest extends AbstractGriffinTest {
 
     @Test
     public void testDeleteActivePartition() throws Exception {
-
         // this delete partition actually deletes files, simulating manual intervention
-
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY",
-                    sqlExecutionContext
-            );
-            engine.releaseAllWriters();
-            try (TableReader reader = newTableReader(configuration, "tst")) {
+            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
+            engine.releaseAllWriters();
+
+            try (TableReader reader = newTableReader(configuration, "tst")) {
                 Assert.assertEquals(100000, reader.size());
 
                 // last and "active" partition is "1970-01-12"
@@ -82,11 +78,10 @@ public class TableRepairTest extends AbstractGriffinTest {
     public void testDeletePartitionInTheMiddle() throws Exception {
         // this delete partition actually deletes files, simulating manual intervention
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY",
-                    sqlExecutionContext
-            );
+            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+
             engine.releaseAllWriters();
+
             try (TableReader reader = newTableReader(configuration, "tst")) {
 
                 Assert.assertEquals(100000, reader.size());
