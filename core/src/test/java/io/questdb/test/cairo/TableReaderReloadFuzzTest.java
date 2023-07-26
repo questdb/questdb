@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -87,7 +88,10 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
             row.append();
             writer.commit();
 
-            try (TableReader reader = newTableReader(configuration, tableName)) {
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    TableReader reader = newTableReader(configuration, tableName)
+            ) {
                 TestUtils.printSql(compiler, sqlExecutionContext, tableName, sink);
 
                 for (int i = 0; i < 64; i++) {

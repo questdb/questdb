@@ -289,7 +289,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(ff, () -> {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
-                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }

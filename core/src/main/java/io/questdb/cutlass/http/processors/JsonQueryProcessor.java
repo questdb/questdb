@@ -41,7 +41,6 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -68,16 +67,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, workerCount, null, null);
+        this(configuration, engine, workerCount, workerCount);
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent
+            int sharedWorkerCount
     ) {
         this(
                 configuration,

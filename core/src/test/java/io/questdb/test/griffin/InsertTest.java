@@ -479,7 +479,7 @@ public class InsertTest extends AbstractGriffinTest {
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertOperation insertOperation = cq.getInsertOperation();
 
-                compile("alter table balances drop column ccy", sqlExecutionContext);
+                alter("alter table balances drop column ccy", sqlExecutionContext);
 
                 insertOperation.createMethod(sqlExecutionContext);
                 Assert.fail();

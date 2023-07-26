@@ -27,10 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
@@ -1587,7 +1584,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableInVolumeFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compile("create table tst0 (" +
+                alter("create table tst0 (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
@@ -4843,12 +4840,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testLexerReset() {
         for (int i = 0; i < 10; i++) {
             try {
-                compiler.compile("select \n" +
-                        "-- ltod(Date)\n" +
-                        "count() \n" +
-                        "-- from acc\n" +
-                        "from acc(Date) sample by 1d\n" +
-                        "-- where x = 10\n", sqlExecutionContext);
+                fact(
+                        "select \n" +
+                                "-- ltod(Date)\n" +
+                                "count() \n" +
+                                "-- from acc\n" +
+                                "from acc(Date) sample by 1d\n" +
+                                "-- where x = 10\n"
+                );
                 Assert.fail();
             } catch (SqlException e) {
                 // we now allow column reference from SQL although column access will fail
@@ -4948,7 +4947,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMissingWhere() {
         try {
-            compiler.compile("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
+            fact("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -7542,7 +7541,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
                             CreateTableTestUtils.create(tableModels[i]);
                         }
-                        compiler.compile("select * from tab", sqlExecutionContext);
+                        fact("select * from tab");
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
@@ -7676,8 +7675,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) compiler.testCompileModel(b, sqlExecutionContext);
-        Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            QueryModel st = (QueryModel) compiler.testCompileModel(b, sqlExecutionContext);
+            Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
+        }
     }
 
     @Test
@@ -7691,7 +7692,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try {
-            compiler.compile(b, sqlExecutionContext);
+            fact(b);
+            Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }

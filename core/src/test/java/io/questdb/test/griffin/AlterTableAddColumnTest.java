@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractGriffinTest;
@@ -49,7 +50,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add mycol int not null, mycol2 int", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add mycol int not null, mycol2 int", sqlExecutionContext).getType());
 
                     assertQueryPlain(
                             "c\tmycol\tmycol2\n" +
@@ -118,7 +119,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compile("alter table x add column xx int", sqlExecutionContext);
+                    alter("alter table x add column xx int", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -137,7 +138,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column mycol int", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column mycol int", sqlExecutionContext).getType());
 
                     assertQueryPlain(
                             "c\tmycol\n" +
@@ -164,7 +165,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     createX();
 
                     try {
-                        compile("alter table x add column D int", sqlExecutionContext);
+                        alter("alter table x add column D int", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "column 'D' already exists");
@@ -205,7 +206,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column \"mycol\" int not null", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column \"mycol\" int not null", sqlExecutionContext).getType());
 
                     assertQueryPlain(
                             "c\tmycol\n" +
@@ -231,7 +232,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add \"spa ce\" string", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add \"spa ce\" string", sqlExecutionContext).getType());
 
                     assertQueryPlain(
                             "c\tspa ce\n" +
@@ -283,7 +284,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add mycol int not null", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add mycol int not null", sqlExecutionContext).getType());
 
                     assertQueryPlain(
                             "c\tmycol\n" +
@@ -309,7 +310,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add mycol int null", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add mycol int null", sqlExecutionContext).getType());
 
                     assertQueryPlain(
                             "c\tmycol\n" +
@@ -398,7 +399,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column meh symbol capacity 2048", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column meh symbol capacity 2048", sqlExecutionContext).getType());
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -454,7 +455,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column meh symbol index", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column meh symbol index", sqlExecutionContext).getType());
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -474,7 +475,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column meh symbol index capacity 9000", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column meh symbol index capacity 9000", sqlExecutionContext).getType());
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -500,7 +501,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column meh symbol nocache", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column meh symbol nocache", sqlExecutionContext).getType());
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -521,7 +522,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     createX();
                     engine.clear();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column meh symbol;", sqlExecutionContext).getType());
 
                     try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -579,36 +580,29 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createX();
-
                     engine.clear();
 
-                    CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                        @Override
-                        public boolean getDefaultSymbolCacheFlag() {
-                            return true;
+                    try (
+                            CairoEngine engine = new CairoEngine(configuration, metrics);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
+                        Assert.assertEquals(ALTER, cc.getType());
+                        cc.execute(null).await();
+
+                        try (TableReader reader = getReader("x")) {
+                            SymbolMapReader smr = reader.getSymbolMapReader(16);
+                            Assert.assertNotNull(smr);
+                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                            //check that both configuration and new column have cached  == true
+                            Assert.assertTrue(engine.getConfiguration().getDefaultSymbolCacheFlag());
+                            Assert.assertTrue(smr.isCached());
                         }
-                    };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
-                        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                            CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
-                            Assert.assertEquals(ALTER, cc.getType());
-                            cc.execute(null).await();
-
-                            try (TableReader reader = getReader("x")) {
-                                SymbolMapReader smr = reader.getSymbolMapReader(16);
-                                Assert.assertNotNull(smr);
-                                Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                                Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                                Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                                //check that both configuration and new column have cached  == true
-                                Assert.assertTrue(engine.getConfiguration().getDefaultSymbolCacheFlag());
-                                Assert.assertTrue(smr.isCached());
-                            }
-
-                            Assert.assertEquals(0, engine.getBusyWriterCount());
-                            Assert.assertEquals(0, engine.getBusyReaderCount());
-                        }
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
                     }
                 }
         );
@@ -620,7 +614,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column mycol int, second symbol", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column mycol int, second symbol").getType());
                     assertQueryPlain(
                             "c\tmycol\tsecond\n" +
                                     "XYZ\tNaN\t\n" +
@@ -650,8 +644,8 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add column mycol int; \n", sqlExecutionContext).getType());
-                    Assert.assertEquals(ALTER, compile("alter table x add column second symbol;", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column mycol int; \n", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x add column second symbol;", sqlExecutionContext).getType());
                     assertQueryPlain(
                             "c\tmycol\tsecond\n" +
                                     "XYZ\tNaN\t\n" +
@@ -699,7 +693,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compile(sql, sqlExecutionContext);
+                alter(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -709,7 +703,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     private void createX() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -729,8 +723,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp);",
-                sqlExecutionContext
+                        ") timestamp (timestamp);"
         );
     }
 }

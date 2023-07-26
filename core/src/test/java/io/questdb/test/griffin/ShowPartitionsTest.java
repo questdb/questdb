@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
@@ -225,7 +226,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable(tabName, sqlExecutionContext);
             try {
-                compile("SHOW PARTITIONS FROM " + tabName + " WHERE active=true", sqlExecutionContext);
+                alter("SHOW PARTITIONS FROM " + tabName + " WHERE active=true", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [WHERE]");
@@ -239,7 +240,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(tableName, sqlExecutionContext);
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -267,7 +268,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                             "NaN\tMONTH\t2023-03.attachable\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\n" +
                             "NaN\tMONTH\t2023-04.attachable\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\n",
                     tableName);
-            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -291,7 +292,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName, sqlExecutionContext);
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -313,7 +314,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName, sqlExecutionContext);
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -335,7 +336,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName, sqlExecutionContext);
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -357,8 +358,8 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName, sqlExecutionContext);
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
-            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2023-06'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '2023-06'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -414,7 +415,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName, sqlExecutionContext);
-            compile("CREATE TABLE partitions AS (SELECT * FROM table_partitions('" + tableName + "'))", sqlExecutionContext);
+            alter("CREATE TABLE partitions AS (SELECT * FROM table_partitions('" + tableName + "'))", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -603,8 +604,10 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                 }
             });
         }
-        try (OperationFuture create = compiler.compile(createTable, context).execute(null)) {
-            create.await();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (OperationFuture create = compiler.compile(createTable, context).execute(null)) {
+                create.await();
+            }
         }
         if (isWal) {
             drainWalQueue();

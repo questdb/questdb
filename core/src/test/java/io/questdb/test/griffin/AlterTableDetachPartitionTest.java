@@ -355,7 +355,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         4);
 
                 String timestampDay = "2022-06-02";
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 renameDetachedToAttachable(tableName, timestampDay);
 
@@ -400,7 +400,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         4);
 
                 String timestampDay = "2022-06-02";
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 renameDetachedToAttachable(tableName, timestampDay);
 
@@ -516,7 +516,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 );
 
                 // drop the partition
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
                 engine.clear();
@@ -830,14 +830,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         assertContent(expected, tableName);
 
                         engine.clear();
-                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                         renameDetachedToAttachable(tableName, "2022-06-01");
-                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
                         engine.clear();
-                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                         renameDetachedToAttachable(tableName, "2022-06-01");
-                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
                         assertContent(expected, tableName);
                     }
@@ -878,14 +878,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
                 );
-                compiler.compile(
-                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                        sqlExecutionContext
-                );
+                ddl("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
                 engine.clear();
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
-                compile("ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'");
+                alter("ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '" + timestampDay + "'");
 
                 engine.clear();
                 TableToken tableToken = engine.verifyTableName(brokenTableName);
@@ -963,7 +960,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         3
                 );
 
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
                         "could not attach partition [table=tabDetachAttachNotAttachable, detachStatus=ATTACH_ERR_MISSING_PARTITION"
@@ -987,7 +984,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         "2022-06-01",
                         3
                 );
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
 
                 // remove _meta.detached simply prevents metadata checking, all else is the same
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -1001,7 +998,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 path.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 Assert.assertTrue(Files.remove(path));
                 renameDetachedToAttachable(tableName, "2022-06-01", "2022-06-02");
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
                         "ts\ts1\ti\tl\ts2\n" +
                                 "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
@@ -1184,18 +1181,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                         try (TableReader ignore = getReader(token)) {
                             // Split partition by committing O3 to "2022-06-01"
-                            compile("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
+                            alter("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
 
                             //noinspection resource
                             Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
                             FilesFacade ff = configuration.getFilesFacade();
                             Assert.assertTrue(ff.exists(path.$()));
 
-                            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                            alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                         }
 
                         renameDetachedToAttachable(tableName, "2022-06-01");
-                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                         assertSql("select min(ts) from " + tableName, "min\n" +
                                 "2022-06-01T00:02:52.799000Z\n");
                     }
@@ -1254,7 +1251,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
 
                 renameDetachedToAttachable(tableName, timestampDay);
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 // attach the partition
                 assertContent(
@@ -1305,10 +1302,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
                 );
-                compiler.compile(
-                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                        sqlExecutionContext
-                );
+                ddl("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
@@ -1383,10 +1377,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
                 );
-                compiler.compile(
-                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                        sqlExecutionContext
-                );
+                ddl("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
@@ -1464,10 +1455,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         tableToken2.getDirName()
                 );
 
-                compiler.compile(
-                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                        sqlExecutionContext
-                );
+                ddl("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
                 String expected = "l\ti\ts\tts\n" +
                         "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
@@ -1539,7 +1527,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
                 }
                 renameDetachedToAttachable(tableName, timestampDay);
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\n" +
                                 "1\t1\t2022-06-01T19:11:59.800000Z\n" +
@@ -1600,7 +1588,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 );
 
                 // detach the partition
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
@@ -1645,7 +1633,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 renameDetachedToAttachable(tableName, timestampDay);
 
                 // reattach old version
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
                                 "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
@@ -1714,7 +1702,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 renameDetachedToAttachable(tableName, timestampDay);
 
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
                                 "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
@@ -1761,7 +1749,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 renameDetachedToAttachable(tableName, timestampDay);
 
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
                                 "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
@@ -1812,7 +1800,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 renameDetachedToAttachable(tableName, timestampDay);
 
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
                                 "33\t33\t2022-06-01T00:00:00.000000Z\tNaN\n" +
@@ -1869,7 +1857,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 renameDetachedToAttachable(tableName, timestampDay);
 
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
                                 "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
@@ -1922,7 +1910,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 );
 
                 // drop the partition
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
                 engine.clear();
@@ -2075,7 +2063,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         .col("l", ColumnType.LONG)
                 );
                 try {
-                    compile("ALTER TABLE tab0 DETACH PARTITION LIST '2022-06-27'", sqlExecutionContext);
+                    alter("ALTER TABLE tab0 DETACH PARTITION LIST '2022-06-27'", sqlExecutionContext);
                     Assert.fail();
                 } catch (AssertionError e) {
                     Assert.assertEquals(-1, tab.getTimestampIndex());
@@ -2261,19 +2249,19 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 TableUtils.createTable(configuration, mem, path, brokenMetaTransform.apply(brokenMeta), brokenMetaId,
                         registerTableName(brokenMeta.getTableName()).getDirName());
                 if (insertStmt != null) {
-                    compile(insertStmt, sqlExecutionContext);
+                    alter(insertStmt, sqlExecutionContext);
                 }
                 if (finalStmt != null) {
-                    compile(finalStmt, sqlExecutionContext);
+                    alter(finalStmt, sqlExecutionContext);
                 }
 
                 // detach partitions and override detached metadata with broken metadata
                 engine.clear();
-                compile(
+                alter(
                         "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-02'",
                         sqlExecutionContext
                 );
-                compile(
+                alter(
                         "ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '2022-06-02'",
                         sqlExecutionContext
                 );
@@ -2353,7 +2341,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     private void assertFailure(String operation, String errorMsg) {
         try {
-            compile(operation, sqlExecutionContext);
+            alter(operation, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException | CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), errorMsg);
@@ -2369,7 +2357,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, other));
         // drop the latest version of the partition
-        compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+        alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
     }

@@ -1697,7 +1697,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
         if (ioPool == writerPool) {
-            O3Utils.setupWorkerPool(ioPool, engine, null, null);
+            O3Utils.setupWorkerPool(ioPool, engine, null);
         }
         ioPool.start(LOG);
         if (ioPool != writerPool) {

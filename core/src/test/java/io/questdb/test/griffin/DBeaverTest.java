@@ -113,8 +113,8 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListColumns() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz(a int, t timestamp)", sqlExecutionContext);
-            compiler.compile("create table tab2(b long, z binary)", sqlExecutionContext);
+            ddl("create table xyz(a int, t timestamp)");
+            ddl("create table tab2(b long, z binary)");
 
             assertQuery12(
                     "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
@@ -141,8 +141,8 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListTables() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz(a int)", sqlExecutionContext);
-            compiler.compile("create table tab2(b long)", sqlExecutionContext);
+            ddl("create table xyz(a int)");
+            ddl("create table tab2(b long)");
             assertQuery12(
                     "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
                             "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +

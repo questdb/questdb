@@ -37,7 +37,7 @@ public class CharGroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
         sqlExecutionContext.setRandom(new Rnd());
-        compiler.compile("create table tab as ( select rnd_char() ch from long_sequence(100) )", sqlExecutionContext);
+        ddl("create table tab as ( select rnd_char() ch from long_sequence(100) )");
 
         assertSql("select min(ch) from tab",
                 "min\n" +

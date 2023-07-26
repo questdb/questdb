@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.*;
-import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
@@ -104,7 +103,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static int pageFrameReduceShardCount = -1;
     protected static int queryCacheEventQueueCapacity = -1;
     protected static SecurityContext securityContext;
-    protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static int sqlCopyBufferSize = 1024 * 1024;
@@ -198,7 +196,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
-        snapshotAgent = node1.getSnapshotAgent();
         messageBus = node1.getMessageBus();
     }
 
@@ -542,7 +539,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void runWalPurgeJob(FilesFacade ff) {
         try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
-            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+            engine.setWalPurgeJobRunLock(job.getRunLock());
             job.drain(0);
         }
     }

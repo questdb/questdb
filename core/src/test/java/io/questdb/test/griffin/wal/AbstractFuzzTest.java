@@ -31,6 +31,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
@@ -179,13 +180,15 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     private static void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
         long randomRow = rnd.nextLong(recordCount);
         sink.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
-        String prefix = "a\n";
-        String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
-        String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
-        LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
-        String limit = ""; // For debugging
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
+            String prefix = "a\n";
+            String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
+            String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+            LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
+            String limit = ""; // For debugging
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
+        }
     }
 
     private static void checkNoSuspendedTables(int tableId, TableToken tableName, long lastTxn) {
@@ -636,7 +639,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
             }
 
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
@@ -650,19 +653,20 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 long endWalMicro = System.nanoTime() / 1000;
                 long walTotal = endWalMicro - endNonWalMicro;
 
-                String limit = "";
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    String limit = "";
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                    assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
 
-                startMicro = System.nanoTime() / 1000;
-                applyWalParallel(transactions, tableNameWal2, rnd);
-                endWalMicro = System.nanoTime() / 1000;
-                long totalWalParallel = endWalMicro - startMicro;
+                    startMicro = System.nanoTime() / 1000;
+                    applyWalParallel(transactions, tableNameWal2, rnd);
+                    endWalMicro = System.nanoTime() / 1000;
+                    long totalWalParallel = endWalMicro - startMicro;
 
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
-
-                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                    assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+                    LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+                }
             } finally {
                 sharedWorkerPool.halt();
             }
@@ -706,7 +710,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
             // Can help to reduce memory consumption.
             engine.releaseInactive();
 
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
             try {
                 applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true);
@@ -716,13 +720,15 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
             checkNoSuspendedTables(new ObjHashSet<>());
 
-            for (int i = 0; i < tableCount; i++) {
-                String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
-                String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
-                LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
-                String limit = "";
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (int i = 0; i < tableCount; i++) {
+                    String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
+                    String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
+                    LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
+                    String limit = "";
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                    assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                }
             }
         });
     }

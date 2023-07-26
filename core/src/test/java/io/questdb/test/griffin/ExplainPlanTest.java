@@ -1642,7 +1642,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         ObjList<Function> args = new ObjList<>();
         IntList argPositions = new IntList();
 
-        FunctionFactoryCache cache = compiler.getFunctionFactoryCache();
+        FunctionFactoryCache cache = engine.getFunctionFactoryCache();
         LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
         factories.forEach((key, value) -> {
             for (int i = 0, n = value.size(); i < n; i++) {
@@ -4803,7 +4803,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         //if query is ordered by symbol and there's only one partition to scan, there's no need to sort   
         testSelectIndexedSymbol("");
         testSelectIndexedSymbol("timestamp(ts)");
-        testSelectIndexedSymbolWithIntervalFilter("timestamp(ts) partition by day");
+        testSelectIndexedSymbolWithIntervalFilter();
     }
 
     @Test
@@ -7002,10 +7002,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    private void testSelectIndexedSymbolWithIntervalFilter(String timestampAndPartitionByClause) throws Exception {
+    private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
-            compile("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
+            compile("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
             compile("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";

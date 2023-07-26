@@ -41,7 +41,6 @@ public class CopyNoMangleTest extends AbstractGriffinTest {
         configOverrideMangleTableDirNames(false);
 
         node1.initGriffin(circuitBreaker);
-        compiler = node1.getSqlCompiler();
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
     }

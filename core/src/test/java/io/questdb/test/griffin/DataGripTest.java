@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory;
 import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -99,16 +98,13 @@ public class DataGripTest extends AbstractGriffinTest {
     @Test
     public void testGetTxId() throws Exception {
         assertMemoryLeak(
-                () -> TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                () -> assertSql(
                         "select case\n" +
                                 "  when pg_catalog.pg_is_in_recovery()\n" +
                                 "    then null\n" +
                                 "  else\n" +
                                 "    pg_catalog.txid_current()::varchar::bigint\n" +
                                 "  end as current_txid",
-                        sink,
                         "current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
                 )
         );
@@ -117,7 +113,7 @@ public class DataGripTest extends AbstractGriffinTest {
     @Test
     public void testLowerCaseCount() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
+            ddl("create table y as (select x from long_sequence(10))");
             assertSql(
                     "select COUNT(*) from y",
                     "count\n" +
@@ -190,7 +186,7 @@ public class DataGripTest extends AbstractGriffinTest {
     @Test
     public void testUpperCaseCount() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
+            ddl("create table y as (select x from long_sequence(10))");
             assertSql(
                     "select COUNT(*) from y",
                     "count\n" +

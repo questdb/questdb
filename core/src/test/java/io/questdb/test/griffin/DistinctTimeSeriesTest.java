@@ -24,20 +24,15 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class DistinctTimeSeriesTest extends AbstractGriffinTest {
 
-    private static final Log LOG = LogFactory.getLog(DistinctTimeSeriesTest.class);
-
     @Test
     public void testAllTypes() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -59,28 +54,21 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                             " rnd_char() t," +
                             " CAST(now() as LONG256) l256" + // Semi-random to not change saved txt file result
                             " from long_sequence(500)" +
-                            ") timestamp (ts) partition by DAY",
-                    sqlExecutionContext);
+                            ") timestamp (ts) partition by DAY");
 
             // create a copy of 'x' as our expected result set
-            compiler.compile("create table y as (select * from x)", sqlExecutionContext);
+            ddl("create table y as (select * from x)");
 
             // copy 'x' into itself, thus duplicating every row
-            compiler.compile("insert into x select * from x", sqlExecutionContext);
+            ddl("insert into x select * from x");
 
-            TestUtils.assertSqlCursors(
-                    compiler,
-                    sqlExecutionContext,
+            assertSqlCursors(
                     "y",
-                    "select distinct * from x",
-                    LOG
+                    "select distinct * from x"
             );
 
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
+            assertSql(
                     "select distinct * from x where 1 != 1",
-                    sink,
                     "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n"
             );
         });
@@ -117,7 +105,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
     @Test
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -139,14 +127,11 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                             " rnd_char() t," +
                             " CAST(now() as LONG256) l256" + // Semi-random to not change saved txt file result
                             " from long_sequence(0)" +
-                            ") timestamp (ts) partition by DAY",
-                    sqlExecutionContext);
+                            ") timestamp (ts) partition by DAY"
+            );
 
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
+            assertSql(
                     "select distinct * from x",
-                    sink,
                     "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n"
             );
         });

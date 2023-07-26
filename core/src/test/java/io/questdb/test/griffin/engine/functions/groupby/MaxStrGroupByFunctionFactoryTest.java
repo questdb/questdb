@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import org.junit.Assert;
@@ -127,15 +128,17 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearNotSupported() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))", sqlExecutionContext);
-            try (
-                    final RecordCursorFactory factory = compiler.compile("select ts, avg(i), max(s) from x sample by 1s fill(linear)", sqlExecutionContext).getRecordCursorFactory();
-                    final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-            ) {
-                cursor.hasNext();
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MaxStrGroupByFunction", e.getMessage());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))", sqlExecutionContext);
+                try (
+                        final RecordCursorFactory factory = compiler.compile("select ts, avg(i), max(s) from x sample by 1s fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                        final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    cursor.hasNext();
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MaxStrGroupByFunction", e.getMessage());
+                }
             }
         });
     }

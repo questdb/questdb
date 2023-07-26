@@ -245,7 +245,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         if (tenant != null) {
             tenant.goodbye();
             tenant.close();
-            LOG.debug().$("closed '").utf8(tenant.getTableToken().getDirName())
+            LOG.info().$("closed '").utf8(tenant.getTableToken().getDirName())
                     .$("' [at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();

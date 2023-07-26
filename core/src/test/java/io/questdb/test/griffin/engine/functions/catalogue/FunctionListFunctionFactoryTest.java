@@ -29,7 +29,6 @@ import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -45,18 +44,13 @@ public class FunctionListFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testFunctions() throws Exception {
-        TestUtils.printSql(compiler, sqlExecutionContext, "functions()", sink);
+        printSql("functions()");
         Assert.assertEquals(expectedFunctions(), extractFunctionsFromSink());
     }
 
     @Test
     public void testFunctionsWithFilter() throws Exception {
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "SELECT name FROM (SELECT name, count(name) FROM functions() GROUP BY name, type ORDER BY name)",
-                sink
-        );
+        printSql("SELECT name FROM (SELECT name, count(name) FROM functions() GROUP BY name, type ORDER BY name)");
         Assert.assertEquals(expectedFunctionNames(), extractFunctionNamesFromSink());
     }
 

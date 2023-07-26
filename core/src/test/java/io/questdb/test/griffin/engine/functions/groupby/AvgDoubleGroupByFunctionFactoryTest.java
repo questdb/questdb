@@ -41,7 +41,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAllWithInfinity() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));", sqlExecutionContext);
+            ddl("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
             assertSql(
                     "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2",
                     "sum\tavg\tmax\tmin\tksum\tnsum\tstddev_samp\n" +
@@ -53,7 +53,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAvgWithInfinity() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));", sqlExecutionContext);
+            ddl("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
             assertSql(
                     "select avg(1/val) from test2",
                     "avg\n1.0\n"
@@ -64,7 +64,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInterpolatedAvg() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table fill_options(ts timestamp, price int) timestamp(ts);", sqlExecutionContext);
+            ddl("create table fill_options(ts timestamp, price int) timestamp(ts);");
             executeInsert("insert into fill_options values(to_timestamp('2020-01-01:10:00:00', 'yyyy-MM-dd:HH:mm:ss'), 1);");
             executeInsert("insert into fill_options values(to_timestamp('2020-01-01:11:00:00', 'yyyy-MM-dd:HH:mm:ss'), 2);");
             executeInsert("insert into fill_options values(to_timestamp('2020-01-01:12:00:00', 'yyyy-MM-dd:HH:mm:ss'), 3);");

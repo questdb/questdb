@@ -35,11 +35,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     public void testCeilInvalidKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile(
-                        "select timestamp_ceil('o', null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
+                fail("select timestamp_ceil('o', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains("invalid unit 'o'", e.getFlyweightMessage());
@@ -51,11 +47,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     public void testCeilNullKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile(
-                        "select timestamp_ceil(null, null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
+                fail("select timestamp_ceil(null, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
@@ -67,11 +59,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     public void testFloorEmptyStrKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile(
-                        "select timestamp_floor('', null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
+                fail("select timestamp_floor('', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
                 TestUtils.assertContains("invalid unit ''", e.getFlyweightMessage());
@@ -83,11 +71,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     public void testFloorInvalidKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile(
-                        "select timestamp_floor('z', null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
+                fail("select timestamp_floor('z', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
                 TestUtils.assertContains("invalid unit 'z'", e.getFlyweightMessage());
@@ -99,19 +83,13 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     public void testFloorInvalidMinutesKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile(
-                        "select timestamp_floor('-3m', null)",
-                        sqlExecutionContext
-                );
+                fail("select timestamp_floor('-3m', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
                 TestUtils.assertContains("invalid unit '-3m'", e.getFlyweightMessage());
             }
             try {
-                compiler.compile(
-                        "select timestamp_floor('0Y', null)",
-                        sqlExecutionContext
-                );
+                fail("select timestamp_floor('0Y', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
                 TestUtils.assertContains("invalid unit '0Y'", e.getFlyweightMessage());
@@ -123,11 +101,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     public void testFloorNullKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile(
-                        "select timestamp_floor(null, null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
+                fail("select timestamp_floor(null, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
                 TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
@@ -137,9 +111,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertMemoryLeak(() -> assertSql(
                 "with t as (\n" +
                         "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
                         ")\n" +
@@ -164,7 +136,6 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                         "  , timestamp_floor('y', ts) f_year\n" +
                         "  , timestamp_floor('y', null) f_null\n" +
                         "  from t\n",
-                sink,
                 "ts\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_week\tc_year\tc_null\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_week\tf_year\tf_null\n" +
                         "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n"
         ));
@@ -172,9 +143,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleFloorWithStride() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertMemoryLeak(() -> assertSql(
                 "with t as (\n" +
                         "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
                         ")\n" +
@@ -187,7 +156,6 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                         "  , timestamp_floor('4d', ts) f_day\n" +
                         "  , timestamp_floor('3w', ts) f_week\n" +
                         "  from t\n",
-                sink,
                 "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
                         "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.850000Z\t2016-02-10T16:18:20.000000Z\t2016-02-10T16:15:00.000000Z\t2016-02-10T15:00:00.000000Z\t2016-02-09T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\n"
         ));

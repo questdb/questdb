@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
@@ -151,87 +152,89 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
 
     private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(createStatement, sqlExecutionContext);
-            final AtomicInteger errorCount = new AtomicInteger();
-            final CyclicBarrier barrier = new CyclicBarrier(2);
-            final CountDownLatch latch = new CountDownLatch(2);
-            TableToken tableToken = engine.verifyTableName("xyz");
-            new Thread(() -> {
-                try (TableWriter writer = getWriter(tableToken)) {
-                    barrier.await();
-                    long ts = 0;
-                    long addr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        Rnd rnd = new Rnd();
-                        for (int i = 0; i < n; i++) {
-                            if (errorCount.get() > 0) {
-                                // Reader already failed
-                                return;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile(createStatement, sqlExecutionContext);
+                final AtomicInteger errorCount = new AtomicInteger();
+                final CyclicBarrier barrier = new CyclicBarrier(2);
+                final CountDownLatch latch = new CountDownLatch(2);
+                TableToken tableToken = engine.verifyTableName("xyz");
+                new Thread(() -> {
+                    try (TableWriter writer = getWriter(tableToken)) {
+                        barrier.await();
+                        long ts = 0;
+                        long addr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            Rnd rnd = new Rnd();
+                            for (int i = 0; i < n; i++) {
+                                if (errorCount.get() > 0) {
+                                    // Reader already failed
+                                    return;
+                                }
+                                TableWriter.Row row = writer.newRow(ts);
+                                row.putInt(0, i);
+                                for (int k = 0; k < 128; k++) {
+                                    Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
+                                }
+                                row.putBin(1, addr, 128);
+                                row.putLong(2, rnd.nextLong());
+                                row.append();
+                                writer.commit();
+                                ts += timestampIncrement;
                             }
-                            TableWriter.Row row = writer.newRow(ts);
-                            row.putInt(0, i);
-                            for (int k = 0; k < 128; k++) {
-                                Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
-                            }
-                            row.putBin(1, addr, 128);
-                            row.putLong(2, rnd.nextLong());
-                            row.append();
-                            writer.commit();
-                            ts += timestampIncrement;
+                        } finally {
+                            Unsafe.free(addr, 128, MemoryTag.NATIVE_DEFAULT);
                         }
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCount.incrementAndGet();
                     } finally {
-                        Unsafe.free(addr, 128, MemoryTag.NATIVE_DEFAULT);
+                        latch.countDown();
                     }
-                } catch (Throwable e) {
-                    e.printStackTrace();
-                    errorCount.incrementAndGet();
-                } finally {
-                    latch.countDown();
-                }
-            }).start();
+                }).start();
 
-            new Thread(() -> {
-                try (TableReader reader = engine.getReader(tableToken)) {
-                    Rnd rnd = new Rnd();
-                    int count = 0;
-                    final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
-                    cursor.of(reader);
-                    final Record record = cursor.getRecord();
-                    barrier.await();
-                    while (count < n) {
-                        if (cursor.reload()) {
-                            while (cursor.hasNext()) {
-                                if (count != record.getInt(0)) {
-                                    errorCount.incrementAndGet();
-                                    StringSink ss = new StringSink();
-                                    ss.put("[");
-                                    for (int i = 0; i < reader.getPartitionCount(); i++) {
-                                        ss.put(reader.getPartitionRowCount(i));
-                                        ss.put(",");
+                new Thread(() -> {
+                    try (TableReader reader = engine.getReader(tableToken)) {
+                        Rnd rnd = new Rnd();
+                        int count = 0;
+                        final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
+                        cursor.of(reader);
+                        final Record record = cursor.getRecord();
+                        barrier.await();
+                        while (count < n) {
+                            if (cursor.reload()) {
+                                while (cursor.hasNext()) {
+                                    if (count != record.getInt(0)) {
+                                        errorCount.incrementAndGet();
+                                        StringSink ss = new StringSink();
+                                        ss.put("[");
+                                        for (int i = 0; i < reader.getPartitionCount(); i++) {
+                                            ss.put(reader.getPartitionRowCount(i));
+                                            ss.put(",");
+                                        }
+                                        ss.put("]:").put(reader.getTxn());
+                                        Assert.assertEquals(ss.toString(), count, record.getInt(0));
                                     }
-                                    ss.put("]:").put(reader.getTxn());
-                                    Assert.assertEquals(ss.toString(), count, record.getInt(0));
+                                    BinarySequence binarySequence = record.getBin(1);
+                                    for (int i = 0; i < 128; i++) {
+                                        Assert.assertEquals(rnd.nextByte(), binarySequence.byteAt(i));
+                                    }
+                                    Assert.assertEquals(rnd.nextLong(), record.getLong(2));
+                                    count++;
                                 }
-                                BinarySequence binarySequence = record.getBin(1);
-                                for (int i = 0; i < 128; i++) {
-                                    Assert.assertEquals(rnd.nextByte(), binarySequence.byteAt(i));
-                                }
-                                Assert.assertEquals(rnd.nextLong(), record.getLong(2));
-                                count++;
                             }
                         }
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCount.incrementAndGet();
+                    } finally {
+                        latch.countDown();
                     }
-                } catch (Throwable e) {
-                    e.printStackTrace();
-                    errorCount.incrementAndGet();
-                } finally {
-                    latch.countDown();
-                }
-            }).start();
+                }).start();
 
-            Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
-            Assert.assertEquals(0, errorCount.get());
-            Os.sleep(1000);
+                Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
+                Assert.assertEquals(0, errorCount.get());
+                Os.sleep(1000);
+            }
         });
     }
 
@@ -239,10 +242,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
-                    sqlExecutionContext
-            );
+            ddl("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
 
             TableToken tableToken = engine.verifyTableName("xyz");
             try (TableWriter writer = getWriter(tableToken)) {
@@ -296,7 +296,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            compile(
+            alter(
                     "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
                     sqlExecutionContext
             );

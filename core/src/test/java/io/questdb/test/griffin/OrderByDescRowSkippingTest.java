@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.std.IntList;
@@ -531,16 +532,17 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderByWithAlias() throws Exception {
         preparePartitionPerRowTableWithLongNames();
-
-        assertQuery6(
-                compiler,
-                "record_Type\tcre_on\n" + DATA,
-                "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
-                "cre_on###DESC",
-                sqlExecutionContext,
-                true,
-                false
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertQuery6(
+                    compiler,
+                    "record_Type\tcre_on\n" + DATA,
+                    "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
+                    "cre_on###DESC",
+                    sqlExecutionContext,
+                    true,
+                    false
+            );
+        }
     }
 
     @Test
@@ -838,8 +840,10 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
 
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
-            for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String query : queries) {
+                    compiler.compile(query, sqlExecutionContext);
+                }
             }
         });
     }

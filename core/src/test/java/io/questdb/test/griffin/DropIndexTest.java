@@ -28,10 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -77,7 +74,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ")" +
             ", INDEX(temperature CAPACITY 4) " +
             "TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
-    protected static SqlCompilerImpl compiler2;
+    protected static SqlCompiler compiler2;
     protected static SqlExecutionContext sqlExecutionContext2;
     private static Path path;
     private static int tablePathLen;
@@ -85,7 +82,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
-        compiler2 = new SqlCompilerImpl(engine, snapshotAgent);
+        compiler2 = engine.getSqlCompiler();
         sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(dirName);
@@ -212,7 +209,7 @@ public class DropIndexTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(noHardLinksFF, () -> {
-            compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            alter(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
                     1,
@@ -222,7 +219,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     indexBlockValueSize
             );
             try {
-                compile(dropIndexStatement(), sqlExecutionContext);
+                alter(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
@@ -255,7 +252,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @Test
     public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            alter(
                     "CREATE TABLE підрахунок AS (" +
                             "  select " +
                             "    rnd_symbol('K1', 'K2') колонка " +
@@ -286,7 +283,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @Test
     public void testDropIndexPreservesIndexFilesWhenThereIsATransactionReadingThem() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
-            compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            alter(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
                     1,
@@ -320,7 +317,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                             Assert.assertEquals(5, countDFiles(isIndexed ? 0L : 1L));
                             Assert.assertEquals(isIndexed ? 10 : 0, countIndexFiles(isIndexed ? 0L : 1L));
                             if (isIndexed) {
-                                compile(dropIndexStatement(), sqlExecutionContext);
+                                alter(dropIndexStatement(), sqlExecutionContext);
                             }
                         }
                     }
@@ -347,7 +344,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             Assert.assertEquals(0, countIndexFiles(1L));
 
             // clean after
-            compile("VACUUM TABLE sensors", sqlExecutionContext);
+            alter("VACUUM TABLE sensors", sqlExecutionContext);
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
@@ -366,7 +363,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @Test
     public void testDropIndexSimultaneously() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
-            compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            alter(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
                     1,
@@ -401,7 +398,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             // drop the index concurrently
             startBarrier.await();
             try {
-                compile(dropIndexStatement(), sqlExecutionContext);
+                alter(dropIndexStatement(), sqlExecutionContext);
                 endLatch.await();
                 // we didnt fail, check they did
                 Throwable fail = concurrentDropIndexFailure.get();
@@ -446,7 +443,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     @Test
     public void testDropIndexStructureOfTableAndColumnIncrease() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
-            compile(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
+            alter(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.DAY,
                     1,
@@ -639,7 +636,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 default:
                     Assert.fail("unsupported partitionBy type");
             }
-            compile(createStatement, sqlExecutionContext);
+            alter(createStatement, sqlExecutionContext);
             checkMetadataAndTxn(
                     partitionedBy,
                     1,
@@ -649,7 +646,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     indexBlockValueSize
             );
 
-            compile(dropIndexStatement(), sqlExecutionContext);
+            alter(dropIndexStatement(), sqlExecutionContext);
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
                     partitionedBy,

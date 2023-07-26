@@ -33,6 +33,7 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
@@ -1779,7 +1780,7 @@ if __name__ == "__main__":
     @Test
     public void testCancelOneQueryOutOfMultipleRunningOnes() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             final int THREADS = 5;
@@ -1841,7 +1842,7 @@ if __name__ == "__main__":
     @Test
     public void testCancelQueryThatReusesCircuitBreakerFromPreviousConnection() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             try (
@@ -1898,9 +1899,9 @@ if __name__ == "__main__":
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-            compiler.compile("create table if not exists tab as " +
-                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
-            compiler.compile("create table if not exists dest as (select x l from long_sequence(10000))", sqlExecutionContext);
+            ddl("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists dest as (select x l from long_sequence(10000))");
             mayDrainWalQueue();
 
             for (String query : queries) {
@@ -2161,11 +2162,9 @@ if __name__ == "__main__":
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
                 pstmt.execute();
             }
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
+
+            assertSql(
                     "t",
-                    sink,
                     "a\tb\n" +
                             "2\t1970-01-01T00:00:00.000001Z\n" +
                             "3\t1970-01-01T00:00:00.000002Z\n" +
@@ -2188,11 +2187,8 @@ if __name__ == "__main__":
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
                 pstmt.execute();
             }
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
+            assertSql(
                     "t",
-                    sink,
                     "a\tb\n" +
                             "2\t1970-01-01T00:00:00.000001Z\n" +
                             "3\t1970-01-01T00:00:00.000002Z\n" +
@@ -2268,11 +2264,8 @@ if __name__ == "__main__":
                     "    timestamp(b)")) {
                 pstmt.execute();
             }
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
+            assertSql(
                     "t",
-                    sink,
                     "a\tb\n"
             );
         });
@@ -2534,7 +2527,7 @@ if __name__ == "__main__":
     @Test
     public void testExtendedQueryTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
                 statement.execute();
                 Assert.fail();
@@ -2899,7 +2892,7 @@ if __name__ == "__main__":
     @Test
     public void testGroupByExpressionNotAppearingInSelectClause() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
                     sink.clear();
@@ -2912,7 +2905,7 @@ if __name__ == "__main__":
     @Test
     public void testGroupByExpressionNotAppearingInSelectClauseWhenTableIsEmpty() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table t1 ( s string );", sqlExecutionContext);
+            ddl("create table t1 ( s string );");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
                     sink.clear();
@@ -2925,7 +2918,7 @@ if __name__ == "__main__":
     @Test
     public void testGroupByExpressionWithBindVariableNotAppearingInSelectClause() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+?")) {
                 statement.setLong(1, 1);
                 try (ResultSet rs = statement.executeQuery()) {
@@ -3274,7 +3267,7 @@ if __name__ == "__main__":
     @Test
     public void testInsertAsSelectTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
-            compiler.compile("create table tab (d double)", sqlExecutionContext);
+            ddl("create table tab (d double)");
             try (final PreparedStatement statement = connection.prepareStatement(
                     "insert into tab select rnd_double() from long_sequence(1000);")) {
                 statement.execute();
@@ -3960,9 +3953,9 @@ nodejs code:
                         Assert.assertEquals(1, a[2]);
 
 
-                        compiler.compile("create table spot1 as (select * from test_batch)", sqlExecutionContext);
-                        compiler.compile("drop table test_batch", sqlExecutionContext);
-                        compiler.compile("rename table spot1 to test_batch", sqlExecutionContext);
+                        ddl("create table spot1 as (select * from test_batch)");
+                        ddl("drop table test_batch");
+                        ddl("rename table spot1 to test_batch");
 
                         batchInsert.setLong(1, 0L);
                         batchInsert.setInt(2, 1);
@@ -4971,7 +4964,7 @@ nodejs code:
                 ">5800000004\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x00 as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -4981,8 +4974,7 @@ nodejs code:
                             " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                             " rnd_double(2) d" +
                             " from long_sequence(10)" +
-                            ") timestamp (timestamp)",
-                    sqlExecutionContext
+                            ") timestamp (timestamp)"
             );
             try (
                     final PGWireServer server = createPGServer(new Port0PGWireConfiguration());
@@ -5431,9 +5423,7 @@ nodejs code:
             try (final PGWireServer server = createPGWireServer(
                     conf,
                     engine,
-                    workerPool,
-                    compiler.getFunctionFactoryCache(),
-                    snapshotAgent
+                    workerPool
             )) {
                 workerPool.start(LOG);
                 try {
@@ -5861,9 +5851,9 @@ nodejs code:
 
         for (String tsOption : tsOptions) {
             assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-                compiler.compile("drop table if exists tab", sqlExecutionContext);
-                compiler.compile("create table tab (s symbol index, ts timestamp) " + tsOption, sqlExecutionContext);
-                compiler.compile("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ", sqlExecutionContext);
+                ddl("drop table if exists tab");
+                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
+                ddl("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ");
                 drainWalQueue();
 
                 ResultProducer sameVal =
@@ -5971,13 +5961,13 @@ nodejs code:
     @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table table (" +
+            ddl("create table table (" +
                     "id symbol, " +
                     "timestamp timestamp) " +
-                    "timestamp(timestamp) partition by day", sqlExecutionContext);
-            compiler.compile("insert into table " +
+                    "timestamp(timestamp) partition by day");
+            ddl("insert into table " +
                     " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
-                    " from long_sequence(10000)", sqlExecutionContext);
+                    " from long_sequence(10000)");
 
             conn.setAutoCommit(false);
             String queryBase = "select * from table "
@@ -6215,7 +6205,7 @@ nodejs code:
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
+            ddl("create table tab as (select rnd_double() d from long_sequence(10000000))");
             try (
                     final PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6617,7 +6607,7 @@ nodejs code:
     @Test
     public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             try (
@@ -6866,7 +6856,7 @@ create table tab as (
      */
     public void testSelectAllTypesFromAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        compiler.compile("create table tab as (\n" +
+        ddl("create table tab as (\n" +
                 "    select\n" +
                 "        rnd_byte() b,\n" +
                 "        rnd_short() sh,\n" +
@@ -6883,7 +6873,7 @@ create table tab as (
                 "        rnd_timestamp(0, 1000, 0) ts,\n" +
                 "        rnd_bin() bin\n" +
                 "    from long_sequence(10)\n" +
-                ");\n", sqlExecutionContext
+                ");\n"
         );
 
         engine.releaseAllWriters();
@@ -7016,7 +7006,7 @@ create table tab as (
     public void testSelectBindVarsAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
-        compiler.compile("create table tab2 (a double);", sqlExecutionContext);
+        ddl("create table tab2 (a double);");
         executeInsert("insert into 'tab2' values (0.7);");
         executeInsert("insert into 'tab2' values (0.2);");
         engine.clear();
@@ -7060,7 +7050,7 @@ create table tab as (
     public void testSelectBindVarsInSelectAndWhereAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
-        compiler.compile("create table tab2 (a double);", sqlExecutionContext);
+        ddl("create table tab2 (a double);");
         executeInsert("insert into 'tab2' values (0.7);");
         executeInsert("insert into 'tab2' values (0.2);");
         engine.clear();
@@ -7219,7 +7209,7 @@ create table tab as (
     @Test
     public void testSimpleCountQueryTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select count(*) from t1 where s = 's10'");
                 Assert.fail();
@@ -7232,7 +7222,7 @@ create table tab as (
     @Test
     public void testSimpleGroupByQueryTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select s, count(*) from t1 group by s ");
                 Assert.fail();
@@ -7847,11 +7837,11 @@ create table tab as (
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
             // create and initialize table outside of PG wire
             // to ensure we do not collaterally initialize execution context on function parser
-            compiler.compile("CREATE TABLE x (\n" +
+            ddl("CREATE TABLE x (\n" +
                     "    ticker symbol index,\n" +
                     "    sample_time timestamp,\n" +
                     "    value int\n" +
-                    ") timestamp (sample_time) partition by YEAR", sqlExecutionContext);
+                    ") timestamp (sample_time) partition by YEAR");
             executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
             mayDrainWalQueue();
 
@@ -7974,7 +7964,7 @@ create table tab as (
     @Test
     public void testTimeoutIsPerPreparedStatement() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
                 statement.execute();
             }
@@ -7988,7 +7978,7 @@ create table tab as (
     @Test
     public void testTimeoutIsPerSimpleStatement() throws Exception {
         assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 200, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("insert into t1 select 's' || x from long_sequence(100)");
             }
@@ -9142,8 +9132,6 @@ create table tab as (
                 conf,
                 engine,
                 workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent,
                 createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry),
                 registry
         );
@@ -9161,7 +9149,7 @@ create table tab as (
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
+            ddl("create table xyz (" +
                             "a geohash(1b)," +
                             "b geohash(2b)," +
                             "c geohash(3b)," +
@@ -9169,8 +9157,7 @@ create table tab as (
                             "e geohash(2c)," +
                             "f geohash(4c)," +
                             "g geohash(8c)" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
 
             try (
@@ -9205,24 +9192,26 @@ create table tab as (
                     }
                     connection.commit();
 
-                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            final Record record = cursor.getRecord();
-                            int count = 0;
-                            while (cursor.hasNext()) {
-                                //TODO: bits GeoHash literal
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory();
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        final Record record = cursor.getRecord();
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            //TODO: bits GeoHash literal
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("0", 0), record.getGeoByte(0));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("01", 0), record.getGeoByte(1));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("010", 0), record.getGeoByte(2));
-                                Assert.assertEquals(GeoHashes.fromString("x", 0, 1), record.getGeoByte(3));
-                                Assert.assertEquals(GeoHashes.fromString("xy", 0, 2), record.getGeoShort(4));
-                                Assert.assertEquals(GeoHashes.fromString("xyzw", 0, 4), record.getGeoInt(5));
-                                Assert.assertEquals(GeoHashes.fromString("xyzwzvxq", 0, 8), record.getGeoLong(6));
-                                count++;
-                            }
-
-                            Assert.assertEquals(100, count);
+                            Assert.assertEquals(GeoHashes.fromString("x", 0, 1), record.getGeoByte(3));
+                            Assert.assertEquals(GeoHashes.fromString("xy", 0, 2), record.getGeoShort(4));
+                            Assert.assertEquals(GeoHashes.fromString("xyzw", 0, 4), record.getGeoInt(5));
+                            Assert.assertEquals(GeoHashes.fromString("xyzwzvxq", 0, 8), record.getGeoLong(6));
+                            count++;
                         }
+
+                        Assert.assertEquals(100, count);
                     }
                 }
             }
@@ -9290,8 +9279,6 @@ create table tab as (
                      conf,
                      engine,
                      pool,
-                     compiler.getFunctionFactoryCache(),
-                     snapshotAgent,
                      createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry),
                      registry
              )
@@ -9302,7 +9289,7 @@ create table tab as (
 
             do {
                 final String tableName = "xyz" + iteration++;
-                compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+                ddl("create table " + tableName + " (a int)");
 
                 try (
                         final Connection connection1 = getConnection(server.getPort(), false, true);
@@ -9467,10 +9454,9 @@ create table tab as (
     private void testBinaryInsert(int maxLength, boolean binaryProtocol) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
+            ddl("create table xyz (" +
                             "a binary" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
             try (
                     final PGWireServer server = createPGServer(1);
@@ -9500,7 +9486,7 @@ create table tab as (
                         }
                         connection.commit();
 
-                        try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursorFactory factory = fact("xyz")) {
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 final Record record = cursor.getRecord();
                                 int count = 0;
@@ -10137,7 +10123,7 @@ create table tab as (
     private void testInsertAllTypes(boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
+            ddl("create table xyz (" +
                             "a byte," +
                             "b char," +
                             "c short," +
@@ -10149,8 +10135,7 @@ create table tab as (
                             "i symbol," +
                             "j boolean," +
                             "k long256" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
             try (
                     final PGWireServer server = createPGServer(2);
@@ -10237,7 +10222,7 @@ create table tab as (
                     connection.commit();
 
                     rnd.reset();
-                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = fact("xyz")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             int count = 0;
@@ -10325,10 +10310,9 @@ create table tab as (
     private void testInsertBinaryBindVariable(boolean binaryProtocol) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
+            ddl("create table xyz (" +
                             "a binary" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
             try (
                     final PGWireServer server = createPGServer(2);
@@ -10349,7 +10333,7 @@ create table tab as (
                     }
                     connection.commit();
 
-                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = fact("xyz")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             int count = 0;

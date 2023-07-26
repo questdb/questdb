@@ -28,9 +28,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,22 +40,24 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = getWriter("tab")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                r.append();
+            try (TableWriter w = getWriter("tab")) {
+                for (int i = 100; i > 10; i--) {
+                    TableWriter.Row r = w.newRow();
+                    r.append();
+                }
+                w.commit();
             }
-            w.commit();
-        }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+            try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record record = cursor.getRecord();
+                    Assert.assertEquals(1, cursor.size());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+                }
             }
         }
     }
@@ -62,23 +65,25 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = getWriter("tab")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                r.putInt(0, i);
-                r.append();
+            try (TableWriter w = getWriter("tab")) {
+                for (int i = 100; i > 10; i--) {
+                    TableWriter.Row r = w.newRow();
+                    r.putInt(0, i);
+                    r.append();
+                }
+                w.commit();
             }
-            w.commit();
-        }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(11, record.getInt(0));
+            try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record record = cursor.getRecord();
+                    Assert.assertEquals(1, cursor.size());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(11, record.getInt(0));
+                }
             }
         }
     }
@@ -259,27 +264,28 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSomeNull() throws SqlException {
 
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = getWriter("tab")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                if (i % 4 == 0) {
-                    r.putInt(0, i);
+            try (TableWriter w = getWriter("tab")) {
+                for (int i = 100; i > 10; i--) {
+                    TableWriter.Row r = w.newRow();
+                    if (i % 4 == 0) {
+                        r.putInt(0, i);
+                    }
+                    r.append();
                 }
-                r.append();
+                w.commit();
             }
-            w.commit();
-        }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+            try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record record = cursor.getRecord();
+                    Assert.assertEquals(1, cursor.size());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+                }
             }
         }
     }
-
 }

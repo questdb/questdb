@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SOCountDownLatch;
@@ -60,12 +60,12 @@ public class DispatcherWriterQueueTest extends AbstractTest {
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-    private SqlCompilerImpl compiler;
+    private SqlCompiler compiler;
     private Error error = null;
     private SqlExecutionContext sqlExecutionContext;
 
     public void setupSql(CairoEngine engine) {
-        compiler = new SqlCompilerImpl(engine);
+        compiler = engine.getSqlCompiler();
         sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(engine.getConfiguration()));
     }
 

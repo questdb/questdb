@@ -251,7 +251,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             long rowCount = 0;
             for (int i = 0; i < 2; i++) {
                 int rows = rnd.nextInt(200);
-                compile("insert into " + tableName +
+                alter("insert into " + tableName +
                         " select x, timestamp_sequence('2022-02-24T0" + i + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
                 rowCount += rows;
 
@@ -265,7 +265,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     walApplyJob.run(0);
                     engine.releaseInactive();
                     int rows = rnd.nextInt(200);
-                    compile("insert into " + tableName +
+                    alter("insert into " + tableName +
                             " select x, timestamp_sequence('2022-02-24T" + String.format("%02d", i + 2) + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
                     rowCount += rows;
                 }
@@ -299,7 +299,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             tw.commit(new ObjList<>());
         }
 
-        compile("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
+        alter("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
         engine.releaseInactive();
         ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
         engine.reloadTableNames(convertedTables);
@@ -320,7 +320,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             tw.commit(new ObjList<>());
         }
 
-        compile("alter table " + tableName + " set type wal", sqlExecutionContext);
+        alter("alter table " + tableName + " set type wal", sqlExecutionContext);
         engine.releaseInactive();
         ObjList<TableToken> convertedTables2 = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
         engine.reloadTableNames(convertedTables2);
@@ -347,7 +347,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY BYPASS WAL"
             );
             compile("alter table " + tableName + " add col1 int");
-            compile("alter table " + tableName + " set type wal", sqlExecutionContext);
+            alter("alter table " + tableName + " set type wal", sqlExecutionContext);
             engine.releaseInactive();
             ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
             engine.reloadTableNames(convertedTables);
@@ -360,7 +360,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
                     "2022-02-24T01:00:00.000000Z\t1\t2\n");
 
-            compile("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
+            alter("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
             engine.releaseInactive();
             convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
             engine.reloadTableNames(convertedTables);
@@ -824,7 +824,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             );
             TableToken sysTableName2 = engine.verifyTableName(tableName + "2");
 
-            compile("alter table " + tableName + "2 set type wal", sqlExecutionContext);
+            alter("alter table " + tableName + "2 set type wal", sqlExecutionContext);
             compile("drop table " + tableName);
             engine.releaseInactive();
 

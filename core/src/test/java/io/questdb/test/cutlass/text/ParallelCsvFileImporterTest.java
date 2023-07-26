@@ -31,10 +31,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.*;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
@@ -988,8 +985,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWhenImportingAfterColumnWasRecreated() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab62 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
-            compile("alter table tab62 drop column line;", compiler, sqlExecutionContext);
-            compile("alter table tab62 add column line symbol;", compiler, sqlExecutionContext);
+            compile(compiler, "alter table tab62 drop column line;", sqlExecutionContext);
+            compile(compiler, "alter table tab62 add column line symbol;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab62", "test-quotes-small.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -1005,8 +1002,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWhenImportingAfterColumnWasRecreatedNoHeader() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
-            compile("alter table tab44 drop column txt;", compiler, sqlExecutionContext);
-            compile("alter table tab44 add column txt symbol;", compiler, sqlExecutionContext);
+            compile(compiler, "alter table tab44 drop column txt;", sqlExecutionContext);
+            compile(compiler, "alter table tab44 add column txt symbol;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab44", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, false);
@@ -1704,12 +1701,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportWithZeroWorkersFails() throws Exception {
         executeWithPool(0, 8, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
-            SqlExecutionContextStub context = new SqlExecutionContextStub(engine) {
-                @Override
-                public int getWorkerCount() {
-                    return 0;
-                }
-            };
+            SqlExecutionContextStub context = new SqlExecutionContextStub(engine);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, context.getWorkerCount())) {
                 importer.setMinChunkSize(1);
@@ -2792,32 +2784,34 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     private void testStatusLogCleanup(int daysToKeep) throws SqlException {
-        String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        compiler.compile("create table \"" + backlogTableName + "\" as " +
-                "(" +
-                "select" +
-                " timestamp_sequence(0, 100000000000) ts," +
-                " rnd_symbol(5,4,4,3) table," +
-                " rnd_symbol(5,4,4,3) file," +
-                " rnd_symbol(5,4,4,3) phase," +
-                " rnd_symbol(5,4,4,3) status," +
-                " rnd_str(5,4,4,3) message," +
-                " rnd_long() rows_handled," +
-                " rnd_long() rows_imported," +
-                " rnd_long() errors" +
-                " from" +
-                " long_sequence(5)" +
-                ") timestamp(ts) partition by DAY", sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
+            compiler.compile("create table \"" + backlogTableName + "\" as " +
+                    "(" +
+                    "select" +
+                    " timestamp_sequence(0, 100000000000) ts," +
+                    " rnd_symbol(5,4,4,3) table," +
+                    " rnd_symbol(5,4,4,3) file," +
+                    " rnd_symbol(5,4,4,3) phase," +
+                    " rnd_symbol(5,4,4,3) status," +
+                    " rnd_str(5,4,4,3) message," +
+                    " rnd_long() rows_handled," +
+                    " rnd_long() rows_imported," +
+                    " rnd_long() errors" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
-        configOverrideParallelImportStatusLogKeepNDays(daysToKeep);
-        new CopyRequestJob(engine, 1, null).close();
-        assertQuery("count\n" + daysToKeep + "\n",
-                "select count() from " + backlogTableName,
-                null,
-                false,
-                true
-        );
-        compiler.compile("drop table \"" + backlogTableName + "\"", sqlExecutionContext);
+            configOverrideParallelImportStatusLogKeepNDays(daysToKeep);
+            new CopyRequestJob(engine, 1).close();
+            assertQuery("count\n" + daysToKeep + "\n",
+                    "select count() from " + backlogTableName,
+                    null,
+                    false,
+                    true
+            );
+            compiler.compile("drop table \"" + backlogTableName + "\"", sqlExecutionContext);
+        }
     }
 
     static IndexChunk chunk(String path, long... data) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
@@ -46,31 +47,33 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testDropColumnTruncatePartitionByNone() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table y as (" +
-                            "select timestamp_sequence(0, 1000000000) timestamp," +
-                            " rnd_symbol('a','b',null) symbol1 " +
-                            " from long_sequence(10)" +
-                            ") timestamp (timestamp)",
-                    sqlExecutionContext
-            );
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile(
+                        "create table y as (" +
+                                "select timestamp_sequence(0, 1000000000) timestamp," +
+                                " rnd_symbol('a','b',null) symbol1 " +
+                                " from long_sequence(10)" +
+                                ") timestamp (timestamp)",
+                        sqlExecutionContext
+                );
 
-            compile("alter table y drop column symbol1", sqlExecutionContext);
-            compiler.compile("truncate table y", sqlExecutionContext);
-            try (TableWriter w = getWriter("y")) {
-                TableWriter.Row row = w.newRow(123);
-                row.cancel();
-            }
-
-            compiler.compile("insert into y values(223)", sqlExecutionContext).execute(null).await();
-
-            try (RecordCursorFactory factory = compiler.compile("select * from y", sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                alter("alter table y drop column symbol1", sqlExecutionContext);
+                compiler.compile("truncate table y", sqlExecutionContext);
+                try (TableWriter w = getWriter("y")) {
+                    TableWriter.Row row = w.newRow(123);
+                    row.cancel();
                 }
-                TestUtils.assertEquals("timestamp\n" +
-                        "1970-01-01T00:00:00.000223Z\n", sink);
+
+                compiler.compile("insert into y values(223)", sqlExecutionContext).execute(null).await();
+
+                try (RecordCursorFactory factory = compiler.compile("select * from y", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        sink.clear();
+                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    }
+                    TestUtils.assertEquals("timestamp\n" +
+                            "1970-01-01T00:00:00.000223Z\n", sink);
+                }
             }
         });
     }
@@ -108,9 +111,8 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectStatementEnd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 createX();
-
                 compiler.compile("truncate table x keep symbol maps bla-bla-bla", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
@@ -125,7 +127,7 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableKeyword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("truncate x", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
@@ -138,7 +140,7 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableKeyword2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("truncate", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
@@ -151,7 +153,7 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("truncate table", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
@@ -164,9 +166,8 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableName2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 createX();
-
                 compiler.compile("truncate table x,", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
@@ -181,7 +182,7 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableName3() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("truncate table with", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
@@ -194,7 +195,7 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableName4() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 createX();
 
                 compiler.compile("truncate table x, keep", sqlExecutionContext);
@@ -211,7 +212,7 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableName5() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 createX();
 
                 compiler.compile("truncate table x y z", sqlExecutionContext);
@@ -240,7 +241,9 @@ public class TruncateTest extends AbstractGriffinTest {
                             true
                     );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x", sqlExecutionContext).getType());
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x", sqlExecutionContext).getType());
+                    }
 
                     assertQuery(
                             "count\n" +
@@ -269,7 +272,9 @@ public class TruncateTest extends AbstractGriffinTest {
                             true
                     );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x keep symbol maps", sqlExecutionContext).getType());
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x keep symbol maps", sqlExecutionContext).getType());
+                    }
 
                     assertQuery(
                             "count\n" +
@@ -293,7 +298,9 @@ public class TruncateTest extends AbstractGriffinTest {
                     assertQuery("count\n10\n", "select count() from x", null, false, true);
                     assertQuery("count\n20\n", "select count() from y", null, false, true);
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x, y KEEP SYMBOL MAPS;", sqlExecutionContext).getType());
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x, y KEEP SYMBOL MAPS;", sqlExecutionContext).getType());
+                    }
 
                     assertQuery("count\n0\n", "select count() from x", null, false, true);
                     assertQuery("count\n0\n", "select count() from y", null, false, true);
@@ -305,35 +312,37 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testHappyPathTableNameKeep() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile(
-                            "create table keep as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
-                                    " from long_sequence(3)" +
-                                    ") timestamp (timestamp)",
-                            sqlExecutionContext
-                    );
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        compiler.compile(
+                                "create table keep as (" +
+                                        "select" +
+                                        " cast(x as int) i," +
+                                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                                        " from long_sequence(3)" +
+                                        ") timestamp (timestamp)",
+                                sqlExecutionContext
+                        );
 
-                    assertQuery(
-                            "count\n" +
-                                    "3\n",
-                            "select count() from keep",
-                            null,
-                            false,
-                            true
-                    );
+                        assertQuery(
+                                "count\n" +
+                                        "3\n",
+                                "select count() from keep",
+                                null,
+                                false,
+                                true
+                        );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE keep;", sqlExecutionContext).getType());
+                        Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE keep;", sqlExecutionContext).getType());
 
-                    assertQuery(
-                            "count\n" +
-                                    "0\n",
-                            "select count() from keep",
-                            null,
-                            false,
-                            true
-                    );
+                        assertQuery(
+                                "count\n" +
+                                        "0\n",
+                                "select count() from keep",
+                                null,
+                                false,
+                                true
+                        );
+                    }
                 }
         );
     }
@@ -353,7 +362,9 @@ public class TruncateTest extends AbstractGriffinTest {
                             true
                     );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x;", sqlExecutionContext).getType());
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x;", sqlExecutionContext).getType());
+                    }
 
                     assertQuery(
                             "count\n" +
@@ -373,8 +384,10 @@ public class TruncateTest extends AbstractGriffinTest {
             try {
                 createX();
 
-                compiler.compile("truncate table x keep bla-bla-bla", sqlExecutionContext);
-                Assert.fail();
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    compiler.compile("truncate table x keep bla-bla-bla", sqlExecutionContext);
+                    Assert.fail();
+                }
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "SYMBOL expected");
@@ -387,7 +400,7 @@ public class TruncateTest extends AbstractGriffinTest {
     @Test
     public void testKeepSymbolTablesExpectTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()){
                 createX();
 
                 compiler.compile("truncate table x keep symbol bla-bla-bla", sqlExecutionContext);
@@ -442,7 +455,7 @@ public class TruncateTest extends AbstractGriffinTest {
             }).start();
 
             useBarrier.await();
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertNull(compiler.compile("truncate table x,y", sqlExecutionContext));
                 Assert.fail();
             } catch (SqlException e) {
@@ -498,7 +511,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     true
             );
 
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertNull(compiler.compile("truncate table x, y,z", sqlExecutionContext));
                 Assert.fail();
             } catch (SqlException e) {
@@ -540,7 +553,9 @@ public class TruncateTest extends AbstractGriffinTest {
                     true
             );
 
-            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table only x", sqlExecutionContext).getType());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table only x", sqlExecutionContext).getType());
+            }
 
             assertQuery(
                     "count\n" +
@@ -567,40 +582,44 @@ public class TruncateTest extends AbstractGriffinTest {
                     true
             );
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        record.getInt(0);
-                        record.getSym(1);
-                        record.getDouble(2);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            record.getInt(0);
+                            record.getSym(1);
+                            record.getDouble(2);
+                        }
                     }
                 }
-            }
 
-            compiler.compile("truncate table 'x'", sqlExecutionContext);
+                compiler.compile("truncate table 'x'", sqlExecutionContext);
+            }
         });
     }
 
     @Test
     public void testTruncateSymbolIndexRestoresCapacity() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table x as (" +
-                            "select timestamp_sequence(0, 1000000000) timestamp," +
-                            " rnd_symbol('a','b',null) symbol1 " +
-                            " from long_sequence(10)" +
-                            "), index(symbol1 capacity 512) timestamp (timestamp) partition By DAY",
-                    sqlExecutionContext
-            );
-            TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile(
+                        "create table x as (" +
+                                "select timestamp_sequence(0, 1000000000) timestamp," +
+                                " rnd_symbol('a','b',null) symbol1 " +
+                                " from long_sequence(10)" +
+                                "), index(symbol1 capacity 512) timestamp (timestamp) partition By DAY",
+                        sqlExecutionContext
+                );
+                TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
 
-            compiler.compile("truncate table x", sqlExecutionContext);
-            compiler.compile("insert into x\n" +
-                    "select timestamp_sequence(0, 1000000000) timestamp," +
-                    " rnd_symbol('a','b',null) symbol1 " +
-                    " from long_sequence(10)", sqlExecutionContext);
-            TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
+                compiler.compile("truncate table x", sqlExecutionContext);
+                compiler.compile("insert into x\n" +
+                        "select timestamp_sequence(0, 1000000000) timestamp," +
+                        " rnd_symbol('a','b',null) symbol1 " +
+                        " from long_sequence(10)", sqlExecutionContext);
+                TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
+            }
         });
     }
 
@@ -639,7 +658,9 @@ public class TruncateTest extends AbstractGriffinTest {
                             true
                     );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table testTruncateWithColumnTop", sqlExecutionContext).getType());
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table testTruncateWithColumnTop", sqlExecutionContext).getType());
+                    }
 
                     compile(
                             "insert into testTruncateWithColumnTop " +
@@ -682,7 +703,9 @@ public class TruncateTest extends AbstractGriffinTest {
                     true
             );
 
-            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x, y", sqlExecutionContext).getType());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x, y", sqlExecutionContext).getType());
+            }
 
             assertQuery(
                     "count\n" +
@@ -709,81 +732,87 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     private void createX(long count) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from long_sequence(" + count + ")" +
-                        ") timestamp (timestamp)",
-                sqlExecutionContext
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(" + count + ")" +
+                            ") timestamp (timestamp)",
+                    sqlExecutionContext
+            );
+        }
     }
 
     private void createY() throws SqlException {
-        compiler.compile(
-                "create table y as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from long_sequence(20)" +
-                        ") timestamp (timestamp)",
-                sqlExecutionContext
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(20)" +
+                            ") timestamp (timestamp)",
+                    sqlExecutionContext
+            );
+        }
     }
 
     private void testDropColumnWithCachedPlan() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table y as (" +
-                            "select timestamp_sequence(0, 1000000000) timestamp," +
-                            " rnd_symbol('a','b',null) symbol1 " +
-                            " from long_sequence(10)" +
-                            ") timestamp (timestamp)",
-                    sqlExecutionContext
-            );
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile(
+                        "create table y as (" +
+                                "select timestamp_sequence(0, 1000000000) timestamp," +
+                                " rnd_symbol('a','b',null) symbol1 " +
+                                " from long_sequence(10)" +
+                                ") timestamp (timestamp)",
+                        sqlExecutionContext
+                );
 
-            try (RecordCursorFactory factory = compiler.compile("select * from y", sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-                }
+                try (RecordCursorFactory factory = compiler.compile("select * from y", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        sink.clear();
+                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    }
 
-                compile("alter table y drop column symbol1", sqlExecutionContext);
+                    alter("alter table y drop column symbol1", sqlExecutionContext);
 
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-                    Assert.fail();
-                } catch (TableReferenceOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                        Assert.fail();
+                    } catch (TableReferenceOutOfDateException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
+                    }
                 }
             }
         });
@@ -791,38 +820,40 @@ public class TruncateTest extends AbstractGriffinTest {
 
     private void testDropTableWithCachedPlan(String query) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table y as (" +
-                            "select timestamp_sequence(0, 1000000000) timestamp," +
-                            " rnd_symbol('a','b',null) symbol1 " +
-                            " from long_sequence(10)" +
-                            ") timestamp (timestamp)",
-                    sqlExecutionContext
-            );
-
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-                }
-
-                compiler.compile("drop table y", sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile(
-                        "create table y as ( " +
-                                " select " +
-                                " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
-                                " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
-                                " ,rnd_str('a','b',null) symbol1" +
+                        "create table y as (" +
+                                "select timestamp_sequence(0, 1000000000) timestamp," +
+                                " rnd_symbol('a','b',null) symbol1 " +
                                 " from long_sequence(10)" +
-                                ")",
+                                ") timestamp (timestamp)",
                         sqlExecutionContext
                 );
 
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-                    Assert.fail();
-                } catch (TableReferenceOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
+                try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        sink.clear();
+                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    }
+
+                    compiler.compile("drop table y", sqlExecutionContext);
+                    compiler.compile(
+                            "create table y as ( " +
+                                    " select " +
+                                    " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
+                                    " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
+                                    " ,rnd_str('a','b',null) symbol1" +
+                                    " from long_sequence(10)" +
+                                    ")",
+                            sqlExecutionContext
+                    );
+
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                        Assert.fail();
+                    } catch (TableReferenceOutOfDateException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
+                    }
                 }
             }
         });

@@ -125,7 +125,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
 
-            compile(
+            alter(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -144,7 +144,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     " cast(x as int) * 1000000 i," +
                     " -x - 1000000L as j," +
                     " rnd_str(5,16,2) as str,";
-            compile(
+            alter(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
                             " from long_sequence(200)",
@@ -161,7 +161,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             // Partition "2020-02-04" squashed the new update
 
             try (TableReader ignore = getReader("x")) {
-                compile(sqlPrefix +
+                alter(sqlPrefix +
                                 " timestamp_sequence('2020-02-04T18:01', 60*1000000L) ts" +
                                 " from long_sequence(50)",
                         sqlExecutionContext
@@ -177,7 +177,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             }
 
             // should squash partitions into 2 pieces
-            compile(sqlPrefix +
+            alter(sqlPrefix +
                             " timestamp_sequence('2020-02-04T18:01', 1000000L) ts" +
                             " from long_sequence(50)",
                     sqlExecutionContext
@@ -190,7 +190,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             rowCount = assertRowCount((170 + 50) * 2, rowCount);
 
 
-            compile(sqlPrefix +
+            alter(sqlPrefix +
                             " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
                             " from long_sequence(50)",
                     sqlExecutionContext
@@ -204,7 +204,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             rowCount = assertRowCount(delta, rowCount);
 
             // commit in order rolls to the next partition, should squash partition "2020-02-04" to single part
-            compile(sqlPrefix +
+            alter(sqlPrefix +
                             " timestamp_sequence('2020-02-05T01:01:15', 10*60*1000000L) ts" +
                             " from long_sequence(50)",
                     sqlExecutionContext
@@ -433,7 +433,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
     @Test
     public void testSplitMidPartitionCheckIndex() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            alter(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -445,7 +445,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compile(
+            alter(
                     "create table z as (" +
                             "select" +
                             " cast(x as int) * 1000000 i," +
@@ -456,7 +456,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compile(
+            alter(
                     "create table y (" +
                             "i int," +
                             "j long," +
@@ -464,10 +464,10 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             "ts timestamp)",
                     sqlExecutionContext
             );
-            compile("insert into y select * from x", sqlExecutionContext);
-            compile("insert into y select * from z", sqlExecutionContext);
+            alter("insert into y select * from x", sqlExecutionContext);
+            alter("insert into y select * from z", sqlExecutionContext);
 
-            compile("insert into x select * from z", sqlExecutionContext);
+            alter("insert into x select * from z", sqlExecutionContext);
             TestUtils.assertSqlCursors(
                     compiler,
                     sqlExecutionContext,
@@ -580,7 +580,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
     @Test
     public void testSplitMidPartitionOpenReader() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            alter(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -592,7 +592,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compile(
+            alter(
                     "create table z as (" +
                             "select" +
                             " cast(x as int) * 1000000 i," +
@@ -603,7 +603,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compile(
+            alter(
                     "create table y (" +
                             "i int," +
                             "j long," +
@@ -611,11 +611,11 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                             "ts timestamp)",
                     sqlExecutionContext
             );
-            compile("insert into y select * from x", sqlExecutionContext);
-            compile("insert into y select * from z", sqlExecutionContext);
+            alter("insert into y select * from x", sqlExecutionContext);
+            alter("insert into y select * from z", sqlExecutionContext);
 
             try (TableReader ignore = getReader("x")) {
-                compile("insert into x select * from z", sqlExecutionContext);
+                alter("insert into x select * from z", sqlExecutionContext);
 
                 TestUtils.assertSqlCursors(
                         compiler,
@@ -636,7 +636,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             // Another reader, should allow to squash partitions
             try (TableReader ignore = getReader("x")) {
-                compile("insert into x(ts) values('2020-02-06')", sqlExecutionContext);
+                alter("insert into x(ts) values('2020-02-06')", sqlExecutionContext);
                 assertSql("select name, minTimestamp from table_partitions('x')", "name\tminTimestamp\n" +
                         "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
                         "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
@@ -732,7 +732,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
             node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
 
-            compile(
+            alter(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -752,7 +752,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                         " cast(x as int) * 1000000 i," +
                         " -x - 1000000L as j," +
                         " rnd_str(5,16,2) as str,";
-                compile(
+                alter(
                         sqlPrefix +
                                 " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
                                 " from long_sequence(200)",
@@ -766,7 +766,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                         "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
                         "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n");
 
-                compile(sqlPrefix +
+                alter(sqlPrefix +
                                 " timestamp_sequence('2020-02-05T18:01', 60*1000000L) ts" +
                                 " from long_sequence(50)",
                         sqlExecutionContext

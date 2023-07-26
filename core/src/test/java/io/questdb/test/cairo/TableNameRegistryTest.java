@@ -169,7 +169,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             threads.add(new Thread(() -> {
                 try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getMicrosecondClock())) {
                     barrier.await();
-                    snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+                    engine.setWalPurgeJobRunLock(job.getRunLock());
                     //noinspection StatementWithEmptyBody
                     while (!done.get() && job.run(0)) {
                         // run until empty

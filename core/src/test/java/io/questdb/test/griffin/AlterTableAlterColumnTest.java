@@ -46,7 +46,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
 
                     try (TableWriter writer = getWriter("x")) {
                         int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
@@ -69,7 +69,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         }
                     }
 
-                    Assert.assertEquals(ALTER, compile("alter table x alter column ik add index", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, alter("alter table x alter column ik add index", sqlExecutionContext).getType());
 
                     try (TableReader reader = getReader("x")) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
@@ -137,7 +137,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compile("alter table x alter column ik add index", sqlExecutionContext);
+                    alter("alter table x alter column ik add index", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -183,7 +183,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql, sqlExecutionContext);
+                fact(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
@@ -193,7 +193,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
     }
 
     private void createX() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -213,8 +213,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp)",
-                sqlExecutionContext
+                        ") timestamp (timestamp)"
         );
     }
 }

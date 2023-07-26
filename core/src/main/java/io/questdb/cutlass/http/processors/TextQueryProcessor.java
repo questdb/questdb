@@ -33,7 +33,10 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -42,7 +45,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -70,16 +72,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, workerCount, null, null);
+        this(configuration, engine, workerCount, workerCount);
     }
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent
+            int sharedWorkerCount
     ) {
         this.configuration = configuration;
         this.floatScale = configuration.getFloatScale();

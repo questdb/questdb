@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
@@ -58,14 +59,14 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     public void testManyUpdatesInserts() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part_o3_many as" +
+                ddl("create table up_part_o3_many as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 try (TableReader rdr1 = getReader("up_part_o3_many")) {
                     compile("insert into up_part_o3_many " +
@@ -77,12 +78,12 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                             " from long_sequence(3)");
 
                     try (TableReader rdr2 = getReader("up_part_o3_many")) {
-                        executeUpdate("UPDATE up_part_o3_many SET x = 100, str='u1', sym2='EE' WHERE ts >= '1970-01-03'");
+                        update("UPDATE up_part_o3_many SET x = 100, str='u1', sym2='EE' WHERE ts >= '1970-01-03'");
                         runPurgeJob(purgeJob);
 
                         currentMicros++;
                         try (TableReader rdr3 = getReader("up_part_o3_many")) {
-                            executeUpdate("UPDATE up_part_o3_many SET x = 200, str='u2', sym2='EE' WHERE x = 100");
+                            update("UPDATE up_part_o3_many SET x = 200, str='u2', sym2='EE' WHERE x = 100");
                             runPurgeJob(purgeJob);
                             rdr3.openPartition(0);
                         }
@@ -197,17 +198,17 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
             };
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part as" +
+                ddl("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 try (TableReader ignored = getReader("up_part")) {
-                    executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     // cannot purge column versions because of active reader
                     runPurgeJob(purgeJob);
                 }
@@ -242,14 +243,14 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = Timestamps.DAY_MICROS * 30;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part_o3 as" +
+                ddl("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 compile("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
@@ -260,7 +261,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(3)");
 
                 try (TableReader rdr = getReader("up_part_o3")) {
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
+                    update("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -275,7 +276,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                 try (ColumnPurgeJob purgeJob = createPurgeJob()) {
 
                     try (TableReader ignored = getReader("up_part_o3")) {
-                        executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
+                        update("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
                     }
 
                     runPurgeJob(purgeJob);
@@ -332,17 +333,17 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
             };
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part as" +
+                ddl("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 try (TableReader rdr = getReader("up_part")) {
-                    executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -397,14 +398,14 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part_o3 as" +
+                ddl("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 compile("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
@@ -415,7 +416,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(3)");
 
                 try (TableReader rdr = getReader("up_part_o3")) {
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
+                    update("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -454,17 +455,17 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part as" +
+                ddl("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 try (TableReader rdr = getReader("up_part")) {
-                    executeUpdate("UPDATE up_part SET x = 100, str='abcd',SYM2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE up_part SET x = 100, str='abcd',SYM2='EE' WHERE ts >= '1970-01-02'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -510,17 +511,17 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeRespectsOpenReaderNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up as" +
+                ddl("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts)", sqlExecutionContext);
+                        " timestamp(ts)");
 
                 try (TableReader rdr = getReader("up")) {
-                    executeUpdate("UPDATE up SET x = 100, str='abcd', sym2='EE'");
+                    update("UPDATE up SET x = 100, str='abcd', sym2='EE'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -555,33 +556,33 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeRespectsTableRecreate() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up as" +
+                ddl("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts)", sqlExecutionContext);
+                        " timestamp(ts)");
 
                 try (TableReader rdr = getReader("up")) {
-                    executeUpdate("UPDATE up SET x = 100, str='abcd'");
+                    update("UPDATE up SET x = 100, str='abcd'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
                 }
                 engine.releaseInactive();
 
-                compiler.compile("drop table up", sqlExecutionContext);
+                ddl("drop table up");
 
-                compiler.compile("create table up as" +
+                ddl("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts)", sqlExecutionContext);
+                        " timestamp(ts)");
 
                 runPurgeJob(purgeJob);
 
@@ -602,32 +603,32 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeRespectsTableTruncates() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table testPurgeRespectsTableTruncates as" +
+                ddl("create table testPurgeRespectsTableTruncates as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 try (TableReader rdr = getReader("testPurgeRespectsTableTruncates")) {
-                    executeUpdate("UPDATE testPurgeRespectsTableTruncates SET x = 100, str='abcd'");
+                    update("UPDATE testPurgeRespectsTableTruncates SET x = 100, str='abcd'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
                 }
                 engine.releaseInactive();
 
-                compiler.compile("truncate table testPurgeRespectsTableTruncates", sqlExecutionContext);
+                ddl("truncate table testPurgeRespectsTableTruncates");
 
-                compiler.compile("insert into testPurgeRespectsTableTruncates " +
+                ddl("insert into testPurgeRespectsTableTruncates " +
                         " select timestamp_sequence(0, 1000000) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
-                        " from long_sequence(5)", sqlExecutionContext);
+                        " from long_sequence(5)");
 
                 runPurgeJob(purgeJob);
 
@@ -649,14 +650,14 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part_o3 as" +
+                ddl("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 compile("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
@@ -667,7 +668,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(3)");
 
                 try (TableReader rdr = getReader("up_part_o3")) {
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
+                    update("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -710,21 +711,21 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         configOverrideColumnVersionTaskPoolCapacity(1);
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part_o3_many as" +
+                ddl("create table up_part_o3_many as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
-                executeUpdate("UPDATE up_part_o3_many SET x = x + 1, str = str || 'u2', sym2 = sym2 || '2'");
+                update("UPDATE up_part_o3_many SET x = x + 1, str = str || 'u2', sym2 = sym2 || '2'");
 
                 try (Path path = new Path()) {
                     for (int i = 1; i < 10; i++) {
                         try (TableReader ignore = getReader("up_part_o3_many")) {
-                            executeUpdate("UPDATE up_part_o3_many SET x = x + 1, str = str || 'u2', sym2 = sym2 || '2'");
+                            update("UPDATE up_part_o3_many SET x = x + 1, str = str || 'u2', sym2 = sym2 || '2'");
                             runPurgeJob(purgeJob);
                         }
 
@@ -746,14 +747,14 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part_o3 as" +
+                ddl("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        " timestamp(ts) PARTITION BY DAY");
 
                 compile("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
@@ -764,7 +765,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(3)");
 
                 try (TableReader rdr = getReader("up_part_o3")) {
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2 = 'EE' WHERE ts >= '1970-01-03'");
+                    update("UPDATE up_part_o3 SET x = 100, str='abcd', sym2 = 'EE' WHERE ts >= '1970-01-03'");
 
                     currentMicros = 20;
                     runPurgeJob(purgeJob);
@@ -885,7 +886,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @NotNull
     private ColumnPurgeJob createPurgeJob() throws SqlException {
-        return new ColumnPurgeJob(engine, null);
+        return new ColumnPurgeJob(engine);
     }
 
     private ColumnPurgeTask createTask(
@@ -904,11 +905,13 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         return tsk;
     }
 
-    private void executeUpdate(String query) throws SqlException {
-        final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (OperationFuture fut = cq.execute(null)) {
-            fut.await();
+    private void update(String query) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
+            try (OperationFuture fut = cq.execute(null)) {
+                fut.await();
+            }
         }
     }
 

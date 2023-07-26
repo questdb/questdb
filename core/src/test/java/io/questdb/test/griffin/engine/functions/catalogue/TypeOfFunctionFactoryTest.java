@@ -72,8 +72,7 @@ public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     try {
-                        compiler.compile(sql, sqlExecutionContext);
-                        Assert.fail();
+                        fail(sql);
                     } catch (SqlException e) {
                         Assert.assertEquals(7, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "exactly one argument expected");

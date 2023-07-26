@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -94,7 +94,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testDoubleSplitSamePartitionAtSameTransaction() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext executionContext) -> {
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
@@ -313,7 +313,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitLastPartitionWithColumnTop() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext executionContext) -> {
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
@@ -393,7 +393,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         executeWithPool(workerCount,
                 (
                         CairoEngine engine,
-                        SqlCompilerImpl compiler,
+                        SqlCompiler compiler,
                         SqlExecutionContext executionContext
                 ) -> {
                     compiler.compile(
@@ -439,7 +439,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitOverrunLastPartition() throws Exception {
         executeWithPool(workerCount, (
                 CairoEngine engine,
-                SqlCompilerImpl compiler,
+                SqlCompiler compiler,
                 SqlExecutionContext executionContext
         ) -> {
             compiler.compile(
@@ -484,7 +484,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitPartitionWithColumnTop() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext executionContext) -> {
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
@@ -526,7 +526,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext executionContext) -> {
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
@@ -582,7 +582,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop2() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext executionContext) -> {
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
@@ -635,7 +635,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 });
     }
 
-    private static void assertX(SqlCompilerImpl compiler, SqlExecutionContext executionContext, String expectedTable) throws SqlException {
+    private static void assertX(SqlCompiler compiler, SqlExecutionContext executionContext, String expectedTable) throws SqlException {
         String limit = "";
         TestUtils.assertSqlCursors(
                 compiler,
@@ -667,7 +667,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         );
     }
 
-    private void assertIndex(SqlCompilerImpl compiler, SqlExecutionContext executionContext, String table1, String table2, String filter) throws SqlException {
+    private void assertIndex(SqlCompiler compiler, SqlExecutionContext executionContext, String table1, String table2, String filter) throws SqlException {
         TestUtils.assertSqlCursors(
                 compiler,
                 executionContext,

@@ -188,12 +188,12 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     private void checkWalEnabledBeforeAfterAlter(String alterSuffix) throws SqlException {
         createTableWrite("my_table_wal", "WAL", "DAY");
         assertWalEnabled("my_table_wal", true);
-        compile("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
+        alter("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_wal", true);
 
         createTableWrite("my_table_dir", "BYPASS WAL", "DAY");
         assertWalEnabled("my_table_dir", false);
-        compile("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
+        alter("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_dir", false);
 
         assertSql("select name, walEnabled from tables() order by name",

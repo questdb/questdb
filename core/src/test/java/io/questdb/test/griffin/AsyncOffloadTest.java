@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
 import io.questdb.jit.JitUtil;
@@ -187,7 +188,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                         final int seconds = i % 60;
                         final CompiledQuery cq = compiler.compile("INSERT INTO test1 (column1, timestamp) " +
                                         "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
-                                        + (seconds < 10 ? "0" + seconds : "" + seconds) + "Z')",
+                                        + (seconds < 10 ? "0" + seconds : String.valueOf(seconds)) + "Z')",
                                 sqlExecutionContext
                         );
                         try (final OperationFuture fut = cq.execute(null)) {
@@ -409,15 +410,12 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 MemoryTag.NATIVE_DEFAULT
         );
 
-        compiler.compile("create table x ( " +
-                        "v long, " +
-                        "s symbol capacity 4 cache " +
-                        ")",
-                sqlExecutionContext
+        ddl("create table x ( " +
+                "v long, " +
+                "s symbol capacity 4 cache " +
+                ")"
         );
-        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
-                sqlExecutionContext
-        );
+        ddl("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
 
         context.with(
                 context.getSecurityContext(),
@@ -470,15 +468,12 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 MemoryTag.NATIVE_DEFAULT
         );
 
-        compiler.compile("create table x ( " +
-                        "v long, " +
-                        "s symbol capacity 4 cache " +
-                        ")",
-                sqlExecutionContext
+        ddl("create table x ( " +
+                "v long, " +
+                "s symbol capacity 4 cache " +
+                ")"
         );
-        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
-                sqlExecutionContext
-        );
+        ddl("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
 
         context.with(
                 context.getSecurityContext(),

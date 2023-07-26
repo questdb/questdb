@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -94,16 +95,18 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testConstHalfConst1() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
-            assertSql(
-                    "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
-                    "geohash\n" +
-                            "sp052w92p1\n"
-            );
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("create table geohash as (" +
+                                "select " +
+                                "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
+                                ")",
+                        sqlExecutionContext);
+                assertSql(
+                        "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
+                        "geohash\n" +
+                                "sp052w92p1\n"
+                );
+            }
         });
     }
 
@@ -129,41 +132,45 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testEq() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
-                    " select" +
-                    " rnd_geohash(11) a," +
-                    " rnd_geohash(11) b" +
-                    " from long_sequence(5000)" +
-                    ")", sqlExecutionContext);
-            assertSql(
-                    "x where a = b",
-                    "a\tb\n" +
-                            "11010001011\t11010001011\n"
-            );
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("create table x as (" +
+                        " select" +
+                        " rnd_geohash(11) a," +
+                        " rnd_geohash(11) b" +
+                        " from long_sequence(5000)" +
+                        ")", sqlExecutionContext);
+                assertSql(
+                        "x where a = b",
+                        "a\tb\n" +
+                                "11010001011\t11010001011\n"
+                );
+            }
         });
     }
 
     @Test
     public void testNotEq() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
-                    " select" +
-                    " rnd_geohash(11) a," +
-                    " rnd_geohash(13) b" +
-                    " from long_sequence(8)" +
-                    ")", sqlExecutionContext);
-            assertSql(
-                    "x where a != b",
-                    "a\tb\n" +
-                            "01001110110\t0010000110110\n" +
-                            "10001101001\t1111101110110\n" +
-                            "10000101010\t1110010000001\n" +
-                            "11000000101\t0000101011100\n" +
-                            "10011100111\t0011100001011\n" +
-                            "01110110001\t1011000100110\n" +
-                            "11010111111\t1000110001001\n" +
-                            "10010110001\t0101011010111\n"
-            );
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("create table x as (" +
+                        " select" +
+                        " rnd_geohash(11) a," +
+                        " rnd_geohash(13) b" +
+                        " from long_sequence(8)" +
+                        ")", sqlExecutionContext);
+                assertSql(
+                        "x where a != b",
+                        "a\tb\n" +
+                                "01001110110\t0010000110110\n" +
+                                "10001101001\t1111101110110\n" +
+                                "10000101010\t1110010000001\n" +
+                                "11000000101\t0000101011100\n" +
+                                "10011100111\t0011100001011\n" +
+                                "01110110001\t1011000100110\n" +
+                                "11010111111\t1000110001001\n" +
+                                "10010110001\t0101011010111\n"
+                );
+            }
         });
     }
 
@@ -240,17 +247,19 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull9() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
-                            "select " +
-                            "    cast(null as GeOhAsH(50b)) as geohash1, " +
-                            "    cast('sp052w92' as GeOhAsH(2c)) as geohash2 " +
-                            "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
-            assertSql(
-                    "geohash where geohash1 = geohash2",
-                    "geohash1\tgeohash2\n"
-            );
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("create table geohash as (" +
+                                "select " +
+                                "    cast(null as GeOhAsH(50b)) as geohash1, " +
+                                "    cast('sp052w92' as GeOhAsH(2c)) as geohash2 " +
+                                "from long_sequence(1)" +
+                                ")",
+                        sqlExecutionContext);
+                assertSql(
+                        "geohash where geohash1 = geohash2",
+                        "geohash1\tgeohash2\n"
+                );
+            }
         });
     }
 

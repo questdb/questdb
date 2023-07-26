@@ -1003,9 +1003,9 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
         String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
 
         for (String type : types) {
-            compiler.compile("create table tt as (" +
+            ddl("create table tt as (" +
                     "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
-                    ") timestamp(ts)", sqlExecutionContext);
+                    ") timestamp(ts)");
 
             // this is a bit confusing. for booleans, every value x != 0 will evaluate to 1
             // however, for int etc, only the value 1 will evaluate to 1
@@ -1015,7 +1015,7 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                             (type.equals("BOOLEAN") ? "10\n" : "1\n")
             );
 
-            compiler.compile("drop table tt", sqlExecutionContext);
+            ddl("drop table tt");
         }
     }
 

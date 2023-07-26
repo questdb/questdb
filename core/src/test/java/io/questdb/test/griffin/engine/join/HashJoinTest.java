@@ -47,7 +47,7 @@ public class HashJoinTest extends AbstractGriffinTest {
     @Test
     public void testHashJoinDoesntAllocateMemoryPriorToCursorOpenAndAfterCursorCloseForNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table weather_data_historical (\n" +
+            alter("create table weather_data_historical (\n" +
                     "  sensor_time timestamp not null,\n" +
                     "  sensor_day symbol,\n" +
                     "  min_temperature_out float,\n" +

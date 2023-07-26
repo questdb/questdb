@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -40,7 +39,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -66,11 +64,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private TableWriter writer;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
 
-    public CopyRequestJob(
-            final CairoEngine engine,
-            int workerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache
-    ) throws SqlException {
+    public CopyRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
         this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
         this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
         this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);

@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,8 +41,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractGriffinTest 
     public void testInvalidConstantOffset() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("select to_timezone(0, '25:40')", sqlExecutionContext);
-                Assert.fail();
+                fail("select to_timezone(0, '25:40')");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -54,8 +53,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractGriffinTest 
     public void testInvalidConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("select to_timezone(0, 'UUU')", sqlExecutionContext);
-                Assert.fail();
+                fail("select to_timezone(0, 'UUU')");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -67,8 +65,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractGriffinTest 
     public void testNullConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("select to_timezone(0, null)", sqlExecutionContext);
-                Assert.fail();
+                fail("select to_timezone(0, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
@@ -96,8 +93,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractGriffinTest 
     public void testVarNullTimezone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)", sqlExecutionContext);
-                Assert.fail();
+                fail("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)");
             } catch (SqlException e) {
                 Assert.assertEquals(69, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
@@ -122,14 +118,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     private void assertToTimezone(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                sql,
-                sink,
-                "to_timezone\n" +
-                        expected
-        ));
+        assertMemoryLeak(() -> assertSql(sql, "to_timezone\n" + expected));
     }
 
 }

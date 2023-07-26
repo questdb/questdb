@@ -40,7 +40,6 @@ import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
@@ -87,12 +86,9 @@ public class ServerMain implements Closeable {
         // TODO: now the engine has access to the FFC, so all methods below
         //       that pass it in their signature should be simplified. Not
         //       done for compatibility with enterprise
-        config.init(engine, ffCache, freeOnExit);
+        config.init(engine, freeOnExit);
 
         freeOnExit.register(config.getFactoryProvider());
-
-        // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = freeOnExit.register(new DatabaseSnapshotAgent(engine));
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
@@ -114,14 +110,13 @@ public class ServerMain implements Closeable {
                         O3Utils.setupWorkerPool(
                                 sharedPool,
                                 engine,
-                                config.getCairoConfiguration().getCircuitBreakerConfiguration(),
-                                ffCache
+                                config.getCairoConfiguration().getCircuitBreakerConfiguration()
                         );
 
                         if (walSupported) {
                             sharedPool.assign(new CheckWalTransactionsJob(engine));
                             final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
-                            snapshotAgent.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
+                            engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
                             sharedPool.assign(walPurgeJob);
                             sharedPool.freeOnExit(walPurgeJob);
@@ -137,8 +132,7 @@ public class ServerMain implements Closeable {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
-                                    Math.max(1, sharedPool.getWorkerCount() - 2),
-                                    ffCache
+                                    Math.max(1, sharedPool.getWorkerCount() - 2)
                             );
                             sharedPool.assign(copyRequestJob);
                             sharedPool.freeOnExit(copyRequestJob);
@@ -173,8 +167,6 @@ public class ServerMain implements Closeable {
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
-                ffCache,
-                snapshotAgent,
                 metrics
         ));
 

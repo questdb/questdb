@@ -94,7 +94,7 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
             cloneCreateTable("B", true);
             cloneCreateTable("C", true);
 
-            try (RecordCursorFactory factory = compiler.compile("wal_tables()", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("wal_tables()")) {
                 // RecordCursorFactory could be cached in QueryCache and reused
                 // so let's run the query few times using the same factory
                 for (int i = 0; i < 5; i++) {

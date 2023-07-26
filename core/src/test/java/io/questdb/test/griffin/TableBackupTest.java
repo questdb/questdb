@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -73,7 +74,7 @@ public class TableBackupTest {
     private CharSequence backupRoot;
     private Path finalBackupPath;
     private int finalBackupPathLen;
-    private SqlCompilerImpl mainCompiler;
+    private SqlCompiler mainCompiler;
     private CairoConfiguration mainConfiguration;
     private CairoEngine mainEngine;
     private SqlExecutionContext mainSqlExecutionContext;
@@ -111,26 +112,27 @@ public class TableBackupTest {
             int partitionBy,
             boolean isWal,
             int numRows,
-            @NotNull SqlCompilerImpl compiler,
+            @NotNull CairoEngine engine,
             @NotNull SqlExecutionContext context
     ) throws SqlException {
-        executeSqlStmt(
+        executeSqlStmt(engine,
                 "CREATE TABLE '" + tableName + "' AS (" +
                         selectGenerator(numRows) +
                         "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
                         "PARTITION BY " + PartitionBy.toString(partitionBy) +
                         (isWal ? " WAL" : " BYPASS WAL"),
-                compiler, context);
-        return compiler.getEngine().verifyTableName(tableName);
+                context
+        );
+        return engine.verifyTableName(tableName);
     }
 
     public static void executeInsertGeneratorStmt(
             TableToken tableToken,
             int size,
-            SqlCompilerImpl compiler,
+            CairoEngine engine,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        executeSqlStmt("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', compiler, sqlExecutionContext);
+        executeSqlStmt(engine, "INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')',  sqlExecutionContext);
     }
 
     public static String testTableName(String tableName, String tableNameSuffix) {
@@ -427,8 +429,11 @@ public class TableBackupTest {
         });
     }
 
-    private static void executeSqlStmt(CharSequence stmt, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (OperationFuture future = compiler.compile(stmt, sqlExecutionContext).execute(null)) {
+    private static void executeSqlStmt(CairoEngine engine, CharSequence stmt, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                OperationFuture future = compiler.compile(stmt, sqlExecutionContext).execute(null)
+        ) {
             future.await();
         }
     }
@@ -555,7 +560,7 @@ public class TableBackupTest {
                 partitionBy,
                 isWal,
                 10000,
-                mainCompiler,
+                mainEngine,
                 mainSqlExecutionContext
         );
         drainWalQueue();
@@ -563,18 +568,18 @@ public class TableBackupTest {
     }
 
     private void executeInsertGeneratorStmt(TableToken tableToken) throws SqlException {
-        executeInsertGeneratorStmt(tableToken, 6, mainCompiler, mainSqlExecutionContext);
+        executeInsertGeneratorStmt(tableToken, 6, mainEngine, mainSqlExecutionContext);
         drainWalQueue();
     }
 
     private void executeSqlStmt(String stmt) throws SqlException {
-        executeSqlStmt(stmt, mainCompiler, mainSqlExecutionContext);
+        executeSqlStmt(mainEngine, stmt, mainSqlExecutionContext);
         drainWalQueue();
     }
 
     private void selectAll(TableToken tableToken, boolean backup, MutableCharSink sink) throws Exception {
         CairoEngine engine = mainEngine;
-        SqlCompilerImpl compiler = mainCompiler;
+        SqlCompiler compiler = mainCompiler;
         SqlExecutionContext context = mainSqlExecutionContext;
         try {
             if (backup) {

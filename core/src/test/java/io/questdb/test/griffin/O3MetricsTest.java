@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.test.tools.TestUtils;
@@ -390,7 +390,7 @@ public class O3MetricsTest extends AbstractO3Test {
      */
     private static void setupBasicTable(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             long rowCount
     ) throws SqlException {

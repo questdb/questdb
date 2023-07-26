@@ -40,7 +40,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f date)", sqlExecutionContext);
+        ddl("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -50,7 +50,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -63,7 +63,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f date)", sqlExecutionContext);
+        ddl("create table tab (f date)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -74,7 +74,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -248,7 +248,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSomeNull() throws SqlException {
 
-        compiler.compile("create table tab (f date)", sqlExecutionContext);
+        ddl("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -261,7 +261,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

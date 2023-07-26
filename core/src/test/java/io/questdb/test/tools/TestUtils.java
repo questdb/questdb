@@ -27,6 +27,7 @@ package io.questdb.test.tools;
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -394,7 +395,7 @@ public final class TestUtils {
     }
 
     public static void assertEquals(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String expectedSql,
             String actualSql
@@ -432,7 +433,7 @@ public final class TestUtils {
     }
 
     public static void assertEqualsExactOrder(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String expectedSql,
             String actualSql
@@ -620,11 +621,11 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
-    public static void assertSqlCursors(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
         assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
     }
 
-    public static void assertSqlCursors(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
@@ -658,10 +659,16 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
-        try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
+        try (
+                SqlCompiler compiler = node.getEngine().getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()
+        ) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
                 final QuestDBTestNode dbNode = nodes.get(i);
-                try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
+                try (
+                        SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
+                        RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()
+                ) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
                         try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
                             assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
@@ -694,7 +701,7 @@ public final class TestUtils {
     }
 
     public static void assertSqlWithTypes(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
             MutableCharSink sink,
@@ -772,7 +779,7 @@ public final class TestUtils {
     }
 
     public static void createPopulateTable(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             TableModel tableModel,
             int totalRows,
@@ -792,7 +799,7 @@ public final class TestUtils {
 
     public static void createPopulateTable(
             CharSequence tableName,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             TableModel tableModel,
             int totalRows,
@@ -938,7 +945,7 @@ public final class TestUtils {
     }
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1, null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
             copyRequestJob.drain(0);
         }
     }
@@ -974,7 +981,7 @@ public final class TestUtils {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
-                final SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
         ) {
             try {
@@ -1083,7 +1090,7 @@ public final class TestUtils {
         return engine.getWriter(tableToken, "test");
     }
 
-    public static void insert(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
+    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
         Assert.assertNotNull(compiledQuery.getInsertOperation());
         final InsertOperation insertOperation = compiledQuery.getInsertOperation();
@@ -1321,7 +1328,7 @@ public final class TestUtils {
     }
 
     public static void printSqlWithTypes(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
             MutableCharSink sink
@@ -1387,7 +1394,7 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null);
     }
 
     public static long toMemory(CharSequence sequence) {

@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.str.LPSZ;
@@ -1120,7 +1121,9 @@ public class LatestByTest extends AbstractGriffinTest {
     public void testSymbolInPredicate_singleElement() throws Exception {
         assertMemoryLeak(() -> {
             String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
-            compiler.compile(createStmt, sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile(createStmt, sqlExecutionContext);
+            }
             executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
             String expected = "symbol\tside\ttimestamp\n" +
                     "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
@@ -1133,7 +1136,10 @@ public class LatestByTest extends AbstractGriffinTest {
 
     private String selectDistinctSym() throws SqlException {
         StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = compiler.compile("select distinct s from t order by s limit " + 500, sqlExecutionContext).getRecordCursorFactory()) {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("select distinct s from t order by s limit " + 500, sqlExecutionContext).getRecordCursorFactory()
+        ) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
                 int i = 0;
@@ -1172,28 +1178,30 @@ public class LatestByTest extends AbstractGriffinTest {
 
     private void testLatestByWithJoin(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table r (symbol symbol, value long, ts timestamp)" +
-                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
-            executeInsert("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
-            compiler.compile("create table t (symbol symbol, value long, ts timestamp)" +
-                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
-            executeInsert("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("create table r (symbol symbol, value long, ts timestamp)" +
+                        (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
+                executeInsert("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
+                compiler.compile("create table t (symbol symbol, value long, ts timestamp)" +
+                        (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
+                executeInsert("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
 
-            String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +
-                    " t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)\n" +
-                    "select r.symbol, r.v subscribers, t.v followers\n" +
-                    "from r\n" +
-                    "join t on symbol";
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
-                assertCursor(
-                        "symbol\tsubscribers\tfollowers\n" +
-                                "xyz\t1\t42\n",
-                        factory,
-                        false,
-                        false
-                );
+                String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +
+                        " t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)\n" +
+                        "select r.symbol, r.v subscribers, t.v followers\n" +
+                        "from r\n" +
+                        "join t on symbol";
+                try (
+                        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+                ) {
+                    assertCursor(
+                            "symbol\tsubscribers\tfollowers\n" +
+                                    "xyz\t1\t42\n",
+                            factory,
+                            false,
+                            false
+                    );
+                }
             }
         });
     }

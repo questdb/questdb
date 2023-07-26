@@ -27,10 +27,7 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -52,7 +49,7 @@ import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 
 public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverDropTableFuzzTest.class);
-    private SqlCompilerImpl[] compilers;
+    private SqlCompiler[] compilers;
     private SOCountDownLatch dropsDone;
     private SqlExecutionContext[] executionContexts;
     private int numOfDropThreads;
@@ -74,7 +71,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         runTest();
     }
 
-    private void executeDrop(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) throws SqlException {
+    private void executeDrop(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) throws SqlException {
         try {
             LOG.info().$(sql).$();
             final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
@@ -100,7 +97,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         compilers = new SqlCompilerImpl[numOfDropThreads];
         executionContexts = new SqlExecutionContext[numOfDropThreads];
         for (int i = 0; i < numOfDropThreads; i++) {
-            compilers[i] = new SqlCompilerImpl(engine, null);
+            compilers[i] = new SqlCompilerImpl(engine);
             executionContexts[i] = TestUtils.createSqlExecutionCtx(engine, numOfDropThreads);
         }
     }
@@ -122,7 +119,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
             String sql = "";
             try {
                 final SCSequence waitSequence = new SCSequence();
-                final SqlCompilerImpl compiler = compilers[threadId];
+                final SqlCompiler compiler = compilers[threadId];
                 final SqlExecutionContext executionContext = executionContexts[threadId];
                 while (tableNames.size() == 0) {
                     Os.pause();

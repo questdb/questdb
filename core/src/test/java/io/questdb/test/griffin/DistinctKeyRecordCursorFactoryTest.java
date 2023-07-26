@@ -60,7 +60,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount);
 
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
                             "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
                             " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
@@ -76,13 +76,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             }
 
             try {
-                TestUtils.printSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select DISTINCT sym from tab order by 1 LIMIT 3",
-                        sink
-                );
-                Assert.fail();
+                fail("select DISTINCT sym from tab order by 1 LIMIT 3");
             } catch (OutOfMemoryError e) {
                 // ignore
             }
@@ -128,11 +122,10 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
     @Test
     public void testDistinctOnBrokenTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
                             "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
-                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
-                    sqlExecutionContext
+                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH"
             );
 
             // remove partition
@@ -144,13 +137,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             }
 
             try {
-                TestUtils.printSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select DISTINCT sym from tab order by 1 LIMIT 3",
-                        sink
-                );
-                Assert.fail();
+                fail("select DISTINCT sym from tab order by 1 LIMIT 3");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
             }

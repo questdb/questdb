@@ -63,13 +63,13 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "KF\tOP\t0.6797562990945702\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            ddl("create table x as (" +
                     " select" +
                     " rnd_str(2,2,1) a," +
                     " rnd_str(2,2,1) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(30)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
                     "x where a <> b",
@@ -93,13 +93,13 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "RY\tFB\t0.0011075361080621349\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            ddl("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
                     "x where a <> 'TJ'",
@@ -122,13 +122,13 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "RY\tFB\t0.0011075361080621349\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            ddl("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
                     "x where 'TJ' <> a",
@@ -158,13 +158,13 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "HO\tNV\t0.8940917126581895\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            ddl("create table x as (" +
                     " select" +
                     " rnd_str(2,2,1) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(20)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
                     "x where a <> null",
@@ -194,13 +194,13 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "HO\tNV\t0.8940917126581895\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            ddl("create table x as (" +
                     " select" +
                     " rnd_str(2,2,1) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(20)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
                     "x where null <> a",

@@ -1248,8 +1248,8 @@ public class UnionTest extends AbstractGriffinTest {
     @Test
     public void testUnionGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
-            compile("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            alter("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            alter("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
 
             assertQuery("typeof\ts\tsum\n" +
                             "STRING\tb\t9.711630235623893\n" +

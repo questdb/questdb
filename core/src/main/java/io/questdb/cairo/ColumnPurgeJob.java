@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -39,7 +38,6 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.ColumnPurgeTask;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -72,7 +70,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
     private TableWriter writer;
 
-    public ColumnPurgeJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
+    public ColumnPurgeJob(CairoEngine engine) throws SqlException {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.inQueue = engine.getMessageBus().getColumnPurgeQueue();

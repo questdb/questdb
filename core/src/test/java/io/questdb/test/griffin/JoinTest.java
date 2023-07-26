@@ -4446,7 +4446,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoinFailsBecauseSubqueryDoesntSupportRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE trade (\n" +
+            alter("CREATE TABLE trade (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  instrument SYMBOL,\n" +
                     "  price DOUBLE,\n" +
@@ -4478,7 +4478,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoinFailsInFullFatMode() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE trade (\n" +
+            alter("CREATE TABLE trade (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  instrument SYMBOL,\n" +
                     "  price DOUBLE,\n" +
@@ -4884,7 +4884,7 @@ public class JoinTest extends AbstractGriffinTest {
 
     private void assertFailure(String query, String expectedMessage, int position) {
         try {
-            compile(query, sqlExecutionContext);
+            alter(query, sqlExecutionContext);
             Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
         } catch (SqlException | ImplicitCastException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);

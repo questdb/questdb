@@ -32,8 +32,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -54,10 +52,6 @@ public class QuestDBTestNode {
 
     public void closeCairo() {
         cairo.close();
-    }
-
-    public void closeGriffin() {
-        griffin.close();
     }
 
     public BindVariableService getBindVariableService() {
@@ -90,14 +84,6 @@ public class QuestDBTestNode {
 
     public CharSequence getRoot() {
         return cairo.root;
-    }
-
-    public DatabaseSnapshotAgent getSnapshotAgent() {
-        return cairo.snapshotAgent;
-    }
-
-    public SqlCompilerImpl getSqlCompiler() {
-        return griffin.compiler;
     }
 
     public SqlExecutionContext getSqlExecutionContext() {
@@ -134,10 +120,6 @@ public class QuestDBTestNode {
         cairo.tearDown(removeDir);
     }
 
-    public void tearDownGriffin() {
-        griffin.tearDown();
-    }
-
     @Override
     public String toString() {
         return "QuestDBTestNode{" +
@@ -155,7 +137,6 @@ public class QuestDBTestNode {
         private final boolean ownRoot;
         private final CharSequence root;
         private CairoEngine engine;
-        private DatabaseSnapshotAgent snapshotAgent;
 
         private Cairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
             this.root = root;
@@ -171,7 +152,6 @@ public class QuestDBTestNode {
             configuration = new CairoTestConfiguration(root, telemetryConfiguration, overrides);
             metrics = Metrics.enabled();
             engine = new CairoEngine(configuration, metrics);
-            snapshotAgent = new DatabaseSnapshotAgent(engine);
             messageBus = engine.getMessageBus();
         }
 
@@ -185,7 +165,6 @@ public class QuestDBTestNode {
         }
 
         public void tearDown(boolean removeDir) {
-            snapshotAgent.clear();
             engine.getTableIdGenerator().close();
             engine.clear();
             engine.closeNameRegistry();
@@ -204,18 +183,15 @@ public class QuestDBTestNode {
         }
 
         private void close() {
-            snapshotAgent = Misc.free(snapshotAgent);
             engine = Misc.free(engine);
         }
     }
 
     private static class Griffin {
         private final BindVariableService bindVariableService;
-        private final SqlCompilerImpl compiler;
         private final SqlExecutionContext sqlExecutionContext;
 
         private Griffin(Cairo cairo, SqlExecutionCircuitBreaker circuitBreaker) {
-            compiler = cairo.configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(cairo.engine, null, cairo.snapshotAgent);
             bindVariableService = new BindVariableServiceImpl(cairo.configuration);
             sqlExecutionContext = new SqlExecutionContextImpl(cairo.engine, 1)
                     .with(
@@ -230,13 +206,6 @@ public class QuestDBTestNode {
 
         public void setUp() {
             bindVariableService.clear();
-        }
-
-        public void tearDown() {
-        }
-
-        private void close() {
-            compiler.close();
         }
     }
 }

@@ -106,7 +106,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "SNOW", tableToken -> {
                         try {
-                            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
@@ -133,7 +133,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001\n");
 
                             // drop the partition
-                            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
@@ -183,7 +183,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "IGLOO", tableToken -> {
                         try {
-                            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
@@ -217,7 +217,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         try {
                             try (TableReader ignore = engine.getReader(tableToken)) {
                                 // drop the partition which was attached via soft link
-                                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                                alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                                 // there is a reader, cannot unlink, thus the link will still exist
                                 path.of(configuration.getRoot()) // <-- soft link path
                                         .concat(tableToken)
@@ -265,7 +265,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             );
 
                             try (TableReader ignore = engine.getReader(tableToken)) {
-                                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                                alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                             }
 
                             runO3PartitionPurgeJob();
@@ -291,7 +291,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
-                            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
@@ -469,7 +469,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n");
 
             // drop active partition
-            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-10-21'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-10-21'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
@@ -729,10 +729,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             path.of(configuration.getRoot()).concat(tableToken);
             int pathLen = path.length();
             for (int i = 0; i < partitionCount - 2; i++) {
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
                 txn++;
                 copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, partitionName[i], otherLocation);
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
                 txn++;
 
                 // verify that the link has been renamed to what we expect
@@ -760,12 +760,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             try (TableReader ignore = engine.getReader(tableToken)) {
                 // drop all partitions but the most recent
                 for (int i = 0, expectedTxn = 2; i < partitionCount - 2; i++, expectedTxn += 2) {
-                    compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
+                    alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
                     path.trimTo(pathLen).concat(partitionName[i]);
                     TestUtils.txnPartitionConditionally(path, expectedTxn);
                     Assert.assertTrue(Files.exists(path.$()));
                 }
-                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[partitionCount - 2] + "'", sqlExecutionContext);
+                alter("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[partitionCount - 2] + "'", sqlExecutionContext);
                 path.trimTo(pathLen).concat(partitionName[partitionCount - 2]);
                 Assert.assertTrue(Files.exists(path.$()));
             }
@@ -830,7 +830,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         engine.releaseAllReaders();
                         engine.releaseAllWriters();
                         try (
-                                ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine, null);
+                                ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine);
                                 TableReader reader = engine.getReader(tableToken)
                         ) {
                             TxReader txReader = reader.getTxFile();
@@ -922,7 +922,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "FRIO_DEL_15", tableToken -> {
                         try {
-                            compile("TRUNCATE TABLE " + tableName, sqlExecutionContext);
+                            alter("TRUNCATE TABLE " + tableName, sqlExecutionContext);
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "\t\t0\n");
@@ -954,7 +954,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, tableToken -> {
                         try {
-                            compile("TRUNCATE TABLE " + tableName, sqlExecutionContext);
+                            alter("TRUNCATE TABLE " + tableName, sqlExecutionContext);
                             path.of(configuration.getRoot()).concat(tableToken);
                             int plen = path.length();
                             Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
@@ -1094,9 +1094,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
 
             // detach partition and attach it from soft link
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, otherLocation);
-            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+            alter("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
 
             // verify that the link has been renamed to what we expect
             path.of(configuration.getRoot()).concat(tableToken).concat(readOnlyPartitionName);

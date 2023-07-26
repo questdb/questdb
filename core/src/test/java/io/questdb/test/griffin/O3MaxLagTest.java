@@ -26,7 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
@@ -45,7 +45,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testBigUncommittedCheckStrColFixedAndVarMappedSizes() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
                 tableModel
                         .col("id", ColumnType.STRING)
@@ -57,7 +57,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testBigUncommittedMovesTimestampOnEdge() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
                 tableModel
                         .col("id", ColumnType.LONG)
@@ -69,7 +69,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testBigUncommittedToMove() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
                 tableModel
                         .col("id", ColumnType.LONG)
@@ -198,7 +198,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testRowCountWhenLagIsNextDay() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             String[] dates = new String[]{
                     "2021-01-01T00:05:00.000000Z",
                     "2021-01-01T00:01:00.000000Z",
@@ -249,7 +249,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(0,
                 (CairoEngine engine,
-                 SqlCompilerImpl compiler,
+                 SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -285,7 +285,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(0,
                 (CairoEngine engine,
-                 SqlCompilerImpl compiler,
+                 SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -308,7 +308,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         executeWithPool(0,
                 (CairoEngine engine,
-                 SqlCompilerImpl compiler,
+                 SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -327,7 +327,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 (CairoEngine engine,
-                 SqlCompilerImpl compiler,
+                 SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     testVarColumnMergeWithColumnTops(
@@ -350,7 +350,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(0,
                 (CairoEngine engine,
-                 SqlCompilerImpl compiler,
+                 SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -368,7 +368,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(0,
                 (CairoEngine engine,
-                 SqlCompilerImpl compiler,
+                 SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -424,7 +424,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     private void testBigUncommittedMove1(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             TableModel tableModel
     ) throws NumericException, SqlException {
@@ -529,7 +529,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
     }
 
-    private void testContinuousBatchedCommit0(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testContinuousBatchedCommit0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int nTotalRows = 50000;
         int nInitialStateRows = 150;
         long microsBetweenRows = 100000000;
@@ -617,7 +617,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -657,7 +657,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testLargeLagWithinPartition(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testLargeLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -703,7 +703,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     private void testNoLag0(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         String sql = "create table x as (" +
@@ -752,7 +752,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -799,7 +799,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testNoLagWithRollback(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testNoLagWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -860,7 +860,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testO3MaxLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -908,7 +908,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testO3MaxLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -953,7 +953,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagStaggeredPartitions0(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagStaggeredPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1057,7 +1057,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testO3MaxLagWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1104,7 +1104,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagWithLargeO3(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1145,7 +1145,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1187,7 +1187,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     private void testVarColumnMergeWithColumnTops(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             int initialCount,
             int additionalCount,
@@ -1301,7 +1301,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         );
     }
 
-    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
         compiler.compile(

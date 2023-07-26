@@ -3,6 +3,9 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.*;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
@@ -23,12 +26,10 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     };
     private final CairoEngine engine;
     private final Rnd rnd = new Rnd();
-    private final DatabaseSnapshotAgent snapshotAgent;
 
-    public SqlCompilerPool(CairoEngine engine, DatabaseSnapshotAgent snapshotAgent) {
+    public SqlCompilerPool(CairoEngine engine) {
         super(engine.getConfiguration(), MAX_POOL_SEGMENTS, INACTIVE_COMPILER_TTL_MILLIS);
         this.engine = engine;
-        this.snapshotAgent = snapshotAgent;
     }
 
     public C get() {
@@ -51,7 +52,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         // why it looks like this: there is a life-cycle issue: when the SqlCompilerPool is constructed
         // the configuration is not yet initialized thus getFactoryProvider returns null
         // see PropServerConfiguration#init(CairoEngine engine, FunctionFactoryCache functionFactoryCache, FreeOnExit freeOnExit)
-        SqlCompilerImpl delegate = engine.getConfiguration().getFactoryProvider().getSqlCompilerFactory().getInstance(engine, engine.getFunctionFactoryCache(), snapshotAgent);
+        SqlCompilerImpl delegate = engine.getSqlCompilerFactory().getInstance(engine);
         return new C(delegate, this, tableName, entry, index);
     }
 
@@ -134,6 +135,26 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             // todo: is this correct? should we be doing this?
             // and if so then perhaps we should do this while returning the compiler to the pool?
             this.clear();
+        }
+
+        @Override
+        public void setEnableJitNullChecks(boolean value) {
+            delegate.setEnableJitNullChecks(value);
+        }
+
+        @Override
+        public void setFullFatJoins(boolean fullFatJoins) {
+            delegate.setFullFatJoins(fullFatJoins);
+        }
+
+        @Override
+        public ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.testCompileModel(query, executionContext);
+        }
+
+        @Override
+        public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+            return delegate.testParseExpression(expression, model);
         }
 
         @Override

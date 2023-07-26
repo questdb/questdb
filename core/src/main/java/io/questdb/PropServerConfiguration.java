@@ -39,7 +39,6 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -473,7 +472,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log,
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
-                (configuration, engine, functionFactoryCache, freeOnExitList) -> DefaultFactoryProvider.INSTANCE);
+                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE);
     }
 
     public PropServerConfiguration(
@@ -1200,8 +1199,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public void init(CairoEngine engine, FunctionFactoryCache functionFactoryCache, FreeOnExit freeOnExit) {
-        this.factoryProvider = fpf.getInstance(this, engine, functionFactoryCache, freeOnExit);
+    public void init(CairoEngine engine, FreeOnExit freeOnExit) {
+        this.factoryProvider = fpf.getInstance(this, engine, freeOnExit);
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int workerCount) throws ServerConfigurationException {

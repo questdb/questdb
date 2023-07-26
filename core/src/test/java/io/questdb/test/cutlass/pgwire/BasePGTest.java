@@ -32,7 +32,9 @@ import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -73,8 +75,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             PGWireServer.PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
@@ -88,9 +88,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
+            WorkerPool workerPool
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -269,7 +267,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
-        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount(), compiler.getFunctionFactoryCache());
+        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
         workerPool.assign(copyRequestJob);
         workerPool.freeOnExit(copyRequestJob);
@@ -277,9 +275,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return createPGWireServer(
                 configuration,
                 engine,
-                workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent
+                workerPool
         );
     }
 
@@ -319,11 +315,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
             }
 
             @Override

@@ -39,7 +39,7 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -49,7 +49,7 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -62,7 +62,7 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFirstNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -76,7 +76,7 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -89,7 +89,7 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -100,7 +100,7 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

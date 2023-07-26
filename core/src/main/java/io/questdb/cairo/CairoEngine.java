@@ -39,14 +39,12 @@ import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.Sequence;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -76,6 +74,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MetadataPool metadataPool;
     private final Metrics metrics;
     private final ReaderPool readerPool;
+    private final DatabaseSnapshotAgent snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
@@ -112,6 +111,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        this.snapshotAgent = new DatabaseSnapshotAgent(this);
         this.walListener = WalListener.DEFAULT;
         try {
             this.tableIdGenerator.open();
@@ -121,7 +121,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         // Recover snapshot, if necessary.
         try {
-            DatabaseSnapshotAgent.recoverSnapshot(this);
+            snapshotAgent.recoverSnapshot();
         } catch (Throwable e) {
             close();
             throw e;
@@ -160,8 +160,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         }
-        // todo: propagate Snapshot Agent
-        this.sqlCompilerPool = new SqlCompilerPool(this, null);
+        this.sqlCompilerPool = new SqlCompilerPool(this);
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
@@ -175,9 +174,9 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b3 = tableSequencerAPI.releaseAll();
         boolean b4 = metadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
-        boolean b6 = sqlCompilerPool.releaseAll();
         messageBus.reset();
-        return b1 & b2 & b3 & b4 & b5 & b6;
+        snapshotAgent.clear();
+        return b1 & b2 & b3 & b4 & b5;
     }
 
     @Override
@@ -193,11 +192,16 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetry);
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
+        Misc.free(snapshotAgent);
     }
 
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    public void completeSnapshot() throws SqlException {
+        snapshotAgent.completeSnapshot();
     }
 
     public @NotNull TableToken createTable(
@@ -453,6 +457,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return sqlCompilerPool.get();
     }
 
+    public SqlCompilerFactory getSqlCompilerFactory() {
+        return SqlCompilerFactoryImpl.INSTANCE;
+    }
+
     public IDGenerator getTableIdGenerator() {
         return tableIdGenerator;
     }
@@ -659,6 +667,14 @@ public class CairoEngine implements Closeable, WriterSource {
     public void onTableCreated(SecurityContext securityContext, TableToken tableToken) {
     }
 
+    public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+        snapshotAgent.prepareSnapshot(executionContext);
+    }
+
+    public void recoverSnapshot() {
+        this.snapshotAgent.recoverSnapshot();
+    }
+
     public void registerTableToken(TableToken tableToken) {
         tableNameRegistry.registerName(tableToken);
     }
@@ -825,6 +841,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalListener(@NotNull WalListener walListener) {
         this.walListener = walListener;
+    }
+
+    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
+        this.snapshotAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
     public void unlock(
@@ -1014,4 +1034,5 @@ public class CairoEngine implements Closeable, WriterSource {
             return false;
         }
     }
+
 }

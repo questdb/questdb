@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class ColumnVersionTest extends AbstractGriffinTest {
@@ -36,19 +35,18 @@ public class ColumnVersionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setRandom(new Rnd(9005735847243117419L, 3979535605596560453L));
 
-            compiler.compile(
+            ddl(
                     "create table t_col_top_ooo_day as (" +
                             "select " +
                             " x" +
                             ", rnd_symbol('a', 'b', 'c', null) m" +
                             ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
                             " from long_sequence(96)," +
-                            "), index(m) timestamp(ts) partition by DAY",
-                    sqlExecutionContext
+                            "), index(m) timestamp(ts) partition by DAY"
             );
-            compiler.compile("alter table t_col_top_ooo_day add column день symbol", sqlExecutionContext).execute(null).await();
-            compiler.compile("alter table t_col_top_ooo_day add column str string", sqlExecutionContext).execute(null).await();
-            compiler.compile(
+            alter("alter table t_col_top_ooo_day add column день symbol");// .execute(null).await();
+            alter("alter table t_col_top_ooo_day add column str string");//.execute(null).await();
+            ddl(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +
@@ -56,10 +54,9 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             ", timestamp_sequence('1970-01-05T02:30', " + Timestamps.HOUR_MICROS + "L) ts" +
                             ", rnd_symbol('a', 'b', 'c', null)" +
                             ", rnd_str()" +
-                            " from long_sequence(10),",
-                    sqlExecutionContext
+                            " from long_sequence(10),"
             );
-            compiler.compile(
+            ddl(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +
@@ -67,12 +64,11 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             ", timestamp_sequence('1970-01-01T01:30', " + Timestamps.HOUR_MICROS + "L) ts" +
                             ", rnd_symbol('a', 'b', 'c', null)" +
                             ", rnd_str()" +
-                            " from long_sequence(36)",
-                    sqlExecutionContext
+                            " from long_sequence(36)"
             );
 
             sqlExecutionContext.setRandom(new Rnd(3784807164251091079L, 1558467903141138059L));
-            compiler.compile(
+            ddl(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +
@@ -80,10 +76,9 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             ", timestamp_sequence('1970-01-05T04:25', " + Timestamps.HOUR_MICROS + "L) ts" +
                             ", rnd_symbol('a', 'b', 'c', null)" +
                             ", rnd_str()" +
-                            " from long_sequence(10),",
-                    sqlExecutionContext
+                            " from long_sequence(10),"
             );
-            TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = 'a'", sink,
+            assertSql("t_col_top_ooo_day where день = 'a'",
                     "x\tm\tts\tдень\tstr\n" +
                             "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
                             "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
@@ -102,7 +97,7 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
                             "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n");
 
-            compiler.compile(
+            ddl(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +
@@ -110,11 +105,10 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             ", timestamp_sequence('1970-01-01T01:27', " + Timestamps.HOUR_MICROS + "L) ts" +
                             ", rnd_symbol('a', 'b', 'c', null)" +
                             ", rnd_str()" +
-                            " from long_sequence(36)",
-                    sqlExecutionContext
+                            " from long_sequence(36)"
             );
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = 'a'", sink,
+            assertSql("t_col_top_ooo_day where день = 'a'",
                     "x\tm\tts\tдень\tstr\n" +
                             "1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ\n" +
                             "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +

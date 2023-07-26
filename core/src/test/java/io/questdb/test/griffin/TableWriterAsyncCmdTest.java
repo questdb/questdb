@@ -62,7 +62,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterCommandInvalidSerialisation() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
@@ -85,7 +85,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterCommandsExceedEngineEventQueue() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp)", sqlExecutionContext);
 
             // Block event queue with stale sequence
             SCSequence staleSequence = new SCSequence();
@@ -129,7 +129,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterCommandsExceedsEngineCmdQueue() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp)", sqlExecutionContext);
             SCSequence tempSequence = new SCSequence();
 
             // Block table
@@ -171,7 +171,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     return super.rename(from, to);
                 }
             };
-            compile("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
+            alter("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
 
             OperationFuture fut;
             // Block table
@@ -188,7 +188,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             } finally {
                 fut.close();
             }
-            compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
+            alter("ALTER TABLE product drop column to_remove", sqlExecutionContext);
         });
     }
 
@@ -204,7 +204,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     return super.rmdir(name);
                 }
             };
-            compile("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
+            alter("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             OperationFuture fut;
@@ -238,7 +238,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     return super.rename(from, to);
                 }
             };
-            compile("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
+            alter("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
 
             // Block table
             try (TableWriter writer = getWriter("product")) {
@@ -265,7 +265,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterDeserializationFails() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
+            alter("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             OperationFuture fut;
@@ -303,7 +303,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterDoesNotCommitUncommittedRowsOnWriterClose() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache) timestamp(timestamp)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp, name symbol nocache) timestamp(timestamp)", sqlExecutionContext);
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
@@ -335,7 +335,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterNonExistingTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
@@ -346,7 +346,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     cc.ofAlter(creepyAlter.build());
                     fut = cc.execute(commandReplySequence);
                 }
-                compile("drop table product", sqlExecutionContext);
+                alter("drop table product", sqlExecutionContext);
 
                 // ALTER TABLE should be executed successfully on writer.close()
                 fut.await();
@@ -361,7 +361,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterSymbolCache() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
@@ -388,7 +388,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncRenameMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try {
 
@@ -416,7 +416,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
         long tmpWriterCommandQueueSlotSize = writerCommandQueueSlotSize;
         writerCommandQueueSlotSize = 4L;
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp)", sqlExecutionContext);
 
             // Get the lock so command has to be serialized to writer command queue
             try (TableWriter ignored = getWriter("product")) {
@@ -435,7 +435,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testCommandQueueReused() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp)", sqlExecutionContext);
 
             // Block event queue with stale sequence
             try (TableWriter writer = getWriter("product")) {
@@ -455,7 +455,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testInvalidAlterDropPartitionStatementQueued() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
 
             try (TableWriter writer = getWriter("product")) {
                 AlterOperationBuilder creepyAlter = new AlterOperationBuilder();
@@ -479,7 +479,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testInvalidAlterStatementQueued() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            alter("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
 
             try (TableWriter writer = getWriter("product")) {
 

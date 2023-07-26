@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
@@ -308,8 +309,10 @@ public class SortAndLimitTest extends AbstractGriffinTest {
 
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
-            for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String query : queries) {
+                    compiler.compile(query, sqlExecutionContext);
+                }
             }
         });
     }

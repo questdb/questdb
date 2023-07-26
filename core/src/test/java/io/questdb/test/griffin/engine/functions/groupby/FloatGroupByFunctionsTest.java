@@ -51,7 +51,7 @@ public class FloatGroupByFunctionsTest extends AbstractGriffinTest {
     @Test
     public void testSampleByWithNulls() throws SqlException {
         sqlExecutionContext.setRandom(new Rnd());
-        compiler.compile("create table tab as ( select rnd_float() ch from long_sequence(100) )", sqlExecutionContext);
+        ddl("create table tab as ( select rnd_float() ch from long_sequence(100) )");
 
         assertSql("select min(ch), max(ch), first(ch), last(ch), count() from tab",
                 "min\tmax\tfirst\tlast\tcount\n" +

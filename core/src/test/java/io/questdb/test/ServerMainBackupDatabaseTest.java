@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
@@ -153,20 +154,17 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
 
                 CairoEngine engine = qdb.getEngine();
-                List<SqlCompilerImpl> compilers = new ArrayList<>();
                 List<SqlExecutionContext> contexts = new ArrayList<>();
 
                 // create/populate tables concurrently
                 for (int t = 0; t < N; t++) {
-                    compilers.add(new SqlCompilerImpl(engine));
                     contexts.add(createSqlExecutionCtx(engine));
-                    startTableCreator(partitionBy, isWal, compilers.get(t), contexts.get(t), tableTokens, createsBarrier, expectedTotalRows, createsCompleted, errors);
+                    startTableCreator(partitionBy, isWal, engine, contexts.get(t), tableTokens, createsBarrier, expectedTotalRows, createsCompleted, errors);
                 }
                 // insert into tables concurrently
                 for (int t = 0; t < N; t++) {
-                    compilers.add(new SqlCompilerImpl(engine));
                     contexts.add(createSqlExecutionCtx(engine));
-                    startTableWriter(t, compilers.get(t), contexts.get(t), tableTokens, expectedTotalRows, createsCompleted, writersCompleted, endWriters, errors);
+                    startTableWriter(t, engine, contexts.get(t), tableTokens, expectedTotalRows, createsCompleted, writersCompleted, endWriters, errors);
                 }
                 // backup database concurrently 3 seconds from now
                 startBackupDatabase(defaultCompiler, defaultContext, expectedTotalRows, createsCompleted, backupCompleted, errors);
@@ -175,11 +173,9 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 Assert.assertTrue(backupCompleted.await(TimeUnit.SECONDS.toNanos(60L)));
                 endWriters.set(true);
                 Assert.assertTrue(writersCompleted.await(TimeUnit.SECONDS.toNanos(10L)));
-                for (int i = 0, n = compilers.size(); i < n; i++) {
-                    Misc.free(compilers.get(i));
+                for (int i = 0, n = contexts.size(); i < n; i++) {
                     Misc.free(contexts.get(i));
                 }
-                compilers.clear();
                 contexts.clear();
 
                 // drop tables
@@ -202,15 +198,14 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             String newRoot = getLatestBackupDbRoot();
             try (
                     ServerMain qdb = new ServerMain("-d", newRoot, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompilerImpl defaultCompiler = new SqlCompilerImpl(qdb.getEngine());
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
                 long totalRows = 0L;
                 for (int i = 0, n = tableTokens.get().size(); i < n; i++) {
                     TableToken tableToken = tableTokens.get().get(i);
-                    totalRows += assertTableExists(tableToken, partitionBy, isWal, defaultCompiler, defaultContext);
-                    executeInsertGeneratorStmt(tableToken, 10, defaultCompiler, defaultContext);
+                    totalRows += assertTableExists(tableToken, partitionBy, isWal, qdb.getEngine(), defaultContext);
+                    executeInsertGeneratorStmt(tableToken, 10, qdb.getEngine(), defaultContext);
                     drainWalQueue(qdb.getEngine());
                 }
                 Assert.assertTrue(totalRows > (expectedTotalRows.get() * 0.5));
@@ -220,28 +215,36 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         });
     }
 
-    private static long assertTableExists(TableToken tableToken, int partitionBy, boolean isWal, SqlCompilerImpl compiler, SqlExecutionContext context) throws Exception {
-        CompiledQuery cc = compiler.compile(
-                "SELECT name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
-                        "FROM tables() " +
-                        "WHERE name='" + tableToken.getTableName() + '\'',
-                context);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
-            String expected = tableToken.getTableName() + "\ttimestamp2\t" + PartitionBy.toString(partitionBy) + '\t' + isWal + '\t' + tableToken.getDirName();
-            TestUtils.assertContains(sink, expected);
-        }
+    private static long assertTableExists(
+            TableToken tableToken,
+            int partitionBy,
+            boolean isWal,
+            CairoEngine engine,
+            SqlExecutionContext context
+    ) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CompiledQuery cc = compiler.compile(
+                    "SELECT name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
+                            "FROM tables() " +
+                            "WHERE name='" + tableToken.getTableName() + '\'',
+                    context);
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+                String expected = tableToken.getTableName() + "\ttimestamp2\t" + PartitionBy.toString(partitionBy) + '\t' + isWal + '\t' + tableToken.getDirName();
+                TestUtils.assertContains(sink, expected);
+            }
 
-        cc = compiler.compile("SELECT * FROM '" + tableToken.getTableName() + "' WHERE bool = true LIMIT -100", context);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-            // being able to iterate is the test
-            TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
-        }
-        cc = compiler.compile("SELECT count(*) n FROM '" + tableToken.getTableName() + '\'', context);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
-            sink.clear(sink.length() - 1);
-            return Long.parseLong(sink.toString());
+            cc = compiler.compile("SELECT * FROM '" + tableToken.getTableName() + "' WHERE bool = true LIMIT -100", context);
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+                // being able to iterate is the test
+                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+            }
+            cc = compiler.compile("SELECT count(*) n FROM '" + tableToken.getTableName() + '\'', context);
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+                sink.clear(sink.length() - 1);
+                return Long.parseLong(sink.toString());
+            }
         }
     }
 
@@ -291,7 +294,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     private static void startTableCreator(
             int partitionBy,
             boolean isWal,
-            SqlCompilerImpl compiler,
+            CairoEngine engine,
             SqlExecutionContext context,
             AtomicReference<List<TableToken>> tableTokens,
             CyclicBarrier creatorsBarrier,
@@ -302,7 +305,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         startThread(createsCompleted, errors, () -> {
             creatorsBarrier.await();
             int numRows = ThreadLocalRandom.current().nextInt(100, 2000);
-            tableTokens.get().add(executeCreateTableStmt(UUID.randomUUID() + "_عظمة_", partitionBy, isWal, numRows, compiler, context));
+            tableTokens.get().add(executeCreateTableStmt(UUID.randomUUID() + "_عظمة_", partitionBy, isWal, numRows, engine, context));
             expectedTotalRows.getAndAdd(numRows);
             return null;
         });
@@ -310,7 +313,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
     private static void startTableWriter(
             int tableId,
-            SqlCompilerImpl compiler,
+            CairoEngine engine,
             SqlExecutionContext context,
             AtomicReference<List<TableToken>> tableTokens,
             AtomicLong expectedTotalRows,
@@ -333,7 +336,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             Assert.assertNotNull(tableToken);
             while (!Thread.currentThread().isInterrupted() && !endWriters.get()) {
                 int numRows = ThreadLocalRandom.current().nextInt(1, 50);
-                executeInsertGeneratorStmt(tableToken, numRows, compiler, context);
+                executeInsertGeneratorStmt(tableToken, numRows, engine, context);
                 expectedTotalRows.getAndAdd(numRows);
                 Os.sleep(1L);
             }

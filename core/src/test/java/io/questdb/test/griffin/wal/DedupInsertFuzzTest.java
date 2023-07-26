@@ -168,7 +168,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             applyWal(transactions, tableName, 1, rnd);
             transactions.clear();
 
-            compile("alter table " + tableName + " add s symbol index", sqlExecutionContext);
+            alter("alter table " + tableName + " add s symbol index", sqlExecutionContext);
 
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
@@ -239,7 +239,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void createEmptyTable(String tableName, String dedupOption) throws SqlException {
-        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
+        alter("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
                 , sqlExecutionContext);
     }
 
@@ -346,14 +346,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
 
             transactions = uniqueInserts(transactions);
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
                 applyNonWal(transactions, tableNameNoWal, rnd);
 
                 ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
-                compile("alter table " + tableNameWal + " dedup upsert keys(ts)", sqlExecutionContext);
+                alter("alter table " + tableNameWal + " dedup upsert keys(ts)", sqlExecutionContext);
                 applyWal(transactionsWithDups, tableNameWal, 1 + rnd.nextInt(4), rnd);
 
                 String limit = "";// limit 5190, 5205";

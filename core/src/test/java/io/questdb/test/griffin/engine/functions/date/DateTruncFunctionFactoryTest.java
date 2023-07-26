@@ -24,10 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -37,11 +36,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInvalidKind() {
         try {
-            compiler.compile(
-                    "select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
-                    sqlExecutionContext
-            );
-            Assert.fail();
+            fail("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid unit 'invalid'", e.getFlyweightMessage());
@@ -51,11 +46,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNullKind() {
         try {
-            compiler.compile(
-                    "select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
-                    sqlExecutionContext
-            );
-            Assert.fail();
+            fail("select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
@@ -128,11 +119,8 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     private void assertTimestamp(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertMemoryLeak(() -> assertSql(
                 sql,
-                sink,
                 "truncated\n" +
                         expected + "\n"
         ));

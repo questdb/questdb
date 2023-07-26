@@ -2608,7 +2608,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testFloatToLong() throws Exception {
-        compiler.compile("create table rndfloat as (select rnd_float(2) fl from long_sequence(10))", sqlExecutionContext);
+        ddl("create table rndfloat as (select rnd_float(2) fl from long_sequence(10))");
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 

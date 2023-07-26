@@ -71,7 +71,7 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
     @Test
     public void testSnapshotPrepare() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            alter("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();

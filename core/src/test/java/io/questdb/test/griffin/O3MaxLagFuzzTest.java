@@ -26,7 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -70,7 +70,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
 
     private static void testFuzz00(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             Rnd rnd
     ) throws SqlException, NumericException {
@@ -152,14 +152,14 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
 
     private void testFuzz0(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, NumericException {
         testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG));
     }
 
 
-    private void testRollbackFuzz(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final int nTotalRows = rnd.nextInt(79000);
         final long microsBetweenRows = rnd.nextLong(3090985);
@@ -169,7 +169,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
 
     private void testRollbackFuzz0(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             int nTotalRows,
             int lim,

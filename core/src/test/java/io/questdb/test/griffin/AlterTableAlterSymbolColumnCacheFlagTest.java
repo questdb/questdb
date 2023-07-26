@@ -124,7 +124,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
         final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(1);
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x (i int, sym symbol nocache) ;", sqlExecutionContext);
+            ddl("create table x (i int, sym symbol nocache) ;");
             executeInsert("insert into x values (1, 'GBP')");
             executeInsert("insert into x values (2, 'CHF')");
             executeInsert("insert into x values (3, 'GBP')");
@@ -223,7 +223,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
     }
 
     private void createX() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -243,8 +243,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp);",
-                sqlExecutionContext
+                        ") timestamp (timestamp);"
         );
     }
 

@@ -133,7 +133,7 @@ public class TrigonometryTest extends AbstractGriffinTest {
     @Test
     public void testSimpleFromTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table angle (x double)", sqlExecutionContext);
+            alter("create table angle (x double)", sqlExecutionContext);
             for (int i = 0; i <= 90; i++) {
                 executeInsert("insert into angle values(" + i * Math.PI / 180.0 + ')');
             }

@@ -31,6 +31,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.text.TextLoader;

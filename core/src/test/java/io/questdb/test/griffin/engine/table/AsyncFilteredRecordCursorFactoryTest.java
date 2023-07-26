@@ -25,11 +25,12 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
@@ -550,7 +551,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
     }
 
-    private void testDeferredSymbolInFilter0(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testDeferredSymbolInFilter0(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // JIT compiler doesn't support IN operator for symbols.
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         compiler.compile("create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour", sqlExecutionContext);
@@ -622,7 +623,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     Record r1 = c1.getRecord();
                     Record r2 = c2.getRecord();
 
-                    // We expect both cursors to be able to make progress even although only one of them
+                    // We expect both cursors to be able to make progress even though only one of them
                     // occupies the reduce queue most of the time. The second one should be using a local task.
                     while (c1.hasNext()) {
                         printer.print(r1, f1.getMetadata(), sink1);
@@ -758,17 +759,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 protected boolean runSerially() {
                     if (run) {
                         try {
-                            runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
-                                @Override
-                                public Rnd getRandom() {
-                                    return rnd;
-                                }
+                            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
+                                    @Override
+                                    public Rnd getRandom() {
+                                        return rnd;
+                                    }
 
-                                @Override
-                                public int getWorkerCount() {
-                                    return sharedPoolWorkerCount;
-                                }
-                            });
+                                    @Override
+                                    public int getWorkerCount() {
+                                        return sharedPoolWorkerCount;
+                                    }
+                                });
+                            }
                         } catch (Throwable e) {
                             e.printStackTrace();
                             errorCounter.incrementAndGet();
@@ -807,17 +810,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             pool.start();
 
             try {
-                runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
-                    @Override
-                    public int getSharedWorkerCount() {
-                        return sharedWorkerCount;
-                    }
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
+                        @Override
+                        public int getSharedWorkerCount() {
+                            return sharedWorkerCount;
+                        }
 
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-                });
+                        @Override
+                        public int getWorkerCount() {
+                            return workerCount;
+                        }
+                    });
+                }
             } catch (Throwable e) {
                 e.printStackTrace();
                 throw e;

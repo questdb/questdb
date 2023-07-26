@@ -677,7 +677,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     private void assertFailure(String sql, int position) throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compile(sql, sqlExecutionContext);
+                alter(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());

@@ -32,8 +32,8 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y (a int, b int)", sqlExecutionContext);
-            compiler.compile("insert into y select x/4, x from long_sequence(10)", sqlExecutionContext);
+            ddl("create table y (a int, b int)");
+            ddl("insert into y select x/4, x from long_sequence(10)");
             engine.releaseAllWriters();
 
             String query = "select b.a, row_number() OVER (PARTITION BY b.a ORDER BY b.b desc) as b " +
@@ -197,7 +197,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testKafkaQuery3() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)", sqlExecutionContext);
+            ddl("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
             assertQuery(
@@ -260,7 +260,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testKafkaQuery31() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)", sqlExecutionContext);
+            ddl("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
             assertQuery(

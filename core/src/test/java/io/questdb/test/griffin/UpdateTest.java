@@ -498,7 +498,7 @@ public class UpdateTest extends AbstractGriffinTest {
             );
 
             // Bump table version
-            compile("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
+            alter("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
             executeUpdate("UPDATE testUpdateAddedColumn SET y = x + 1 WHERE ts between '1970-01-01T12' and '1970-01-02T12'");
 
             assertSql("testUpdateAddedColumn", "ts\tx\ty\n" +
@@ -657,8 +657,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
-            compile("alter table up add column bin2 binary", sqlExecutionContext);
-            compile("insert into up select * from " +
+            alter("alter table up add column bin2 binary", sqlExecutionContext);
+            alter("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_bin(10, 20, 0) as bin1," +
                     " x + 10 as lng2," +
@@ -961,11 +961,11 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
-            compile("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
-            compile("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
-            compile("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
-            compile("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
-            compile("insert into up select * from " +
+            alter("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
+            alter("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
+            alter("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
+            alter("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
+            alter("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
@@ -1046,7 +1046,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
-            compile("alter table up add column y long", sqlExecutionContext);
+            alter("alter table up add column y long", sqlExecutionContext);
             executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
             assertSql("up", "ts\tx\ty\n" +
@@ -1112,8 +1112,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
-            compile("alter table up add column y long", sqlExecutionContext);
-            compile("insert into up select * from " +
+            alter("alter table up add column y long", sqlExecutionContext);
+            alter("insert into up select * from " +
                     " (select timestamp_sequence(250000000000, 25000000000) ts," +
                     " cast(x as int) + 10 as x," +
                     " cast(x as long) * 10 as y" +
@@ -1214,8 +1214,8 @@ public class UpdateTest extends AbstractGriffinTest {
 
             try (UpdateOperation updateOperation = cc.getUpdateOperation()) {
                 // Bump table version
-                compile("alter table up add column y long", sqlExecutionContext);
-                compile("alter table up drop column y", sqlExecutionContext);
+                alter("alter table up add column y long", sqlExecutionContext);
+                alter("alter table up drop column y", sqlExecutionContext);
 
                 applyUpdate(updateOperation);
                 Assert.fail();
@@ -1262,8 +1262,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
-            compile("alter table up add column y long", sqlExecutionContext);
-            compile("alter table up drop column y", sqlExecutionContext);
+            alter("alter table up add column y long", sqlExecutionContext);
+            alter("alter table up drop column y", sqlExecutionContext);
 
             executeUpdate("UPDATE up SET x = 44");
 
@@ -1308,8 +1308,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
-            compile("alter table up add column y long", sqlExecutionContext);
-            compile("insert into up select * from " +
+            alter("alter table up add column y long", sqlExecutionContext);
+            alter("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
@@ -1346,8 +1346,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
-            compile("alter table up add column y long", sqlExecutionContext);
-            compile("insert into up select * from " +
+            alter("alter table up add column y long", sqlExecutionContext);
+            alter("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
@@ -1382,7 +1382,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
-            compile("alter table up add column y long", sqlExecutionContext);
+            alter("alter table up add column y long", sqlExecutionContext);
 
             executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
@@ -1410,8 +1410,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
-            compile("alter table up add column y long", sqlExecutionContext);
-            compile("insert into up select * from " +
+            alter("alter table up add column y long", sqlExecutionContext);
+            alter("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
@@ -1562,9 +1562,9 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
-            compile("alter table up add column str2 string", sqlExecutionContext);
+            alter("alter table up add column str2 string", sqlExecutionContext);
 
-            compile("insert into up select * from " +
+            alter("insert into up select * from " +
                     " (select timestamp_sequence('1970-01-01T00:30', 6 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
@@ -1608,8 +1608,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
-            compile("alter table up add column str2 string", sqlExecutionContext);
-            compile("insert into up select * from " +
+            alter("alter table up add column str2 string", sqlExecutionContext);
+            alter("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +

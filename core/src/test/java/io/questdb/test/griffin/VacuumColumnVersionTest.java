@@ -452,7 +452,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
 
     @NotNull
     private ColumnPurgeJob createPurgeJob() throws SqlException {
-        return new ColumnPurgeJob(engine, null);
+        return new ColumnPurgeJob(engine);
     }
 
     private void executeUpdate(String query) throws SqlException {

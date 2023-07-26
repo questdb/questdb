@@ -26,14 +26,11 @@ package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.*;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -523,7 +520,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -535,8 +532,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             ", h long" +
                             ", i boolean" +
                             ", k long" +
-                            ", t timestamp)",
-                    sqlExecutionContext
+                            ", t timestamp)"
             );
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
@@ -1096,22 +1092,22 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    compiler.compile("create table test(" +
-                                    "ts timestamp, " +
-                                    "byte byte, " +
-                                    "short short," +
-                                    "char char," +
-                                    "int int," +
-                                    "long long," +
-                                    "boolean boolean," +
-                                    "float float," +
-                                    "double double," +
-                                    "string string," +
-                                    "symbol symbol," +
-                                    "long256 long256," +
-                                    "timestamp timestamp," +
-                                    "date date) timestamp(ts) partition by NONE",
-                            sqlExecutionContext);
+                    ddl("create table test(" +
+                            "ts timestamp, " +
+                            "byte byte, " +
+                            "short short," +
+                            "char char," +
+                            "int int," +
+                            "long long," +
+                            "boolean boolean," +
+                            "float float," +
+                            "double double," +
+                            "string string," +
+                            "symbol symbol," +
+                            "long256 long256," +
+                            "timestamp timestamp," +
+                            "date date) timestamp(ts) partition by NONE"
+                    );
 
                     String expectedMetadata = "{\"columnCount\":14,\"columns\":[" +
                             "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
@@ -1165,7 +1161,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    compiler.compile("create table test(ts timestamp) timestamp(ts) partition by NONE", sqlExecutionContext);
+                    ddl("create table test(ts timestamp) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = "ts\n" +
@@ -1200,7 +1196,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    compiler.compile("create table test(ts timestamp) timestamp(ts) partition by NONE", sqlExecutionContext);
+                    ddl("create table test(ts timestamp) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = "ts\n" +
@@ -2019,7 +2015,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -2031,8 +2027,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             ", h long" +
                             ", i boolean" +
                             ", k long" +
-                            ", t timestamp)",
-                    sqlExecutionContext
+                            ", t timestamp)"
             );
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
@@ -2699,9 +2694,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "2\t1\n" +
                     "2\t1\n";
 
-            compiler.compile("create table test (col_a int, col_b long)", sqlExecutionContext);
-            compile(compiler, "alter table test drop column col_a", sqlExecutionContext);
-            compile(compiler, "alter table test add column col_a long", sqlExecutionContext);
+            ddl("create table test (col_a int, col_b long)");
+            alter("alter table test drop column col_a");
+            alter("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -2725,9 +2720,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "1\t2\n" +
                     "1\t2\n";
 
-            compiler.compile("create table test (col_a int, col_b long)", sqlExecutionContext);
-            compile(compiler, "alter table test drop column col_a", sqlExecutionContext);
-            compile(compiler, "alter table test add column col_a long", sqlExecutionContext);
+            ddl("create table test (col_a int, col_b long)");
+            alter("alter table test drop column col_a");
+            alter( "alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -2795,7 +2790,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            compiler.compile("create table test(a string, d binary)", sqlExecutionContext);
+            ddl("create table test(a string, d binary)");
             configureLoaderDefaults(textLoader);
             try {
                 playText(textLoader, csv, 1024,
@@ -2823,7 +2818,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t1970-01-01T00:00:00.000045Z\n" +
                     "werop\t1970-01-01T00:00:00.000090Z\n";
 
-            compiler.compile("create table test(a string, b timestamp)", sqlExecutionContext);
+            ddl("create table test(a string, b timestamp)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -2846,7 +2841,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t\n" +
                     "werop\t\n";
 
-            compiler.compile("create table test(a string, b date)", sqlExecutionContext);
+            ddl("create table test(a string, b date)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -2869,12 +2864,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(t date" +
                             ", s symbol" +
-                            ", v double)",
-                    sqlExecutionContext
+                            ", v double)"
             );
             configureLoaderDefaults(textLoader);
             playText(
@@ -2902,7 +2896,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            compiler.compile("create table test (t timestamp, s symbol, v double)", sqlExecutionContext);
+            ddl("create table test (t timestamp, s symbol, v double)");
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
@@ -2929,14 +2923,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "2019-11-12T00:00:00.000Z,GOOG,2019-11-12T00:00:00.000Z,2019-11-12T00:00:00.000Z,15\n" +
                     "2019-11-13T00:00:00.000Z,GOOG,2019-11-13T00:00:00.000Z,2019-11-13T00:00:00.000Z,20\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(t1 timestamp" +
                             ", s symbol" +
                             ", t2 timestamp" +
                             ", t3 timestamp" +
-                            ", v double)",
-                    sqlExecutionContext
+                            ", v double)"
             );
             configureLoaderDefaults(textLoader);
             playText(
@@ -2967,7 +2960,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile("create table test(a int, b int)", sqlExecutionContext);
+            ddl("create table test(a int, b int)");
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
@@ -3008,7 +3001,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -3020,8 +3013,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             ", h long" +
                             ", i boolean" +
                             ", k long" +
-                            ", t timestamp)",
-                    sqlExecutionContext
+                            ", t timestamp)"
             );
             configureLoaderDefaults(textLoader);
             playText(
@@ -3048,7 +3040,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            compiler.compile("create table test(a string, b int, d binary)", sqlExecutionContext);
+            ddl("create table test(a string, b int, d binary)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -3058,31 +3050,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
-    private static void assertTable(String expected) throws SqlException {
-        refreshTablesInBaseEngine();
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "test",
-                sink,
-                expected
-        );
-    }
-
-    private static void compile(SqlCompilerImpl compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, executionContext);
-        try (OperationFuture future = cc.execute(null)) {
-            future.await();
-        }
-    }
-
     private static String extractLast(Path path) {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);
         return pathElements[pathElements.length - 1];
     }
 
-    private static void playText(
+    private void playText(
             CairoEngine engine,
             TextLoader textLoader,
             String text,
@@ -3222,6 +3196,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
+    protected void assertTable(String expected) throws SqlException {
+        refreshTablesInBaseEngine();
+        assertSql("test", expected);
+    }
+
     private void assertTimestampAsLong(String nominatedTimestamp, String expectedMeta) throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
@@ -3320,7 +3299,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
-                    compiler.compile(createStmt, sqlExecutionContext);
+                    ddl(createStmt);
                     configureLoaderDefaults(
                             textLoader,
                             Atomicity.SKIP_ROW,

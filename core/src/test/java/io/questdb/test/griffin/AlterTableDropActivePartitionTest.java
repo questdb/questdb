@@ -700,7 +700,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
                     Assert.assertEquals(ALTER,
-                            compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
+                            alter("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
                 }
         );
@@ -712,7 +712,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName, TableHeader);
                     try {
-                        compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
+                        alter("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
                     } catch (SqlException e) {
                         Assert.assertEquals(("alter table " + tableName + " drop partition where ").length(), e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "no partitions matched WHERE clause");
@@ -773,10 +773,11 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             reader1.reload();
                             Assert.assertEquals(1, reader0.size());
                             Assert.assertEquals(1, reader1.size());
-                            try (RecordCursorFactory factory = compiler.compile(tableName, sqlExecutionContext).getRecordCursorFactory()) {
-                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    assertCursor(expectedTableAfterDrop, cursor, factory.getMetadata(), true);
-                                }
+                            try (
+                                    RecordCursorFactory factory = fact(tableName);
+                                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                            ) {
+                                assertCursor(expectedTableAfterDrop, cursor, factory.getMetadata(), true);
                             }
                             assertFactoryMemoryUsage();
                         }
@@ -909,16 +910,16 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @SuppressWarnings("SameParameterValue")
     private void detachPartition(String tableName, String partitionName) throws SqlException {
         Assert.assertEquals(ALTER,
-                compile("alter table " + tableName + " detach partition list '" + partitionName + "'", sqlExecutionContext).getType());
+                alter("alter table " + tableName + " detach partition list '" + partitionName + "'", sqlExecutionContext).getType());
     }
 
     private void dropPartition(String tableName, String partitionName) throws SqlException {
         Assert.assertEquals(ALTER,
-                compile("alter table " + tableName + " drop partition list '" + partitionName + "'", sqlExecutionContext).getType());
+                alter("alter table " + tableName + " drop partition list '" + partitionName + "'", sqlExecutionContext).getType());
     }
 
     private void insert(String stmt) throws SqlException {
-        compile(stmt, sqlExecutionContext);
+        alter(stmt, sqlExecutionContext);
         txn++;
     }
 }

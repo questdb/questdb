@@ -163,16 +163,18 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFailsWithSingleArg() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table alex as (" +
+            ddl("create table alex as (" +
                     "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
                     " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
                     " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
                     " from long_sequence(6)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             try {
-                compiler.compile("select coalesce(b)\n" +
-                        "from alex", sqlExecutionContext);
+                ddl(
+                        "select coalesce(b)\n" +
+                        "from alex"
+                );
                 Assert.fail("SqlException expected");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().contains("coalesce"));
@@ -183,15 +185,14 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFailsWithUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table alex as (" +
+            ddl("create table alex as (" +
                     "select CAST(NULL as binary) x, CAST(NULL as binary) a" +
                     " from long_sequence(6)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             try {
-                compiler.compile("select coalesce(x, a)\n" +
-                        "from alex", sqlExecutionContext);
-                Assert.fail("SqlException epected");
+                fail("select coalesce(x, a)\n" +
+                        "from alex");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().contains("coalesce"));
             }

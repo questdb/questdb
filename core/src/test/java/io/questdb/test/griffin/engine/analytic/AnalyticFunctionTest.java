@@ -35,7 +35,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     @Test
     public void testAnalyticContextCleanup() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table trades as " +
+            ddl("create table trades as " +
                     "(" +
                     "select" +
                     " rnd_int(1,2,3) price," +
@@ -56,7 +56,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
             // AnalyticContext should be properly clean up when we try to execute the next query.
 
             try {
-                compile("select row_number() from trades", sqlExecutionContext);
+                alter("select row_number() from trades", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(7, e.getPosition());

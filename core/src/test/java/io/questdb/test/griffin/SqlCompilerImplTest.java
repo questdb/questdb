@@ -3793,9 +3793,9 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertFromStringToLong256() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
-            compile("create table l256(v long256)", sqlExecutionContext);
-            compile("insert into l256 select * from t", sqlExecutionContext);
+            alter("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
+            alter("create table l256(v long256)", sqlExecutionContext);
+            alter("insert into l256 select * from t", sqlExecutionContext);
             if (configuration.getWalEnabledDefault()) {
                 drainWalQueue();
             }
@@ -3953,11 +3953,11 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertNullSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
             executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
             executeInsert("INSERT INTO symbolic_index VALUES ('1')");
             executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            compile("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("symbolic_index_other", "s\n123456\n1\n\n");
             assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
@@ -3989,7 +3989,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertNullSymbolWithIndex() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
             executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
             executeInsert("INSERT INTO symbolic_index VALUES ('1')");
             executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
@@ -4012,12 +4012,12 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertNullSymbolWithIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
             executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
             executeInsert("INSERT INTO symbolic_index VALUES ('1')");
             executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
             executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            compile("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
             assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
@@ -4036,7 +4036,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertNullSymbolWithoutIndex() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
             executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
             executeInsert("INSERT INTO symbolic_index VALUES ('1')");
             executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
@@ -4059,12 +4059,12 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertNullSymbolWithoutIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
             executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
             executeInsert("INSERT INTO symbolic_index VALUES ('1')");
             executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
             executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            compile("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            alter("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
             assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
@@ -4184,7 +4184,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE trigonometry AS " +
+            alter("CREATE TABLE trigonometry AS " +
                     "(SELECT" +
                     "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
                     "     rnd_symbol('A', 'B', 'C') sym," +
@@ -4212,7 +4212,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE trigonometry AS " +
+            alter("CREATE TABLE trigonometry AS " +
                     "(SELECT" +
                     "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
                     "     rnd_symbol('A', 'B', 'C') sym," +

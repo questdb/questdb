@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
@@ -40,45 +41,51 @@ public class FlushQueryCacheTest extends AbstractGriffinTest {
             final FanOut queryCacheEventFanOut = messageBus.getQueryCacheEventFanOut();
             queryCacheEventFanOut.and(queryCacheEventSubSeq);
 
-            try {
-                int queueSize = configuration.getQueryCacheEventQueueCapacity();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    int queueSize = configuration.getQueryCacheEventQueueCapacity();
 
-                for (int i = 0; i < queueSize; i++) {
+                    for (int i = 0; i < queueSize; i++) {
+                        TestUtils.assertSql(
+                                compiler,
+                                sqlExecutionContext,
+                                "select flush_query_cache",
+                                sink,
+                                "flush_query_cache\n" +
+                                        "true\n"
+                        );
+                    }
+
+                    // The queue is full now, so we expect false value to be returned.
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
                             "select flush_query_cache",
                             sink,
                             "flush_query_cache\n" +
-                                    "true\n"
+                                    "false\n"
                     );
+                } finally {
+                    messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
+                    queryCacheEventSubSeq.clear();
                 }
-
-                // The queue is full now, so we expect false value to be returned.
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select flush_query_cache",
-                        sink,
-                        "flush_query_cache\n" +
-                                "false\n"
-                );
-            } finally {
-                messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
-                queryCacheEventSubSeq.clear();
             }
         });
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select flush_query_cache",
-                sink,
-                "flush_query_cache\n" +
-                        "true\n"
-        ));
+        assertMemoryLeak(() ->  {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSql(
+                        compiler,
+                        sqlExecutionContext,
+                        "select flush_query_cache",
+                        sink,
+                        "flush_query_cache\n" +
+                                "true\n"
+                );
+            }
+        });
     }
 }

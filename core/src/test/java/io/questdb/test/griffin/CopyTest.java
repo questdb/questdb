@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CopyModel;
@@ -185,41 +185,37 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testDefaultCopyOptions() throws SqlException {
-        CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
-        assertEquals("y", model.getTarget().token.toString());
-        assertEquals("'somefile.csv'", model.getFileName().token.toString());
-        assertFalse(model.isHeader());
-        assertEquals(-1, model.getPartitionBy());
-        assertNull(model.getTimestampColumnName());
-        assertNull(model.getTimestampFormat());
-        assertEquals(-1, model.getDelimiter());
+            assertEquals("y", model.getTarget().token.toString());
+            assertEquals("'somefile.csv'", model.getFileName().token.toString());
+            assertFalse(model.isHeader());
+            assertEquals(-1, model.getPartitionBy());
+            assertNull(model.getTimestampColumnName());
+            assertNull(model.getTimestampFormat());
+            assertEquals(-1, model.getDelimiter());
+        }
     }
 
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount(), null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
 
             String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
             try {
                 // selects nothing because ID is invalid
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                assertSql(
                         "copy 'ffffffffffffffff' cancel",
-                        sink,
                         "id\tstatus\n" +
                                 "ffffffffffffffff\tunknown\n"
                 );
 
                 // this one should succeed
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                assertSql(
                         "copy '" + importId + "' cancel",
-                        sink,
                         "id\tstatus\n" +
                                 importId + "\tcancelled\n"
                 );
@@ -236,7 +232,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount(), null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
             String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -251,11 +247,8 @@ public class CopyTest extends AbstractGriffinTest {
                 }
 
                 // cancel request should succeed
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                assertSql(
                         "copy '" + copyID + "' cancel",
-                        sink,
                         "id\tstatus\n" +
                                 copyID + "\tcancelled\n"
                 );
@@ -277,7 +270,7 @@ public class CopyTest extends AbstractGriffinTest {
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
             try {
-                compiler.compile("copy 'foobar' cancel;", sqlExecutionContext);
+                ddl("copy 'foobar' cancel;");
                 Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "copy cancel ID format is invalid: 'foobar'");
@@ -290,11 +283,11 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyFileWithRawLongTsIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
-            compiler.compile("CREATE TABLE reading (\n" +
+            ddl("CREATE TABLE reading (\n" +
                     "  readingTypeId SYMBOL,\n" +
                     "  value FLOAT,\n" +
                     "  readingDate TIMESTAMP\n" +
-                    ") timestamp (readingDate) PARTITION BY DAY;", sqlExecutionContext);
+                    ") timestamp (readingDate) PARTITION BY DAY;");
             runAndFetchCopyID("copy reading from 'test-quotes-rawts.csv';", sqlExecutionContext);
         };
 
@@ -311,7 +304,7 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
-            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
@@ -329,7 +322,7 @@ public class CopyTest extends AbstractGriffinTest {
         }
 
         CopyRunnable stmt = () -> {
-            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+           ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
@@ -344,7 +337,7 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyIntoExistingTableWithoutExplicitTimestampAndFormatInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -357,7 +350,7 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -463,7 +456,7 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyRequiresWithBeforeOptions() {
         try {
-            compiler.testCompileModel("copy x from 'somefile.csv' partition by HOUR;", sqlExecutionContext);
+            ddl("copy x from 'somefile.csv' partition by HOUR;");
             Assert.fail();
         } catch (SqlException e) {
             assertEquals("[27] 'with' expected", e.getMessage());
@@ -653,7 +646,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount(), null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
             // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
             sqlCopyBufferSize = 1024;
             String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
@@ -661,22 +654,16 @@ public class CopyTest extends AbstractGriffinTest {
 
             try {
                 // this one should be rejected
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                assertSql(
                         "copy 'ffffffffffffffff' cancel",
-                        sink,
                         "id\tstatus\n" +
                                 "ffffffffffffffff\tunknown\n"
 
                 );
 
                 // this one should succeed
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                assertSql(
                         "copy '" + copyID + "' cancel",
-                        sink,
                         "id\tstatus\n" +
                                 copyID + "\tcancelled\n"
                 );
@@ -752,7 +739,7 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testSerialCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts);", sqlExecutionContext);
+            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts);");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -1050,27 +1037,29 @@ public class CopyTest extends AbstractGriffinTest {
         Object[] partitionBy = new Object[]{"HOUR", PartitionBy.HOUR, "DAY", PartitionBy.DAY, "MONTH", PartitionBy.MONTH, "WEEK", PartitionBy.WEEK, "YEAR", PartitionBy.YEAR};
         Object[] onError = new Object[]{"SKIP_COLUMN", Atomicity.SKIP_COL, "SKIP_ROW", Atomicity.SKIP_ROW, "ABORT", Atomicity.SKIP_ALL};
 
-        for (boolean upperCase : useUpperCase) {
-            for (int p = 0; p < partitionBy.length / 2; p += 2) {
-                for (int o = 0; o < onError.length / 2; o += 2) {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (boolean upperCase : useUpperCase) {
+                for (int p = 0; p < partitionBy.length / 2; p += 2) {
+                    for (int o = 0; o < onError.length / 2; o += 2) {
 
-                    CopyModel model;
-                    if (upperCase) {
-                        model = (CopyModel) compiler.testCompileModel("COPY x FROM 'somefile.csv' WITH HEADER TRUE " +
-                                "PARTITION BY " + partitionBy[p] + " TIMESTAMP 'ts1' FORMAT 'yyyy-MM-ddTHH:mm:ss' DELIMITER ';' ON ERROR " + onError[o] + ";'", sqlExecutionContext);
-                    } else {
-                        model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true " +
-                                "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
+                        CopyModel model;
+                        if (upperCase) {
+                            model = (CopyModel) compiler.testCompileModel("COPY x FROM 'somefile.csv' WITH HEADER TRUE " +
+                                    "PARTITION BY " + partitionBy[p] + " TIMESTAMP 'ts1' FORMAT 'yyyy-MM-ddTHH:mm:ss' DELIMITER ';' ON ERROR " + onError[o] + ";'", sqlExecutionContext);
+                        } else {
+                            model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true " +
+                                    "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
+                        }
+
+                        assertEquals("x", model.getTarget().token.toString());
+                        assertEquals("'somefile.csv'", model.getFileName().token.toString());
+                        assertTrue(model.isHeader());
+                        assertEquals(partitionBy[p + 1], model.getPartitionBy());
+                        assertEquals("ts1", model.getTimestampColumnName().toString());
+                        assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
+                        assertEquals(';', model.getDelimiter());
+                        assertEquals(onError[o + 1], model.getAtomicity());
                     }
-
-                    assertEquals("x", model.getTarget().token.toString());
-                    assertEquals("'somefile.csv'", model.getFileName().token.toString());
-                    assertTrue(model.isHeader());
-                    assertEquals(partitionBy[p + 1], model.getPartitionBy());
-                    assertEquals("ts1", model.getTimestampColumnName().toString());
-                    assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
-                    assertEquals(';', model.getDelimiter());
-                    assertEquals(onError[o + 1], model.getAtomicity());
                 }
             }
         }
@@ -1130,7 +1119,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     private void testCopyWithAtomicity(boolean parallel, String atomicity, int expectedCount) throws Exception {
         CopyRunnable stmt = () -> {
-            compiler.compile("create table alltypes (\n" +
+            ddl("create table alltypes (\n" +
                     "  bo boolean,\n" +
                     "  by byte,\n" +
                     "  sh short,\n" +
@@ -1145,7 +1134,7 @@ public class CopyTest extends AbstractGriffinTest {
                     "  sym symbol,\n" +
                     "  l256 long256," +
                     "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by " + (parallel ? "DAY" : "NONE") + ";", sqlExecutionContext);
+                    ") timestamp(tstmp) partition by " + (parallel ? "DAY" : "NONE") + ";");
             runAndFetchCopyID("copy alltypes from 'test-errors.csv' with header true timestamp 'tstmp' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSSSSZ' on error " + atomicity + ";", sqlExecutionContext);
         };
@@ -1161,8 +1150,10 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     protected static String runAndFetchCopyID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cq = compiler.compile(copySql, sqlExecutionContext);
-        try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+        try (
+                RecordCursorFactory factory = fact(copySql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
             Assert.assertTrue(cursor.hasNext());
             return cursor.getRecord().getStr(0).toString();
         }
@@ -1172,8 +1163,8 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
-            compiler.compile("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"", sqlExecutionContext);
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1, null)) {
+            ddl("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"");
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 Thread processingThread = createJobThread(copyRequestJob, processed);
                 processingThread.start();
                 statement.run();
@@ -1193,7 +1184,7 @@ public class CopyTest extends AbstractGriffinTest {
             boolean supportsRandomAccess,
             boolean expectSize
     ) throws SqlException {
-        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+        try (final RecordCursorFactory factory = fact(query)) {
             assertFactoryCursor5(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize);
         }
     }

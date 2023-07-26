@@ -203,7 +203,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 TableToken tableToken = engine.verifyTableName("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
-                        compile("alter table tbl drop partition where ts >= '1970-01-10T03'", sqlExecutionContext);
+                        alter("alter table tbl drop partition where ts >= '1970-01-10T03'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail
@@ -377,7 +377,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     try (TableReader rdr2 = getReader("tbl")) {
-                        compile("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
+                        alter("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail
@@ -670,7 +670,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 TableToken tableToken = engine.verifyTableName("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
-                        compile("alter table tbl drop partition list '1970-01-10T00'", sqlExecutionContext);
+                        alter("alter table tbl drop partition list '1970-01-10T00'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail
@@ -692,7 +692,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
-                        compile("alter table tbl drop partition list '1970-01-10T07'", sqlExecutionContext);
+                        alter("alter table tbl drop partition list '1970-01-10T07'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail

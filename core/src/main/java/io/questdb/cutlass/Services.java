@@ -42,8 +42,6 @@ import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -60,8 +58,6 @@ public final class Services {
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
@@ -76,8 +72,6 @@ public final class Services {
                 cairoEngine,
                 workerPoolManager.getInstance(configuration, metrics.health(), Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
-                functionFactoryCache,
-                snapshotAgent,
                 metrics
         );
     }
@@ -88,8 +82,6 @@ public final class Services {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
@@ -102,9 +94,7 @@ public final class Services {
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                sharedWorkerCount,
-                functionFactoryCache,
-                snapshotAgent
+                sharedWorkerCount
         );
 
         HttpServer.addDefaultEndpoints(
@@ -113,9 +103,7 @@ public final class Services {
                 cairoEngine,
                 workerPool,
                 sharedWorkerCount,
-                jsonQueryProcessorBuilder,
-                functionFactoryCache,
-                snapshotAgent
+                jsonQueryProcessorBuilder
         );
         return server;
     }

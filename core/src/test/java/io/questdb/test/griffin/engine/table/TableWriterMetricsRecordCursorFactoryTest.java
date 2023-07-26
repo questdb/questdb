@@ -67,7 +67,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
         assertMemoryLeak(() -> {
             try (
                     CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
-                    SqlCompilerImpl localCompiler = new SqlCompilerImpl(localEngine, snapshotAgent);
+                    SqlCompilerImpl localCompiler = new SqlCompilerImpl(localEngine);
                     SqlExecutionContext localSqlExecutionContext = TestUtils.createSqlExecutionCtx(localEngine)
             ) {
                 MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);

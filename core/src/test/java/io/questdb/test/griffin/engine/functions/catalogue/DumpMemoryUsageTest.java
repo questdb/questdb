@@ -24,20 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class DumpMemoryUsageTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
+        assertMemoryLeak(() -> assertSql(
                 "select dump_memory_usage",
-                sink,
                 "dump_memory_usage\n" +
                         "true\n"
         ));

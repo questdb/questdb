@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory;
 import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
@@ -34,11 +33,8 @@ public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPrefixedTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
-                () -> TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                () -> assertSql(
                         "select pg_catalog.txid_current();",
-                        sink,
                         "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
                 )
         );
@@ -47,11 +43,8 @@ public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
-                () -> TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
+                () -> assertSql(
                         "select txid_current();",
-                        sink,
                         "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
                 )
         );

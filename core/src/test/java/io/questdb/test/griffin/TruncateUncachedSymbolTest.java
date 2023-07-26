@@ -53,7 +53,7 @@ public class TruncateUncachedSymbolTest extends AbstractGriffinTest {
                             "\thash6i int\n" +
                             ")\n" +
                             "timestamp(time);", sqlExecutionContext);
-                    compile("alter TABLE positions ALTER COLUMN hash6 ADD INDEX", sqlExecutionContext);
+                    alter("alter TABLE positions ALTER COLUMN hash6 ADD INDEX", sqlExecutionContext);
                     executeInsert("INSERT INTO positions\n" +
                             "VALUES(\n" +
                             "    1578506142000000L,\n" +

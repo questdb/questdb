@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Sequence;
@@ -168,12 +168,13 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     }
 
     private static void assertXCountAndMax(
-            SqlCompilerImpl compiler,
+            CairoEngine engine,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedMaxTimestamp
     ) throws SqlException {
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
+        assertMaxTimestamp(engine, expectedMaxTimestamp);
     }
 
     private static void checkDistressedOrNoSpaceLeft(CairoError e) {
@@ -184,7 +185,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     }
 
     @NotNull
-    private static String prepareCountAndMaxTimestampSinks(SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static String prepareCountAndMaxTimestampSinks(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.printSql(
                 compiler,
                 sqlExecutionContext,
@@ -237,7 +238,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
     private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
@@ -305,7 +306,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         reset();
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -316,12 +317,12 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -391,7 +392,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         }
 
         reset();
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
@@ -435,12 +436,12 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                 sqlExecutionContext,
                 engine);
 
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
@@ -511,7 +512,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         reset();
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         if (rnd.nextBoolean()) {
             engine.releaseAllWriters();
@@ -531,7 +532,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                 sqlExecutionContext,
                 engine);
 
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private void runFuzzRoutine(CustomisableRunnable routine) throws Exception {

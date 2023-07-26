@@ -263,7 +263,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             copyUtf8StringChars(constValue, constMem, constDbcs);
             FilesFacade ff = new TestFilesFacadeImpl();
 
-            compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+            ddl("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY");
             TableToken tableToken = engine.verifyTableName("x");
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
@@ -354,7 +354,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             } finally {
                 Unsafe.free(constMem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
-            compiler.compile("drop table x", sqlExecutionContext);
+            ddl("drop table x");
         });
     }
 

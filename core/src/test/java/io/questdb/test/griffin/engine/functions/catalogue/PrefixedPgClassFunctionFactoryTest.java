@@ -27,10 +27,10 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -136,7 +136,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     public void testLeakAfterIncompleteFetch() throws Exception {
         assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select * from pg_catalog.pg_class")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
@@ -145,7 +145,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                             sink
                     );
 
-                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
+                    ddl("create table xyz (a int)", sqlExecutionContext);
                     engine.clear();
 
                     cursor.toTop();
@@ -159,12 +159,12 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table abc (b double)", sqlExecutionContext);
+                    ddl("create table abc (b double)");
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
 
-                    compiler.compile("drop table abc;", sqlExecutionContext);
+                    ddl("drop table abc;");
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
@@ -303,7 +303,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select * from pg_catalog.pg_class() order by relname")) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -313,7 +313,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                             sink
                     );
 
-                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
+                    ddl("create table xyz (a int)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -333,7 +333,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table автомобилей (b double)", sqlExecutionContext);
+                    ddl("create table автомобилей (b double)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -347,7 +347,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                                     "2\tавтомобилей\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n"
                             , sink);
 
-                    compiler.compile("drop table автомобилей;", sqlExecutionContext);
+                    ddl("drop table автомобилей;");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);

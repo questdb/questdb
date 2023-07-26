@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.StationaryMicrosClock;
-import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -98,13 +97,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
     private void assertSql(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> {
             try {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        sql,
-                        sink,
-                        expected
-                );
+                assertSql(sql, expected);
             } finally {
                 sqlExecutionContext.setRandom(null);
             }

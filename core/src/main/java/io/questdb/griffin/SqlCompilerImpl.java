@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -99,7 +100,6 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path();
-    private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
@@ -118,16 +118,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
 
-    // Exposed for embedded API users.
     public SqlCompilerImpl(CairoEngine engine) {
-        this(engine, null, null);
-    }
-
-    public SqlCompilerImpl(CairoEngine engine, @Nullable DatabaseSnapshotAgent snapshotAgent) {
-        this(engine, engine.getFunctionFactoryCache(), snapshotAgent);
-    }
-
-    public SqlCompilerImpl(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
         this.engine = engine;
         this.queryBuilder = new QueryBuilder(this);
         this.configuration = engine.getConfiguration();
@@ -143,10 +134,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
 
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-        this.functionParser = new FunctionParser(
-                configuration,
-                functionFactoryCache != null ? functionFactoryCache : engine.getFunctionFactoryCache()
-        );
+        this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
         this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
@@ -154,7 +142,6 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         functionParser.setSqlCodeGenerator(codeGenerator);
 
         this.backupAgent = new DatabaseBackupAgent();
-        this.snapshotAgent = snapshotAgent;
 
         registerKeywordBasedExecutors();
 
@@ -329,21 +316,24 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         return queryBuilder;
     }
 
-    // used in tests
+    @TestOnly
+    @Override
     public void setEnableJitNullChecks(boolean value) {
         codeGenerator.setEnableJitNullChecks(value);
     }
 
     @TestOnly
+    @Override
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
     }
 
-    public boolean shouldLog(KeywordBasedExecutor executor) {
+    public boolean shouldLog() {
         return true;
     }
 
     @TestOnly
+    @Override
     public ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(query);
@@ -351,6 +341,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     }
 
     @TestOnly
+    @Override
     public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
@@ -1352,7 +1343,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         }
 
         if (executor != null) {
-            if (shouldLog(executor)) {
+            if (shouldLog()) {
                 logQuery();
             }
             // an executor can return null as a fallback to execution model
@@ -2429,18 +2420,12 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            if (snapshotAgent == null) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
-            }
-            snapshotAgent.prepareSnapshot(executionContext);
+            engine.prepareSnapshot(executionContext);
             return compiledQuery.ofSnapshotPrepare();
         }
 
         if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            if (snapshotAgent == null) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
-            }
-            snapshotAgent.completeSnapshot();
+            engine.completeSnapshot();
             return compiledQuery.ofSnapshotComplete();
         }
 
