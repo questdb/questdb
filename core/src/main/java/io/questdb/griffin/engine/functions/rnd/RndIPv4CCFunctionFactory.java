@@ -52,12 +52,14 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
         int nullRate = args.getQuick(1).getInt(null);
         int lo = Numbers.getIPv4Subnet(subnetStr);
 
+        // first try getting subnet from ip, if arg is subnet (not ip) then try parsing again
         if (lo == -2) {
             lo = Numbers.parseSubnet(subnetStr);
         }
 
         int hi = Numbers.getBroadcastAddress(subnetStr);
 
+        // invalid subnet
         if (lo == -2 || hi == -2) {
             throw SqlException.$(argPositions.getQuick(0), "invalid subnet: ").put(subnetStr);
         }

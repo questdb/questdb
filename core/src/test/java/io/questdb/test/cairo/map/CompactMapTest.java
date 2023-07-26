@@ -584,7 +584,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(11));
                         Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(12));
                         Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoLong(13));
-                        Assert.assertEquals(rnd2.nextInt(), value.getInt(14));
+                        Assert.assertEquals(rnd2.nextInt(), value.getIPv4(14));
                     }
                 }
             }

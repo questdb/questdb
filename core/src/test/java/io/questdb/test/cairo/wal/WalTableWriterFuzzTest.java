@@ -819,7 +819,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putStr(col++, (char) (65 + i % 26));
         row.putSym(col++, symbol);
         row.putLong128(col++, Hash.fastLongMix(i), Hash.fastLongMix(i + 1)); // UUID
-        //row.putInt(col, i); //IPv4
         row.append();
     }
 
@@ -911,7 +910,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 .col("label", ColumnType.SYMBOL)
                 .col("uuid", ColumnType.UUID)
                 .col("bin", ColumnType.BINARY)
-                //.col("IPv4", ColumnType.IPv4)
                 .timestamp("ts");
     }
 

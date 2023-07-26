@@ -70,13 +70,18 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
         int subnet = getIPv4Subnet(constValue);
         int netmask = getIPv4Netmask(constValue);
 
-        if (subnet == -2 && netmask == -2) { //catches negative netmask
+        //catches negative netmask
+        if (subnet == -2 && netmask == -2) {
             throw SqlException.$(18, "invalid argument: ").put(constValue);
-        } else if (subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
+        }
+        //arg is invalid OR a subnet (-2 used as sentinel because -1 is valid (0xffffffff))
+        else if (subnet == -2) {
 
-            subnet = parseSubnet(constValue); // Check is arg is subnet
+            // check if arg is subnet
+            subnet = parseSubnet(constValue);
 
-            if (subnet == -2) { // Is true if arg is not a valid subnet/ip address
+            // arg is not a valid subnet/ip address
+            if (subnet == -2) {
                 throw SqlException.$(18, "invalid argument: ").put(constValue);
             } else {
                 return new ContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);

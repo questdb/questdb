@@ -37,13 +37,18 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.std.Numbers.*;
+
 public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
 
     @Override
-    public String getSignature() { return ">>=(sX)"; }
+    public String getSignature() {
+        return ">>=(sX)";
+    }
 
     @Override
-    public boolean isBoolean() { return true; }
+    public boolean isBoolean() {
+        return true;
+    }
 
     @Override
     public Function newInstance(
@@ -59,20 +64,24 @@ public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
     private Function createHalfConstantFunc(Function varFunc, Function constFunc) throws SqlException {
         CharSequence constValue = constFunc.getStr(null);
 
-        if(constValue == null) {
+        if (constValue == null) {
             return new NegContainsEqIPv4FunctionFactory.NullCheckFunc(varFunc);
         }
 
         int subnet = getIPv4Subnet(constValue);
         int netmask = getIPv4Netmask(constValue);
 
-        if(subnet == -2 && netmask == -2) { //catches negative netmask
+        //catches negative netmask
+        if (subnet == -2 && netmask == -2) {
             throw SqlException.$(18, "invalid argument: ").put(constValue);
         }
-        else if(subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
-            subnet = parseSubnet(constValue); // Check if arg is subnet
+        //arg is invalid OR a subnet (-2 used as sentinel because -1 is valid (0xffffffff))
+        else if (subnet == -2) {
+            // check if arg is subnet
+            subnet = parseSubnet(constValue);
 
-            if(subnet == -2) { // Is true if arg is not a valid subnet/ip address
+            // arg is not a valid subnet/ip address
+            if (subnet == -2) {
                 throw SqlException.$(18, "invalid argument: ").put(constValue);
             } else {
                 return new NegContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
@@ -83,8 +92,9 @@ public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final int subnet;
         private final int netmask;
+        private final int subnet;
+
         public ConstCheckFunc(Function arg, int subnet, int netmask) {
             this.arg = arg;
             this.subnet = subnet;
@@ -92,10 +102,14 @@ public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() { return arg; }
+        public Function getArg() {
+            return arg;
+        }
 
         @Override
-        public boolean getBool(Record rec) { return (arg.getIPv4(rec) & netmask) == subnet; }
+        public boolean getBool(Record rec) {
+            return (arg.getIPv4(rec) & netmask) == subnet;
+        }
 
         @Override
         public void toPlan(PlanSink sink) {
@@ -106,16 +120,25 @@ public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
 
     public static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        public NullCheckFunc(Function arg) { this.arg = arg; }
+
+        public NullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
 
         @Override
-        public Function getArg() { return arg; }
+        public Function getArg() {
+            return arg;
+        }
 
         @Override
-        public boolean getBool(Record rec) { return arg.getIPv4(rec) == IPv4_NULL; }
+        public boolean getBool(Record rec) {
+            return arg.getIPv4(rec) == IPv4_NULL;
+        }
 
         @Override
-        public void toPlan(PlanSink sink) { sink.val(arg).val(" is null"); }
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val(" is null");
+        }
     }
 
 }

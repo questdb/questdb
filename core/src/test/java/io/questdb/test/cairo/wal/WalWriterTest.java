@@ -1680,7 +1680,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                         assertEquals(i, record.getLong128Lo(29));
                         assertEquals(i + 1, record.getLong128Hi(29));
-                        assertEquals(i, record.getInt(30));
+                        assertEquals(i, record.getIPv4(30));
 
                         assertEquals(ts, record.getTimestamp(31));
                         assertEquals(i, record.getRowId());

@@ -70,11 +70,15 @@ public class NegContainsIPv4FunctionFactory implements FunctionFactory {
         int subnet = getIPv4Subnet(constValue);
         int netmask = getIPv4Netmask(constValue);
 
-        if (subnet == -2 && netmask == -2) { //catches negative netmask
+        //catches negative netmask
+        if (subnet == -2 && netmask == -2) {
             throw SqlException.$(18, "invalid argument: ").put(constValue);
-        } else if (subnet == -2) { // If true, the argument is either invalid OR is a subnet instead of an ip address (-2 used as sentinel because 0xffffffff (which is valid) is -1)
+        }
+        //arg is invalid OR a subnet (-2 used as sentinel because -1 is valid (0xffffffff))
+        else if (subnet == -2) {
 
-            subnet = parseSubnet(constValue); // Check is arg is subnet
+            // check if arg is subnet
+            subnet = parseSubnet(constValue);
 
             if (subnet == -2) { // Is true if arg is not a valid subnet/ip address
                 throw SqlException.$(18, "invalid argument: ").put(constValue);
@@ -104,7 +108,8 @@ public class NegContainsIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (netmask == 32 || netmask == -1) { //if netmask is 32 then IP can't be strictly contained because arg is a single host, if netmask is -1 that means no netmask was provided and the arg is a single host
+            // if netmask = 32 then IP can't be strictly contained, if netmask = -1 that means arg is a single host - both are invalid
+            if (netmask == 32 || netmask == -1) {
                 return false;
             }
             return (arg.getIPv4(rec) & netmask) == subnet;
