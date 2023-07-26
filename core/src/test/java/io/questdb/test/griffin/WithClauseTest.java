@@ -109,7 +109,7 @@ public class WithClauseTest extends AbstractGriffinTest {
     @Test
     public void testWithLatestByFilterGroup() throws Exception {
         assertMemoryLeak(() -> {
-            ddl"create table contact_events2 as (\n" +
+            ddl("create table contact_events2 as (\n" +
                     "  select cast(x as SYMBOL) _id,\n" +
                     "    rnd_symbol('c1', 'c2', 'c3', 'c4') contactid, \n" +
                     "    CAST(x as Timestamp) timestamp, \n" +

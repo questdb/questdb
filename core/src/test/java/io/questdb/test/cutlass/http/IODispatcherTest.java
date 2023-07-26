@@ -61,6 +61,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.*;
 import org.junit.rules.Timeout;
 
 import java.io.InputStream;
@@ -7849,7 +7850,7 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    private static void compile(SqlCompilerImpl compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    private static void compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
         try (OperationFuture future = cc.execute(null)) {
             future.await();

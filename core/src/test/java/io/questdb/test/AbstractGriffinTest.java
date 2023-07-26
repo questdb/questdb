@@ -262,7 +262,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         return doubleEquals(a, b, EPSILON);
     }
 
-    public static void executeInsert(String insertSql) throws SqlException {
+    public static void executeInsert(CharSequence insertSql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.insert(compiler, sqlExecutionContext, insertSql);
         }
@@ -1084,7 +1084,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false)
+        assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
     }
 
     protected void assertQueryFullFat(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
@@ -1241,7 +1241,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         TableToken tableToken = registerTableName(tableModel.getTableName());
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
-                Path path = new Path().of(configuration.getRoot()).concat(tableToken);
+                Path path = new Path().of(configuration.getRoot()).concat(tableToken)
         ) {
             TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
             for (int i = 0; i < insertIterations; i++) {

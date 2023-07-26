@@ -46,6 +46,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
