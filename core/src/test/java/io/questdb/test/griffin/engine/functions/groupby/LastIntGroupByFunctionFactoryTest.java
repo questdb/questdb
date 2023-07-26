@@ -28,7 +28,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractGriffinTest;
@@ -39,57 +38,53 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNull() throws SqlException {
+        ddl("create table tab (f int)");
 
-        try {
-            ddl("create table tab (f int)");
-
-            try (TableWriter w = getWriter("tab")) {
-                for (int i = 100; i > 10; i--) {
-                    TableWriter.Row r = w.newRow();
-                    r.append();
-                }
-                w.commit();
+        try (TableWriter w = getWriter("tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                r.append();
             }
+            w.commit();
+        }
 
-            try (RecordCursorFactory factory = fact("select last(f) from tab")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Record record = cursor.getRecord();
-                    Assert.assertEquals(1, cursor.size());
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
-                }
+        try (RecordCursorFactory factory = fact("select last(f) from tab")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
             }
         }
     }
 
     @Test
     public void testNonNull() throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ddl("create table tab (f int)");
+        ddl("create table tab (f int)");
 
-            try (TableWriter w = getWriter("tab")) {
-                for (int i = 100; i > 10; i--) {
-                    TableWriter.Row r = w.newRow();
-                    r.putInt(0, i);
-                    r.append();
-                }
-                w.commit();
+        try (TableWriter w = getWriter("tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                r.putInt(0, i);
+                r.append();
             }
+            w.commit();
+        }
 
-            try (RecordCursorFactory factory = fact("select last(f) from tab")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Record record = cursor.getRecord();
-                    Assert.assertEquals(1, cursor.size());
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(11, record.getInt(0));
-                }
+        try (RecordCursorFactory factory = fact("select last(f) from tab")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(11, record.getInt(0));
             }
         }
     }
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tlast\tk\n" +
+        assertQuery13(
+                "b\tlast\tk\n" +
                         "\t1627393380\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-2002373666\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -262,27 +257,25 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-        try {
-            ddl("create table tab (f int)");
+        ddl("create table tab (f int)");
 
-            try (TableWriter w = getWriter("tab")) {
-                for (int i = 100; i > 10; i--) {
-                    TableWriter.Row r = w.newRow();
-                    if (i % 4 == 0) {
-                        r.putInt(0, i);
-                    }
-                    r.append();
+        try (TableWriter w = getWriter("tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                if (i % 4 == 0) {
+                    r.putInt(0, i);
                 }
-                w.commit();
+                r.append();
             }
+            w.commit();
+        }
 
-            try (RecordCursorFactory factory = fact("select last(f) from tab")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Record record = cursor.getRecord();
-                    Assert.assertEquals(1, cursor.size());
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
-                }
+        try (RecordCursorFactory factory = fact("select last(f) from tab")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
             }
         }
     }

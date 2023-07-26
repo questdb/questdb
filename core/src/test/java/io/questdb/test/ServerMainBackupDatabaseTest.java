@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -44,6 +43,7 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -269,7 +269,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     }
 
     private static void startBackupDatabase(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext context,
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,

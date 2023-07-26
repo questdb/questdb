@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
+import org.junit.*;
 
 import java.util.HashMap;
 import java.util.Map;

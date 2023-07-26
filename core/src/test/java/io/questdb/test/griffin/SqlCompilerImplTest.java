@@ -41,6 +41,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
@@ -2845,6 +2846,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                                     "y BOOLEAN) " +
                                     "timestamp(t) " +
                                     "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
+                    );
 
                     try (TableWriter writer = getWriter("x")) {
                         sink.clear();
@@ -4943,7 +4945,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
             fail(
                     "create table y as (" +
                             "select * from (select rnd_double(2) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
             );
         } catch (SqlException e) {
             Assert.assertEquals(93, e.getPosition());
@@ -5141,7 +5143,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), expectedMessage);
                 if (position != -1) {
                     Assert.assertSame(SqlException.class, e.getClass());
-                    Assert.assertEquals(position, ((SqlException) e).getPosition());
+                    Assert.assertEquals(position, ((FlyweightMessageContainer) e).getPosition());
                 }
             } else {
                 Assert.fail();
