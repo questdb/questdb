@@ -24,8 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlOptimiser;
 import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
@@ -33,9 +31,7 @@ public class CursorDereferenceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testCatalogue() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table pg_test(a int)", sqlExecutionContext);
-            }
+            ddl("create table pg_test(a int)");
             assertQuery(
                     "x\tpg_class\n" +
                             "11\t\n" +

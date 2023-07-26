@@ -58,7 +58,7 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractGriffinTest
     @Test
     public void testSumBigFive() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab (x long256)", sqlExecutionContext);
+            ddl("create table tab (x long256)");
             executeInsert("insert into tab values (0xb00ee5505bd95e51dd18889bae1dee3404d446e61d5293f55ff29ba4a01ab073)");
             executeInsert("insert into tab values (0x6f64ae42c48c96a19e099d7a980099af601f70d614b709804ea60bf902c30e3e)");
             executeInsert("insert into tab values (0x7c6ec2b2ffd4a89ec87dd041359f34661ce5fa64b58567a438c725aa47e609dd)");

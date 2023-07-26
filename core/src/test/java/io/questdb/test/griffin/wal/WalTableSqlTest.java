@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.wal.*;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -72,21 +73,24 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    insertMethod.execute();
 
-            try (InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                 InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                insertMethod.execute();
-
-                CompiledQuery compiledQuery2 = compiler.compile("insert into " + tableName +
-                        " values (102, 'bbb', '2022-02-24T02', 'ccc')", sqlExecutionContext);
-                try (InsertOperation insertOperation2 = compiledQuery2.getInsertOperation();
-                     InsertMethod insertMethod2 = insertOperation2.createMethod(sqlExecutionContext)) {
-                    insertMethod2.execute();
-                    insertMethod2.commit();
+                    CompiledQuery compiledQuery2 = compiler.compile("insert into " + tableName +
+                            " values (102, 'bbb', '2022-02-24T02', 'ccc')", sqlExecutionContext);
+                    try (InsertOperation insertOperation2 = compiledQuery2.getInsertOperation();
+                         InsertMethod insertMethod2 = insertOperation2.createMethod(sqlExecutionContext)) {
+                        insertMethod2.execute();
+                        insertMethod2.commit();
+                    }
+                    insertMethod.commit();
                 }
-                insertMethod.commit();
             }
 
             executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd')");
@@ -111,19 +115,21 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
-                insertMethod.execute();
-                insertMethod.execute();
-                insertMethod.commit();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    insertMethod.execute();
+                    insertMethod.execute();
+                    insertMethod.commit();
 
-                insertMethod.execute();
-                compile("alter table " + tableName + " add column new_column int");
-                insertMethod.commit();
+                    insertMethod.execute();
+                    compile("alter table " + tableName + " add column new_column int");
+                    insertMethod.commit();
+                }
             }
 
             executeInsert("insert into " + tableName + " values (103, 'dfd', 'str-2', '2022-02-24T02', 'asdd', 1234)");
@@ -148,16 +154,18 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
 
-                insertMethod.execute();
-                compile("alter table " + tableName + " add column jjj int");
-                insertMethod.commit();
+                    insertMethod.execute();
+                    compile("alter table " + tableName + " add column jjj int");
+                    insertMethod.commit();
+                }
             }
 
             executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234)");
@@ -181,17 +189,19 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
 
-                insertMethod.execute();
-                compile("alter table " + tableName + " add column jjj int");
-                compile("alter table " + tableName + " add column col_str string");
-                insertMethod.commit();
+                    insertMethod.execute();
+                    compile("alter table " + tableName + " add column jjj int");
+                    compile("alter table " + tableName + " add column col_str string");
+                    insertMethod.commit();
+                }
             }
 
             executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234, 'sss-value')");
@@ -215,16 +225,17 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
-
-                insertMethod.execute();
-                insertMethod.commit();
-                compile("alter table " + tableName + " add column jjj int");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    insertMethod.execute();
+                    insertMethod.commit();
+                    compile("alter table " + tableName + " add column jjj int");
+                }
             }
 
             executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234)");
@@ -1210,19 +1221,21 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
-                insertMethod.execute();
-                insertMethod.execute();
-                insertMethod.commit();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    insertMethod.execute();
+                    insertMethod.execute();
+                    insertMethod.commit();
 
-                insertMethod.execute();
-                compile("alter table " + tableName + " drop column sym");
-                insertMethod.commit();
+                    insertMethod.execute();
+                    compile("alter table " + tableName + " drop column sym");
+                    insertMethod.commit();
+                }
             }
 
             executeInsert("insert into " + tableName + " values (103, 'str-2', '2022-02-24T02', 'asdd')");
@@ -1528,16 +1541,18 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
 
-                insertMethod.execute();
-                compile("alter table " + tableName + " add column sss string");
-                insertMethod.commit();
+                    insertMethod.execute();
+                    compile("alter table " + tableName + " add column sss string");
+                    insertMethod.commit();
+                }
             }
 
             executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', '1234')");

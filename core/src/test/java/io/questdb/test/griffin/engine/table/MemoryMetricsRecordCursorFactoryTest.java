@@ -30,11 +30,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.table.MemoryMetricsRecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -51,17 +49,13 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSql() throws Exception {
-        CompiledQuery cc = compiler.compile("select * from memory_metrics()", sqlExecutionContext);
-        RecordCursorFactory factory = cc.getRecordCursorFactory();
-        try {
+        try (RecordCursorFactory factory = fact("select * from memory_metrics()")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
 
                 String expected = expectedTableContent();
                 assertTrue(sink.toString().matches(expected));
             }
-        } finally {
-            Misc.free(factory);
         }
     }
 

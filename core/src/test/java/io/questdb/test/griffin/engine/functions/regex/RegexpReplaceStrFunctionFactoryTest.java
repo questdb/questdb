@@ -66,9 +66,9 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
                     "example2.com\n" +
                     "\n" +
                     "example2.com\n";
-            compiler.compile("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
 
-            try (RecordCursorFactory factory = compiler.compile("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -96,7 +96,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
     private void assertFailure(CharSequence expectedMsg, CharSequence sql) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursorFactory factory = fact(sql);
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();

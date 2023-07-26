@@ -28,9 +28,9 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,8 +38,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -49,7 +48,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -61,8 +60,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
@@ -75,7 +73,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -103,8 +101,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -115,7 +112,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -300,8 +297,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        ddl("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -314,7 +310,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

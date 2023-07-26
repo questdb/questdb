@@ -24,9 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.Test;
 
 public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
@@ -36,23 +36,22 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.NONE);
 
-            compiler.compile("insert into all2 select * from (" +
-                            "select" +
-                            " rnd_int()," +
-                            " rnd_short()," +
-                            " rnd_byte()," +
-                            " rnd_double()," +
-                            " rnd_float()," +
-                            " rnd_long()," +
-                            " rnd_str(2,3,0)," +
-                            " rnd_symbol('A','D')," +
-                            " rnd_boolean()," +
-                            " rnd_bin()," +
-                            " rnd_date()," +
-                            " rnd_long256()," +
-                            " rnd_char()," +
-                            " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)",
-                    sqlExecutionContext
+            executeInsert("insert into all2 select * from (" +
+                    "select" +
+                    " rnd_int()," +
+                    " rnd_short()," +
+                    " rnd_byte()," +
+                    " rnd_double()," +
+                    " rnd_float()," +
+                    " rnd_long()," +
+                    " rnd_str(2,3,0)," +
+                    " rnd_symbol('A','D')," +
+                    " rnd_boolean()," +
+                    " rnd_bin()," +
+                    " rnd_date()," +
+                    " rnd_long256()," +
+                    " rnd_char()," +
+                    " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)"
             );
             assertSql(
                     "select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', timestamp) from all2 order by 1",

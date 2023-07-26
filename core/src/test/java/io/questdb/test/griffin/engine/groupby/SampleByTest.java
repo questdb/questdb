@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
@@ -493,7 +493,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testGroupByFail() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -502,8 +502,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             " rnd_symbol('XY','ZP', null, 'UU') c" +
                             " from" +
                             " long_sequence(1000000)" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
 
             engine.clear();
@@ -528,7 +527,7 @@ public class SampleByTest extends AbstractGriffinTest {
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
                             RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine));
@@ -769,7 +768,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleByAlignToCalendarBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -785,13 +784,12 @@ public class SampleByTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
             try (
-                    RecordCursorFactory factory = compiler.compile(
+                    RecordCursorFactory factory = fact(
                             "select k, s, first(lat) lat, last(lon) lon " +
                                     "from x " +
                                     "where s in ('a') " +
-                                    "sample by 1h align to calendar time zone $1 with offset $2",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
+                                    "sample by 1h align to calendar time zone $1 with offset $2"
+                    )
             ) {
 
                 String expectedMoscow = "k\ts\tlat\tlon\n" +
@@ -869,7 +867,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleByAlignToCalendarBindVariablesWrongTypes() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -879,13 +877,12 @@ public class SampleByTest extends AbstractGriffinTest {
                             "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
-                            "), index(s) timestamp(k) partition by DAY",
-                    sqlExecutionContext
+                            "), index(s) timestamp(k) partition by DAY"
             );
 
             String sql = "select k, s, first(lat) lat, last(lon) lon from x sample by 1h align to calendar time zone $1 with offset $2";
 
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(sql)) {
                 sqlExecutionContext.getBindVariableService().setLong(0, 42);
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
                 try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
@@ -897,7 +894,7 @@ public class SampleByTest extends AbstractGriffinTest {
             }
 
             sqlExecutionContext.getBindVariableService().clear();
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(sql)) {
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setLong(1, 42);
                 try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
@@ -1475,8 +1472,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByIndexNoTimestampColSelected() throws Exception {
-        assertMemoryLeak(() -> compiler.compile("create table xx (lat double, lon double, s symbol, k timestamp)" +
-                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY"));
 
         assertQuery("s\tlat\tlon\n" +
                         "a\t-2.0\t2.0\n" +
@@ -1520,8 +1517,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByIndexWithIrregularEmptyPeriods() throws Exception {
-        assertMemoryLeak(() -> compiler.compile("create table xx (s symbol, k timestamp)" +
-                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table xx (s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY"));
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T20:50:00.000000Z\ta\t1970-01-01T20:50:00.000000Z\t1970-01-01T21:30:00.000000Z\n" +
@@ -1967,14 +1964,14 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleIndexNoRowsInIndex() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (k timestamp)\n" +
-                    " timestamp(k) partition by DAY", sqlExecutionContext);
-            compiler.compile(
+            ddl("create table xx (k timestamp)\n" +
+                    " timestamp(k) partition by DAY");
+            executeInsert(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
+                            "long_sequence(100)\n");
             alter("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
@@ -1999,8 +1996,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleLatestRestrictedByWhere() throws Exception {
-        assertMemoryLeak(() -> compiler.compile("create table xx (s symbol, k timestamp)" +
-                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table xx (s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY"));
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T05:01:00.000000Z\ta\t1970-01-01T05:01:00.000000Z\t1970-01-01T05:29:00.000000Z\n",
@@ -2019,21 +2016,21 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleMainIndexHasColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (k timestamp)\n" +
-                    " timestamp(k) partition by DAY", sqlExecutionContext);
-            compiler.compile(
+            ddl("create table xx (k timestamp)\n" +
+                    " timestamp(k) partition by DAY");
+            executeInsert(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence('1970-01-01T12', 2 * 60 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(8)\n", sqlExecutionContext);
+                            "long_sequence(8)\n");
             alter("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
-            compiler.compile("insert into xx " +
+            executeInsert("insert into xx " +
                     "select " +
                     "timestamp_sequence('1970-01-03', 1 * 60 * 1000000L),\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                     "from\n" +
-                    "long_sequence(60)\n", sqlExecutionContext);
+                    "long_sequence(60)\n");
         });
 
         // 1970-01-01 data does not have s column
@@ -2060,22 +2057,22 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleWithColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (s symbol, k timestamp)" +
-                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+            ddl("create table xx (s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            compiler.compile(
+            executeInsert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
+                            "long_sequence(100)\n");
 
             alter("alter table xx add i1 int", sqlExecutionContext);
             alter("alter table xx add c1 char", sqlExecutionContext);
             alter("alter table xx add l1 long", sqlExecutionContext);
 
-            compiler.compile(
+            executeInsert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2084,7 +2081,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             "rnd_char() c1,\n" +
                             "x as l1\n" +
                             "from\n" +
-                            "long_sequence(100)", sqlExecutionContext);
+                            "long_sequence(100)");
 
             alter("alter table xx add f1 float", sqlExecutionContext);
             alter("alter table xx add d1 double", sqlExecutionContext);
@@ -2135,22 +2132,22 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleWithColumnTopsGeo() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (s symbol, k timestamp)" +
-                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+            ddl("create table xx (s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            compiler.compile(
+            executeInsert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
+                            "long_sequence(100)\n");
 
             alter("alter table xx add i1 int", sqlExecutionContext);
             alter("alter table xx add c1 char", sqlExecutionContext);
             alter("alter table xx add l1 long", sqlExecutionContext);
 
-            compiler.compile(
+            executeInsert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2159,7 +2156,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             "rnd_char() c1,\n" +
                             "x as l1\n" +
                             "from\n" +
-                            "long_sequence(100)", sqlExecutionContext);
+                            "long_sequence(100)");
 
             alter("alter table xx add f1 float", sqlExecutionContext);
             alter("alter table xx add d1 double", sqlExecutionContext);
@@ -2219,16 +2216,16 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterDataFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
-                    ", index(s capacity 345) timestamp(k) partition by DAY \n", sqlExecutionContext);
+            ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
+                    ", index(s capacity 345) timestamp(k) partition by DAY \n");
 
-            compiler.compile("insert into xx " +
+            executeInsert("insert into xx " +
                     "select " +
                     "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
                     "rnd_double() d,\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                     "from\n" +
-                    "long_sequence(300)\n", sqlExecutionContext);
+                    "long_sequence(300)\n");
 
             assertSql("select sum(d)\n" +
                             "from xx " +
@@ -3369,7 +3366,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneVariable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -3378,16 +3375,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             " timestamp_sequence(172800000000, 300000000) k" +
                             " from" +
                             " long_sequence(100)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+                            ") timestamp(k) partition by NONE"
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile(
-                    "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
-                    sqlExecutionContext
-            ).getRecordCursorFactory()) {
-
+            try (RecordCursorFactory factory = fact("select k, count() from x sample by 90m align to calendar time zone $1 with offset $2")) {
                 String expectedMoscow = "k\tcount\n" +
                         "1970-01-02T22:45:00.000000Z\t3\n" +
                         "1970-01-03T00:15:00.000000Z\t18\n" +
@@ -4302,16 +4294,15 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearConstructorFail() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(172800000000, 3600000000) k" +
-                            " from" +
-                            " long_sequence(20000000)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20000000)" +
+                    ") timestamp(k) partition by NONE"
             );
 
             FilesFacade ff = new TestFilesFacadeImpl() {
@@ -4334,7 +4325,7 @@ public class SampleByTest extends AbstractGriffinTest {
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
@@ -4351,16 +4342,15 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearFail() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(172800000000, 3600000000) k" +
-                            " from" +
-                            " long_sequence(20000000)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20000000)" +
+                    ") timestamp(k) partition by NONE"
             );
 
             FilesFacade ff = new TestFilesFacadeImpl() {
@@ -4383,7 +4373,7 @@ public class SampleByTest extends AbstractGriffinTest {
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
                         try (
                                 RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
@@ -8602,7 +8592,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillValueAllTypesAndTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -8616,11 +8606,12 @@ public class SampleByTest extends AbstractGriffinTest {
                             " timestamp_sequence(172800000000, 3600000000) k" +
                             " from" +
                             " long_sequence(20)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+                            ") timestamp(k) partition by NONE"
             );
+
             snapshotMemoryUsage();
-            try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)", sqlExecutionContext).getRecordCursorFactory()) {
+
+            try (final RecordCursorFactory factory = fact("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
                 assertTimestamp("k", factory);
                 String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\t74.19752505948932\t113.1213\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
@@ -8665,7 +8656,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
                 assertVariableColumns(factory, sqlExecutionContext);
 
-                compiler.compile("truncate table x", sqlExecutionContext);
+                ddl("truncate table x");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -9816,8 +9807,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnAliasPosFirst() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "time\tsum\tsum1\tsum2\n" +
@@ -9835,8 +9826,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnAliasPosLast() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\tsum1\tsum2\ttime\n" +
@@ -9854,8 +9845,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnAliasPosMid() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\ttime\tsum1\tsum2\n" +
@@ -9873,8 +9864,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "ts\tsum\tsum1\tsum2\n" +
@@ -9892,8 +9883,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnJoinTableAliasLast() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\tsum1\tsum2\tts\n" +
@@ -9911,8 +9902,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnJoinTableAliasMid() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\tsum1\tts\tsum2\n" +
@@ -10240,7 +10231,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -10250,16 +10241,10 @@ public class SampleByTest extends AbstractGriffinTest {
                             "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
-                            "), index(s) timestamp(k) partition by DAY",
-                    sqlExecutionContext
+                            "), index(s) timestamp(k) partition by DAY"
             );
-            try (
-                    RecordCursorFactory ignored = compiler.compile(
-                            query,
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
-                Assert.fail();
+            try {
+                fail(query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
                 Assert.assertEquals(errorPosition, ex.getPosition());

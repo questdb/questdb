@@ -441,7 +441,9 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     }
 
     private void assertTimeout(String ddl, String dml, String query) throws Exception {
-        assertTimeout(ddl, dml, query, compiler, sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertTimeout(ddl, dml, query, compiler, sqlExecutionContext);
+        }
     }
 
     private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
@@ -572,7 +574,6 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContextImpl sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
         ) {
             sqlExecutionContext.with(circuitBreaker);
@@ -582,7 +583,9 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                 pool.start(LOG);
             }
 
-            runnable.run(engine, compiler, sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                runnable.run(engine, compiler, sqlExecutionContext);
+            }
             Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
             Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
         } finally {

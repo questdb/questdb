@@ -28,9 +28,9 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -61,7 +61,6 @@ public class MinCharGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-
         ddl("create table tab (f char)");
 
         final Rnd rnd = new Rnd();
@@ -76,7 +75,7 @@ public class MinCharGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -88,8 +87,7 @@ public class MinCharGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
-        compiler.compile("create table tab (f char)", sqlExecutionContext);
+        ddl("create table tab (f char)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -100,7 +98,7 @@ public class MinCharGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = fact("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

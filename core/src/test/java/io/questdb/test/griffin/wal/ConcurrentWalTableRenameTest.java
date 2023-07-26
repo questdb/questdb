@@ -26,6 +26,7 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -108,7 +109,7 @@ public class ConcurrentWalTableRenameTest extends AbstractGriffinTest {
                 try {
                     barrier.await();
                     try (
-                            SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         while (!done.get()) {

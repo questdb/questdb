@@ -26,8 +26,8 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -127,9 +127,9 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearNotSupported() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))", sqlExecutionContext);
+            ddl("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
             try (
-                    final RecordCursorFactory factory = compiler.compile("select ts, avg(i), min(s) from x sample by 1s fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursorFactory factory = fact("select ts, avg(i), min(s) from x sample by 1s fill(linear)");
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 cursor.hasNext();

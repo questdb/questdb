@@ -24,24 +24,25 @@
 
 package io.questdb.test.jit;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.jit.CompiledFilterIRSerializer;
-import io.questdb.test.griffin.BaseFunctionFactoryTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
-import org.junit.*;
+import io.questdb.test.griffin.BaseFunctionFactoryTest;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -108,8 +109,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             writer.commit();
         }
 
-        CompiledQuery query = compiler.compile("select * from x", sqlExecutionContext);
-        factory = query.getRecordCursorFactory();
+        factory = fact("select * from x");
         Assert.assertTrue(factory.supportPageFrameCursor());
         metadata = factory.getMetadata();
     }

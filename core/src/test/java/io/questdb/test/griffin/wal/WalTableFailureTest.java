@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -1210,24 +1211,26 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
-                insertMethod.execute();
-                insertMethod.execute();
-                insertMethod.commit();
-
-                insertMethod.execute();
-                compile("alter table " + tableName + " add column new_column int");
-
-                try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    insertMethod.execute();
+                    insertMethod.execute();
                     insertMethod.commit();
-                } catch (CairoException e) {
-                    // todo: check all assertContains() usages
-                    TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
+
+                    insertMethod.execute();
+                    compile("alter table " + tableName + " add column new_column int");
+
+                    try {
+                        insertMethod.commit();
+                    } catch (CairoException e) {
+                        // todo: check all assertContains() usages
+                        TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
+                    }
                 }
             }
 

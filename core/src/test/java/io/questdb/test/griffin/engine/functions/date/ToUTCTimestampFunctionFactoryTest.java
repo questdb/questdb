@@ -41,9 +41,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInvalidConstantOffset() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("select to_utc(0, '25:40')", sqlExecutionContext);
-                Assert.fail();
+            try {
+                fail("select to_utc(0, '25:40')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -54,9 +53,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInvalidConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()){
-                compiler.compile("select to_utc(0, 'UUU')", sqlExecutionContext);
-                Assert.fail();
+            try {
+                fail("select to_utc(0, 'UUU')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -67,9 +65,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNullConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("select to_utc(0, null)", sqlExecutionContext);
-                Assert.fail();
+            try {
+                fail("select to_utc(0, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
@@ -96,9 +93,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testVarNullTimezone() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()){
-                compiler.compile("select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)", sqlExecutionContext);
-                Assert.fail();
+            try {
+                fail("select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)");
             } catch (SqlException e) {
                 Assert.assertEquals(64, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
@@ -123,7 +119,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     private void assertToUTC(String sql, String expected) throws Exception {
-        assertMemoryLeak(() ->  {
+        assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSql(
                         compiler,

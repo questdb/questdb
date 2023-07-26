@@ -128,10 +128,10 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearNotSupported() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))", sqlExecutionContext);
+            try {
+                ddl("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",);
                 try (
-                        final RecordCursorFactory factory = compiler.compile("select ts, avg(i), max(s) from x sample by 1s fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                        final RecordCursorFactory factory = fact("select ts, avg(i), max(s) from x sample by 1s fill(linear)");
                         final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
                     cursor.hasNext();

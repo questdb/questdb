@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -111,12 +111,11 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 Assert.fail(ex.getMessage());
             }
-
         });
     }
 
     private void execQuery(String ddl, String query) throws SqlException {
-        compiler.compile(ddl, sqlExecutionContext);
-        TestUtils.printSql(compiler, sqlExecutionContext, query, sink);
+        ddl(ddl, sqlExecutionContext);
+        TestUtils.printSql(engine, sqlExecutionContext, query, sink);
     }
 }

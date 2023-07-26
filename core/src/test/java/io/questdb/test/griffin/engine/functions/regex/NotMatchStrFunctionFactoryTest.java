@@ -26,8 +26,8 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,9 +37,9 @@ public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                compiler.compile("select * from x where name !~ null", sqlExecutionContext);
+                fail("select * from x where name !~ null");
             } catch (SqlException e) {
                 Assert.assertEquals(30, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
@@ -50,9 +50,9 @@ public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                compiler.compile("select * from x where name !~ 'XJ**'", sqlExecutionContext);
+                fail("select * from x where name !~ 'XJ**'");
             } catch (SqlException e) {
                 Assert.assertEquals(34, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
@@ -114,10 +114,9 @@ public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
                     "ROU\n" +
                     "OPY\n" +
                     "YPR\n";
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ '[ABCDEFGHIJKLMN]'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact("select * from x where name !~ '[ABCDEFGHIJKLMN]'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);

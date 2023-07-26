@@ -27,9 +27,9 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -77,7 +77,7 @@ public class HashJoinTest extends AbstractGriffinTest {
             long tagBeforeFactory = getMemUsedByFactories();
             System.gc();
 
-            try (final RecordCursorFactory factory = compiler.compile("  select a1.sensor_day, \n" +
+            try (final RecordCursorFactory factory = fact("  select a1.sensor_day, \n" +
                     "  warmest_day, to_str(a2.sensor_time, 'yyyy') as warmest_day_year, \n" +
                     "  coldest_day, to_str(a3.sensor_time, 'yyyy') as coldest_day_year,\n" +
                     "  warmest_night, to_str(a4.sensor_time, 'yyyy') as warmest_night_year,\n" +
@@ -101,7 +101,7 @@ public class HashJoinTest extends AbstractGriffinTest {
                     "  left join weather_data_historical a4 on (a1.sensor_day = a4.sensor_day and warmest_night = a4.min_temperature_out)\n" +
                     "  left join weather_data_historical a5 on (a1.sensor_day = a5.sensor_day and coldest_night = a5.min_temperature_out)\n" +
                     "  left join weather_data_historical a6 on (a1.sensor_day = a6.sensor_day and max_snow_height = a6.snow_height and a6.snow_height > 0)\n" +
-                    "  left join weather_data_historical a7 on (a1.sensor_day = a7.sensor_day and max_wind_gust_overall = a7.max_wind_gust_speed)", sqlExecutionContext).getRecordCursorFactory()) {
+                    "  left join weather_data_historical a7 on (a1.sensor_day = a7.sensor_day and max_wind_gust_overall = a7.max_wind_gust_speed)")) {
 
                 long rssBeforeCursor = Os.getRss();
                 long virtCursorMem = getMemUsedByFactories() - tagBeforeFactory;

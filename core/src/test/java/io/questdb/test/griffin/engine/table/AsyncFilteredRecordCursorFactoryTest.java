@@ -804,7 +804,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
         assertMemoryLeak(() -> {
-
             WorkerPool pool = new TestWorkerPool(workerCount);
             TestUtils.setupWorkerPool(pool, engine);
             pool.start();

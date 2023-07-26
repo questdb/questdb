@@ -95,12 +95,11 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testConstHalfConst1() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table geohash as (" +
+            try {
+                ddl("create table geohash as (" +
                                 "select " +
                                 "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
-                                ")",
-                        sqlExecutionContext);
+                                ")");
                 assertSql(
                         "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
                         "geohash\n" +
@@ -132,13 +131,13 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testEq() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table x as (" +
+            try {
+                ddl("create table x as (" +
                         " select" +
                         " rnd_geohash(11) a," +
                         " rnd_geohash(11) b" +
                         " from long_sequence(5000)" +
-                        ")", sqlExecutionContext);
+                        ")");
                 assertSql(
                         "x where a = b",
                         "a\tb\n" +
@@ -151,13 +150,13 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNotEq() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table x as (" +
+            try {
+                ddl("create table x as (" +
                         " select" +
                         " rnd_geohash(11) a," +
                         " rnd_geohash(13) b" +
                         " from long_sequence(8)" +
-                        ")", sqlExecutionContext);
+                        ")");
                 assertSql(
                         "x where a != b",
                         "a\tb\n" +
@@ -247,14 +246,13 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull9() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table geohash as (" +
+            try {
+                ddl("create table geohash as (" +
                                 "select " +
                                 "    cast(null as GeOhAsH(50b)) as geohash1, " +
                                 "    cast('sp052w92' as GeOhAsH(2c)) as geohash2 " +
                                 "from long_sequence(1)" +
-                                ")",
-                        sqlExecutionContext);
+                                ")");
                 assertSql(
                         "geohash where geohash1 = geohash2",
                         "geohash1\tgeohash2\n"

@@ -1315,6 +1315,17 @@ public final class TestUtils {
     }
 
     public static void printSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            printSql(compiler, sqlExecutionContext, sql, sink);
+        }
+    }
+
+    public static void printSql(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
