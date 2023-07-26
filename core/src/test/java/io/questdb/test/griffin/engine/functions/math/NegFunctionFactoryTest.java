@@ -72,7 +72,7 @@ public class NegFunctionFactoryTest extends AbstractGriffinTest {
 
     private void assertNeg(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 sql,
                 sink,

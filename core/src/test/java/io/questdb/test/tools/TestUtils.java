@@ -633,6 +633,18 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log);
+        }
+    }
+
+    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, symbolsAsStrings);
+        }
+    }
+
     public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
         assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
     }

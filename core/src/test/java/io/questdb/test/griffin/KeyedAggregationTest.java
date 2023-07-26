@@ -239,9 +239,9 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             final String expected = "hour\tcount\n" +
                     "0\t122\n";
 
-            compiler.compile("create table x as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(100))", sqlExecutionContext);
-            compiler.compile("create table y as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(200))", sqlExecutionContext);
-            compiler.compile("create table z as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(300))", sqlExecutionContext);
+            ddl("create table x as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(100))");
+            ddl("create table y as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(200))");
+            ddl("create table z as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(300))");
 
             assertQuery(expected, "select hour(ts), count from " +
                     "(select z.ts, z.val from x join y on y.val = x.val join z on (val) where x.val > 50)" +
@@ -371,13 +371,11 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     @Test
     public void testIntSymbolAddKeyMidTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val from long_sequence(1000000))", sqlExecutionContext);
-            alter("alter table tab add column s2 symbol cache", sqlExecutionContext);
-            compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)", sqlExecutionContext);
+            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val from long_sequence(1000000))");
+            alter("alter table tab add column s2 symbol cache");
+            ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
-            try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = fact("select s2, sum(val) from tab order by s2")) {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override

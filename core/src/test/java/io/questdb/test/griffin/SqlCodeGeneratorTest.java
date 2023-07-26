@@ -592,7 +592,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testCreateTableIfNotExists() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 10; i++) {
-                fact("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
+                ddl("create table if not exists y as (select rnd_int() a from long_sequence(21))");
             }
         });
 
@@ -1824,7 +1824,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        fact("drop table tab", sqlExecutionContext);
+        ddl("drop table tab");
 
         assertQuery13(
                 "min\tmax\n" +
@@ -1977,12 +1977,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             }
 
             query = "select s as symbol, count() from x order by symbol";
-            try (RecordCursorFactory factory = fact(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(query)) {
                 assertCursor("symbol\tcount\n" + expectedData, factory, true, true);
             }
 
             query = "select s as symbol, count() as cnt from x group by symbol order by symbol";
-            try (RecordCursorFactory factory = fact(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = fact(query)) {
                 assertCursor("symbol\tcnt\n" + expectedData, factory, true, true);
             }
         });
@@ -2033,7 +2033,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select x, y from l left join rr on l.x = rr.y and (y > 0 or y > 10)",
                     sink,
@@ -2149,7 +2149,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select x, y\n" +
                             "from l left join rr on l.x = rr.y\n" +
@@ -3487,7 +3487,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "SELECT * FROM balances \n" +
                             "WHERE cust_id = 'c1' and balance_ccy='EUR' \n" +
@@ -5137,7 +5137,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             );
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "SELECT ts, a.city, a.make, avg(temp)\n" +
                             "FROM readings timestamp(ts)\n" +
@@ -6613,7 +6613,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x(a int)");
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)",
                     sink,
@@ -7446,7 +7446,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     ddl("create TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);");
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                             sink,
@@ -7455,7 +7455,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "show columns from 'привет от штиблет'",
                             sink,
@@ -8030,7 +8030,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select metric, sum(value) from x \n" +
                             "where node in ('node1', 'node2') and metric in ('cpu') \n" +
@@ -8179,7 +8179,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select * from x \n" +
                             "where node in ('node2') and metric in ('cpu', 'memory') \n" +

@@ -41,6 +41,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.*;
 
 public class SnapshotTest extends AbstractGriffinTest {
 

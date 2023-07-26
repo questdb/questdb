@@ -30,7 +30,10 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
@@ -40,9 +43,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 import java.io.IOException;
 import java.nio.file.Paths;
@@ -538,7 +539,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     private static void assertTableExists(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext context,
             TableToken tableToken,
             boolean inVolume
@@ -566,7 +567,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private Thread concurrentTableCreator(
             String threadName,
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext context,
             CyclicBarrier startBarrier,
             SOCountDownLatch haltLatch,
@@ -596,7 +597,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private TableToken createPopulateTable(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext context,
             String tableName,
             boolean isWal,

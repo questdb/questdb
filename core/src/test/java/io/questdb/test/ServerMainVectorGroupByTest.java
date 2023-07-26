@@ -29,7 +29,6 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -143,7 +142,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
     private TableToken createPopulateTable(
             CairoConfiguration cairoConfig,
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext context,
             String tableName
     ) throws Exception {

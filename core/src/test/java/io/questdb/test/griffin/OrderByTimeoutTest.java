@@ -34,6 +34,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.*;
 
 public class OrderByTimeoutTest extends AbstractGriffinTest {
 

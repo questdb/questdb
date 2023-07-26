@@ -176,7 +176,9 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testTimeoutInLatestByAllIndexed() throws Exception {
-        testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+        }
     }
 
     @Test
@@ -364,7 +366,9 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupBy() throws Exception {
-        testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+        }
     }
 
     @Test
@@ -402,7 +406,9 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testTimeoutInVectorizedNonKeyedGroupBy() throws Exception {
-        testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
+        }
     }
 
     //non-keyed

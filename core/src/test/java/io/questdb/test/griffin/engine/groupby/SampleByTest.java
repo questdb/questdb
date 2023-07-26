@@ -1502,7 +1502,8 @@ public class SampleByTest extends AbstractGriffinTest {
             alter("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
-        TestUtils.assertSqlCursors(compiler,
+        TestUtils.assertSqlCursors(
+                engine,
                 sqlExecutionContext,
                 "select s, first(lat) lat, last(lon) lon " +
                         "from xx " +
@@ -1512,7 +1513,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "from xx " +
                         "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
                         "sample by 2h",
-                LOG);
+                LOG
+        );
     }
 
     @Test

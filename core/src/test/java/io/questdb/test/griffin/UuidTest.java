@@ -29,12 +29,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Uuid;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.UUID;
-
-import static org.junit.Assert.fail;
 
 public class UuidTest extends AbstractGriffinTest {
 
@@ -43,7 +42,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("create table x (u UUID)");
         try {
             assertCompile("insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))");
-            fail();
+            Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "invalid UUID constant");
         }
@@ -54,7 +53,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("create table x (u UUID)");
         try {
             assertCompile("insert into x values ('a0eebc11-110b-11f8-116d')");
-            fail();
+            Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertContains(e.getMessage(), "inconvertible value");
         }

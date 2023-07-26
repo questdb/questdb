@@ -459,14 +459,14 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             alter("insert into x select * from z", sqlExecutionContext);
             TestUtils.assertSqlCursors(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "y order by ts",
                     "x",
                     LOG,
                     true
             );
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
             TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
         });
     }
@@ -608,14 +608,14 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                 alter("insert into x select * from z", sqlExecutionContext);
 
                 TestUtils.assertSqlCursors(
-                        compiler,
+                        engine,
                         sqlExecutionContext,
                         "y order by ts",
                         "x",
                         LOG,
                         true
                 );
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
                 assertSql("select name, minTimestamp from table_partitions('x')",
                         "name\tminTimestamp\n" +
                                 "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +

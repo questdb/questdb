@@ -28,7 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
@@ -116,7 +119,7 @@ public class LatestByParallelTest extends AbstractTest {
     }
 
     private static void assertQuery(
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String expected,
             String ddl,
@@ -138,7 +141,7 @@ public class LatestByParallelTest extends AbstractTest {
 
     private static void testLatestByAll(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
@@ -166,7 +169,7 @@ public class LatestByParallelTest extends AbstractTest {
 
     private static void testLatestByFiltered(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
@@ -195,7 +198,7 @@ public class LatestByParallelTest extends AbstractTest {
 
     private static void testLatestByTimestamp(
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
@@ -294,8 +297,6 @@ public class LatestByParallelTest extends AbstractTest {
 
     @FunctionalInterface
     interface LatestByRunnable {
-        void run(CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
+        void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
-
 }
-

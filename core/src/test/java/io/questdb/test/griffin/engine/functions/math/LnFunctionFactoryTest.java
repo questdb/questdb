@@ -47,7 +47,7 @@ public class LnFunctionFactoryTest extends AbstractGriffinTest {
 
     private void assertLog(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 sql,
                 sink,

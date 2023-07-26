@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
@@ -194,7 +193,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void waitForData(String tableName, SqlCompilerImpl defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
+    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
         long time = System.currentTimeMillis();
         while (true) {
             try {
@@ -212,7 +211,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     private TableToken createPopulateTable(
             CairoConfiguration cairoConfig,
             CairoEngine engine,
-            SqlCompilerImpl compiler,
+            SqlCompiler compiler,
             SqlExecutionContext context,
             String tableName
     ) throws Exception {

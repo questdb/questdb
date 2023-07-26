@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -59,7 +61,7 @@ public class TableWriterInteractionTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "xyz where x = 'ELLO'",
                     sink,

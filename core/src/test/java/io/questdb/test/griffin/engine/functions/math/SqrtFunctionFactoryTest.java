@@ -42,7 +42,7 @@ public class SqrtFunctionFactoryTest extends AbstractGriffinTest {
 
     private void assertSqrt(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 sql,
                 sink,

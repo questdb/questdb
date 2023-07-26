@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractGriffinTest;
@@ -45,28 +46,28 @@ public class RecordCursorMemoryUsageTest extends AbstractGriffinTest {
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(1000)) timestamp(ts)");
-            try {
-                compiler.setFullFatJoins(true);
-                try (RecordCursorFactory factory = compile("select * from tab t1 asof join tab t2 ")
-                        .getRecordCursorFactory()) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    compiler.setFullFatJoins(true);
+                    try (RecordCursorFactory factory = compiler.compile("select * from tab t1 asof join tab t2;", sqlExecutionContext).getRecordCursorFactory()) {
+                        long freeDuring;
+                        long memDuring;
 
-                    long freeDuring;
-                    long memDuring;
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            freeDuring = Unsafe.getFreeCount();
+                            memDuring = getMemUsedByFactories();
+                            TestUtils.drainCursor(cursor);
+                        }
 
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        freeDuring = Unsafe.getFreeCount();
-                        memDuring = getMemUsedByFactories();
-                        TestUtils.drainCursor(cursor);
+                        long memAfter = getMemUsedByFactories();
+                        long freeAfter = Unsafe.getFreeCount();
+
+                        Assert.assertTrue(memAfter < memDuring);
+                        Assert.assertTrue(freeAfter > freeDuring);
                     }
-
-                    long memAfter = getMemUsedByFactories();
-                    long freeAfter = Unsafe.getFreeCount();
-
-                    Assert.assertTrue(memAfter < memDuring);
-                    Assert.assertTrue(freeAfter > freeDuring);
+                } finally {
+                    compiler.setFullFatJoins(false);
                 }
-            } finally {
-                compiler.setFullFatJoins(false);
             }
         });
     }
