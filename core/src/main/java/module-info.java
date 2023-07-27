@@ -764,6 +764,8 @@ open module io.questdb {
             BitwiseXorLongFunctionFactory,
             BitwiseAndIntFunctionFactory,
             BitwiseOrIntFunctionFactory,
+            BitwiseNotIPv4FunctionFactory,
+            BitwiseNotIPv4StrFunctionFactory,
             BitwiseNotIntFunctionFactory,
             BitwiseXorIntFunctionFactory,
 

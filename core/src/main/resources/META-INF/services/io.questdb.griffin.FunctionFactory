@@ -741,6 +741,8 @@ io.questdb.griffin.engine.functions.math.BitwiseNotLongFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseAndIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseOrIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseXorIntFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseNotIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseNotIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
 
 # timezone conversion
