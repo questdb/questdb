@@ -1057,7 +1057,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         });
     }
 
-    //asserts plan without having to prefix query with 'explain ', specify the fixed output header, etc.
+    // asserts plan without having to prefix query with 'explain ', specify the fixed output header, etc.
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
         StringSink sink = new StringSink();
         sink.put("EXPLAIN ").put(query);
@@ -1070,6 +1070,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
         }
+    }
+
+    protected void assertPlan(SqlCompiler compiler, CharSequence query, CharSequence expectedPlan) throws SqlException {
+        assertPlan(compiler, query, expectedPlan, sqlExecutionContext);
     }
 
     protected void assertPlan(SqlCompiler compiler, CharSequence query, CharSequence expectedPlan, SqlExecutionContext sqlExecutionContext) throws SqlException {

@@ -299,8 +299,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a asof join b on ts where a.i = b.ts::int",
                     "SelectedRecord\n" +
@@ -319,8 +319,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1",
                     "SelectedRecord\n" +
@@ -339,8 +339,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a asof join b on ts",
                     "SelectedRecord\n" +
@@ -358,8 +358,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a asof join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
@@ -378,8 +378,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
@@ -400,8 +400,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * " +
                             "from a " +
@@ -427,8 +427,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // where clause predicate can't be pushed to join clause because asof is and outer join
     public void testAsOfJoin5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * " +
                             "from a " +
@@ -449,8 +449,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 assertPlan("select * " +
@@ -472,8 +472,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a asof join b",
                     "SelectedRecord\n" +
@@ -582,7 +582,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testCrossJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            ddl("create table t (x int, ts timestamp) timestamp(ts)");
             compile("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 cross join t t2 order by t1.ts",
                     "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"};
@@ -609,7 +609,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testCrossJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            ddl("create table t (x int, ts timestamp) timestamp(ts)");
             compile("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " +
@@ -633,7 +633,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testCrossJoinWithSort3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            ddl("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from " +
                             "((select * from t order by ts asc) limit 10) t1 " +
@@ -654,7 +654,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testCrossJoinWithSort4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            ddl("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from " +
                             "((select * from t order by ts asc) limit 10) t1 " +
@@ -677,7 +677,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testCrossJoinWithSort5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            ddl("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from " +
                             "((select * from t order by ts asc) limit 10) t1 " +
@@ -983,7 +983,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExceptAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc",
                     "Except\n" +
@@ -1001,7 +1001,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExceptAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc",
                     "Except\n" +
@@ -1019,7 +1019,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExceptAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc",
                     "Sort light\n" +
@@ -1039,7 +1039,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExceptAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc",
                     "Sort light\n" +
@@ -1076,7 +1076,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainDeferredSingleSymbolFilterDataFrame() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab \n" +
+            ddl("create table tab \n" +
                     "(\n" +
                     "   id symbol index,\n" +
                     "   ts timestamp,\n" +
@@ -1105,7 +1105,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainInsert() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( l long, d double)");
+            ddl("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Insert into table: a\n", "explain insert into a values (1, 2.0)"
             );
@@ -1115,7 +1115,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( l long, d double)");
+            ddl("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Insert into table: a\n" +
                     "    VirtualRecord\n" +
@@ -1140,7 +1140,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainSelect() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( l long, d double)");
+            ddl("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "DataFrame\n" +
                     "    Row forward scan\n" +
@@ -1189,7 +1189,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainSelectWithCte3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( l long, d double)");
+            ddl("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Limit lo: 10\n" +
                     "    DataFrame\n" +
@@ -1202,7 +1202,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainUpdate1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( l long, d double)");
+            ddl("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Update table: a\n" +
                     "    VirtualRecord\n" +
@@ -1217,8 +1217,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainUpdate2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( l1 long, d1 double)");
-            compile("create table b ( l2 long, d2 double)");
+            ddl("create table a ( l1 long, d1 double)");
+            ddl("create table b ( l2 long, d2 double)");
             assertSql("QUERY PLAN\n" +
                     "Update table: a\n" +
                     "    VirtualRecord\n" +
@@ -1550,7 +1550,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testFunctions() throws Exception {
         assertMemoryLeak(() -> { // test table for show_columns
-            compile("create table bbb (a int)");
+            ddl("create table bbb (a int)");
         });
 
         final StringSink sink = new StringSink();
@@ -2279,8 +2279,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testHashInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s1 string)");
-            compile("create table b ( i int, s2 string)");
+            ddl("create table a ( i int, s1 string)");
+            ddl("create table b ( i int, s2 string)");
 
             assertPlan("select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2",
                     "SelectedRecord\n" +
@@ -2297,16 +2297,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//inner hash join maintains order metadata and can be part of asof join
-    public void testHashInnerJoinWithAsof() throws Exception {
+    @Test // inner hash join maintains order metadata and can be part of asof join
+    public void testHashInnerJoinWithAsOf() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-            compile("create table tabb (b1 int, b2 long)");
-            compile("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+            ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+            ddl("create table tabb (b1 int, b2 long)");
+            ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                assertPlan("select * " +
+                assertPlan(
+                        compiler,
+                        "select * " +
                                 "from taba " +
                                 "inner join tabb on a1=b1 " +
                                 "asof join tabc on b1=c1",
@@ -2332,8 +2334,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testHashLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int)");
-            compile("create table b ( i int)");
+            ddl("create table a ( i int)");
+            ddl("create table b ( i int)");
 
             assertPlan("select * from a left join b on i",
                     "SelectedRecord\n" +
@@ -2352,8 +2354,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testHashLeftJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int)");
-            compile("create table b ( i int)");
+            ddl("create table a ( i int)");
+            ddl("create table b ( i int)");
 
             assertPlan("select * from a left join b on i where b.i is not null",
                     "SelectedRecord\n" +
@@ -2376,8 +2378,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testImplicitJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i1 int)");
-            compile("create table b ( i2 int)");
+            ddl("create table a ( i1 int)");
+            ddl("create table b ( i2 int)");
 
             assertQuery("", "select * from a, b where a.i1 = b.i2", null, null);
 
@@ -2443,7 +2445,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testIntersectAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc",
                     "Intersect\n" +
@@ -2461,7 +2463,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testIntersectAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc",
                     "Intersect\n" +
@@ -2479,7 +2481,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testIntersectAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc",
                     "Sort light\n" +
@@ -2499,7 +2501,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testIntersectAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc",
                     "Sort light\n" +
@@ -2560,7 +2562,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn0c() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
+            ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             compile("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlan("select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s",
@@ -2576,7 +2578,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn0d() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
+            ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             compile("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlan("select ts,i from a where s in ('a1') latest on ts partition by s",
@@ -2591,7 +2593,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn0e() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             compile("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertPlan("select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s",
@@ -2798,11 +2800,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn5a() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             compile("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlan(
-                    "select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s",
+            assertPlan("select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s",
                     "Index backward scan on: s\n" +
                             "  symbolFilter: s in ['def1','def2']\n" +
                             "    Frame backward scan on: a\n");
@@ -2812,11 +2813,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn5b() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             compile("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlan(
-                    "select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s",
+            assertPlan("select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s",
                     "Index backward scan on: s\n" +
                             "  symbolFilter: s in [1] or s in ['deferred']\n" +
                             "    Frame backward scan on: a\n");
@@ -2826,11 +2826,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn5c() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             compile("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlan(
-                    "select s, i, ts from a where s  in ('1', '2') latest on ts partition by s",
+            assertPlan("select s, i, ts from a where s  in ('1', '2') latest on ts partition by s",
                     "Index backward scan on: s\n" +
                             "  symbolFilter: s in [1,2]\n" +
                             "    Frame backward scan on: a\n");
@@ -2860,7 +2859,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn8() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             compile("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlan("select s, i, ts from a where s  in ('s1') latest on ts partition by s",
@@ -2874,7 +2873,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // key outside list of symbols
     public void testLatestOn8a() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             compile("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlan("select s, i, ts from a where s  in ('bogus_key') latest on ts partition by s",
@@ -2908,7 +2907,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLatestOn9b() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
+            ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             compile("insert into a select x::int, 'S' || x, x::timestamp from long_sequence(10)");
 
             assertPlan("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
@@ -2922,8 +2921,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEquality1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a int)");
-            compile("create table tabb (b int)");
+            ddl("create table taba (a int)");
+            ddl("create table tabb (b int)");
 
             assertPlan("select * from taba left join tabb on a=b",
                     "SelectedRecord\n" +
@@ -2942,8 +2941,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEquality2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2",
                     "SelectedRecord\n" +
@@ -2962,8 +2961,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // FIXME: there should be no separate filter
     public void testLeftJoinWithEquality3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  or a2=b2",
                     "SelectedRecord\n" +
@@ -2981,8 +2980,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // FIXME: join and where clause filters should be separated
     public void testLeftJoinWithEquality4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  or a2=b2 where a1 > b2",
                     "SelectedRecord\n" +
@@ -3001,8 +3000,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // FIXME: ORed predicates should be applied as filter in hash join
     public void testLeftJoinWithEquality5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba " +
                             "left join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)",
@@ -3025,9 +3024,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEquality6() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
-            compile("create table tabc (c1 int, c2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
+            ddl("create table tabc (c1 int, c2 long)");
 
             assertPlan("select * from taba " +
                             "left join tabb on a1=b1 and a1=5 " +
@@ -3068,8 +3067,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
                     "SelectedRecord\n" +
@@ -3089,8 +3088,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
                     "SelectedRecord\n" +
@@ -3110,8 +3109,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10 and 1=0",
                     "SelectedRecord\n" +
@@ -3130,8 +3129,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressions4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2!=a2",
                     "SelectedRecord\n" +
@@ -3151,8 +3150,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // FIXME: a2=a2 run as past of left join or be optimized away !
     public void testLeftJoinWithEqualityAndExpressions5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=a2",
                     "SelectedRecord\n" +
@@ -3172,8 +3171,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // left join filter must remain intact !
     public void testLeftJoinWithEqualityAndExpressions6() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 string)");
-            compile("create table tabb (b1 int, b2 string)");
+            ddl("create table taba (a1 int, a2 string)");
+            ddl("create table tabb (b1 int, b2 string)");
 
             assertPlan("select * from taba " +
                             "left join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'",
@@ -3194,8 +3193,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba " +
                             "left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " +
@@ -3218,8 +3217,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
                     "SelectedRecord\n" +
@@ -3240,8 +3239,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
                     "SelectedRecord\n" +
@@ -3262,8 +3261,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on abs(a2+1) = abs(b2)",
                     "SelectedRecord\n" +
@@ -3281,8 +3280,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, a2 long)");
-            compile("create table tabb (b1 int, b2 long)");
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
 
             assertPlan("select * from taba left join tabb on abs(a2+1) = abs(b2) or a2/2 = b2+1",
                     "SelectedRecord\n" +
@@ -3300,8 +3299,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
                     "SelectedRecord\n" +
@@ -3320,8 +3319,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a lt join b on ts",
                     "SelectedRecord\n" +
@@ -3341,8 +3340,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         // lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
         // CONCLUSION: a join b on X can't always be translated to a join b on a.X = b.X
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
@@ -3361,8 +3360,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtJoin1b() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
@@ -3381,8 +3380,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtJoin1c() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a lt join b where a.i = b.ts",
                     "SelectedRecord\n" +
@@ -3400,8 +3399,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a lt join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
@@ -3420,8 +3419,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
@@ -3444,8 +3443,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
@@ -3466,8 +3465,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testLtOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * " +
                             "from a " +
@@ -3565,7 +3564,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testNestedLoopLeftJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            ddl("create table t (x int, ts timestamp) timestamp(ts)");
             compile("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts",
                     "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
@@ -3593,7 +3592,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testNestedLoopLeftJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            ddl("create table t (x int, ts timestamp) timestamp(ts)");
             compile("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " +
@@ -3618,7 +3617,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testOrderByIsMaintainedInLtAndAsofSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+            ddl("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
 
             for (String joinType : Arrays.asList("AsOf", "Lt")) {
                 String query = "with gp as \n" +
@@ -3653,7 +3652,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testOrderByIsMaintainedInSpliceSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+            ddl("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
 
             String query = "with gp as (\n" +
                     "selecT * from (\n" +
@@ -3687,7 +3686,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testOrderByIsMaintainedInSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE gas_prices " +
+            ddl("create table gas_prices " +
                     "(timestamp TIMESTAMP, " +
                     "galon_price DOUBLE) " +
                     "timestamp (timestamp);");
@@ -4072,7 +4071,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "    ResolutionHeight int, " +
                     "    id int" +
                     ")");
-            compile("CREATE TABLE hits2 as (select * from hits1)");
+            ddl("create table hits2 as (select * from hits1)");
 
             assertPlan("SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " +
                             "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" +
@@ -4617,7 +4616,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectDoubleInList() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t ( d double)");
+            ddl("create table t ( d double)");
 
             assertPlan("select * from t where d in (5, -1, 1, null)",
                     "Async Filter\n" +
@@ -4795,7 +4794,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectIndexedSymbols01b() throws Exception {
         //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan 
         assertMemoryLeak(() -> {
-            compile("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
+            ddl("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
             insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String queryDesc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
@@ -4943,7 +4942,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols07NonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s symbol index)");
+            ddl("create table a ( s symbol index)");
             String expectedPlan = "FilterOnExcludedValues symbolOrder: #ORDER#\n" +
                     "  symbolFilter: s not in ['S1']\n" +
                     "  filter: length(s)=2\n" +
@@ -4959,7 +4958,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols07Partitioned() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
+            ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
 
             String query = "select * from a where s != 'S1' and length(s) = 2 and ts in '2023-03-15' order by s #ORDER#";
             String expectedPlan = "FilterOnExcludedValues symbolOrder: #ORDER#\n" +
@@ -4980,7 +4979,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols08() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s symbol index)");
+            ddl("create table a ( s symbol index)");
             insert("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
 
             String query = "select * from a where s != 'a' order by s";
@@ -5056,7 +5055,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols11() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s symbol index, ts timestamp) timestamp(ts)");
+            ddl("create table a ( s symbol index, ts timestamp) timestamp(ts)");
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
 
             assertPlan("select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1",
@@ -5074,7 +5073,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols12() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
+            ddl("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             compile("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1",
                     "Limit lo: 1\n" +
@@ -5088,7 +5087,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols13() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
+            ddl("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             compile("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a where s1 in ('S1')  order by ts desc",
                     "DeferredSingleSymbolFilterDataFrame\n" +
@@ -5101,7 +5100,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols14() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a where s1 = 'S1'  order by ts desc",
                     "DeferredSingleSymbolFilterDataFrame\n" +
@@ -5114,7 +5113,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
     public void testSelectIndexedSymbols15() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a " +
                             "where s1 = 'S1' " +
@@ -5131,7 +5130,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols16() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a " +
                             "where s1 in ('S1', 'S2') " +
@@ -5151,7 +5150,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test // TODO: should use the same plan as above
     public void testSelectIndexedSymbols17() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
+            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a " +
                             "where (s1 = 'S1' or s1 = 'S2') " +
@@ -5172,7 +5171,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectIndexedSymbols18() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
+            ddl("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
             compile("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
             String query = "select * from " +
                     "(" +
@@ -5209,7 +5208,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectLongInList() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t ( l long)");
+            ddl("create table t ( l long)");
 
             assertPlan("select * from t where l in (5, -1, 1, null)",
                     "Async Filter\n" +
@@ -5231,7 +5230,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectNoOrderByWithNegativeLimit() throws Exception {
-        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        ddl("create table a ( i int, ts timestamp) timestamp(ts)");
         compile("insert into a select x,x::timestamp from long_sequence(10)");
 
         assertPlan(
@@ -5255,7 +5254,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectOrderByTsAscAndDesc() throws Exception {
-        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        ddl("create table a ( i int, ts timestamp) timestamp(ts)");
         compile("insert into a select x,x::timestamp from long_sequence(10)");
 
         assertPlan(
@@ -5270,7 +5269,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectOrderByTsDescAndAsc() throws Exception {
-        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        ddl("create table a ( i int, ts timestamp) timestamp(ts)");
         compile("insert into a select x,x::timestamp from long_sequence(10)");
 
         assertPlan(
@@ -5329,7 +5328,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectOrderByTsWithNegativeLimit1() throws Exception {
-        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        ddl("create table a ( i int, ts timestamp) timestamp(ts)");
         compile("insert into a select x,x::timestamp from long_sequence(10)");
 
         assertPlan("select ts, count(*)  from a sample by 1s limit -5",
@@ -6391,7 +6390,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortAgain1a() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts asc limit 10) order by ts asc",
                     "Limit lo: 10\n" +
@@ -6404,7 +6403,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortAgain1b() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc",
                     "Sort light lo: 10\n" +
@@ -6418,7 +6417,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortAgain2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
@@ -6437,7 +6436,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortAgain3a() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from " +
                             "(select * from (select * from a order by ts asc, l) limit 10) " +
@@ -6460,7 +6459,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortAgain3b() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from " +
                             "(select * from (select * from a order by ts desc, l desc) limit 10) " +
@@ -6479,7 +6478,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortAgain4a() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from " +
                             "(select * from " +
@@ -6513,7 +6512,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortAgain4b() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from " +
                             "(select * from " +
@@ -6541,7 +6540,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortAscLimitAndSortDesc() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts asc limit 10) order by ts desc",
                     "Sort light\n" +
@@ -6556,7 +6555,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortDescLimitAndSortAgain() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts desc limit 10) order by ts desc",
                     "Limit lo: 10\n" +
@@ -6569,7 +6568,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSortDescLimitAndSortAsc1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from (select * from a order by ts desc limit 10) order by ts asc",
                     "Sort light\n" +
@@ -6584,7 +6583,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test//TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long)");
+            ddl("create table a ( i int, ts timestamp, l long)");
 
             assertPlan("select * from (select * from a order by ts, l limit 10) order by ts, l",
                     "Sort light\n" +
@@ -6600,7 +6599,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test//TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long)");
+            ddl("create table a ( i int, ts timestamp, l long)");
 
             assertPlan("select * from (select * from a order by ts, l limit 10,-10) order by ts, l",
                     "Sort light\n" +
@@ -6617,8 +6616,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from a splice join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
@@ -6637,8 +6636,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlan("select * from a splice join b on ts where a.i + b.i = 1",
                     "SelectedRecord\n" +
@@ -6657,8 +6656,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a splice join b on ts",
                     "SelectedRecord\n" +
@@ -6676,8 +6675,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a splice join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
@@ -6696,8 +6695,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
@@ -6718,8 +6717,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table a ( i int, ts timestamp) timestamp(ts)");
-            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a splice join b where a.i = b.i",
                     "SelectedRecord\n" +
@@ -6762,7 +6761,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testWhereOrderByTsLimit1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t ( x long, ts timestamp) timestamp(ts)");
+            ddl("create table t ( x long, ts timestamp) timestamp(ts)");
 
             String query = "select * from t where x < 100 order by ts desc limit -5";
             assertPlan(query,
@@ -6800,7 +6799,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testWithBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t ( x int );");
+            ddl("create table t ( x int );");
 
             int jitMode = sqlExecutionContext.getJitMode();
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -6887,7 +6886,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     private void test2686Prepare() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table table_1 (\n" +
+            ddl("create table table_1 (\n" +
                     "          ts timestamp,\n" +
                     "          name string,\n" +
                     "          age int,\n" +
@@ -6898,7 +6897,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             insert("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
             insert("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
 
-            compile("create table table_2 (\n" +
+            ddl("create table table_2 (\n" +
                     "          ts timestamp,\n" +
                     "          name string,\n" +
                     "          age int,\n" +
@@ -6913,9 +6912,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     //left join maintains order metadata and can be part of asof join
     private void testHashAndAsofJoin(boolean isLight) throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-            compile("create table tabb (b1 int, b2 long)");
-            compile("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+            ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+            ddl("create table tabb (b1 int, b2 long)");
+            ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
             assertPlan("select * " +
                             "from taba " +
@@ -6942,7 +6941,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
-            compile("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
+            ddl("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
             insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
@@ -6990,7 +6989,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
-            compile("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
+            ddl("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
             insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
@@ -7040,7 +7039,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
-            compile("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
+            ddl("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
             insert("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
 
             bindVariableService.clear();
