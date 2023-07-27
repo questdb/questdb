@@ -51,10 +51,13 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "2021-04-25T00:00:03.300000Z\n" +
                 "2021-04-25T00:00:03.800000Z\n";
 
-        assertSql("SELECT timestamp_sequence(\n" +
-                "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-                "         rnd_long(1,10,0) * 100000L\n" +
-                ") ts from long_sequence(10, 900, 800)", expected);
+        assertSql(
+                "SELECT timestamp_sequence(\n" +
+                        "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                        "         rnd_long(1,10,0) * 100000L\n" +
+                        ") ts from long_sequence(10, 900, 800)",
+                expected
+        );
     }
 
     @Test
@@ -91,16 +94,9 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "9\t1970-01-01T00:00:00.008000Z\n" +
                 "10\t1970-01-01T00:00:00.009000Z\n";
 
-        assertSql("select x ac, timestamp_sequence(0, 1000) ts from long_sequence(10)", expected);
-    }
-
-    private void assertSql(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                assertSql(sql, expected);
-            } finally {
-                sqlExecutionContext.setRandom(null);
-            }
-        });
+        assertSql(
+                "select x ac, timestamp_sequence(0, 1000) ts from long_sequence(10)",
+                expected
+        );
     }
 }
