@@ -7643,6 +7643,49 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIPv4Distinct() throws Exception {
+        assertQuery("ip\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.3\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.5\n",
+                "select distinct ip from test order by ip",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                false);
+    }
+    @Test
+    public void testIPv4Explain() throws Exception {
+        assertQuery("QUERY PLAN\n" +
+                        "Sort light\n" +
+                        "  keys: [ip desc]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: test\n",
+                "explain select * from test order by ip desc",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                false,
+                true);
+    }
+
+    @Test
     public void testOrderByIPv4Descending() throws Exception {
         assertQuery("ip\tbytes\tts\n" +
                         "255.95.177.227\t44\t1970-01-01T00:56:40.000000Z\n" +
@@ -9821,6 +9864,34 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "k",
                 true,
                 false);
+    }
+
+    @Test
+    public void testCountIPv4() throws Exception {
+        assertQuery("count\tbytes\n" +
+                        "8\t1\n" +
+                        "10\t2\n" +
+                        "12\t7\n" +
+                        "12\t5\n" +
+                        "6\t6\n" +
+                        "12\t0\n" +
+                        "14\t4\n" +
+                        "6\t3\n" +
+                        "9\t8\n" +
+                        "7\t9\n" +
+                        "4\t10\n",
+                "select count(ip), bytes from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,10,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(100)" +
+                        ")",
+                null,
+                true,
+                true);
     }
 
     @Test

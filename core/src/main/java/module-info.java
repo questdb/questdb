@@ -585,6 +585,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,
