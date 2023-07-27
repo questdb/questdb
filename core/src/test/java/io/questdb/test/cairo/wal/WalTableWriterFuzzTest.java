@@ -741,7 +741,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                 expectException(
                         "UPDATE " + tableName + " SET INT=systimestamp()",
-                        1000, // todo: arbitrary, was not asserted in the test
+                        43,
                         "inconvertible types: TIMESTAMP -> INT"
                 );
                 drainWalQueue();
@@ -749,7 +749,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                 expectException(
                         "UPDATE " + tableCopyName + " SET INT=systimestamp()",
-                        10000,
+                        48,
                         "inconvertible types: TIMESTAMP -> INT"
                 );
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);

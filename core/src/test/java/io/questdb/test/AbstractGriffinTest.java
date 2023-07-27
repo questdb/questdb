@@ -33,7 +33,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -61,7 +60,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionContext sqlExecutionContext;
-    protected final SCSequence eventSubSequence = new SCSequence();
 
     public static boolean assertCursor(
             CharSequence expected,
@@ -754,6 +752,21 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    protected static void assertSqlFails(CharSequence sql) throws SqlException {
+        assertSqlFails(sql, sqlExecutionContext);
+        Assert.fail();
+    }
+
+    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext) throws SqlException {
+        ddl(sql, executionContext);
+        Assert.fail();
+    }
+
+    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws SqlException {
+        ddl(sql, executionContext, fullFatJoins);
+        Assert.fail();
+    }
+
     /**
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
@@ -890,27 +903,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected static RecordCursorFactory select(CharSequence selectSql) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
-        }
-    }
-
-    protected static void assertSqlFails(CharSequence sql) throws SqlException {
-        assertSqlFails(sql, sqlExecutionContext);
-        Assert.fail();
-    }
-
-    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext) throws SqlException {
-        ddl(sql, executionContext);
-        Assert.fail();
-    }
-
-    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws SqlException {
-        ddl(sql, executionContext, fullFatJoins);
-        Assert.fail();
-    }
-
     protected static void printSql(CharSequence sql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
@@ -990,6 +982,12 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, expectedPlan);
     }
 
+    protected static RecordCursorFactory select(CharSequence selectSql) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
+        }
+    }
+
     void assertFactoryCursor4(
             String expected,
             String expectedTimestamp,
@@ -1027,7 +1025,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertFailure(CharSequence query, @Nullable CharSequence ddl, int expectedPosition, @NotNull CharSequence expectedMessage) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
                     ddl(ddl, sqlExecutionContext);

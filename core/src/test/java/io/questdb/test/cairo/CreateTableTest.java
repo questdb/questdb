@@ -702,6 +702,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     private void assertSymbolParameters(SymbolParameters parameters) throws Exception {
+        engine.clear();
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader("tab")) {
                 if (parameters.symbolCapacity != null) {
