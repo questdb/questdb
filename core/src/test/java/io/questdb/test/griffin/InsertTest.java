@@ -684,35 +684,35 @@ public class InsertTest extends AbstractGriffinTest {
             ddl("create table trades (i int, sym symbol)");
 
             // No comma delimiter between rows
-            expectException(
+            expectInsertException(
                     "insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');",
                     39,
                     "',' expected"
             );
 
             // Empty row
-            expectException(
+            expectInsertException(
                     "insert into trades VALUES (1, 'USDJPY'), ();",
                     42,
                     "Expression expected"
             );
 
             // Empty row with comma delimiter inside
-            expectException(
+            expectInsertException(
                     "insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);",
                     57,
                     "Expression expected"
             );
 
             // Empty row column
-            expectException(
+            expectInsertException(
                     "insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);",
                     59,
                     "Expression expected"
             );
 
             // Multi row insert can't end in comma token
-            expectException(
+            expectInsertException(
                     "insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;",
                     55,
                     "'(' expected"
@@ -724,7 +724,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertMultipleRowsFailRowWrongColumnCount() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (i int, sym symbol)");
-            expectException(
+            expectInsertException(
                     "insert into trades VALUES (1, 'USDJPY'), ('USDFJD');",
                     50,
                     "row value count does not match column count [expected=2, actual=1, tuple=2]"
@@ -736,7 +736,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertMultipleRowsFailTypeConversion() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (sym symbol)");
-            expectException(
+            expectInsertException(
                     "insert into trades VALUES ('USDJPY'), (1), ('USDFJD');",
                     39,
                     "inconvertible types: INT -> SYMBOL [from=1, to=sym]"
@@ -782,7 +782,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertNoSelfReference() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
-            expectException(
+            expectInsertException(
                     "insert into trades_aapl (ts) values (ts)",
                     37,
                     "Invalid column"
@@ -806,7 +806,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertNotEnoughFields() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            expectException(
+            expectInsertException(
                     "insert into balances values (1, 'USD')",
                     37,
                     "row value count does not match column count [expected=3, actual=2, tuple=1]"
@@ -968,7 +968,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             assertReaderCheckWal(expected2, "t");
 
-            expectException(
+            expectInsertException(
                     "insert into t values  (timestamp with time zone)",
                     47,
                     "String literal expected after 'timestamp with time zone'"
@@ -980,10 +980,10 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            expectException(
+            expectInsertException(
                     "insert into balances values (1, ccy, 356.12)",
                     32,
-                    "hello" // todo: there was no message assert here
+                    "Invalid column: ccy"
             );
         });
     }
@@ -1002,7 +1002,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertWithLessColumnsThanExistingTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
-            expectException(
+            expectInsertException(
                     "insert into tab select x ac  from long_sequence(10)",
                     12,
                     "select clause must provide timestamp column"
@@ -1014,7 +1014,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertWithWrongDesignatedColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
-            expectException(
+            expectInsertException(
                     "insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)",
                     12,
                     "designated timestamp of existing table"
@@ -1055,7 +1055,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertWithoutDesignatedTimestampAndTypeDoesNotMatch() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
-            expectException(
+            expectInsertException(
                     "insert into tab select x ac, rnd_int() id from long_sequence(10)",
                     12,
                     "expected timestamp column"
@@ -1067,7 +1067,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertWrongTypeConstant() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (a timestamp)", sqlExecutionContext);
-            expectException("insert into test values ('foobar')", 0, "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
+            expectInsertException("insert into test values ('foobar')", 0, "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
         });
     }
 

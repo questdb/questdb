@@ -894,6 +894,20 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    protected static void expectInsertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
+        try {
+            executeInsert(sql);
+            Assert.fail();
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer) {
+                Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
+            } else {
+                throw e;
+            }
+        }
+    }
+
     protected static RecordCursorFactory fact(CharSequence selectSql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
