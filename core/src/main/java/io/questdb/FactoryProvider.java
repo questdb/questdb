@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DdlListenerFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -48,4 +49,6 @@ public interface FactoryProvider extends QuietCloseable {
     SqlCompilerFactory getSqlCompilerFactory();
 
     WalInitializerFactory getWalInitializerFactory();
+
+    DdlListenerFactory getDdlListenerFactory();
 }

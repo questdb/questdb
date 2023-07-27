@@ -89,6 +89,7 @@ public class WalWriter implements TableWriterAPI {
     private final int walId;
     private final WalInitializer walInitializer;
     private final String walName;
+    private final DdlListener ddlListener;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
@@ -115,6 +116,7 @@ public class WalWriter implements TableWriterAPI {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
+        this.ddlListener = configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
@@ -1585,7 +1587,7 @@ public class WalWriter implements TableWriterAPI {
                     }
 
                     if (executionContext != null) {
-                        executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), metadata.getTableToken(), columnName);
+                        ddlListener.onColumnAdded(executionContext.getSecurityContext(), metadata.getTableToken(), columnName);
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {

@@ -170,6 +170,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
+    private final DdlListener ddlListener;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -182,7 +183,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
-    private CommitListener commitListener;
     private long committedMasterRef;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
@@ -247,6 +247,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
+        final boolean sysTable = Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
+        this.ddlListener = sysTable ? DdlListenerImpl.INSTANCE : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
@@ -572,7 +574,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (executionContext != null) {
-            executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), tableToken, columnName);
+            ddlListener.onColumnAdded(executionContext.getSecurityContext(), tableToken, columnName);
         }
     }
 
@@ -978,10 +980,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
             shrinkO3Mem();
-
-            if (commitListener != null) {
-                commitListener.onCommit(txWriter.getTxn(), rowsAdded);
-            }
             return rowsAdded;
         }
 
@@ -2105,11 +2103,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    @SuppressWarnings("unused")
-    public void setCommitListener(CommitListener commitListener) {
-        this.commitListener = commitListener;
-    }
-
     public void setExtensionListener(ExtensionListener listener) {
         txWriter.setExtensionListener(listener);
     }
@@ -3099,12 +3092,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            final long txn = getTxn();
-
-            if (commitListener != null) {
-                commitListener.onCommit(txn, rowsAdded);
-            }
-            return txn;
+            return getTxn();
         }
         return TableSequencer.NO_TXN;
     }
@@ -3436,7 +3424,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(partitionFrameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
-        commitListener = Misc.free(commitListener);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {

@@ -78,6 +78,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
     private final long writerIdleTimeout;
+    private final DdlListener ddlListener;
 
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -90,6 +91,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         this.telemetry = engine.getTelemetry();
         this.cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
+        this.ddlListener = configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
         this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
         final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
@@ -394,7 +396,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             tud.commit(false);
                             try {
                                 writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
-                                tud.getEngine().onColumnAdded(securityContext, tud.getTableToken(), columnNameUtf16);
+                                ddlListener.onColumnAdded(securityContext, tud.getTableToken(), columnNameUtf16);
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                             } catch (CairoException e) {
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
@@ -698,7 +700,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 if (tud.isWriterInError()) {
                     throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
                 }
-                queue[writerThreadId].get(seq).createMeasurementEvent(securityContext, tud, parser, netIoJob.getWorkerId());
+                queue[writerThreadId].get(seq).createMeasurementEvent(securityContext, tud, ddlListener, parser, netIoJob.getWorkerId());
             } finally {
                 pubSeq[writerThreadId].done(seq);
             }
