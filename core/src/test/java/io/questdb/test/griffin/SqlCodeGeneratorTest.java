@@ -960,6 +960,34 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCountIPv4() throws Exception {
+        assertQuery("count\tbytes\n" +
+                        "8\t1\n" +
+                        "10\t2\n" +
+                        "12\t7\n" +
+                        "12\t5\n" +
+                        "6\t6\n" +
+                        "12\t0\n" +
+                        "14\t4\n" +
+                        "6\t3\n" +
+                        "9\t8\n" +
+                        "7\t9\n" +
+                        "4\t10\n",
+                "select count(ip), bytes from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,10,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(100)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
     public void testCreateAsSelectCastIPv4ToStr() throws Exception {
         assertSql("select rnd_ipv4()::string from long_sequence(10)", "cast\n" +
                 "187.139.150.80\n" +
@@ -2933,6 +2961,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIPv4Distinct() throws Exception {
+        assertQuery("ip\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.3\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.5\n",
+                "select distinct ip from test order by ip",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,5,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                false);
+    }
+
+    @Test
     public void testIPv4EqArgsSwapped() throws Exception {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
 
@@ -3031,6 +3081,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "null\n" +
                 "null\n" +
                 "null\n");
+    }
+
+    @Test
+    public void testIPv4Explain() throws Exception {
+        assertQuery("QUERY PLAN\n" +
+                        "Sort light\n" +
+                        "  keys: [ip desc]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: test\n",
+                "explain select * from test order by ip desc",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                false,
+                true);
     }
 
     @Test
@@ -7008,6 +7080,42 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLimitIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select * from test limit 5", "ip\tcount\n" +
+                "10.5.96.238\t1\n" +
+                "10.5.50.227\t1\n" +
+                "10.5.89.171\t1\n" +
+                "10.5.82.23\t1\n" +
+                "10.5.76.40\t1\n");
+    }
+
+    @Test
+    public void testLimitIPv42() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select * from test limit -5", "ip\tcount\n" +
+                "10.5.170.235\t1\n" +
+                "10.5.45.159\t1\n" +
+                "10.5.184.81\t1\n" +
+                "10.5.207.196\t1\n" +
+                "10.5.213.108\t1\n");
+    }
+
+    @Test
+    public void testLimitIPv43() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("select * from test limit 2, 10", "ip\tcount\n" +
+                "10.5.89.171\t1\n" +
+                "10.5.82.23\t1\n" +
+                "10.5.76.40\t1\n" +
+                "10.5.20.236\t1\n" +
+                "10.5.95.15\t1\n" +
+                "10.5.178.136\t1\n" +
+                "10.5.45.145\t1\n" +
+                "10.5.93.114\t1\n");
+    }
+
+    @Test
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
@@ -7143,6 +7251,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMaxIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        executeInsert("insert into test values ('255.255.255.255', 1)");
+        assertSql("select max(ip) from test", "max\n" +
+                "255.255.255.255\n");
+    }
+
+    @Test
     public void testMinDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -7180,6 +7296,22 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testMinIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        executeInsert("insert into test values ('0.0.0.1', 1)");
+        assertSql("select min(ip) from test", "min\n" +
+                "0.0.0.1\n");
+    }
+
+    @Test
+    public void testMinIPv4Null() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        executeInsert("insert into test values ('0.0.0.0', 1)");
+        assertSql("select min(ip) from test", "min\n" +
+                "4.98.173.21\n");
     }
 
     @Test
@@ -7639,49 +7771,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true);
-    }
-
-    @Test
-    public void testIPv4Distinct() throws Exception {
-        assertQuery("ip\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.5\n",
-                "select distinct ip from test order by ip",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                false);
-    }
-    @Test
-    public void testIPv4Explain() throws Exception {
-        assertQuery("QUERY PLAN\n" +
-                        "Sort light\n" +
-                        "  keys: [ip desc]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: test\n",
-                "explain select * from test order by ip desc",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                false,
                 true);
     }
 
@@ -9864,34 +9953,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "k",
                 true,
                 false);
-    }
-
-    @Test
-    public void testCountIPv4() throws Exception {
-        assertQuery("count\tbytes\n" +
-                        "8\t1\n" +
-                        "10\t2\n" +
-                        "12\t7\n" +
-                        "12\t5\n" +
-                        "6\t6\n" +
-                        "12\t0\n" +
-                        "14\t4\n" +
-                        "6\t3\n" +
-                        "9\t8\n" +
-                        "7\t9\n" +
-                        "4\t10\n",
-                "select count(ip), bytes from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,10,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                true);
     }
 
     @Test
