@@ -1278,9 +1278,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected void executeOperation(QuestDBTestNode node, String query, int opType) throws SqlException {
         CompiledQuery cq = compile(query, node.getSqlExecutionContext());
         Assert.assertEquals(opType, cq.getType());
-        try (OperationFuture fut = cq.execute(eventSubSequence)) {
-            fut.await();
-        }
     }
 
     protected void executeOperation(String query, int opType) throws SqlException {

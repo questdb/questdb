@@ -26,10 +26,10 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -400,10 +400,7 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(13)" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            executeOperation(
-                    "alter table " + tableName + " drop partition where ts < to_timestamp('2022-02-" + day + ":00:00:00', 'yyyy-MM-dd:HH:mm:ss')",
-                    CompiledQuery.ALTER
-            );
+            alter("alter table " + tableName + " drop partition where ts < to_timestamp('2022-02-" + day + ":00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
 
             drainWalQueue();
 

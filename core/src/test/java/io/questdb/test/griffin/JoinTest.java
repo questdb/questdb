@@ -311,7 +311,7 @@ public class JoinTest extends AbstractGriffinTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", true, false, true);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, true);
 
             ddl(
                     "insert into x select * from " +
@@ -383,7 +383,7 @@ public class JoinTest extends AbstractGriffinTest {
                     query,
                     "timestamp",
                     false,
-                    false,
+                    true,
                     true
             );
 
