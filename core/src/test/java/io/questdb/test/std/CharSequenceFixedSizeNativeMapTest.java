@@ -2,6 +2,7 @@ package io.questdb.test.std;
 
 import io.questdb.std.CharSequenceFixedSizeNativeMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -238,46 +239,74 @@ public class CharSequenceFixedSizeNativeMapTest {
 
     @Test
     public void testTombstoneCompaction() throws Exception {
-        int baseCount = 1000;
+        int baseCount = 10000;
         TestUtils.assertMemoryLeak(() -> {
             try (CharSequenceFixedSizeNativeMap map = new CharSequenceFixedSizeNativeMap(VALUE_PAYLOAD_SIZE_BYTES)) {
                 long ptr = Unsafe.malloc(VALUE_PAYLOAD_SIZE_BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    for (int i = 0; i < baseCount / 2; i++) {
-                        for (int j = 0; j < VALUE_PAYLOAD_SIZE_BYTES; j++) {
-                            Unsafe.getUnsafe().putByte(ptr + j, (byte) i);
-                        }
-                        map.put(String.valueOf(i), ptr, VALUE_PAYLOAD_SIZE_BYTES);
-                    }
-                    for (int i = 0; i < baseCount / 2; i++) {
-                        map.remove(String.valueOf(i));
-                    }
-                    for (int i = baseCount / 4; i < baseCount * 2; i++) {
-                        for (int j = 0; j < VALUE_PAYLOAD_SIZE_BYTES; j++) {
-                            Unsafe.getUnsafe().putByte(ptr + j, (byte) i);
-                        }
-                        map.put(String.valueOf(i), ptr, VALUE_PAYLOAD_SIZE_BYTES);
-                    }
+                    int lowerBound = 0;
+                    int upperBound = baseCount / 2;
+                    insertEntries(map, lowerBound, upperBound, ptr);
+                    Assert.assertEquals(upperBound, map.size());
+                    Assert.assertEquals(lowerBound, map.tombstonesSize());
+                    int expectedCapacity = Numbers.ceilPow2((int) (upperBound / CharSequenceFixedSizeNativeMap.LOAD_FACTOR));
+                    Assert.assertEquals(expectedCapacity, map.capacity());
 
-                    for (int i = 0; i < baseCount / 4; i++) {
-                        Assert.assertEquals(0, map.get(String.valueOf(i)));
-                    }
+                    removeEntries(map, lowerBound, upperBound);
+                    assertNoEntries(map, lowerBound, upperBound);
+                    Assert.assertEquals(lowerBound, map.size());
+                    Assert.assertEquals(upperBound, map.tombstonesSize());
 
-                    for (int i = baseCount / 4; i < baseCount * 2; i++) {
-                        long valPtr = map.get(String.valueOf(i));
-                        Assert.assertNotEquals(0, valPtr);
-                        try {
-                            for (int j = 0; j < VALUE_PAYLOAD_SIZE_BYTES; j++) {
-                                Assert.assertEquals((byte) i, Unsafe.getUnsafe().getByte(valPtr + j));
-                            }
-                        } finally {
-                            map.releaseReader();
-                        }
-                    }
+                    lowerBound = baseCount / 4;
+                    upperBound = baseCount * 2;
+                    insertEntries(map, lowerBound, upperBound, ptr);
+                    assertNoEntries(map, 0, lowerBound);
+                    assertEntriesExistsAndValid(map, lowerBound, upperBound);
+
+                    int expectedSize = upperBound - lowerBound;
+                    Assert.assertEquals(expectedSize, map.size());
+                    expectedCapacity = Numbers.ceilPow2((int) (expectedSize / CharSequenceFixedSizeNativeMap.LOAD_FACTOR));
+                    Assert.assertEquals(expectedCapacity, map.capacity());
                 } finally {
                     Unsafe.free(ptr, VALUE_PAYLOAD_SIZE_BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
+    }
+
+    private static void assertEntriesExistsAndValid(CharSequenceFixedSizeNativeMap map, int fromInc, int toExc) {
+        for (int i = fromInc; i < toExc; i++) {
+            long valPtr = map.get(String.valueOf(i));
+            Assert.assertNotEquals(0, valPtr);
+            try {
+                for (int j = 0; j < VALUE_PAYLOAD_SIZE_BYTES; j++) {
+                    Assert.assertEquals((byte) i, Unsafe.getUnsafe().getByte(valPtr + j));
+                }
+            } finally {
+                map.releaseReader();
+            }
+        }
+
+    }
+
+    private static void assertNoEntries(CharSequenceFixedSizeNativeMap map, int fromInc, int toExc) {
+        for (int i = fromInc; i < toExc; i++) {
+            Assert.assertEquals(0, map.get(String.valueOf(i)));
+        }
+    }
+
+    private static void insertEntries(CharSequenceFixedSizeNativeMap map, int fromInc, int toExc, long bufferPtr) {
+        for (int i = fromInc; i < toExc; i++) {
+            for (int j = 0; j < VALUE_PAYLOAD_SIZE_BYTES; j++) {
+                Unsafe.getUnsafe().putByte(bufferPtr + j, (byte) i);
+            }
+            map.put(String.valueOf(i), bufferPtr, VALUE_PAYLOAD_SIZE_BYTES);
+        }
+    }
+
+    private static void removeEntries(CharSequenceFixedSizeNativeMap map, int fromInc, int toExc) {
+        for (int i = fromInc; i < toExc; i++) {
+            map.remove(String.valueOf(i));
+        }
     }
 }

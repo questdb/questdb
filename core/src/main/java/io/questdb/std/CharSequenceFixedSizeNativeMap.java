@@ -1,5 +1,7 @@
 package io.questdb.std;
 
+import org.jetbrains.annotations.TestOnly;
+
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -13,8 +15,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * their read locks and a reader will block until the writer has finished updating the map.
  */
 public final class CharSequenceFixedSizeNativeMap implements QuietCloseable {
+    public static final double LOAD_FACTOR = 0.5; // todo: externalize me ?
     private static final int DEFAULT_CAPACITY = 16;
-    private static final double LOAD_FACTOR = 0.5; // todo: externalize me ?
     private static final int MEMORY_TAG = MemoryTag.NATIVE_DEFAULT; // todo: externalize me?
     private static final String TOMBSTONE = "";
     private static final double TOMBSTONE_RATIO_THRESHOLD = 0.1; // todo: externalize me?
@@ -35,6 +37,11 @@ public final class CharSequenceFixedSizeNativeMap implements QuietCloseable {
         this.totalSize = 0;
         this.resizeThreshold = (int) (DEFAULT_CAPACITY * LOAD_FACTOR);
         this.tombstonesSize = 0;
+    }
+
+    @TestOnly
+    public int capacity() {
+        return keys.length;
     }
 
     /**
@@ -146,25 +153,45 @@ public final class CharSequenceFixedSizeNativeMap implements QuietCloseable {
         }
     }
 
-    private static boolean notTombstone(String key) {
+    @TestOnly
+    public int size() {
+        return totalSize - tombstonesSize;
+    }
+
+    @TestOnly
+    public int tombstonesSize() {
+        return tombstonesSize;
+    }
+
+    private static boolean isTombstone(String key) {
         // intentionally using reference equality for tombstone check
-        return key != TOMBSTONE;
+        return key == TOMBSTONE;
     }
 
     private void put0(String key, int keyHash, long valuePtr) {
         // can only be called while holding write lock
 
         int index = keyHash & mask;
-        while (keys[index] != null) {
-            if (Chars.equals(key, keys[index])) {
+        String currentKey = keys[index];
+        boolean tombstone = isTombstone(currentKey);
+        while (currentKey != null && !tombstone) {
+            if (Chars.equals(key, currentKey)) {
                 Unsafe.getUnsafe().copyMemory(valuePtr, valuesPtr + (long) index * valueSizeBytes, valueSizeBytes);
+                return;
             }
             index = (index + 1) & mask;
+            currentKey = keys[index];
+            tombstone = isTombstone(currentKey);
+        }
+
+        if (tombstone) {
+            tombstonesSize--;
+        } else {
+            totalSize++;
         }
 
         keys[index] = key;
         Unsafe.getUnsafe().copyMemory(valuePtr, valuesPtr + (long) index * valueSizeBytes, valueSizeBytes);
-        totalSize++;
         resizeIfNeeded();
     }
 
@@ -196,7 +223,7 @@ public final class CharSequenceFixedSizeNativeMap implements QuietCloseable {
         totalSize = 0; // will be incremented by put0
         for (int i = 0, n = oldKeys.length; i < n; i++) {
             String key = oldKeys[i];
-            if ((key != null) && notTombstone(key)) {
+            if ((key != null) && !isTombstone(key)) {
                 int hash = Hash.spread(Chars.hashCode(key));
                 long valuePtr = oldValuesPtr + (long) i * valueSizeBytes;
                 put0(key, hash, valuePtr);
