@@ -76,6 +76,7 @@ io.questdb.griffin.engine.functions.eq.NegContainsIPv4FunctionFactory
 # nullif
 io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfIPv4FunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
 
@@ -555,10 +556,12 @@ io.questdb.griffin.engine.functions.groupby.CountDistinctStringGroupByFunctionFa
 io.questdb.griffin.engine.functions.groupby.CountDistinctSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountDistinctIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory
 
 # 'isOrdered'
+io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory
 
 # round()
