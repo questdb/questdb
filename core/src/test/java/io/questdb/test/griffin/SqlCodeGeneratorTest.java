@@ -6750,6 +6750,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByTimestampInclusion() throws Exception {
         assertQuery("ts\tmarket_type\tavg\n" +
+                        "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
                         "1970-01-01T00:00:09.999996Z\tbbb\t0.344021345830156\n",
                 "select ts, market_type, avg(bid_price) FROM market_updates LATEST ON ts PARTITION BY market_type SAMPLE BY 1s",
                 "create table market_updates as (" +
