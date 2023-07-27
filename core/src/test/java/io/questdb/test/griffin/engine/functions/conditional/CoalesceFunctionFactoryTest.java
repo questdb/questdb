@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
@@ -32,7 +32,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
+public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());

@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class ExtractFunctionTest extends AbstractGriffinTest {
+public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void test1997Millennium() throws Exception {

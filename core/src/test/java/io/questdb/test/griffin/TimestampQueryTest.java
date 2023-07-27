@@ -30,7 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
-public class TimestampQueryTest extends AbstractGriffinTest {
+public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testCast2AsValidColumnNameTouchFunction() throws Exception {

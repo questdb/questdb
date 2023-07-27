@@ -29,7 +29,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.bin.Base64FunctionFactory;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -49,7 +48,7 @@ public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
         final int tmp = AbstractCairoTest.binaryEncodingMaxLength;
         try {
             AbstractCairoTest.binaryEncodingMaxLength = 9; // update limit temporarily up to 9 bytes
-            AbstractGriffinTest.assertQuery("x\ty\n" +
+            AbstractCairoTest.assertQuery("x\ty\n" +
                             "00000000 ee 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4\t7kEdFVWKF/rY\n" +
                             "00000000 3b 72 db f3 04 1b c7 88 de a0 79 3c 77 15 68 61\tO3Lb8wQbx4je\n" +
                             "00000000 af 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e 38\trxnElZQ2U0m0\n" +
@@ -68,7 +67,7 @@ public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRandomBinSeq() throws Exception {
-        AbstractGriffinTest.assertQuery("x\ty\n" +
+        AbstractCairoTest.assertQuery("x\ty\n" +
                         "00000000 ee 41 1d 15 55 8a\t7kEdFVWK\n" +
                         "\t\n" +
                         "00000000 d8 cc 14 ce f1 59\t2MwUzvFZ\n" +

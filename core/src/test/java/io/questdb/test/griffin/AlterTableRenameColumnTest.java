@@ -27,12 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AlterTableRenameColumnTest extends AbstractGriffinTest {
+public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
     public void testBadSyntax() throws Exception {

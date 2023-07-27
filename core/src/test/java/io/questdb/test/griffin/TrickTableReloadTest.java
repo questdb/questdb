@@ -26,11 +26,11 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TrickTableReloadTest extends AbstractGriffinTest {
+public class TrickTableReloadTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolAddAndReaderReload() throws SqlException {

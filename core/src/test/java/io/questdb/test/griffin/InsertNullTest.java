@@ -29,11 +29,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class InsertNullTest extends AbstractGriffinTest {
+public class InsertNullTest extends AbstractCairoTest {
 
     private static final int NULL_INSERTS = 3;
 

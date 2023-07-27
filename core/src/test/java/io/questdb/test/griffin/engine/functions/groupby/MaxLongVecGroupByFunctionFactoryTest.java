@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MaxLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MaxLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {

@@ -34,7 +34,7 @@ import io.questdb.griffin.WhereClauseSymbolEstimator;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -43,7 +43,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
+public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
 
     private static RecordMetadata metadata;
     private static TableReader reader;
@@ -52,7 +52,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL).symbolCapacity(1)
@@ -74,7 +74,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
     public static void tearDownStatic() throws Exception {
         reader = Misc.free(reader);
         metadata = null;
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override

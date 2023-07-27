@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjHashSet;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,7 +39,7 @@ import org.junit.Test;
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
-public class DropStatementTest extends AbstractGriffinTest {
+public class DropStatementTest extends AbstractCairoTest {
     /* **
      * DROP can be followed by:
      * - TABLE name [;]

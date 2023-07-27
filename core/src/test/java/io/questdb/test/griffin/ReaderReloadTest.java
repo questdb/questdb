@@ -30,7 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,7 +38,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ReaderReloadTest extends AbstractGriffinTest {
+public class ReaderReloadTest extends AbstractCairoTest {
 
 
     @Test

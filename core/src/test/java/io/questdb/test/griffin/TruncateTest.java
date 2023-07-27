@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 
 import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 
-public class TruncateTest extends AbstractGriffinTest {
+public class TruncateTest extends AbstractCairoTest {
 
     @Test
     public void testDropColumnTruncatePartitionByNone() throws Exception {

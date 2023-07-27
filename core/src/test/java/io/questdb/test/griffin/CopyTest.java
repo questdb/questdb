@@ -38,7 +38,7 @@ import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -55,7 +55,7 @@ import java.util.concurrent.CountDownLatch;
 import static org.junit.Assert.*;
 
 @RunWith(Parameterized.class)
-public class CopyTest extends AbstractGriffinTest {
+public class CopyTest extends AbstractCairoTest {
     private final boolean walEnabled;
 
     public CopyTest(boolean walEnabled) {
@@ -73,7 +73,7 @@ public class CopyTest extends AbstractGriffinTest {
     public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Before

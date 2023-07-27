@@ -36,7 +36,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -55,7 +55,7 @@ import java.util.function.Consumer;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
-public class UpdateTest extends AbstractGriffinTest {
+public class UpdateTest extends AbstractCairoTest {
     private static final long DEFAULT_CIRCUIT_BREAKER_TIMEOUT = 300_000L;
     protected final SCSequence eventSubSequence = new SCSequence();
     private final boolean walEnabled;
@@ -81,7 +81,7 @@ public class UpdateTest extends AbstractGriffinTest {
         }, MemoryTag.NATIVE_DEFAULT) {
         };
         circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test

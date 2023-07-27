@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,7 +38,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
+public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
 
     @Test
     public void testBusyPollByDay() throws Exception {

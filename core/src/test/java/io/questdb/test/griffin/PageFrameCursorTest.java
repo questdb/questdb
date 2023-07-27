@@ -29,14 +29,14 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
-public class PageFrameCursorTest extends AbstractGriffinTest {
+public class PageFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(

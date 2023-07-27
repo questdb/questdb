@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CountTest extends AbstractGriffinTest {
+public class CountTest extends AbstractCairoTest {
 
     @Test
     public void testColumnAlias() throws Exception {

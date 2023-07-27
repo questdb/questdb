@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TouchTableFunctionTest extends AbstractGriffinTest {
+public class TouchTableFunctionTest extends AbstractCairoTest {
 
     private static final String DDL = "create table x as " +
             "(" +

@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,7 +43,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-public class O3SquashPartitionTest extends AbstractGriffinTest {
+public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {

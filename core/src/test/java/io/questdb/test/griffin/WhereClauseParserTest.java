@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -46,7 +46,7 @@ import org.junit.Test;
 
 import java.util.ServiceLoader;
 
-public class WhereClauseParserTest extends AbstractGriffinTest {
+public class WhereClauseParserTest extends AbstractCairoTest {
 
     private static RecordMetadata metadata;
     private static RecordMetadata noDesignatedTimestampNorIdxMetadata;
@@ -70,7 +70,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
 
         // same as x but with different number of values in symbol maps
         try (TableModel model = new TableModel(configuration, "v", PartitionBy.NONE)) {
@@ -174,7 +174,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
         noDesignatedTimestampNorIdxMetadata = null;
         nonEmptyReader = Misc.free(nonEmptyReader);
         nonEmptyMetadata = null;
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override

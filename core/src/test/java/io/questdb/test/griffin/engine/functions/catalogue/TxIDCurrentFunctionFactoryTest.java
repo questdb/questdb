@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
+public class TxIDCurrentFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPrefixedTxIDCurrentFunc() throws Exception {

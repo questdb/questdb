@@ -39,7 +39,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -47,7 +47,7 @@ import org.junit.*;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class SecurityTest extends AbstractGriffinTest {
+public class SecurityTest extends AbstractCairoTest {
     private static final AtomicInteger nCheckInterruptedCalls = new AtomicInteger();
     private static long circuitBreakerCallLimit = Long.MAX_VALUE;
     private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
@@ -58,7 +58,7 @@ public class SecurityTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         CairoConfiguration readOnlyConfiguration = new DefaultTestCairoConfiguration(root) {
 
             @Override
@@ -183,7 +183,7 @@ public class SecurityTest extends AbstractGriffinTest {
     public static void tearDownStatic() throws Exception {
         memoryRestrictedCompiler = Misc.free(memoryRestrictedCompiler);
         memoryRestrictedEngine = Misc.free(memoryRestrictedEngine);
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After

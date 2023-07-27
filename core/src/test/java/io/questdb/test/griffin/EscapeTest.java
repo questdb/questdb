@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class EscapeTest extends AbstractGriffinTest {
+public class EscapeTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithMultipleEscapedQuote() throws Exception {

@@ -38,7 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -56,7 +56,7 @@ import java.util.stream.Stream;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-public class DropIndexTest extends AbstractGriffinTest {
+public class DropIndexTest extends AbstractCairoTest {
 
     private static final String columnName = "sensor_id";
     private static final String expected = "sensor_id\ttemperature\tdegrees\tts\n" +
@@ -84,7 +84,7 @@ public class DropIndexTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         compiler2 = engine.getSqlCompiler();
         sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
@@ -96,7 +96,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     public static void tearDownStatic() throws Exception {
         compiler2 = Misc.free(compiler2);
         path = Misc.free(path);
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Test

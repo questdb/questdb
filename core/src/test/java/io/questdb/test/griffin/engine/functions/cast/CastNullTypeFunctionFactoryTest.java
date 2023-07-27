@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.engine.functions.cast;
 
 import io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 
-public class CastNullTypeFunctionFactoryTest extends AbstractGriffinTest {
+public class CastNullTypeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastNullToNonCastFriendlyTypeShouldFail() {

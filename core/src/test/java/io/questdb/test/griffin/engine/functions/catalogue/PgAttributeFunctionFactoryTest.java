@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
+public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {

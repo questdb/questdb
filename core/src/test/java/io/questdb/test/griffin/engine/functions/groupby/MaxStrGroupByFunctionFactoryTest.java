@@ -27,11 +27,11 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MaxStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {

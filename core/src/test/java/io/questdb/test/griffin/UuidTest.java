@@ -25,13 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.std.Uuid;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.UUID;
 
-public class UuidTest extends AbstractGriffinTest {
+public class UuidTest extends AbstractCairoTest {
 
     @Test
     public void testBadConstantUuidWithExplicitCast() throws Exception {

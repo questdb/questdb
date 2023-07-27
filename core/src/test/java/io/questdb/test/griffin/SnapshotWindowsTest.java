@@ -28,13 +28,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.*;
 
 /**
  * OS specific test that verifies errors returned on snapshot statement execution on Windows.
  */
-public class SnapshotWindowsTest extends AbstractGriffinTest {
+public class SnapshotWindowsTest extends AbstractCairoTest {
 
     private static Path path = new Path();
     private int rootLen;
@@ -42,13 +42,13 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         path = new Path();
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
         path = Misc.free(path);
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Before

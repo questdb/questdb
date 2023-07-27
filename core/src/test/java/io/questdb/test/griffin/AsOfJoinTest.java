@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AsOfJoinTest extends AbstractGriffinTest {
+public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinAliasDuplication() throws Exception {

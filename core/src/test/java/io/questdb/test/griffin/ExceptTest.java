@@ -26,10 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class ExceptTest extends AbstractGriffinTest {
+public class ExceptTest extends AbstractCairoTest {
 
     @Test
     public void testIntersectOfAllSupportedTypes() throws Exception {

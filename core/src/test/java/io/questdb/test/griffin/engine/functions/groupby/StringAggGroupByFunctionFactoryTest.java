@@ -25,11 +25,11 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstantNull() throws Exception {

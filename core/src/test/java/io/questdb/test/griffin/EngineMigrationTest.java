@@ -32,7 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -49,7 +49,7 @@ import java.net.URL;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-public class EngineMigrationTest extends AbstractGriffinTest {
+public class EngineMigrationTest extends AbstractCairoTest {
 
     public static void replaceDbContent(String path) throws IOException {
 
@@ -80,7 +80,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         configOverrideMangleTableDirNames(false);
     }
 

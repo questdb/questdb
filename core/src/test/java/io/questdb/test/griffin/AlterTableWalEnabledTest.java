@@ -27,13 +27,13 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class AlterTableWalEnabledTest extends AbstractGriffinTest {
+public class AlterTableWalEnabledTest extends AbstractCairoTest {
 
 
     @Test

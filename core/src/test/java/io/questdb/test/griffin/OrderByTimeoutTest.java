@@ -32,11 +32,11 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-public class OrderByTimeoutTest extends AbstractGriffinTest {
+public class OrderByTimeoutTest extends AbstractCairoTest {
 
     public static int breakConnection = -1;
 
@@ -66,12 +66,12 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
                 }
             }
         };
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
         circuitBreaker = Misc.free(circuitBreaker);
     }
 

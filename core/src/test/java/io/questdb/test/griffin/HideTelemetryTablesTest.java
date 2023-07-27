@@ -26,10 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.tasks.TelemetryTask;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class HideTelemetryTablesTest extends AbstractGriffinTest {
+public class HideTelemetryTablesTest extends AbstractCairoTest {
 
     @Test
     public void testHide() throws Exception {

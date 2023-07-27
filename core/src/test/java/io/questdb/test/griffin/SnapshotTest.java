@@ -37,12 +37,12 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-public class SnapshotTest extends AbstractGriffinTest {
+public class SnapshotTest extends AbstractCairoTest {
 
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
@@ -75,13 +75,13 @@ public class SnapshotTest extends AbstractGriffinTest {
                 setTimeout(-100); // trigger timeout on first check
             }
         };
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
         path = Misc.free(path);
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Before

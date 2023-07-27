@@ -42,7 +42,7 @@ import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -57,7 +57,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
-public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
+public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private static final int QUEUE_CAPACITY = 4;
 
@@ -69,7 +69,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         pageFrameReduceQueueCapacity = QUEUE_CAPACITY;
 
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test

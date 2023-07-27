@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class InsertCastTest extends AbstractGriffinTest {
+public class InsertCastTest extends AbstractCairoTest {
 
     @Test
     public void testCastByteToCharBind() throws Exception {

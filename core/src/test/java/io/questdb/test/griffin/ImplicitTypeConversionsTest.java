@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,7 +38,7 @@ import org.junit.Test;
  * int -> short, byte
  * short -> byte
  */
-public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
+public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertDoubleAsByte_Causes_Overflow_and_throws_exception() throws Exception {

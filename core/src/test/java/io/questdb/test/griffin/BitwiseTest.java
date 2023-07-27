@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class BitwiseTest extends AbstractGriffinTest {
+public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testIntAnd() throws Exception {

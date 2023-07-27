@@ -27,12 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TrailingDigitsTest extends AbstractGriffinTest {
+public class TrailingDigitsTest extends AbstractCairoTest {
     /**
      * Test if output contains trailing digits with a simple test case.
      */

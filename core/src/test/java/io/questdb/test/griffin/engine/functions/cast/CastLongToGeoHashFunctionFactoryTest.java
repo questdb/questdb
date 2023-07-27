@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CastLongToGeoHashFunctionFactoryTest extends AbstractGriffinTest {
+public class CastLongToGeoHashFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(

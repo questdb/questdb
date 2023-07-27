@@ -26,13 +26,13 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
 
-public class UnionTest extends AbstractGriffinTest {
+public class UnionTest extends AbstractCairoTest {
 
     @Test
     public void testExcept() throws Exception {

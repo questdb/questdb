@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class InSymbolCursorFunctionFactoryTest extends AbstractGriffinTest {
+public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullInCursorInFilter() throws Exception {

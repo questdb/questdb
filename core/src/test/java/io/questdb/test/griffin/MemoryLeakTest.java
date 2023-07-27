@@ -36,12 +36,12 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MemoryLeakTest extends AbstractGriffinTest {
+public class MemoryLeakTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(MemoryLeakTest.class);
 
     @Test

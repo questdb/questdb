@@ -26,16 +26,16 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.cairo.TableToken;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
-public class TableListFunctionFactoryTest extends AbstractGriffinTest {
+public class TableListFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMetadataQuery() throws Exception {
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {

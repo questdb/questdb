@@ -26,23 +26,17 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
@@ -54,8 +48,6 @@ import org.junit.Test;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
@@ -72,7 +64,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     @BeforeClass
     public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 1024;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Override
@@ -86,7 +78,17 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     public void testInsertUpdateParallel() throws Exception {
         initLoadParameters(50, 2, 2, 5, 75);
         initUpdateParameters(5, 3);
-        initFuzzParameters(-1, -1, -1, -1, -1, false, false, false, false);
+        initFuzzParameters(
+                -1,
+                -1,
+                -1,
+                -1,
+                -1,
+                false,
+                false,
+                false,
+                false
+        );
         runTest();
     }
 
@@ -94,7 +96,17 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     public void testInsertUpdateSequential() throws Exception {
         initLoadParameters(50, 2, 2, 5, 75);
         initUpdateParameters(10, 1);
-        initFuzzParameters(-1, -1, -1, -1, -1, false, false, false, false);
+        initFuzzParameters(
+                -1,
+                -1,
+                -1,
+                -1,
+                -1,
+                false,
+                false,
+                false,
+                false
+        );
         runTest();
     }
 
@@ -102,32 +114,18 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     public void testInsertUpdateWithColumnAdds() throws Exception {
         initLoadParameters(50, 1, 2, 3, 75);
         initUpdateParameters(15, 1);
-        initFuzzParameters(-1, 3, 2, 2, -1, false, false, false, false);
+        initFuzzParameters(
+                -1,
+                3,
+                2,
+                2,
+                -1,
+                false,
+                false,
+                false,
+                false
+        );
         runTest();
-    }
-
-    private void executeUpdate(SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            while (true) {
-                try {
-                    LOG.info().$(sql).$();
-                    final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-                    try (OperationFuture fut = cc.execute(waitSequence)) {
-                        if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
-                            throw SqlException.$(0, "update query timeout");
-                        }
-                    }
-                    return;
-                } catch (TableReferenceOutOfDateException ex) {
-                    // retry, e.g. continue
-                } catch (SqlException ex) {
-                    if (Chars.contains(ex.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed")) {
-                        continue;
-                    }
-                    throw new RuntimeException(ex);
-                }
-            }
-        }
     }
 
     private List<ColumnNameType> getMetaData(Map<CharSequence, ArrayList<ColumnNameType>> columnsCache, CharSequence tableName) {
@@ -177,9 +175,9 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
             String updateSql = "";
             try {
                 final Map<CharSequence, ArrayList<ColumnNameType>> columnsCache = new HashMap<>();
-                final SCSequence waitSequence = new SCSequence();
+                final SCSequence eventSubSeq = new SCSequence();
                 final SqlExecutionContext executionContext = executionContexts[threadId];
-                while (tableNames.size() == 0) {
+                while (tableNames.isEmpty()) {
                     Os.pause();
                 }
 
@@ -191,7 +189,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
 
                     Collections.shuffle(columns);
                     updateSql = line.generateRandomUpdate(tableName, columns, rnd);
-                    executeUpdate(executionContext, updateSql, waitSequence);
+                    update(updateSql, executionContext, eventSubSeq);
                     updateSqlQueue.add(updateSql);
                 }
             } catch (Exception e) {
@@ -231,9 +229,8 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         super.waitDone(sockets);
 
         // repeat all updates after all lines are guaranteed to be landed in the tables
-        final SqlExecutionContext executionContext = executionContexts[0];
-        for (String sql : updateSqlQueue) {
-            executeUpdate(executionContext, sql, null);
+        for (String updateSql : updateSqlQueue) {
+            update(updateSql);
         }
         mayDrainWalQueue();
     }

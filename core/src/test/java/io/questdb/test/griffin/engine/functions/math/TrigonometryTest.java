@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class TrigonometryTest extends AbstractGriffinTest {
+public class TrigonometryTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {

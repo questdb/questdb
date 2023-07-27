@@ -25,18 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.str.CharSink;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTest {
+public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest {
 
     @Test
     public void testAlterExpectColumnKeyword() throws Exception {

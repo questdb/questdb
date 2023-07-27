@@ -49,6 +49,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -143,7 +144,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        BasePGTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -6576,6 +6577,7 @@ nodejs code:
         });
     }
 
+
     @Test
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         skipOnWalRun(); // non-partitioned table
@@ -9258,10 +9260,6 @@ create table tab as (
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
 
             @Override
             public int getWorkerCount() {

@@ -31,11 +31,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Test;
 
-public class LatestByTest extends AbstractGriffinTest {
+public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {

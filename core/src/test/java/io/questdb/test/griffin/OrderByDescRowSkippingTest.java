@@ -31,7 +31,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.std.IntList;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -40,7 +40,7 @@ import org.junit.Test;
  * - with and without designated timestamps,
  * - non-partitioned and partitioned .
  */
-public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
+public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
     private static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +
             "9\t2022-01-12T06:13:20.000000Z\n" +

@@ -35,7 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestUtils;
@@ -49,7 +49,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TextLoaderTest extends AbstractGriffinTest {
+public class TextLoaderTest extends AbstractCairoTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
     private static final String PATH_SEP_REGEX = Os.isWindows() ?
@@ -59,7 +59,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     @AfterClass
     public static void tearDownClass() throws Exception {
         jsonLexer.close();
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After
@@ -3153,7 +3153,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
             engine.clear();
-            AbstractGriffinTest.engine.clear();
+            AbstractCairoTest.engine.clear();
         });
     }
 

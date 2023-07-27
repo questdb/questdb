@@ -31,12 +31,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
+public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testDistinctFailAllocRosti() throws Exception {
         // fail Rosti instance #3

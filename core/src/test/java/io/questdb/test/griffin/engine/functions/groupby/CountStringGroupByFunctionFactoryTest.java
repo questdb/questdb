@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {

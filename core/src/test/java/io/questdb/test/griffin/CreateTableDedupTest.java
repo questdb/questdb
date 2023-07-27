@@ -35,13 +35,13 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.LongList;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class CreateTableDedupTest extends AbstractGriffinTest {
+public class CreateTableDedupTest extends AbstractCairoTest {
 
     @Test
     public void testAlterReadonlyFails() throws Exception {

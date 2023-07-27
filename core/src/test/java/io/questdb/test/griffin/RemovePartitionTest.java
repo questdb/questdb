@@ -29,12 +29,12 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RemovePartitionTest extends AbstractGriffinTest {
+public class RemovePartitionTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveSeveralFromTop() throws Exception {

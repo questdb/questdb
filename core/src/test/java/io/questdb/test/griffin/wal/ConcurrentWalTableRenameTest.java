@@ -33,7 +33,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -41,7 +41,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class ConcurrentWalTableRenameTest extends AbstractGriffinTest {
+public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentSelectRename() throws Exception {

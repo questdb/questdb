@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class PowerTest extends AbstractGriffinTest {
+public class PowerTest extends AbstractCairoTest {
     @Test
     public void testPowerDouble() throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(

@@ -31,7 +31,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -41,7 +41,7 @@ import org.junit.Test;
 import java.io.File;
 import java.nio.file.Paths;
 
-public class AlterTableDropPartitionTest extends AbstractGriffinTest {
+public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnAndDropPartition() throws Exception {

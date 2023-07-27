@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
-public class AlterTableAddColumnTest extends AbstractGriffinTest {
+public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAdd2ColumnsWithoutUsingColumnKeywordAndUsingNotNullKeyword() throws Exception {

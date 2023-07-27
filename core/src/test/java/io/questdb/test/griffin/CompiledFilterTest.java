@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -45,7 +45,7 @@ import org.junit.Test;
  * Tests for advanced features and scenarios, such as col tops, bind variables,
  * random access, record behavior, and so on.
  */
-public class CompiledFilterTest extends AbstractGriffinTest {
+public class CompiledFilterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {

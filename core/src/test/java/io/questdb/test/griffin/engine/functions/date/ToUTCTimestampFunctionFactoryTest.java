@@ -26,12 +26,12 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
+public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAreaName() throws Exception {

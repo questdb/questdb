@@ -28,13 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class SimpleTableTest extends AbstractGriffinTest {
+public class SimpleTableTest extends AbstractCairoTest {
     @Test
     public void testTimeStampWithTimezone() throws Exception {
         assertMemoryLeak(() -> {

@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {

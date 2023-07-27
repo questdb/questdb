@@ -26,10 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class ColumnVersionTest extends AbstractGriffinTest {
+public class ColumnVersionTest extends AbstractCairoTest {
     @Test
     public void testMultipleColumnTops() throws Exception {
         assertMemoryLeak(() -> {

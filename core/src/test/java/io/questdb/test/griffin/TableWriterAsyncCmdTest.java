@@ -44,7 +44,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,7 +53,7 @@ import org.junit.Test;
 import static io.questdb.cairo.sql.OperationFuture.QUERY_NO_RESPONSE;
 import static io.questdb.griffin.engine.ops.AlterOperation.ADD_COLUMN;
 
-public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
+public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
     private final SCSequence commandReplySequence = new SCSequence();
     private final int engineCmdQueue = engine.getConfiguration().getWriterCommandQueueCapacity();

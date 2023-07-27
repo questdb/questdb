@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -37,7 +37,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
+public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSelectAll() throws Exception {

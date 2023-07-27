@@ -27,14 +27,14 @@ package io.questdb.test.tools;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 
-public final class TestUtilsTest extends AbstractGriffinTest {
+public final class TestUtilsTest extends AbstractCairoTest {
 
     @Test
     public void testOrderTolerantRecordComparison() throws Exception {

@@ -31,7 +31,7 @@ import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
@@ -48,7 +48,7 @@ import java.io.IOException;
 
 import static io.questdb.test.cutlass.text.ParallelCsvFileImporterTest.*;
 
-public class CsvFileIndexerTest extends AbstractGriffinTest {
+public class CsvFileIndexerTest extends AbstractCairoTest {
 
     public void assertFailureFor(FilesFacade ff, String fileName, int timestampIndex, String errorMessage) {
         try {

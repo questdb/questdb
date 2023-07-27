@@ -25,12 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class CreateTableAsSelectTest extends AbstractGriffinTest {
+public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {

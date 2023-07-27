@@ -26,11 +26,11 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NotMatchCharFunctionFactoryTest extends AbstractGriffinTest {
+public class NotMatchCharFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCheckCharacter() throws Exception {

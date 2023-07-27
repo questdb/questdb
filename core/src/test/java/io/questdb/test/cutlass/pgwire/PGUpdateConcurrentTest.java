@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ThreadLocal;
@@ -56,7 +56,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 256;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Override
@@ -300,7 +300,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 }
 
                 Thread tick = new Thread(() -> {
-                    while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                    while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                         try (TableWriter tableWriter = getWriter("up")) {
                             tableWriter.tick();
                         } catch (EntryUnavailableException ignored) {
@@ -358,7 +358,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         try {
                             barrier.await();
                             try (TableReader rdr = getReader("up")) {
-                                while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                                while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                                     rdr.reload();
                                     assertReader(rdr, expectedValues, validators);
                                 }
@@ -377,7 +377,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 }
             }
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Assert.fail(exceptions.poll().toString());
             }
         });

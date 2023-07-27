@@ -24,14 +24,14 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import java.util.Arrays;
 
 import static io.questdb.griffin.engine.functions.catalogue.Constants.KEYWORDS;
 
-public class KeywordsFunctionFactoryTest extends AbstractGriffinTest {
+public class KeywordsFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSelectKeywords() throws Exception {
         CharSequence[] keywords = KEYWORDS.clone();

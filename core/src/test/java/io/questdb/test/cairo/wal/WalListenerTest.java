@@ -33,7 +33,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -45,11 +45,11 @@ import java.util.Deque;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class WalListenerTest extends AbstractGriffinTest {
+public class WalListenerTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         listener.events.clear();
         engine.setWalListener(listener);
     }
@@ -57,14 +57,14 @@ public class WalListenerTest extends AbstractGriffinTest {
     @AfterClass
     public static void tearDownStatic() throws Exception {
         engine.setWalListener(WalListener.DEFAULT);
-        if (listener.events.size() > 0) {
+        if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");
             for (WalListenerEvent event : listener.events) {
                 System.err.println("    " + event);
             }
             Assert.fail();
         }
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     enum WalListenerEventType {

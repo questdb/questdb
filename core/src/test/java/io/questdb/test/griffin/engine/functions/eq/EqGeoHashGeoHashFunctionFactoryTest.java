@@ -35,12 +35,12 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
+public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
 
     private static final ObjList<Function> args = new ObjList<>(2);
     private static final EqGeoHashGeoHashFunctionFactory factory = new EqGeoHashGeoHashFunctionFactory();

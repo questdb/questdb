@@ -38,7 +38,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -53,7 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.griffin.CompiledQuery.SET;
 
-public class SqlCompilerImplTest extends AbstractGriffinTest {
+public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(SqlCompilerImplTest.class);
     private static Path path;
@@ -61,13 +60,13 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         path = new Path();
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
         path = Misc.free(path);
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Test

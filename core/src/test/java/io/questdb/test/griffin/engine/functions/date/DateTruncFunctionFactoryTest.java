@@ -25,13 +25,13 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 
-public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
+public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidKind() {

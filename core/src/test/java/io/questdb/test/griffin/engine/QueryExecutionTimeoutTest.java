@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.MemoryTag;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.tools.TestUtils;
@@ -51,7 +51,7 @@ import org.junit.Test;
  * This test verifies that various factories use circuit breaker and thus can time out or detect broken connection.
  */
 @SuppressWarnings("SameParameterValue")
-public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
+public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -72,7 +72,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                 setTimeout(-100); // trigger timeout on first check
             }
         };
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test

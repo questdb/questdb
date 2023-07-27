@@ -26,12 +26,12 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
+public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullRegex() throws Exception {

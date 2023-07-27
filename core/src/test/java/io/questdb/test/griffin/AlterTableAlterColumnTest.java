@@ -26,7 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,7 +36,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class AlterTableAlterColumnTest extends AbstractGriffinTest {
+public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAddIndexColumnWithCapacity_capacityCanBeReadByWriter() throws Exception {

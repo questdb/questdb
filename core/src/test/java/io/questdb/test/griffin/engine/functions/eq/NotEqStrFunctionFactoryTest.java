@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
+public class NotEqStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {

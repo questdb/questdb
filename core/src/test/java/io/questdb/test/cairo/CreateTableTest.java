@@ -33,7 +33,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Test interactions between cast and index clauses in CREATE TABLE and CREATE TABLE AS SELECT statements .
  */
 @SuppressWarnings("SameParameterValue")
-public class CreateTableTest extends AbstractGriffinTest {
+public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast() throws Exception {

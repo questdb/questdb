@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class PgAttrDefFunctionFactoryTest extends AbstractGriffinTest {
+public class PgAttrDefFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgAttrDefFunc() throws Exception {

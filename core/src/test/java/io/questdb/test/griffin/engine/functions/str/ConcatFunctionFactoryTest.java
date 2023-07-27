@@ -25,11 +25,11 @@
 package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.cairo.PartitionBy;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import org.junit.Test;
 
-public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
+public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {

@@ -36,7 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
 
-public class WalWriterTest extends AbstractGriffinTest {
+public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnRollsUncommittedRowsToNewSegment() throws Exception {

@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DistinctTimeSeriesTest extends AbstractGriffinTest {
+public class DistinctTimeSeriesTest extends AbstractCairoTest {
 
     @Test
     public void testAllTypes() throws Exception {

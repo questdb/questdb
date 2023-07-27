@@ -24,13 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
  * Tests set operations that occur in subquery.
  */
-public class NestedSetOperationTest extends AbstractGriffinTest {
+public class NestedSetOperationTest extends AbstractCairoTest {
 
     @Test
     public void testColumnPushdownWithDistinctAndUnionAll() throws Exception {

@@ -40,7 +40,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -53,7 +53,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class AbstractFuzzTest extends AbstractGriffinTest {
+public class AbstractFuzzTest extends AbstractCairoTest {
     protected final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
     protected final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
@@ -83,12 +83,12 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         walTxnNotificationQueueCapacity = 16;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
@@ -213,11 +213,11 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
             try {
                 Rnd tempRnd = new Rnd();
-                while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.size() == 0) {
+                while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
 
                     // wait until structure version, truncate is applied
-                    while (waitBarrierVersion.get() < transaction.waitBarrierVersion && errors.size() == 0) {
+                    while (waitBarrierVersion.get() < transaction.waitBarrierVersion && errors.isEmpty()) {
                         Os.sleep(1);
                     }
 
@@ -414,7 +414,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
-                while (done.get() == 0 && errors.size() == 0) {
+                while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.getUnsafe().loadFence();
                     while (job.run(0) || checkJob.run(0)) {
                         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
@@ -449,7 +449,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                     readers.add(getReader(tableNameWal));
                 }
 
-                while (done.get() == 0 && errors.size() == 0) {
+                while (done.get() == 0 && errors.isEmpty()) {
                     int reader = runRnd.nextInt(tableCount);
                     purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
                     Os.sleep(50);
@@ -467,7 +467,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         try {
             node1.getConfigurationOverrides().setWalPurgeInterval(0L);
             try (WalPurgeJob job = new WalPurgeJob(engine)) {
-                while (done.get() == 0 && errors.size() == 0) {
+                while (done.get() == 0 && errors.isEmpty()) {
                     job.drain(0);
                     Os.sleep(1);
                 }

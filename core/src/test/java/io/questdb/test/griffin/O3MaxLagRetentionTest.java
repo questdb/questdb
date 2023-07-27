@@ -25,11 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class O3MaxLagRetentionTest extends AbstractGriffinTest {
+public class O3MaxLagRetentionTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {

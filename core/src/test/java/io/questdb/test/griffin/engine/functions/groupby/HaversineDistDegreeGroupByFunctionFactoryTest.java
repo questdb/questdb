@@ -31,12 +31,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     public static final double DELTA = 0.0001;
 

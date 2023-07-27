@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class NoopGroupByTest extends AbstractGriffinTest {
+public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testMissingGroupByWithHourFunction() throws Exception {

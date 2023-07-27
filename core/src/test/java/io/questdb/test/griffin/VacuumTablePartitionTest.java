@@ -26,12 +26,12 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class VacuumTablePartitionTest extends AbstractGriffinTest {
+public class VacuumTablePartitionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumExceedsQueueSize() throws Exception {

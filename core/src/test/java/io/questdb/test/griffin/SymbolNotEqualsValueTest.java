@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
+public class SymbolNotEqualsValueTest extends AbstractCairoTest {
 
     @Test
     public void testNotEquals1SymbolsNonExistent() throws Exception {

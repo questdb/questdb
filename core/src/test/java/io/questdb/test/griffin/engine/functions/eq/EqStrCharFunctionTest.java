@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class EqStrCharFunctionTest extends AbstractGriffinTest {
+public class EqStrCharFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSymEqChar() throws Exception {

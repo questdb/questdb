@@ -32,13 +32,13 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.table.MemoryMetricsRecordCursorFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
 
-public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
+public class MemoryMetricsRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMetadata() {

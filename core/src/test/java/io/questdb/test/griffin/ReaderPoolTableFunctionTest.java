@@ -37,7 +37,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,7 +47,7 @@ import java.util.concurrent.Callable;
 
 import static org.junit.Assert.assertTrue;
 
-public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
+public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testCursorDoesHaveUpfrontSize() throws Exception {
         assertMemoryLeak(() -> {

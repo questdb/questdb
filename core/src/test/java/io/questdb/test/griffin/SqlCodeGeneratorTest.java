@@ -39,7 +39,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
 
-public class SqlCodeGeneratorTest extends AbstractGriffinTest {
+public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
@@ -3644,7 +3644,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     ") timestamp(k) partition by DAY",
                             sqlExecutionContext);
 
-                    AbstractGriffinTest.refreshTablesInBaseEngine();
+                    refreshTablesInBaseEngine();
                     try (RecordCursorFactory factory = compiler.compile("select * from x where b = 'PEHN' and a < 22 latest on k partition by b", sqlExecutionContext).getRecordCursorFactory()) {
                         try {
                             assertCursor(
@@ -7905,7 +7905,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table xy as (select rnd_str() v from long_sequence(100))");
-            AbstractGriffinTest.refreshTablesInBaseEngine();
+            refreshTablesInBaseEngine();
             bindVariableService.clear();
             try (RecordCursorFactory factory = select("xy where v " + keyword + " $1")) {
                 bindVariableService.setStr(0, "MBE%");

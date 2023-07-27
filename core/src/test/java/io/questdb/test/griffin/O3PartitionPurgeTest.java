@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-public class O3PartitionPurgeTest extends AbstractGriffinTest {
+public class O3PartitionPurgeTest extends AbstractCairoTest {
     private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass

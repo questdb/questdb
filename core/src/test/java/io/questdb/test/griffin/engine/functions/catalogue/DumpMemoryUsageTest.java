@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.std.Os;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DumpMemoryUsageTest extends AbstractGriffinTest {
+public class DumpMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {

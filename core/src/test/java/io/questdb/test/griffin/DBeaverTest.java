@@ -25,10 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DBeaverTest extends AbstractGriffinTest {
+public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testDotNetGetTypes() throws SqlException {
         assertQuery12(

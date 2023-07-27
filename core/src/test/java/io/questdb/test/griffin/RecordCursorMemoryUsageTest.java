@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RecordCursorMemoryUsageTest extends AbstractGriffinTest {
+public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
 
     //HashJoinRecordCursorFactory
 

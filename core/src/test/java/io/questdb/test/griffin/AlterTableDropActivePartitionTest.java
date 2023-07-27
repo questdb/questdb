@@ -34,7 +34,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
@@ -43,7 +43,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
+public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
 
     private static final String LastPartitionTs = "2023-10-15";
     private static final String MinMaxCountHeader = "min\tmax\tcount\n";

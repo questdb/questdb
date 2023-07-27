@@ -25,13 +25,13 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
+public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testOfNull() throws SqlException {
         assertSql("typeOf\n" +

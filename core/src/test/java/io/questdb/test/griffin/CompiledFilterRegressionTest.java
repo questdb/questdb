@@ -34,7 +34,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -48,7 +48,7 @@ import java.util.List;
 /**
  * Basic tests that compare compiled filter output with the Java implementation.
  */
-public class CompiledFilterRegressionTest extends AbstractGriffinTest {
+public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(CompiledFilterRegressionTest.class);
     private static final int N_SIMD = 512;
@@ -553,7 +553,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
             long maxSize = 0;
             List<String> filters = gen.generate();
             LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
-            Assert.assertTrue(filters.size() > 0);
+            Assert.assertFalse(filters.isEmpty());
             for (String filter : filters) {
                 long size = runQuery(baseQuery + " where " + filter);
                 maxSize = Math.max(maxSize, size);
@@ -733,7 +733,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
          * Programming by Knuth.
          */
         public List<String> generate() {
-            if (filterParts.size() == 0) {
+            if (filterParts.isEmpty()) {
                 return Collections.emptyList();
             }
 

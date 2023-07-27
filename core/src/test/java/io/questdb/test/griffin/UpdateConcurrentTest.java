@@ -41,7 +41,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -52,14 +52,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class UpdateConcurrentTest extends AbstractGriffinTest {
+public class UpdateConcurrentTest extends AbstractCairoTest {
     private static final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 128;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Override
@@ -158,7 +158,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
 
             Thread tick = new Thread(() -> {
-                while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                     try (TableWriter tableWriter = getWriter(
                             "up"
                     )) {
@@ -223,16 +223,13 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     });
 
                     try {
-                        final SqlCompiler readerCompiler = engine.getSqlCompiler();
                         barrier.await();
                         try (TableReader rdr = getReader("up")) {
-                            while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                            while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                                 rdr.reload();
                                 assertReader(rdr, expectedValues, validators);
                                 Os.sleep(1);
                             }
-                        } finally {
-                            readerCompiler.close();
                         }
                     } catch (Throwable th) {
                         LOG.error().$("reader error ").$(th).$();
@@ -249,7 +246,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                 threads.get(i).join();
             }
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Assert.fail(exceptions.poll().toString());
             }
         });

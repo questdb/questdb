@@ -25,12 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.InsertNullTest.expectedNullInserts;
 
-public class InsertNullGeoHashTest extends AbstractGriffinTest {
+public class InsertNullGeoHashTest extends AbstractCairoTest {
 
     private static final int NULL_INSERTS = 15;
 

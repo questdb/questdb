@@ -35,7 +35,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -46,13 +46,13 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
 
-public class VacuumColumnVersionTest extends AbstractGriffinTest {
+public class VacuumColumnVersionTest extends AbstractCairoTest {
     private int iteration;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         columnVersionPurgeQueueCapacity = 2;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Before

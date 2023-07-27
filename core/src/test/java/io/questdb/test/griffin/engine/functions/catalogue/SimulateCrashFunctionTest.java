@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SimulateCrashFunctionTest extends AbstractGriffinTest {
+public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {

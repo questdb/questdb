@@ -45,7 +45,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -58,7 +58,7 @@ import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
 
-public abstract class BasePGTest extends AbstractGriffinTest {
+public abstract class BasePGTest extends AbstractCairoTest {
 
     protected CopyRequestJob copyRequestJob = null;
 

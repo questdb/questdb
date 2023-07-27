@@ -27,16 +27,16 @@ package io.questdb.test.griffin.wal;
 import io.questdb.TelemetryJob;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 @SuppressWarnings("SameParameterValue")
-public class WalTelemetryTest extends AbstractGriffinTest {
+public class WalTelemetryTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         walTxnNotificationQueueCapacity = 8;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test

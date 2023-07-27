@@ -24,12 +24,12 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class WithClauseTest extends AbstractGriffinTest {
+public class WithClauseTest extends AbstractCairoTest {
 
     @Test
     public void testWithAliasOverridingTable1() throws Exception {

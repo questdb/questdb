@@ -26,11 +26,11 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.Os;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class DumpThreadStacksTest extends AbstractGriffinTest {
+public class DumpThreadStacksTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {

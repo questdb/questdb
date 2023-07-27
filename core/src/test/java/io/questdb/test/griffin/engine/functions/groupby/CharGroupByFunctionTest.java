@@ -26,14 +26,14 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import org.junit.Test;
 
-public class CharGroupByFunctionTest extends AbstractGriffinTest {
+public class CharGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testNonNull() throws SqlException {
         sqlExecutionContext.setRandom(new Rnd());

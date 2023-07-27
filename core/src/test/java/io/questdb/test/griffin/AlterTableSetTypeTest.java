@@ -30,7 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,7 +38,7 @@ import java.io.IOException;
 
 import static org.junit.Assert.assertEquals;
 
-public class AlterTableSetTypeTest extends AbstractGriffinTest {
+public class AlterTableSetTypeTest extends AbstractCairoTest {
     static final byte NON_WAL = (byte) 0;
     static final byte WAL = (byte) 1;
 

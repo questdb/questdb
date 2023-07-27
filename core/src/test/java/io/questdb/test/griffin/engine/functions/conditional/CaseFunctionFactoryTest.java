@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.conditional;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CaseFunctionFactoryTest extends AbstractGriffinTest {
+public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBinary() throws Exception {

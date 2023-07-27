@@ -29,13 +29,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
+public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testJoinReorderNoStackOverflow() throws Exception {

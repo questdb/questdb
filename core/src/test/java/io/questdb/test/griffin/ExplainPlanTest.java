@@ -56,7 +56,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -65,14 +65,14 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-public class ExplainPlanTest extends AbstractGriffinTest {
+public class ExplainPlanTest extends AbstractCairoTest {
 
     protected final static Log LOG = LogFactory.getLog(ExplainPlanTest.class);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test
@@ -466,7 +466,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 "            Frame forward scan on: a\n" +
                                 "        DataFrame\n" +
                                 "            Row forward scan\n" +
-                                "            Frame forward scan on: b\n"
+                                "            Frame forward scan on: b\n",
+                                sqlExecutionContext
                 );
             }
         });
@@ -1516,7 +1517,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "                  workers: 1\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: a\n"
+                            "                        Frame forward scan on: a\n",
+                    sqlExecutionContext
             );
         }
     }
@@ -1539,7 +1541,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            Limit lo: 40\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: a\n"
+                            "                    Frame forward scan on: a\n",
+                    sqlExecutionContext
             );
         }
     }
@@ -1561,7 +1564,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "        Hash\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: a\n"
+                            "                Frame forward scan on: a\n",
+                    sqlExecutionContext
             );
         }
     }
@@ -2345,7 +2349,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 "                    Frame forward scan on: tabb\n" +
                                 "        DataFrame\n" +
                                 "            Row forward scan\n" +
-                                "            Frame forward scan on: tabc\n");
+                                "            Frame forward scan on: tabc\n",
+                        sqlExecutionContext
+                );
             }
         });
     }
@@ -3458,7 +3464,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 "            Frame forward scan on: a\n" +
                                 "        DataFrame\n" +
                                 "            Row forward scan\n" +
-                                "            Frame forward scan on: b\n"
+                                "            Frame forward scan on: b\n",
+                        sqlExecutionContext
                 );
             }
         });
@@ -6960,7 +6967,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "                    Frame forward scan on: tabb\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: tabc\n"
+                            "            Frame forward scan on: tabc\n",
+                    sqlExecutionContext
             );
         });
     }

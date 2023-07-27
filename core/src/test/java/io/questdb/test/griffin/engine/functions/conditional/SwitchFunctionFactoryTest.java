@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
+public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanDuplicateFalse() throws Exception {

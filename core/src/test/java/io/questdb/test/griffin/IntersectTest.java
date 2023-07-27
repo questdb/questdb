@@ -26,10 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class IntersectTest extends AbstractGriffinTest {
+public class IntersectTest extends AbstractCairoTest {
 
     @Test
     public void testIntersectDuplicateColumnException() throws Exception {

@@ -55,7 +55,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.AbstractCairoTest.sink;
-import static io.questdb.test.AbstractGriffinTest.assertCursor;
 import static io.questdb.test.griffin.ShowPartitionsTest.replaceSizeToMatchOS;
 import static io.questdb.test.griffin.ShowPartitionsTest.testTableName;
 import static io.questdb.test.tools.TestUtils.*;
@@ -185,9 +184,9 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             RecordCursorPrinter printer = new RecordCursorPrinter();
             LongList rows = new LongList();
             for (int j = 0; j < 5; j++) {
-                assertCursor(finallyExpected, false, true, false, cursor0, meta, sink, printer, rows, false);
+                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor0, meta, sink, printer, rows, false);
                 cursor0.toTop();
-                assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, printer, rows, false);
+                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, printer, rows, false);
                 cursor1.toTop();
             }
         }

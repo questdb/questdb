@@ -42,7 +42,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-public class SymbolCacheTest extends AbstractGriffinTest {
+public class SymbolCacheTest extends AbstractCairoTest {
 
     private static final long DBCS_MAX_SIZE = 256;
 
@@ -167,7 +167,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             writerThread.join();
             readerThread.join();
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 for (Throwable ex : exceptions) {
                     ex.printStackTrace();
                 }

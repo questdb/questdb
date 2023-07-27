@@ -37,13 +37,13 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-public class AbstractSqlParserTest extends AbstractGriffinTest {
+public class AbstractSqlParserTest extends AbstractCairoTest {
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,

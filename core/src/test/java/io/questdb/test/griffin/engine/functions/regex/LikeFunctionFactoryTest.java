@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,7 +36,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-public class LikeFunctionFactoryTest extends AbstractGriffinTest {
+public class LikeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVariableConcatIndexed() throws Exception {

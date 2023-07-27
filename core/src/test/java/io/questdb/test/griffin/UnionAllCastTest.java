@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class UnionAllCastTest extends AbstractGriffinTest {
+public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testAllNoCast() throws Exception {

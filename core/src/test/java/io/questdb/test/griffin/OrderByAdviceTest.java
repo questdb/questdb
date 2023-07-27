@@ -26,12 +26,12 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class OrderByAdviceTest extends AbstractGriffinTest {
+public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithOrderBy() throws Exception {

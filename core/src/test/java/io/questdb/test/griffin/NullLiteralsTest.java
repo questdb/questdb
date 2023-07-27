@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class NullLiteralsTest extends AbstractGriffinTest {
+public class NullLiteralsTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanIsNotNull() throws Exception {

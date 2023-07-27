@@ -29,13 +29,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 
 import java.util.ArrayList;
 
-public class BaseFunctionFactoryTest extends AbstractGriffinTest {
+public class BaseFunctionFactoryTest extends AbstractCairoTest {
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
     protected final static QueryModel queryModel = QueryModel.FACTORY.newInstance();
 

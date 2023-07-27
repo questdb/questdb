@@ -63,14 +63,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractAlterTableAttachPartitionTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
         purgeJob = Misc.free(purgeJob);
-        AbstractAlterTableAttachPartitionTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Test

@@ -40,7 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -51,7 +51,7 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-public class SampleByTest extends AbstractGriffinTest {
+public class SampleByTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Test
@@ -10264,7 +10264,7 @@ public class SampleByTest extends AbstractGriffinTest {
     private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
-            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                     "from x " +
@@ -10278,7 +10278,7 @@ public class SampleByTest extends AbstractGriffinTest {
     private void testSampleByPushdownWithoutDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
-            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                     "from y timestamp(ts) " +

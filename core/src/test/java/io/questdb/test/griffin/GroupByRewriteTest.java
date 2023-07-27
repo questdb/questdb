@@ -25,11 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GroupByRewriteTest extends AbstractGriffinTest {
+public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {

@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRowCursorFactory;
 import io.questdb.std.IntList;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +39,7 @@ import org.junit.Test;
  * - with and without designated timestamps,
  * - non-partitioned and partitioned.
  */
-public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
+public class OrderByAscRowSkippingTest extends AbstractCairoTest {
 
     // partitionedTable with two partitions, 5 rows per partition
     @Test

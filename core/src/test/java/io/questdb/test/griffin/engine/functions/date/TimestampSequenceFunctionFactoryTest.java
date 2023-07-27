@@ -24,17 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
+public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test

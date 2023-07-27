@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
+public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgGetKeywordsFunc() throws Exception {

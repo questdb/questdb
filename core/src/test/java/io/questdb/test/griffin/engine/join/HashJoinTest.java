@@ -29,13 +29,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 
-public class HashJoinTest extends AbstractGriffinTest {
+public class HashJoinTest extends AbstractCairoTest {
 
     /**
      * Check that hash join factory doesn't allocate substantial amounts of memory prior to- and after cursor execution.

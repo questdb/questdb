@@ -34,7 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,7 +43,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class JoinTest extends AbstractGriffinTest {
+public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void test2686() throws Exception {

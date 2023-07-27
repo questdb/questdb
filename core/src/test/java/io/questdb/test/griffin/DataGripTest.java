@@ -26,11 +26,11 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class DataGripTest extends AbstractGriffinTest {
+public class DataGripTest extends AbstractCairoTest {
 
     @Test
     public void testGetCurrentDatabase() throws SqlException {

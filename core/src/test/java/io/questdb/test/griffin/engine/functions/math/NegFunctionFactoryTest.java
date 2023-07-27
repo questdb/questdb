@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class NegFunctionFactoryTest extends AbstractGriffinTest {
+public class NegFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNegByte() throws Exception {

@@ -24,13 +24,13 @@
 
 package io.questdb.test.griffin.engine.analytic;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AnalyticFunctionTest extends AbstractGriffinTest {
+public class AnalyticFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testAnalyticContextCleanup() throws Exception {

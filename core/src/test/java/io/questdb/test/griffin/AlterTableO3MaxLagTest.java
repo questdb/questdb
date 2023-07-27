@@ -30,7 +30,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -38,7 +38,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
+public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     @Test
     public void setMaxUncommittedRows() throws Exception {
         assertMemoryLeak(() -> {

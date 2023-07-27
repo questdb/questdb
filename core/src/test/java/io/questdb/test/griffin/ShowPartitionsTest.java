@@ -35,7 +35,7 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -53,7 +53,7 @@ import static io.questdb.cairo.TableUtils.ATTACHABLE_DIR_MARKER;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 
 @RunWith(Parameterized.class)
-public class ShowPartitionsTest extends AbstractGriffinTest {
+public class ShowPartitionsTest extends AbstractCairoTest {
 
     private final boolean isWal;
     private final String tableNameSuffix;

@@ -27,7 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.cairo.TableReaderTest.assertOpenPartitionCount;
 import static org.junit.Assert.assertEquals;
 
-public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
+public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private static final int ADD = 0;
     private static final Log LOG = LogFactory.getLog(TableReaderReloadFuzzTest.class);
     private static final int MAX_NUM_OF_INSERTS = 10;

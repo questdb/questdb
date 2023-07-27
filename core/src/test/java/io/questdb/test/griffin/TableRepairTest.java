@@ -29,11 +29,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TableRepairTest extends AbstractGriffinTest {
+public class TableRepairTest extends AbstractCairoTest {
 
     @Test
     public void testDeleteActivePartition() throws Exception {

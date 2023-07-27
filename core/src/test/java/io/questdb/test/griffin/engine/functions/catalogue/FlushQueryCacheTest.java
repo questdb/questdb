@@ -25,13 +25,13 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class FlushQueryCacheTest extends AbstractGriffinTest {
+public class FlushQueryCacheTest extends AbstractCairoTest {
 
     @Test
     public void testFullQueue() throws Exception {

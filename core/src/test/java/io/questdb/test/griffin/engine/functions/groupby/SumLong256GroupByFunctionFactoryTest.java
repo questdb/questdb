@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SumLong256GroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class SumLong256GroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSumAllNull() throws Exception {

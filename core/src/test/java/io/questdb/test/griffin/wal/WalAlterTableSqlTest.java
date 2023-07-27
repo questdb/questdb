@@ -28,13 +28,13 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 
-public class WalAlterTableSqlTest extends AbstractGriffinTest {
+public class WalAlterTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void createWalAndDetachAttachPartition() throws Exception {
