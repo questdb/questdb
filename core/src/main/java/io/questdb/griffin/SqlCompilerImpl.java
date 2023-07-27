@@ -105,8 +105,9 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence query;
     protected boolean queryContainsSecret;
-    protected long queryLogfd;
+    protected long queryLogFd;
     protected boolean queryLogged;
+    private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
@@ -194,12 +195,16 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         functionParser.clear();
         query = null;
         queryLogged = false;
-        queryLogfd = -1;
+        queryLogFd = -1;
         queryContainsSecret = false;
     }
 
     @Override
     public void close() {
+        if (closed) {
+            throw new IllegalStateException("close was already called");
+        }
+        closed = true;
         Misc.free(backupAgent);
         Misc.free(dropStmtCompiler);
         Misc.free(vacuumColumnVersions);
@@ -1333,7 +1338,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         executionContext.containsSecret(false);
         if (doLog) {
             this.query = query;
-            this.queryLogfd = executionContext.getRequestFd();
+            this.queryLogFd = executionContext.getRequestFd();
         }
 
         if (executor != null) {
@@ -2734,14 +2739,14 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     protected void logQuery(CharSequence currentQuery) {
         if (!queryContainsSecret) {
             queryLogged = true;
-            LOG.info().$("parse [fd=").$(queryLogfd).$(", q=").utf8(currentQuery).I$();
+            LOG.info().$("parse [fd=").$(queryLogFd).$(", q=").utf8(currentQuery).I$();
         }
     }
 
     protected void logQuery() {
         if (!queryLogged && !queryContainsSecret) {
             queryLogged = true;
-            LOG.info().$("parse [fd=").$(queryLogfd).$(", q=").utf8(query).I$();
+            LOG.info().$("parse [fd=").$(queryLogFd).$(", q=").utf8(query).I$();
         }
     }
 

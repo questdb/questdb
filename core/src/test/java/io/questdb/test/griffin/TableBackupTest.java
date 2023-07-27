@@ -589,9 +589,9 @@ public class TableBackupTest {
             TestUtils.printSql(compiler, context, tableToken.getTableName(), sink);
         } finally {
             if (backup) {
-                Misc.free(engine);
                 Misc.free(compiler);
                 Misc.free(context);
+                Misc.free(engine);
             }
         }
     }
