@@ -146,17 +146,14 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             final String tableName = "t";
             ddl("create table " + tableName + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day",
-                    sqlExecutionContext);
+                    "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day");
 
             ddl("snapshot prepare");
 
-            ddl("insert into " + tableName +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)", sqlExecutionContext);
+            insert("insert into " + tableName +
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)");
 
             // Release all readers and writers, but keep the snapshot dir around.
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
             engine.clear();
 
             snapshotInstanceId = restartedId;
@@ -189,7 +186,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "PE\tB\t3\n";
             assertSql(expectedAllColumns, "select * from " + tableName);
 
-            ddl("alter table " + tableName + " drop column b", sqlExecutionContext);
+            ddl("alter table " + tableName + " drop column b");
             assertSql("a\tc\n" +
                     "JW\t1\n" +
                     "WH\t2\n" +
@@ -208,7 +205,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ddl("create table test (ts timestamp, name symbol, val int)");
             SimpleWaitingLock lock = new SimpleWaitingLock();
             SOCountDownLatch latch1 = new SOCountDownLatch(1);
             SOCountDownLatch latch2 = new SOCountDownLatch(1);
@@ -387,7 +384,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             path.trimTo(rootLen).concat("test.txt").$();
             Assert.assertTrue(Files.touch(path));
 
-            ddl("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ddl("create table test (ts timestamp, name symbol, val int)");
             ddl("snapshot prepare");
 
             // The test file should be deleted by SNAPSHOT PREPARE.
@@ -423,7 +420,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareFailsOnCorruptedTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "t";
-            ddl("create table " + tableName + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ddl("create table " + tableName + " (ts timestamp, name symbol, val int)");
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
@@ -444,7 +441,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testSnapshotPrepareFailsOnSyncError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ddl("create table test (ts timestamp, name symbol, val int)");
 
             testFilesFacade.errorOnSync = true;
             try {
@@ -511,7 +508,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testSnapshotPrepareSubsequentCallFails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ddl("create table test (ts timestamp, name symbol, val int)");
 
             SimpleWaitingLock lock = new SimpleWaitingLock();
 
@@ -547,7 +544,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testSnapshotPrepareSubsequentCallFailsWithLock() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ddl("create table test (ts timestamp, name symbol, val int)");
             try {
                 ddl("snapshot prepare");
                 ddl("snapshot prepare");
@@ -577,7 +574,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(5)" +
@@ -641,7 +638,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             snapshotInstanceId = snapshotId;
             String tableName = testName.getMethodName() + "_abc";
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -777,19 +774,17 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             final String nonPartitionedTable = "npt";
             ddl("create table " + nonPartitionedTable + " as " +
-                            "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
-                    sqlExecutionContext);
+                    "(select rnd_str(5,10,2) a, x b from long_sequence(20))");
             final String partitionedTable = "pt";
             ddl("create table " + partitionedTable + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
-                    sqlExecutionContext);
+                    "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour");
 
             ddl("snapshot prepare");
 
-            ddl("insert into " + nonPartitionedTable +
-                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
-            ddl("insert into " + partitionedTable +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
+            insert("insert into " + nonPartitionedTable +
+                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)");
+            insert("insert into " + partitionedTable +
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)");
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -816,7 +811,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             snapshotInstanceId = snapshotId;
 
             try (Path path = new Path()) {
-                ddl("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
+                ddl("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))");
                 ddl("snapshot prepare");
 
                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
@@ -840,19 +835,19 @@ public class SnapshotTest extends AbstractGriffinTest {
                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
                 String tableName = "t";
-                compile("create table " + tableName + " (a STRING, b LONG)");
+                ddl("create table " + tableName + " (a STRING, b LONG)");
 
                 // Bump truncate version by truncating non-empty table
-                compile("insert into " + tableName + " VALUES('abasd', 1L)");
-                compile("truncate table " + tableName);
+                insert("insert into " + tableName + " VALUES('abasd', 1L)");
+                ddl("truncate table " + tableName);
 
-                ddl("insert into " + tableName +
-                        " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))", sqlExecutionContext);
+                insert("insert into " + tableName +
+                        " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))");
                 if (generateColTops) {
-                    ddl("alter table " + tableName + " add column c int", sqlExecutionContext);
+                    ddl("alter table " + tableName + " add column c int");
                 }
                 if (dropColumns) {
-                    ddl("alter table " + tableName + " drop column a", sqlExecutionContext);
+                    ddl("alter table " + tableName + " drop column a");
                 }
 
                 ddl("snapshot prepare");
@@ -940,9 +935,9 @@ public class SnapshotTest extends AbstractGriffinTest {
                 path.of(configuration.getRoot());
                 copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
-                ddl(ddl, sqlExecutionContext);
+                ddl(ddl);
                 if (ddl2 != null) {
-                    ddl(ddl2, sqlExecutionContext);
+                    ddl(ddl2);
                 }
 
                 ddl("snapshot prepare");

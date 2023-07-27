@@ -169,13 +169,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public boolean clear() {
+        snapshotAgent.clear();
+        messageBus.reset();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
         boolean b4 = metadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
-        messageBus.reset();
-        snapshotAgent.clear();
         return b1 & b2 & b3 & b4 & b5;
     }
 

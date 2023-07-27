@@ -1122,7 +1122,9 @@ public final class TestUtils {
                 insertMethod.commit();
             }
         } else {
-            Assert.fail("insert VALUES() SQL expected");
+            if (compiledQuery.getType() != CompiledQuery.INSERT_AS_SELECT) {
+                Assert.fail("INSERT AS SELECT SQL expected, got: " + insertSql);
+            }
         }
     }
 
