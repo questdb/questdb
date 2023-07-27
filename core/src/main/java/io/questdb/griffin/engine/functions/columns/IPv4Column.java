@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -50,6 +51,9 @@ public class IPv4Column extends IPv4Function implements ScalarFunction {
 
     @Override
     public int getIPv4(Record rec) {
+        if (rec.getIPv4(columnIndex) == Numbers.IPv4_NULL) {
+            return Numbers.IPv4_NULL;
+        }
         return rec.getIPv4(columnIndex);
     }
 
