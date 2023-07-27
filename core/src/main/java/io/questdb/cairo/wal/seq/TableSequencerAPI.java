@@ -468,7 +468,6 @@ public class TableSequencerAPI implements QuietCloseable {
                     LOG.info().$("releasing idle table sequencer [tableDir=").utf8(tableDir).I$();
                     iterator.remove();
                     removed = true;
-                    seqTxnTrackers.remove(tableDir);
                 }
             }
         }

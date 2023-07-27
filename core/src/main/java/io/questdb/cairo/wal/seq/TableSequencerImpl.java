@@ -346,6 +346,7 @@ public class TableSequencerImpl implements TableSequencer {
     public void resumeTable() {
         metadata.resumeTable();
         notifyTxnCommitted(Long.MAX_VALUE);
+        seqTxnTracker.setUnsuspended();
     }
 
     @TestOnly
