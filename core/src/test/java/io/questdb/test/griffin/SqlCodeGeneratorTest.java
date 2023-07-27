@@ -3084,6 +3084,26 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIPv4Except() throws Exception {
+        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
+        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into y values('0.0.0.1')");
+        executeInsert("insert into y values('0.0.0.2')");
+        executeInsert("insert into y values('0.0.0.3')");
+        executeInsert("insert into y values('0.0.0.4')");
+        executeInsert("insert into y values('0.0.0.5')");
+
+        assertSql("select col1 from x except select col2 from y", "col1\n" +
+                "0.0.0.6\n");
+    }
+
+    @Test
     public void testIPv4Explain() throws Exception {
         assertQuery("QUERY PLAN\n" +
                         "Sort light\n" +
@@ -3103,6 +3123,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 null,
                 false,
                 true);
+    }
+
+    @Test
+    public void testIPv4Intersect() throws Exception {
+        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
+        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into x values('0.0.0.6')");
+        executeInsert("insert into y values('0.0.0.1')");
+        executeInsert("insert into y values('0.0.0.2')");
+
+
+        assertSql("select col1 from x intersect select col2 from y", "col1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n");
     }
 
     @Test
@@ -3365,6 +3404,34 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         executeInsert("insert into y values('0.0.0.5')");
 
         assertSql("select col1 from x union select col2 from y", "col1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.3\n" +
+                "0.0.0.4\n" +
+                "0.0.0.5\n");
+    }
+
+    @Test
+    public void testIPv4UnionAll() throws Exception {
+        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
+        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
+        executeInsert("insert into x values('0.0.0.1')");
+        executeInsert("insert into x values('0.0.0.2')");
+        executeInsert("insert into x values('0.0.0.3')");
+        executeInsert("insert into x values('0.0.0.4')");
+        executeInsert("insert into x values('0.0.0.5')");
+        executeInsert("insert into y values('0.0.0.1')");
+        executeInsert("insert into y values('0.0.0.2')");
+        executeInsert("insert into y values('0.0.0.3')");
+        executeInsert("insert into y values('0.0.0.4')");
+        executeInsert("insert into y values('0.0.0.5')");
+
+        assertSql("select col1 from x union all select col2 from y", "col1\n" +
+                "0.0.0.1\n" +
+                "0.0.0.2\n" +
+                "0.0.0.3\n" +
+                "0.0.0.4\n" +
+                "0.0.0.5\n" +
                 "0.0.0.1\n" +
                 "0.0.0.2\n" +
                 "0.0.0.3\n" +
@@ -9585,6 +9652,34 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 null,
                 false
         );
+    }
+
+    @Test
+    public void testTruncateIPv4() throws Exception {
+        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
+        assertSql("test", "ip\tcount\n" +
+                "187.139.150.80\t1\n" +
+                "18.206.96.238\t1\n" +
+                "92.80.211.65\t1\n" +
+                "212.159.205.29\t1\n" +
+                "4.98.173.21\t1\n" +
+                "199.122.166.85\t1\n" +
+                "79.15.250.138\t1\n" +
+                "35.86.82.23\t1\n" +
+                "111.98.117.250\t1\n" +
+                "205.123.179.216\t1\n" +
+                "184.254.198.204\t1\n" +
+                "134.75.235.20\t1\n" +
+                "170.90.236.206\t1\n" +
+                "162.25.160.241\t1\n" +
+                "48.21.128.89\t1\n" +
+                "92.26.178.136\t1\n" +
+                "93.140.132.196\t1\n" +
+                "93.204.45.145\t1\n" +
+                "231.146.30.59\t1\n" +
+                "20.62.93.114\t1\n");
+        compiler.compile("truncate table test", sqlExecutionContext);
+        assertSql("test", "ip\tcount\n");
     }
 
     @Test
