@@ -1121,6 +1121,8 @@ public final class TestUtils {
                 insertMethod.execute();
                 insertMethod.commit();
             }
+        } else {
+            Assert.fail("insert VALUES() SQL expected");
         }
     }
 

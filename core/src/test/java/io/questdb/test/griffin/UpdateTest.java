@@ -29,6 +29,7 @@ import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
@@ -56,6 +57,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 @RunWith(Parameterized.class)
 public class UpdateTest extends AbstractGriffinTest {
     private static final long DEFAULT_CIRCUIT_BREAKER_TIMEOUT = 300_000L;
+    protected final SCSequence eventSubSequence = new SCSequence();
     private final boolean walEnabled;
 
     public UpdateTest(WalMode walMode) {
@@ -536,7 +538,8 @@ public class UpdateTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:01.000000Z\t123\n" +
                         "1970-01-01T00:00:02.000000Z\t123\n" +
                         "1970-01-01T00:00:03.000000Z\t4\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\n");
+                        "1970-01-01T00:00:04.000000Z\t5\n"
+        );
     }
 
     @Test
@@ -550,7 +553,8 @@ public class UpdateTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:01.000000Z\t2\tNaN\n" +
                         "1970-01-01T00:00:02.000000Z\t3\tNaN\n" +
                         "1970-01-01T00:00:03.000000Z\t4\tNaN\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\tNaN\n");
+                        "1970-01-01T00:00:04.000000Z\t5\tNaN\n"
+        );
     }
 
     @Test
@@ -574,7 +578,8 @@ public class UpdateTest extends AbstractGriffinTest {
                             "1970-01-01T00:00:01.000000Z\t2\n" +
                             "1970-01-01T00:00:02.000000Z\t3\n" +
                             "1970-01-01T00:00:03.000000Z\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n");
+                            "1970-01-01T00:00:04.000000Z\t5\n"
+            );
         } finally {
             sqlExecutionContext = oldContext;
         }
@@ -591,7 +596,8 @@ public class UpdateTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:01.000000Z\n" +
                         "1970-01-01T00:00:02.000000Z\n" +
                         "1970-01-01T00:00:03.000000Z\n" +
-                        "1970-01-01T00:00:04.000000Z\n");
+                        "1970-01-01T00:00:04.000000Z\n"
+        );
     }
 
     @Test
@@ -1451,13 +1457,15 @@ public class UpdateTest extends AbstractGriffinTest {
     @Test
     public void testUpdateString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            ddl(
+                    "create table up as" +
                             " (select" +
                             " rnd_str('foo','bar') as s," +
                             " timestamp_sequence(0, 1000000) ts," +
                             " x" +
                             " from long_sequence(5)) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""),
-                    sqlExecutionContext);
+                    sqlExecutionContext
+            );
 
             // char
             update("update up set s = 'a' where s = 'bar'");

@@ -270,6 +270,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        engine.clear();
         assertMemoryLeak(AbstractCairoTest.ff, code);
     }
 

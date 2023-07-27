@@ -38,7 +38,7 @@ public class UuidTest extends AbstractGriffinTest {
         ddl("create table x (u UUID)");
         expectException(
                 "insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))",
-                11111,
+                28,
                 "invalid UUID constant"
         );
     }
@@ -48,8 +48,8 @@ public class UuidTest extends AbstractGriffinTest {
         ddl("create table x (u UUID)");
         expectException(
                 "insert into x values ('a0eebc11-110b-11f8-116d')",
-                1111,
-                "inconvertible value"
+                0,
+                "inconvertible value: `a0eebc11-110b-11f8-116d` [STRING -> UUID]"
         );
     }
 
@@ -67,7 +67,7 @@ public class UuidTest extends AbstractGriffinTest {
         ddl("create table x (u uuid)");
         insert("insert into x values (null)");
         ddl("create table y (s string)");
-        insert("insert into y select cast (u as string) from x");
+        ddl("insert into y select cast (u as string) from x");
         assertSql(
                 "column\n" +
                         "true\n", "select s is null from y"
@@ -351,7 +351,7 @@ public class UuidTest extends AbstractGriffinTest {
         ddl("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
         insert("insert into x values ('2018-01-01', 1)");
         insert("insert into x values ('2018-01-03', 1)");
-        insert("alter table x add column u uuid");
+        ddl("alter table x add column u uuid");
         insert("insert into x values ('2018-01-02', 1, '00000000-0000-0000-0000-000000000000')");
         assertSql(
                 "ts\ti\tu\n" +
@@ -382,7 +382,11 @@ public class UuidTest extends AbstractGriffinTest {
     public void testInsertFromFunctionReturningString() throws Exception {
         ddl("create table x (u UUID)");
         insert("insert into x values (rnd_str('11111111-1111-1111-1111-111111111111'))");
-        assertSql("", "x");
+        assertSql(
+                "u\n" +
+                        "11111111-1111-1111-1111-111111111111\n",
+                "x"
+        );
     }
 
     @Test
@@ -401,7 +405,7 @@ public class UuidTest extends AbstractGriffinTest {
         ddl("create table x (u uuid)");
         insert("insert into x values (null)");
         ddl("create table y (s string)");
-        insert("insert into y select u from x");
+        ddl("insert into y select u from x");
         assertSql(
                 "column\n" +
                         "true\n",
@@ -413,7 +417,7 @@ public class UuidTest extends AbstractGriffinTest {
     public void testInsertUuidColumnIntoIntColumnImplicitCast() throws Exception {
         ddl("create table x (u uuid)");
         insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-        insert("create table y (i int)");
+        ddl("create table y (i int)");
         assertFailure("insert into y select u from x", null, 21, "inconvertible types");
     }
 
@@ -422,7 +426,7 @@ public class UuidTest extends AbstractGriffinTest {
         ddl("create table x (u uuid)");
         insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
         ddl("create table y (s string)");
-        insert("insert into y select cast (u as string) from x");
+        ddl("insert into y select cast (u as string) from x");
         assertSql(
                 "s\n" +
                         "11111111-1111-1111-1111-111111111111\n",
@@ -435,7 +439,7 @@ public class UuidTest extends AbstractGriffinTest {
         ddl("create table x (u uuid)");
         insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
         ddl("create table y (s string)");
-        insert("insert into y select u from x");
+        ddl("insert into y select u from x");
         assertSql(
                 "s\n" +
                         "11111111-1111-1111-1111-111111111111\n",

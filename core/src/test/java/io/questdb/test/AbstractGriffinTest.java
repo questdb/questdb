@@ -33,7 +33,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -61,7 +60,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionContext sqlExecutionContext;
-    protected final SCSequence eventSubSequence = new SCSequence();
 
     public static boolean assertCursor(
             CharSequence expected,
@@ -1040,7 +1038,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertFailure(CharSequence query, @Nullable CharSequence ddl, int expectedPosition, @NotNull CharSequence expectedMessage) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
                     ddl(ddl, sqlExecutionContext);
