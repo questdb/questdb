@@ -104,7 +104,6 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testAsOfCorrectness() throws Exception {
         assertMemoryLeak(() -> {
-
             ddl("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
             ddl("create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)");
 
@@ -1679,11 +1678,11 @@ public class JoinTest extends AbstractGriffinTest {
     public void testJoinColumnPropagationIntoJoinModel() throws Exception {
         ddl(
                 "CREATE TABLE trades (" +
-                "  symbol SYMBOL," +
-                "  price DOUBLE," +
-                "  amount DOUBLE," +
-                "  timestamp TIMESTAMP " +
-                ") timestamp (timestamp) PARTITION BY DAY;"
+                        "  symbol SYMBOL," +
+                        "  price DOUBLE," +
+                        "  amount DOUBLE," +
+                        "  timestamp TIMESTAMP " +
+                        ") timestamp (timestamp) PARTITION BY DAY;"
         );
 
         insert("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
@@ -2003,16 +2002,16 @@ public class JoinTest extends AbstractGriffinTest {
                 "2\t3\t2\t3\n" +
                 "4\t6\t4\t6\n" +
                 "6\t9\t6\t9\n", "select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
-                        "from x " +
-                        "join x as x1 on x.i = x1.i"
+                "from x " +
+                "join x as x1 on x.i = x1.i"
         );
 
         assertSql("i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
                 "1\t2\t3\t1\t2\t3\t5\n" +
                 "2\t4\t6\t2\t4\t6\t10\n" +
                 "3\t6\t9\t3\t6\t9\t15\n", "select *, x.\"in\" + x1.\"from\" " +
-                        "from x " +
-                        "join x as x1 on x.i = x1.i"
+                "from x " +
+                "join x as x1 on x.i = x1.i"
         );
     }
 
@@ -3003,12 +3002,12 @@ public class JoinTest extends AbstractGriffinTest {
     public void testMultipleJoinsWithTopLevelSelect() throws Exception {
         ddl(
                 "CREATE TABLE train ( " +
-                "  id INT, " +
-                "  date timestamp, " +
-                "  store_nbr INT, " +
-                "  family SYMBOL, " +
-                "  sales DOUBLE " +
-                ") timestamp (date) PARTITION BY YEAR"
+                        "  id INT, " +
+                        "  date timestamp, " +
+                        "  store_nbr INT, " +
+                        "  family SYMBOL, " +
+                        "  sales DOUBLE " +
+                        ") timestamp (date) PARTITION BY YEAR"
         );
 
         insert("insert into train values (1, '2015-05-31T00:00:00', 1, 'A', 1.0 )");
@@ -3820,7 +3819,7 @@ public class JoinTest extends AbstractGriffinTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", true, false, fullFatJoin);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, fullFatJoin);
 
             ddl(
                     "insert into x select * from (" +
@@ -3869,7 +3868,7 @@ public class JoinTest extends AbstractGriffinTest {
                     query,
                     "timestamp",
                     false,
-                    false,
+                    true,
                     fullFatJoin
             );
         });
@@ -3933,7 +3932,7 @@ public class JoinTest extends AbstractGriffinTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", true, false, fullFatJoin);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, fullFatJoin);
 
             ddl(
                     "insert into x select * from " +
@@ -4002,7 +4001,7 @@ public class JoinTest extends AbstractGriffinTest {
                     query,
                     "timestamp",
                     false,
-                    false,
+                    true,
                     fullFatJoin
             );
         });
@@ -4138,7 +4137,7 @@ public class JoinTest extends AbstractGriffinTest {
                     query,
                     "timestamp",
                     false,
-                    false,
+                    true,
                     fullFatJoin
             );
         });
@@ -4181,7 +4180,7 @@ public class JoinTest extends AbstractGriffinTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", true, false, fullFatJoin);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, fullFatJoin);
 
             ddl("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
@@ -4210,7 +4209,7 @@ public class JoinTest extends AbstractGriffinTest {
                     query,
                     "timestamp",
                     false,
-                    false,
+                    true,
                     fullFatJoin
             );
         });
@@ -4256,7 +4255,7 @@ public class JoinTest extends AbstractGriffinTest {
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFat(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null, true, false, fullFatJoin);
+            assertQueryFullFat(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null, false, false, fullFatJoin);
         });
     }
 
@@ -4335,7 +4334,7 @@ public class JoinTest extends AbstractGriffinTest {
             ddl("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryFullFat(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null, true, false, fullFatJoin);
+            assertQueryFullFat(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null, false, false, fullFatJoin);
         });
     }
 
@@ -4413,7 +4412,7 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             // filter is applied to final join result
-            assertQueryFullFat(expected, "select * from x join y on (kk)", null, true, false, fullFatJoin);
+            assertQueryFullFat(expected, "select * from x join y on (kk)", null, false, false, fullFatJoin);
         });
     }
 
@@ -4464,7 +4463,7 @@ public class JoinTest extends AbstractGriffinTest {
             ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
             ddl("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
-            assertQueryFullFat(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, true, false, fullFatJoin);
+            assertQueryFullFat(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false, false, fullFatJoin);
         });
     }
 
@@ -4518,7 +4517,7 @@ public class JoinTest extends AbstractGriffinTest {
                             "9\t100\t8\t456\t448\n",
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
                     null,
-                    true,
+                    false,
                     false,
                     fullFatJoin
             );
@@ -4560,7 +4559,7 @@ public class JoinTest extends AbstractGriffinTest {
                     expected,
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where d-b > 100",
                     null,
-                    true,
+                    false,
                     false,
                     fullFatJoin
             );
@@ -5028,7 +5027,7 @@ public class JoinTest extends AbstractGriffinTest {
             expectException(
                     "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
                     44,
-                    "hello", // todo: there was no message assertion
+                    "join column type mismatch",
                     fullFatJoins
             );
         });
