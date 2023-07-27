@@ -10174,7 +10174,8 @@ public class SampleByTest extends AbstractGriffinTest {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 forceNoIndexQuery,
                 insert,
                 "k",
@@ -10182,7 +10183,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 false
         );
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 query,
                 null,
                 "k",

@@ -36,9 +36,10 @@ import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
-public class CompiledQueryImpl implements CompiledQuery {
+public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
@@ -56,19 +57,31 @@ public class CompiledQueryImpl implements CompiledQuery {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
+        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
 
-        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
+        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation, true);
             }
         };
+    }
+
+    @Override
+    public void clear() {
+        this.type = 0;
+        this.recordCursorFactory = null;
+        this.tableToken = null;
+        this.affectedRowsCount = -1;
+        this.insertOp = null;
+        this.alterOp = null;
+        this.updateOp = null;
+        this.statementName = null;
     }
 
     @Override

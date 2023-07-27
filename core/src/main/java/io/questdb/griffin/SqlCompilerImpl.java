@@ -193,6 +193,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         backupAgent.clear();
         alterOperationBuilder.clear();
         functionParser.clear();
+        compiledQuery.clear();
         query = null;
         queryLogged = false;
         queryLogFd = -1;
