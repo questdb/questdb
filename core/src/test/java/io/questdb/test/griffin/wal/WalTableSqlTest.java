@@ -1501,8 +1501,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             // In order
             compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
-
-
+            
             node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
             runApplyOnce();
 

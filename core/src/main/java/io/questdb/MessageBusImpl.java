@@ -157,7 +157,7 @@ public class MessageBusImpl implements MessageBus {
         int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
-                    () -> new PageFrameReduceTask(configuration),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
                     reduceQueueCapacity
             );
 
@@ -215,6 +215,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    @Override
+    public MPSequence getCopyRequestPubSeq() {
+        return textImportRequestPubSeq;
     }
 
     @Override
@@ -385,11 +390,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<CopyTask> getTextImportQueue() {
         return textImportQueue;
-    }
-
-    @Override
-    public MPSequence getCopyRequestPubSeq() {
-        return textImportRequestPubSeq;
     }
 
     @Override

@@ -28,9 +28,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -507,7 +507,8 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(time timestamp, uuid symbol, hash8 geohash(8c))", sqlExecutionContext);
             try {
-                fail("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
+                executeInsert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
+                Assert.fail();
             } catch (ImplicitCastException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible value: `f91t` [STRING -> GEOHASH(8c)]");
             }
@@ -601,13 +602,13 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             alter("alter table t1 add a8 geohash(8c)");
 
             ddl("insert into t1 select x," +
-                            "timestamp_sequence(0, 1000000) ts," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
-                            "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
-                            "cast(rnd_str('questdb123456', '12345672', '901234567') as geohash(8c)) geo8 " +
-                            "from long_sequence(2)"
-                    );
+                    "timestamp_sequence(0, 1000000) ts," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('questdb123456', '12345672', '901234567') as geohash(8c)) geo8 " +
+                    "from long_sequence(2)"
+            );
 
             assertSql("t1",
                     "x\tts\ta1\ta2\ta4\ta8\n" +

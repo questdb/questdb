@@ -30,7 +30,6 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -53,7 +52,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
     private TableToken tableToken;
-    private TextLoader textLoader;
     private short type;
     private UpdateOperation updateOp;
 
@@ -130,11 +128,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public TextLoader getTextLoader() {
-        return textLoader;
-    }
-
-    @Override
     public short getType() {
         return type;
     }
@@ -175,8 +168,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(COMMIT);
     }
 
-    public CompiledQuery ofCopyRemote(TextLoader textLoader) {
-        this.textLoader = textLoader;
+    public CompiledQuery ofCopyRemote() {
         return of(COPY_REMOTE);
     }
 

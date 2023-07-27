@@ -562,24 +562,23 @@ public final class TestUtils {
 
         // Checks that the same tag used for allocation and freeing native memory
         long memAfter = Unsafe.getMemUsed();
-        long memNativeJitDiff = 0;
+        long memNativeSqlCompilerDiff = 0;
         Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
-//                    if (i != MemoryTag.NATIVE_JIT) {
-                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
-                    Assert.assertTrue(actualMemByTag > -1);
-//                    } else {
-                    // JIT memory is not released immediately
-                    // todo: Can we do better than this? This is too fragile and prone to false positives
-//                        Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
-//                        memNativeJitDiff = actualMemByTag - memoryUsageByTag[i];
-//                    }
+                    if (i != MemoryTag.NATIVE_SQL_COMPILER) {
+                        Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
+                        Assert.assertTrue(actualMemByTag > -1);
+                    } else {
+                        // SqlCompiler memory is not released immediately as compilers are pooled
+                        Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+                        memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
+                    }
                 }
             }
-            Assert.assertEquals(mem + memNativeJitDiff, memAfter);
+            Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
         }
 
         int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();

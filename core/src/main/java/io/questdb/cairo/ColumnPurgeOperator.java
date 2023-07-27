@@ -41,7 +41,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final LongList completedRowIds = new LongList();
     private final FilesFacade ff;
     private final MicrosecondClock microClock;
-    private final Path path = new Path();
+    private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final int pathRootLen;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
@@ -63,7 +63,7 @@ public class ColumnPurgeOperator implements Closeable {
         txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
         txReader = new TxReader(ff);
         microClock = configuration.getMicrosecondClock();
-        longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
+        longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
     }
 
     public ColumnPurgeOperator(CairoConfiguration configuration) {
@@ -82,7 +82,7 @@ public class ColumnPurgeOperator implements Closeable {
     @Override
     public void close() {
         if (longBytes != 0L) {
-            Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
+            Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
             longBytes = 0;
         }
         closePurgeLogCompleteFile();
@@ -188,7 +188,6 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
-
         LOG.info().$("purging [table=").utf8(task.getTableName().getTableName())
                 .$(", column=").utf8(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
@@ -210,8 +209,8 @@ public class ColumnPurgeOperator implements Closeable {
                 final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
                 int columnTypeRaw = task.getColumnType();
                 int columnType = Math.abs(columnTypeRaw);
-                boolean isSymbolRootFiles = ColumnType.isSymbol(columnType) &&
-                        partitionTimestamp == PurgingOperator.TABLE_ROOT_PARTITION;
+                boolean isSymbolRootFiles = ColumnType.isSymbol(columnType)
+                        && partitionTimestamp == PurgingOperator.TABLE_ROOT_PARTITION;
 
                 int pathTrimToPartition;
                 CharSequence columnName = task.getColumnName();

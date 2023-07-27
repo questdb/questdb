@@ -2964,6 +2964,22 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFreesMemoryOnClose() {
+        // NATIVE_SQL_COMPILER is excluded from TestUtils#assertMemoryLeak(),
+        // so here we make sure that SQL compiler releases its memory on close.
+
+        Path.clearThreadLocals();
+        long mem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
+
+        new SqlCompilerImpl(engine).close();
+
+        Path.clearThreadLocals();
+        long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
+
+        Assert.assertEquals(mem, memAfter);
+    }
+
+    @Test
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");

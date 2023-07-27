@@ -47,6 +47,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
+    private final int memoryTag;
     private int capacity;
     private long headPtr;
     private long tailPtr;
@@ -56,9 +57,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path(int capacity) {
+        this(capacity, MemoryTag.NATIVE_PATH);
+    }
+
+    public Path(int capacity, int memoryTag) {
         assert capacity > 0;
         this.capacity = capacity;
-        headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+        this.memoryTag = memoryTag;
+        headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
     }
 
     public static void clearThreadLocals() {
@@ -118,7 +124,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public void close() {
         if (headPtr != 0L) {
-            Unsafe.free(headPtr, capacity + 1, MemoryTag.NATIVE_PATH);
+            Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
         }
     }
@@ -227,6 +233,19 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
                 p--;
             }
             tailPtr = p;
+        }
+        return this;
+    }
+
+    public Path prefix(Path prefix, int prefixLen) {
+        if (prefix != null) {
+            if (prefixLen > 0) {
+                int thisLen = length();
+                checkExtend(thisLen + prefixLen);
+                Vect.memmove(headPtr + prefixLen, headPtr, thisLen);
+                Vect.memcpy(headPtr, prefix.address(), prefixLen);
+                tailPtr += prefixLen;
+            }
         }
         return this;
     }
@@ -351,19 +370,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public void zeroPad(int len) {
         checkExtend(len);
         Vect.memset(tailPtr, len, 0);
-    }
-
-    public Path prefix(Path prefix, int prefixLen) {
-        if (prefix != null) {
-            if (prefixLen > 0) {
-                int thisLen = length();
-                checkExtend(thisLen + prefixLen);
-                Vect.memmove(headPtr + prefixLen, headPtr, thisLen);
-                Vect.memcpy(headPtr, prefix.address(), prefixLen);
-                tailPtr += prefixLen;
-            }
-        }
-        return this;
     }
 
     private void checkClosed() {

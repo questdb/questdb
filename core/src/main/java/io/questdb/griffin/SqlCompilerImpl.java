@@ -32,8 +32,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -79,7 +77,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     protected final CairoEngine engine;
     protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
-    protected final Path path = new Path();
+    protected final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
@@ -99,11 +97,10 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex;
-    private final Path renamePath = new Path();
+    private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
-    private final TextLoader textLoader;
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence query;
@@ -169,7 +166,6 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
                 postOrderTreeTraversalAlgo
         );
 
-        textLoader = new TextLoader(engine);
         alterOperationBuilder = new AlterOperationBuilder();
     }
 
@@ -195,7 +191,6 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         parser.clear();
         backupAgent.clear();
         alterOperationBuilder.clear();
-        backupAgent.clear();
         functionParser.clear();
         query = null;
         queryLogged = false;
@@ -210,7 +205,6 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
-        Misc.free(textLoader);
         Misc.free(rebuildIndex);
         Misc.free(codeGenerator);
         Misc.free(mem);
@@ -1424,8 +1418,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
             // no-op implementation
             executionContext.getSecurityContext().authorizeCopy();
-            setupTextLoaderFromModel(copyModel);
-            return compiledQuery.ofCopyRemote(textLoader);
+            return compiledQuery.ofCopyRemote();
         }
 
         final RecordCursorFactory copyFactory;
@@ -2399,22 +2392,6 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
         return compiledQuery.ofRepair();
     }
 
-    private void setupTextLoaderFromModel(CopyModel model) {
-        textLoader.clear();
-        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        // todo: configure the following
-        //   - what happens when data row errors out, max errors may be?
-        //   - we should be able to skip X rows from top, dodgy headers etc.
-
-        textLoader.configureDestination(
-                model.getTarget().token,
-                false,
-                model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
-                model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
-                model.getTimestampColumnName(), model.getTimestampFormat()
-        );
-    }
-
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
@@ -2983,10 +2960,10 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
     }
 
     private class DatabaseBackupAgent implements Closeable {
-        private final Path auxPath = new Path();
-        private final Path dstPath = new Path();
+        private final Path auxPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+        private final Path dstPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
         private final StringSink sink = new StringSink();
-        private final Path srcPath = new Path();
+        private final Path srcPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
         private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
