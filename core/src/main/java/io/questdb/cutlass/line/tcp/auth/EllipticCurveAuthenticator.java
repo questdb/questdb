@@ -32,8 +32,10 @@ import io.questdb.cutlass.auth.ChallengeResponseMatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.security.SecureRandom;
@@ -43,12 +45,12 @@ public class EllipticCurveAuthenticator implements Authenticator {
     private static final int MIN_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
 
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
+    private final ChallengeResponseMatcher challengeResponseMatcher;
     private final NetworkFacade nf;
     private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
     protected long recvBufPseudoStart;
     private AuthState authState;
     private long challengePtr;
-    private ChallengeResponseMatcher challengeResponseMatcher;
     private int fd;
     private String principal;
     private long recvBufEnd;
@@ -64,7 +66,6 @@ public class EllipticCurveAuthenticator implements Authenticator {
     @Override
     public void close() {
         challengePtr = Unsafe.free(challengePtr, AuthUtils.CHALLENGE_LEN, MemoryTag.NATIVE_DEFAULT);
-        challengeResponseMatcher = Misc.free(challengeResponseMatcher);
     }
 
     @Override

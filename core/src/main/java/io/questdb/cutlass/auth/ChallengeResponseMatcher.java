@@ -1,12 +1,6 @@
 package io.questdb.cutlass.auth;
 
-import io.questdb.std.QuietCloseable;
-
-public interface ChallengeResponseMatcher extends QuietCloseable {
-    @Override
-    default void close() {
-
-    }
+public interface ChallengeResponseMatcher {
 
     /**
      * Verify a signature of a challenge. The signature is expected to be encoded in base64. The challenge is taken as is.

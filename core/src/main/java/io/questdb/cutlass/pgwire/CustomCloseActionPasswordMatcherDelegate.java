@@ -1,6 +1,8 @@
 package io.questdb.cutlass.pgwire;
 
-public final class CustomCloseActionPasswordMatcherDelegate implements UsernamePasswordMatcher {
+import io.questdb.std.QuietCloseable;
+
+public final class CustomCloseActionPasswordMatcherDelegate implements UsernamePasswordMatcher, QuietCloseable {
 
     private final Runnable closeAction;
     private final UsernamePasswordMatcher delegate;
@@ -12,11 +14,7 @@ public final class CustomCloseActionPasswordMatcherDelegate implements UsernameP
 
     @Override
     public void close() {
-        try {
-            delegate.close();
-        } finally {
-            closeAction.run();
-        }
+        closeAction.run();
     }
 
     @Override

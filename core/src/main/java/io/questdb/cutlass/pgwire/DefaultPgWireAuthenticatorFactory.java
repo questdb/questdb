@@ -62,7 +62,8 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
                 circuitBreaker,
                 registry,
                 optionsListener,
-                matcher
+                matcher,
+                true
         );
     }
 }

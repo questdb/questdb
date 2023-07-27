@@ -24,13 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.std.QuietCloseable;
-
-public interface UsernamePasswordMatcher extends QuietCloseable {
-    @Override
-    default void close() {
-
-    }
+public interface UsernamePasswordMatcher {
 
     /**
      * Verify password for a user.

@@ -35,12 +35,6 @@ public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher
     }
 
     @Override
-    public void close() {
-        first.close();
-        second.close();
-    }
-
-    @Override
     public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
         return first.verifyPassword(username, passwordPtr, passwordLen) || second.verifyPassword(username, passwordPtr, passwordLen);
     }

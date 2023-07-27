@@ -57,13 +57,12 @@ public class StaticUsernamePasswordMatcherTest {
 
     @Test
     public void testVerifyPassword() {
-        try (StaticUsernamePasswordMatcher matcher = newMatcher("user", "pass")) {
-            assertMatch(matcher, "user", "pass");
-            assertNoMatch(matcher, "user", "ssap");
-            assertNoMatch(matcher, "user", "wrongpassword");
-            assertNoMatch(matcher, "", "wrongpassword");
-            assertNoMatch(matcher, null, "pass");
-        }
+        StaticUsernamePasswordMatcher matcher = newMatcher("user", "pass");
+        assertMatch(matcher, "user", "pass");
+        assertNoMatch(matcher, "user", "ssap");
+        assertNoMatch(matcher, "user", "wrongpassword");
+        assertNoMatch(matcher, "", "wrongpassword");
+        assertNoMatch(matcher, null, "pass");
     }
 
     private StaticUsernamePasswordMatcher newMatcher(String username, String password) {
