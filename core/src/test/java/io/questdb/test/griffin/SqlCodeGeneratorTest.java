@@ -433,6 +433,408 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCaseIPv41() throws Exception {
+        assertQuery("ip\tbytes\tcase\n" +
+                        "187.139.150.80\t580\tnay\n" +
+                        "212.159.205.29\t23\tnay\n" +
+                        "79.15.250.138\t850\tnay\n" +
+                        "205.123.179.216\t167\tnay\n" +
+                        "170.90.236.206\t572\tnay\n" +
+                        "92.26.178.136\t7\tnay\n" +
+                        "231.146.30.59\t766\tnay\n" +
+                        "113.132.124.243\t522\tnay\n" +
+                        "67.22.249.199\t203\tnay\n" +
+                        "25.107.51.160\t827\tYAY\n" +
+                        "146.16.210.119\t383\tnay\n" +
+                        "187.63.210.97\t424\tnay\n" +
+                        "188.239.72.25\t513\tnay\n" +
+                        "181.82.42.148\t539\tnay\n" +
+                        "129.172.181.73\t25\tnay\n" +
+                        "66.56.51.126\t904\tnay\n" +
+                        "230.202.108.161\t171\tnay\n" +
+                        "180.48.50.141\t136\tnay\n" +
+                        "128.225.84.244\t313\tnay\n" +
+                        "254.93.251.9\t810\tnay\n" +
+                        "227.40.250.157\t903\tnay\n" +
+                        "180.36.62.54\t528\tnay\n" +
+                        "136.166.51.222\t580\tnay\n" +
+                        "24.123.12.210\t95\tYAY\n" +
+                        "171.117.213.66\t720\tnay\n" +
+                        "224.99.254.121\t619\tnay\n" +
+                        "55.211.206.129\t785\tYAY\n" +
+                        "144.131.72.77\t369\tnay\n" +
+                        "97.159.145.120\t352\tnay\n" +
+                        "164.153.242.17\t906\tnay\n" +
+                        "165.166.233.251\t332\tnay\n" +
+                        "114.126.117.26\t71\tnay\n" +
+                        "164.74.203.45\t678\tnay\n" +
+                        "241.248.184.75\t334\tnay\n" +
+                        "255.95.177.227\t44\tnay\n" +
+                        "216.150.248.30\t563\tnay\n" +
+                        "71.73.196.29\t741\tnay\n" +
+                        "180.91.244.55\t906\tnay\n" +
+                        "111.221.228.130\t531\tnay\n" +
+                        "171.30.189.77\t238\tnay\n" +
+                        "73.153.126.70\t772\tnay\n" +
+                        "105.218.160.179\t986\tnay\n" +
+                        "201.100.238.229\t318\tnay\n" +
+                        "12.214.12.100\t598\tYAY\n" +
+                        "212.102.182.127\t984\tnay\n" +
+                        "50.214.139.184\t574\tYAY\n" +
+                        "186.33.243.40\t659\tnay\n" +
+                        "74.196.176.71\t740\tnay\n" +
+                        "150.153.88.133\t849\tnay\n" +
+                        "63.60.82.184\t37\tYAY\n",
+                "select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' else 'nay' end from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testCaseIPv42() throws Exception {
+        assertQuery("ip\tbytes\tcase\n" +
+                        "187.139.150.80\t580\t\n" +
+                        "212.159.205.29\t23\t\n" +
+                        "79.15.250.138\t850\t\n" +
+                        "205.123.179.216\t167\t\n" +
+                        "170.90.236.206\t572\t\n" +
+                        "92.26.178.136\t7\t\n" +
+                        "231.146.30.59\t766\t\n" +
+                        "113.132.124.243\t522\t\n" +
+                        "67.22.249.199\t203\t\n" +
+                        "25.107.51.160\t827\tYAY\n" +
+                        "146.16.210.119\t383\t\n" +
+                        "187.63.210.97\t424\t\n" +
+                        "188.239.72.25\t513\t\n" +
+                        "181.82.42.148\t539\t\n" +
+                        "129.172.181.73\t25\t\n" +
+                        "66.56.51.126\t904\t\n" +
+                        "230.202.108.161\t171\t\n" +
+                        "180.48.50.141\t136\t\n" +
+                        "128.225.84.244\t313\t\n" +
+                        "254.93.251.9\t810\t\n" +
+                        "227.40.250.157\t903\t\n" +
+                        "180.36.62.54\t528\t\n" +
+                        "136.166.51.222\t580\t\n" +
+                        "24.123.12.210\t95\tYAY\n" +
+                        "171.117.213.66\t720\t\n" +
+                        "224.99.254.121\t619\t\n" +
+                        "55.211.206.129\t785\tYAY\n" +
+                        "144.131.72.77\t369\t\n" +
+                        "97.159.145.120\t352\t\n" +
+                        "164.153.242.17\t906\t\n" +
+                        "165.166.233.251\t332\t\n" +
+                        "114.126.117.26\t71\t\n" +
+                        "164.74.203.45\t678\t\n" +
+                        "241.248.184.75\t334\t\n" +
+                        "255.95.177.227\t44\t\n" +
+                        "216.150.248.30\t563\t\n" +
+                        "71.73.196.29\t741\t\n" +
+                        "180.91.244.55\t906\t\n" +
+                        "111.221.228.130\t531\t\n" +
+                        "171.30.189.77\t238\t\n" +
+                        "73.153.126.70\t772\t\n" +
+                        "105.218.160.179\t986\t\n" +
+                        "201.100.238.229\t318\t\n" +
+                        "12.214.12.100\t598\tYAY\n" +
+                        "212.102.182.127\t984\t\n" +
+                        "50.214.139.184\t574\tYAY\n" +
+                        "186.33.243.40\t659\t\n" +
+                        "74.196.176.71\t740\t\n" +
+                        "150.153.88.133\t849\t\n" +
+                        "63.60.82.184\t37\tYAY\n",
+                "select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' end from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testCaseIPv43() throws Exception {
+        assertQuery("ip\tbytes\tcase\n" +
+                        "187.139.150.80\t580\t0\n" +
+                        "212.159.205.29\t23\t0\n" +
+                        "79.15.250.138\t850\t0\n" +
+                        "205.123.179.216\t167\t0\n" +
+                        "170.90.236.206\t572\t0\n" +
+                        "92.26.178.136\t7\t0\n" +
+                        "231.146.30.59\t766\t0\n" +
+                        "113.132.124.243\t522\t0\n" +
+                        "67.22.249.199\t203\t0\n" +
+                        "25.107.51.160\t827\t1\n" +
+                        "146.16.210.119\t383\t0\n" +
+                        "187.63.210.97\t424\t0\n" +
+                        "188.239.72.25\t513\t0\n" +
+                        "181.82.42.148\t539\t0\n" +
+                        "129.172.181.73\t25\t0\n" +
+                        "66.56.51.126\t904\t0\n" +
+                        "230.202.108.161\t171\t0\n" +
+                        "180.48.50.141\t136\t0\n" +
+                        "128.225.84.244\t313\t0\n" +
+                        "254.93.251.9\t810\t0\n" +
+                        "227.40.250.157\t903\t0\n" +
+                        "180.36.62.54\t528\t0\n" +
+                        "136.166.51.222\t580\t0\n" +
+                        "24.123.12.210\t95\t1\n" +
+                        "171.117.213.66\t720\t0\n" +
+                        "224.99.254.121\t619\t0\n" +
+                        "55.211.206.129\t785\t1\n" +
+                        "144.131.72.77\t369\t0\n" +
+                        "97.159.145.120\t352\t0\n" +
+                        "164.153.242.17\t906\t0\n" +
+                        "165.166.233.251\t332\t0\n" +
+                        "114.126.117.26\t71\t0\n" +
+                        "164.74.203.45\t678\t0\n" +
+                        "241.248.184.75\t334\t0\n" +
+                        "255.95.177.227\t44\t0\n" +
+                        "216.150.248.30\t563\t0\n" +
+                        "71.73.196.29\t741\t0\n" +
+                        "180.91.244.55\t906\t0\n" +
+                        "111.221.228.130\t531\t0\n" +
+                        "171.30.189.77\t238\t0\n" +
+                        "73.153.126.70\t772\t0\n" +
+                        "105.218.160.179\t986\t0\n" +
+                        "201.100.238.229\t318\t0\n" +
+                        "12.214.12.100\t598\t1\n" +
+                        "212.102.182.127\t984\t0\n" +
+                        "50.214.139.184\t574\t1\n" +
+                        "186.33.243.40\t659\t0\n" +
+                        "74.196.176.71\t740\t0\n" +
+                        "150.153.88.133\t849\t0\n" +
+                        "63.60.82.184\t37\t1\n",
+                "select ip, bytes, case when ip << '2.65.32.1/2' then 1 else 0 end from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testCaseIPv44() throws Exception {
+        assertQuery("ip\tbytes\tcase\n" +
+                        "187.139.150.80\t580\tNaN\n" +
+                        "212.159.205.29\t23\tNaN\n" +
+                        "79.15.250.138\t850\tNaN\n" +
+                        "205.123.179.216\t167\tNaN\n" +
+                        "170.90.236.206\t572\tNaN\n" +
+                        "92.26.178.136\t7\tNaN\n" +
+                        "231.146.30.59\t766\tNaN\n" +
+                        "113.132.124.243\t522\tNaN\n" +
+                        "67.22.249.199\t203\tNaN\n" +
+                        "25.107.51.160\t827\t1\n" +
+                        "146.16.210.119\t383\tNaN\n" +
+                        "187.63.210.97\t424\tNaN\n" +
+                        "188.239.72.25\t513\tNaN\n" +
+                        "181.82.42.148\t539\tNaN\n" +
+                        "129.172.181.73\t25\tNaN\n" +
+                        "66.56.51.126\t904\tNaN\n" +
+                        "230.202.108.161\t171\tNaN\n" +
+                        "180.48.50.141\t136\tNaN\n" +
+                        "128.225.84.244\t313\tNaN\n" +
+                        "254.93.251.9\t810\tNaN\n" +
+                        "227.40.250.157\t903\tNaN\n" +
+                        "180.36.62.54\t528\tNaN\n" +
+                        "136.166.51.222\t580\tNaN\n" +
+                        "24.123.12.210\t95\t1\n" +
+                        "171.117.213.66\t720\tNaN\n" +
+                        "224.99.254.121\t619\tNaN\n" +
+                        "55.211.206.129\t785\t1\n" +
+                        "144.131.72.77\t369\tNaN\n" +
+                        "97.159.145.120\t352\tNaN\n" +
+                        "164.153.242.17\t906\tNaN\n" +
+                        "165.166.233.251\t332\tNaN\n" +
+                        "114.126.117.26\t71\tNaN\n" +
+                        "164.74.203.45\t678\tNaN\n" +
+                        "241.248.184.75\t334\tNaN\n" +
+                        "255.95.177.227\t44\tNaN\n" +
+                        "216.150.248.30\t563\tNaN\n" +
+                        "71.73.196.29\t741\tNaN\n" +
+                        "180.91.244.55\t906\tNaN\n" +
+                        "111.221.228.130\t531\tNaN\n" +
+                        "171.30.189.77\t238\tNaN\n" +
+                        "73.153.126.70\t772\tNaN\n" +
+                        "105.218.160.179\t986\tNaN\n" +
+                        "201.100.238.229\t318\tNaN\n" +
+                        "12.214.12.100\t598\t1\n" +
+                        "212.102.182.127\t984\tNaN\n" +
+                        "50.214.139.184\t574\t1\n" +
+                        "186.33.243.40\t659\tNaN\n" +
+                        "74.196.176.71\t740\tNaN\n" +
+                        "150.153.88.133\t849\tNaN\n" +
+                        "63.60.82.184\t37\t1\n",
+                "select ip, bytes, case when ip << '2.65.32.1/2' then 1 end from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testCaseIPv45() throws Exception {
+        assertQuery("ip\tbytes\tcase\n" +
+                        "2.2.96.238\t774\tNOT NULL\n" +
+                        "2.2.89.171\t404\tNOT NULL\n" +
+                        "2.2.76.40\t167\tNOT NULL\n" +
+                        "2.2.95.15\t803\tNOT NULL\n" +
+                        "2.2.45.145\t182\tNOT NULL\n" +
+                        "null\t647\tNULL\n" +
+                        "2.2.249.199\t203\tNOT NULL\n" +
+                        "null\t827\tNULL\n" +
+                        "2.2.170.235\t987\tNOT NULL\n" +
+                        "2.2.184.81\t614\tNOT NULL\n" +
+                        "2.2.213.108\t539\tNOT NULL\n" +
+                        "2.2.47.76\t585\tNOT NULL\n" +
+                        "null\t16\tNULL\n" +
+                        "2.2.129.200\t981\tNOT NULL\n" +
+                        "2.2.171.12\t313\tNOT NULL\n" +
+                        "2.2.253.254\t297\tNOT NULL\n" +
+                        "null\t773\tNULL\n" +
+                        "2.2.227.50\t411\tNOT NULL\n" +
+                        "2.2.12.210\t95\tNOT NULL\n" +
+                        "2.2.205.4\t916\tNOT NULL\n" +
+                        "2.2.236.117\t983\tNOT NULL\n" +
+                        "2.2.183.179\t369\tNOT NULL\n" +
+                        "2.2.220.75\t12\tNOT NULL\n" +
+                        "2.2.157.48\t613\tNOT NULL\n" +
+                        "null\t114\tNULL\n" +
+                        "2.2.52.211\t678\tNOT NULL\n" +
+                        "2.2.35.79\t262\tNOT NULL\n" +
+                        "2.2.207.241\t497\tNOT NULL\n" +
+                        "2.2.196.29\t741\tNOT NULL\n" +
+                        "2.2.228.56\t993\tNOT NULL\n" +
+                        "2.2.246.213\t562\tNOT NULL\n" +
+                        "2.2.126.70\t772\tNOT NULL\n" +
+                        "2.2.37.167\t907\tNOT NULL\n" +
+                        "2.2.234.47\t314\tNOT NULL\n" +
+                        "2.2.73.129\t984\tNOT NULL\n" +
+                        "2.2.112.55\t175\tNOT NULL\n" +
+                        "2.2.74.124\t254\tNOT NULL\n" +
+                        "2.2.167.123\t849\tNOT NULL\n" +
+                        "2.2.2.123\t941\tNOT NULL\n" +
+                        "2.2.140.124\t551\tNOT NULL\n" +
+                        "null\t343\tNULL\n" +
+                        "null\t77\tNULL\n" +
+                        "null\t519\tNULL\n" +
+                        "2.2.15.163\t606\tNOT NULL\n" +
+                        "2.2.245.83\t446\tNOT NULL\n" +
+                        "2.2.204.60\t835\tNOT NULL\n" +
+                        "2.2.7.88\t308\tNOT NULL\n" +
+                        "2.2.186.59\t875\tNOT NULL\n" +
+                        "2.2.89.110\t421\tNOT NULL\n" +
+                        "2.2.46.225\t470\tNOT NULL\n",
+                "select ip, bytes, case when ip << null then 'NULL' else 'NOT NULL' end from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testCaseIPv46() throws Exception {
+        assertQuery("ip\tbytes\tcase\n" +
+                        "2.2.96.238\t774\tNOT NULL\n" +
+                        "2.2.89.171\t404\tNOT NULL\n" +
+                        "2.2.76.40\t167\tNOT NULL\n" +
+                        "2.2.95.15\t803\tNOT NULL\n" +
+                        "2.2.45.145\t182\tNOT NULL\n" +
+                        "null\t647\tNULL\n" +
+                        "2.2.249.199\t203\tNOT NULL\n" +
+                        "null\t827\tNULL\n" +
+                        "2.2.170.235\t987\tNOT NULL\n" +
+                        "2.2.184.81\t614\tNOT NULL\n" +
+                        "2.2.213.108\t539\tNOT NULL\n" +
+                        "2.2.47.76\t585\tNOT NULL\n" +
+                        "null\t16\tNULL\n" +
+                        "2.2.129.200\t981\tNOT NULL\n" +
+                        "2.2.171.12\t313\tNOT NULL\n" +
+                        "2.2.253.254\t297\tNOT NULL\n" +
+                        "null\t773\tNULL\n" +
+                        "2.2.227.50\t411\tNOT NULL\n" +
+                        "2.2.12.210\t95\tNOT NULL\n" +
+                        "2.2.205.4\t916\tNOT NULL\n" +
+                        "2.2.236.117\t983\tNOT NULL\n" +
+                        "2.2.183.179\t369\tNOT NULL\n" +
+                        "2.2.220.75\t12\tNOT NULL\n" +
+                        "2.2.157.48\t613\tNOT NULL\n" +
+                        "null\t114\tNULL\n" +
+                        "2.2.52.211\t678\tNOT NULL\n" +
+                        "2.2.35.79\t262\tNOT NULL\n" +
+                        "2.2.207.241\t497\tNOT NULL\n" +
+                        "2.2.196.29\t741\tNOT NULL\n" +
+                        "2.2.228.56\t993\tNOT NULL\n" +
+                        "2.2.246.213\t562\tNOT NULL\n" +
+                        "2.2.126.70\t772\tNOT NULL\n" +
+                        "2.2.37.167\t907\tNOT NULL\n" +
+                        "2.2.234.47\t314\tNOT NULL\n" +
+                        "2.2.73.129\t984\tNOT NULL\n" +
+                        "2.2.112.55\t175\tNOT NULL\n" +
+                        "2.2.74.124\t254\tNOT NULL\n" +
+                        "2.2.167.123\t849\tNOT NULL\n" +
+                        "2.2.2.123\t941\tNOT NULL\n" +
+                        "2.2.140.124\t551\tNOT NULL\n" +
+                        "null\t343\tNULL\n" +
+                        "null\t77\tNULL\n" +
+                        "null\t519\tNULL\n" +
+                        "2.2.15.163\t606\tNOT NULL\n" +
+                        "2.2.245.83\t446\tNOT NULL\n" +
+                        "2.2.204.60\t835\tNOT NULL\n" +
+                        "2.2.7.88\t308\tNOT NULL\n" +
+                        "2.2.186.59\t875\tNOT NULL\n" +
+                        "2.2.89.110\t421\tNOT NULL\n" +
+                        "2.2.46.225\t470\tNOT NULL\n",
+                "select ip, bytes, case when ip <<= null then 'NULL' else 'NOT NULL' end from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                true);
+    }
+
+    @Test
     public void testCastAndAliasedColumnAfterWildcard() throws Exception {
         assertQuery("a\tk\tklong\n" +
                         "80.43224099968394\t1970-01-01T00:00:00.000000Z\t0\n" +
@@ -6348,7 +6750,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByTimestampInclusion() throws Exception {
         assertQuery("ts\tmarket_type\tavg\n" +
-                        "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
                         "1970-01-01T00:00:09.999996Z\tbbb\t0.344021345830156\n",
                 "select ts, market_type, avg(bid_price) FROM market_updates LATEST ON ts PARTITION BY market_type SAMPLE BY 1s",
                 "create table market_updates as (" +
@@ -7239,7 +7640,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true);
     }
-
 
     @Test
     public void testOrderByIPv4Descending() throws Exception {

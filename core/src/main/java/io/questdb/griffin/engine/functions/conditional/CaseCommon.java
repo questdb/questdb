@@ -383,5 +383,6 @@ public class CaseCommon {
         constructors.extendAndSet(ColumnType.BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.LONG128, (position, picker, args) -> new Long128CaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.UUID, (position, picker, args) -> new UuidCaseFunction(picker, args));
+        constructors.extendAndSet(ColumnType.IPv4, IPv4CaseFunction::new);
     }
 }

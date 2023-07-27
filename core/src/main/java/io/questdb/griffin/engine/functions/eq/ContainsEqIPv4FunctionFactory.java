@@ -132,7 +132,7 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getInt(rec) == IPv4_NULL;
+            return arg.getIPv4(rec) == IPv4_NULL;
         }
 
         @Override
