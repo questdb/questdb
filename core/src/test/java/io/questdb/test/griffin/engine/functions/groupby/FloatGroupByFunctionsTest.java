@@ -42,10 +42,10 @@ public class FloatGroupByFunctionsTest extends AbstractGriffinTest {
             createPopulateTable(tm, 100, "2020-01-01", 2);
         }
 
-        assertSql("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d",
-                "ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                        "2020-01-01T00:28:47.990000Z\t0.0010\t0.0510\t0.0010\t0.0510\t51\n" +
-                        "2020-01-02T00:28:47.990000Z\t0.0520\t0.1000\t0.0520\t0.1000\t49\n");
+        assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                "2020-01-01T00:28:47.990000Z\t0.0010\t0.0510\t0.0010\t0.0510\t51\n" +
+                "2020-01-02T00:28:47.990000Z\t0.0520\t0.1000\t0.0520\t0.1000\t49\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d"
+        );
     }
 
     @Test
@@ -53,8 +53,8 @@ public class FloatGroupByFunctionsTest extends AbstractGriffinTest {
         sqlExecutionContext.setRandom(new Rnd());
         ddl("create table tab as ( select rnd_float() ch from long_sequence(100) )");
 
-        assertSql("select min(ch), max(ch), first(ch), last(ch), count() from tab",
-                "min\tmax\tfirst\tlast\tcount\n" +
-                        "0.0011\t0.9856\t0.6608\t0.7998\t100\n");
+        assertSql("min\tmax\tfirst\tlast\tcount\n" +
+                "0.0011\t0.9856\t0.6608\t0.7998\t100\n", "select min(ch), max(ch), first(ch), last(ch), count() from tab"
+        );
     }
 }

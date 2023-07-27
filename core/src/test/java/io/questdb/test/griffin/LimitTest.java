@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractGriffinTest;
@@ -231,10 +230,11 @@ public class LimitTest extends AbstractGriffinTest {
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table t1 (ts timestamp, id symbol)");
-            executeInsert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
+            insert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
             assertQueryAndCache("ts\tid\n" +
                             "1970-01-01T00:00:00.000004Z\tabc\n",
-                    "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true);
+                    "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true
+            );
         });
     }
 
@@ -339,33 +339,31 @@ public class LimitTest extends AbstractGriffinTest {
     @Test
     public void testNegativeLimitOnIndexedSymbolFilter() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                ddl(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0), 3) price," +
-                                " cast(x * 120000000 as timestamp) timestamp" +
-                                " from long_sequence(30)" +
-                                "), index(sym) timestamp(timestamp) partition by month"
-                );
+            ddl(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0), 3) price," +
+                            " cast(x * 120000000 as timestamp) timestamp" +
+                            " from long_sequence(30)" +
+                            "), index(sym) timestamp(timestamp) partition by month"
+            );
 
-                executeInsert("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
-                executeInsert("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
-                executeInsert("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
+            insert("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
+            insert("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
+            insert("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
 
-                assertQuery(
-                        "i\tsym\tprice\ttimestamp\n" +
-                                "-3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z\n" +
-                                "-2\tgoogl\t2.0\t2002-01-01T00:00:00.000000Z\n" +
-                                "-1\tgoogl\t3.0\t2003-01-01T00:00:00.000000Z\n",
-                        "y where sym = 'googl' limit -3",
-                        "timestamp",
-                        true,
-                        false
-                );
-            }
+            assertQuery(
+                    "i\tsym\tprice\ttimestamp\n" +
+                            "-3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z\n" +
+                            "-2\tgoogl\t2.0\t2002-01-01T00:00:00.000000Z\n" +
+                            "-1\tgoogl\t3.0\t2003-01-01T00:00:00.000000Z\n",
+                    "y where sym = 'googl' limit -3",
+                    "timestamp",
+                    true,
+                    false
+            );
         });
     }
 
@@ -442,7 +440,8 @@ public class LimitTest extends AbstractGriffinTest {
             assertQuery("count\n1000\n",
                     "select count(*)\n" +
                             "from intervaltest\n" +
-                            "WHERE ts > '2023-04-06T00:09:59.000000Z'", null, false, true);
+                            "WHERE ts > '2023-04-06T00:09:59.000000Z'", null, false, true
+            );
 
             String query = "select *\n" +
                     "from intervaltest\n" +
@@ -467,7 +466,8 @@ public class LimitTest extends AbstractGriffinTest {
                             "599993\t2023-04-06T00:09:59.993000Z\n" +
                             "599992\t2023-04-06T00:09:59.992000Z\n" +
                             "599991\t2023-04-06T00:09:59.991000Z\n",
-                    query, "ts###DESC", true, false);
+                    query, "ts###DESC", true, false
+            );
         });
     }
 
@@ -731,7 +731,7 @@ public class LimitTest extends AbstractGriffinTest {
         int expectedPosition = 34;
 
         String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
-        try (final RecordCursorFactory factory = fact(query)) {
+        try (final RecordCursorFactory factory = select(query)) {
             try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                 Assert.fail();
             }
@@ -772,7 +772,7 @@ public class LimitTest extends AbstractGriffinTest {
 
             assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
 
-            executeInsert(
+            insert(
                     "insert into y select * from " +
                             "(select" +
                             " cast(x + 30 as int) i," +
@@ -809,7 +809,7 @@ public class LimitTest extends AbstractGriffinTest {
                 "insert into t1 values (5L, 'a2')";
 
         for (String sql : inserts.split("\\r?\\n")) {
-            executeInsert(sql);
+            insert(sql);
         }
 
         assertQueryAndCache("ts\tid\n" +

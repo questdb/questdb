@@ -131,7 +131,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
             final String sql = "with x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 1s";
             assertSql(
-                    sql,
                     "ts\tcount_distinct\n" +
                             "1970-01-01T00:00:00.000000Z\t5\n" +
                             "1970-01-01T00:00:01.000000Z\t5\n" +
@@ -142,7 +141,7 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                             "1970-01-01T00:00:06.000000Z\t4\n" +
                             "1970-01-01T00:00:07.000000Z\t5\n" +
                             "1970-01-01T00:00:08.000000Z\t6\n" +
-                            "1970-01-01T00:00:09.000000Z\t5\n"
+                            "1970-01-01T00:00:09.000000Z\t5\n", sql
             );
         });
     }

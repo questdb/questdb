@@ -46,7 +46,6 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
-import static org.junit.Assert.fail;
 
 public class PGSecurityTest extends BasePGTest {
 
@@ -126,7 +125,7 @@ public class PGSecurityTest extends BasePGTest {
                 compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
                 try {
                     executeWithPg("delete from src");
-                    fail("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
+                    assertSqlFails("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
                 } catch (PSQLException e) {
                     // the parser does not support DELETE
                     assertContains(e.getMessage(), "unexpected token: from");
@@ -199,7 +198,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-                executeInsert("insert into src values (now(), 'foo')");
+                insert("insert into src values (now(), 'foo')");
                 assertQueryDisallowed("truncate table src");
             }
         });
@@ -210,7 +209,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-                executeInsert("insert into src values ('2022-04-12T17:30:45.145921Z', 'foo')");
+                insert("insert into src values ('2022-04-12T17:30:45.145921Z', 'foo')");
 
                 try {
                     executeWithPg("update src set name = 'bar'");
@@ -223,8 +222,8 @@ public class PGSecurityTest extends BasePGTest {
                 // if this asserts fails then it means UPDATE are already implemented
                 // please change this test to check the update throws an exception in the read-only mode
                 // this is in place, so we won't forget to test UPDATE honours read-only security context
-                assertSql("select * from src", "ts\tname\n" +
-                        "2022-04-12T17:30:45.145921Z\tfoo\n");
+                assertSql("ts\tname\n" +
+                        "2022-04-12T17:30:45.145921Z\tfoo\n", "select * from src");
             }
         });
     }
@@ -245,7 +244,7 @@ public class PGSecurityTest extends BasePGTest {
             configureForBackups();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-                executeInsert("insert into src values (now(), 'foo')");
+                insert("insert into src values (now(), 'foo')");
                 assertQueryDisallowed("backup database");
             }
         });
@@ -257,7 +256,7 @@ public class PGSecurityTest extends BasePGTest {
             configureForBackups();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-                executeInsert("insert into src values (now(), 'foo')");
+                insert("insert into src values (now(), 'foo')");
                 assertQueryDisallowed("backup table src");
             }
         });
@@ -269,7 +268,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-                executeInsert("insert into src values (now(), 'foo')");
+                insert("insert into src values (now(), 'foo')");
                 assertQueryDisallowed("repair table src");
             }
         });
@@ -319,7 +318,7 @@ public class PGSecurityTest extends BasePGTest {
                         String query = "drop table src";
                         try (final Statement statement = roUserConnection.createStatement()) {
                             statement.execute(query);
-                            fail("Query '" + query + "' must fail for the read-only user!");
+                            assertSqlFails("Query '" + query + "' must fail for the read-only user!");
                         } catch (PSQLException e) {
                             assertContains(e.getMessage(), "Write permission denied");
                         }
@@ -335,7 +334,7 @@ public class PGSecurityTest extends BasePGTest {
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
-            fail("Query '" + query + "' must fail in the read-only mode!");
+            assertSqlFails("Query '" + query + "' must fail in the read-only mode!");
         } catch (PSQLException e) {
             assertContains(e.getMessage(), "Write permission denied");
         }

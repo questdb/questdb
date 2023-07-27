@@ -48,8 +48,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "CZ\t2886736\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'"
             );
         });
     }
@@ -73,8 +72,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "ML\t563832\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()"
             );
         });
     }
@@ -96,8 +94,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "ML\t2617153\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'"
             );
         });
     }
@@ -120,8 +117,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             String expected = "instrument\tsum\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'"
             );
         });
     }

@@ -60,7 +60,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
         );
         // self-concatenation shouldn't affect the number of distinct values,
         // so the result should stay the same
-        assertSql("select a, count_distinct(s) from x", expected);
+        assertSql(expected, "select a, count_distinct(s) from x");
     }
 
     @Test
@@ -150,7 +150,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
             final String sql = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 2s";
             assertSql(
-                    sql,
                     "ts\tcount_distinct\n" +
                             "1970-01-01T00:06:40.000000Z\t4\n" +
                             "1970-01-01T00:06:42.000000Z\t4\n" +
@@ -166,7 +165,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                             "1970-01-01T00:07:02.000000Z\t3\n" +
                             "1970-01-01T00:07:04.000000Z\t6\n" +
                             "1970-01-01T00:07:06.000000Z\t5\n" +
-                            "1970-01-01T00:07:08.000000Z\t4\n"
+                            "1970-01-01T00:07:08.000000Z\t4\n", sql
             );
         });
     }

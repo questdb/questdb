@@ -97,7 +97,7 @@ public class ExceptTest extends AbstractGriffinTest {
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -126,7 +126,7 @@ public class ExceptTest extends AbstractGriffinTest {
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = fact("select * from x except y")) {
+            try (RecordCursorFactory factory = select("select * from x except y")) {
                 assertCursor(expected2, factory, true, false);
             }
         });
@@ -155,7 +155,7 @@ public class ExceptTest extends AbstractGriffinTest {
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -176,7 +176,7 @@ public class ExceptTest extends AbstractGriffinTest {
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = fact("select distinct t from x except y except z")) {
+            try (RecordCursorFactory factory = select("select distinct t from x except y except z")) {
                 assertCursor(expected2, factory, true, false);
             }
         });

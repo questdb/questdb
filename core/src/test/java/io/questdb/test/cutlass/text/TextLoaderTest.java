@@ -2695,8 +2695,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "2\t1\n";
 
             ddl("create table test (col_a int, col_b long)");
-            alter("alter table test drop column col_a");
-            alter("alter table test add column col_a long");
+            ddl("alter table test drop column col_a");
+            ddl("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -2721,8 +2721,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "1\t2\n";
 
             ddl("create table test (col_a int, col_b long)");
-            alter("alter table test drop column col_a");
-            alter("alter table test add column col_a long");
+            ddl("alter table test drop column col_a");
+            ddl("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -3523,7 +3523,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     protected void assertTable(String expected) throws SqlException {
         refreshTablesInBaseEngine();
-        assertSql("test", expected);
+        assertSql(expected, "test");
     }
 
     @FunctionalInterface

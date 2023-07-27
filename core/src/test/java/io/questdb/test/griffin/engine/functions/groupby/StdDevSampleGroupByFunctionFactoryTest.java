@@ -32,8 +32,8 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     @Test
     public void testStddevSampAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select stddev_samp(x) from (select cast(null as double) x from long_sequence(100))",
-                "stddev_samp\nNaN\n"));
+                "stddev_samp\nNaN\n", "select stddev_samp(x) from (select cast(null as double) x from long_sequence(100))"
+        ));
     }
 
     @Test
@@ -41,8 +41,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 17.2151921 x from long_sequence(100))");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n0.0\n"
+                    "stddev_samp\n0.0\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -52,8 +51,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
+                    "stddev_samp\n29.011491975882016\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -62,11 +60,10 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testStddevSampFirstNull() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x double)");
-            executeInsert("insert into 'tbl1' VALUES (null)");
-            executeInsert("insert into 'tbl1' select x from long_sequence(100)");
+            insert("insert into 'tbl1' VALUES (null)");
+            insert("insert into 'tbl1' select x from long_sequence(100)");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
+                    "stddev_samp\n29.011491975882016\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -76,8 +73,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as float) x from long_sequence(100))");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
+                    "stddev_samp\n29.011491975882016\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -87,8 +83,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
+                    "stddev_samp\n29.011491975882016\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -98,8 +93,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
+                    "stddev_samp\n29.011491975882016\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -109,8 +103,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\nNaN\n"
+                    "stddev_samp\nNaN\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -119,11 +112,10 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testStddevSampOneValue() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
-            executeInsert("insert into 'tbl1' VALUES " +
+            insert("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\nNaN\n"
+                    "stddev_samp\nNaN\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -133,8 +125,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 100000000 x from long_sequence(1000000))");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n0.0\n"
+                    "stddev_samp\n0.0\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -143,10 +134,9 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testStddevSampSomeNull() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
-            executeInsert("insert into 'tbl1' VALUES (null)");
+            insert("insert into 'tbl1' VALUES (null)");
             assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
+                    "stddev_samp\n29.011491975882016\n", "select stddev_samp(x) from tbl1"
             );
         });
     }

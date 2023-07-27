@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -128,11 +127,11 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     drainWalQueue();
                 }
 
-                assertSql(tableName, "i\tts\n" +
+                assertSql("i\tts\n" +
                         "2\t1970-01-01T00:00:00.000500Z\n" +
                         "1\t1970-01-01T00:00:00.001000Z\n" +
                         "3\t1970-01-01T00:00:00.001500Z\n" +
-                        "4\t1970-01-01T00:00:00.001500Z\n");
+                        "4\t1970-01-01T00:00:00.001500Z\n", tableName);
             }
         });
     }
@@ -416,8 +415,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                     WalWriterTest.removeColumn(walWriter, "b");
 
-                    executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
-                    fail("Expected exception is missing");
+                    assertSqlFails("UPDATE " + tableName + " SET b = a");
                 } catch (Exception e) {
                     assertTrue(e.getMessage().endsWith("Invalid column: b"));
                 }
@@ -451,15 +449,15 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                     addColumn(walWriter, "c", ColumnType.INT);
 
-                    executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
-                    executeOperation("UPDATE " + tableName + " SET c = a", CompiledQuery.UPDATE);
+                    update("UPDATE " + tableName + " SET b = a");
+                    update("UPDATE " + tableName + " SET c = a");
                     drainWalQueue();
                 }
 
-                assertSql(tableName, "a\tb\tts\tc\n" +
+                assertSql("a\tb\tts\tc\n" +
                         "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
                         "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
-                        "12\t12\t1970-01-01T00:00:00.000000Z\t12\n");
+                        "12\t12\t1970-01-01T00:00:00.000000Z\t12\n", tableName);
             }
         });
     }
@@ -507,16 +505,52 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
                 sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
 
-                executeOperation("UPDATE " + tableName + " SET " +
-                        "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
-                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12, BIN=$13, GEOBYTE=$14, GEOSHORT=$15, GEOINT=$16, GEOLONG=$17 " +
-                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                update(
+                        "UPDATE " + tableName + " SET " +
+                                "INT=$1, " +
+                                "BYTE=$2, " +
+                                "SHORT=$3, " +
+                                "LONG=$4, " +
+                                "FLOAT=$5, " +
+                                "DOUBLE=$6, " +
+                                "TIMESTAMP=$7, " +
+                                "DATE=$8, " +
+                                "CHAR=$9, " +
+                                "BOOLEAN=$10, " +
+                                "STRING=$11, " +
+                                "LABEL=$12, " +
+                                "BIN=$13, " +
+                                "GEOBYTE=$14, " +
+                                "GEOSHORT=$15, " +
+                                "GEOINT=$16, " +
+                                "GEOLONG=$17 " +
+                                "WHERE INT > 5"
+                );
+
                 drainWalQueue();
 
-                executeOperation("UPDATE " + tableCopyName + " SET " +
-                        "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
-                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12, BIN=$13, GEOBYTE=$14, GEOSHORT=$15, GEOINT=$16, GEOLONG=$17 " +
-                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                update(
+                        "UPDATE " + tableCopyName + " SET " +
+                                "INT=$1, " +
+                                "BYTE=$2, " +
+                                "SHORT=$3, " +
+                                "LONG=$4, " +
+                                "FLOAT=$5, " +
+                                "DOUBLE=$6, " +
+                                "TIMESTAMP=$7, " +
+                                "DATE=$8, " +
+                                "CHAR=$9, " +
+                                "BOOLEAN=$10, " +
+                                "STRING=$11, " +
+                                "LABEL=$12, " +
+                                "BIN=$13, " +
+                                "GEOBYTE=$14, " +
+                                "GEOSHORT=$15, " +
+                                "GEOINT=$16, " +
+                                "GEOLONG=$17 " +
+                                "WHERE INT > 5"
+                );
+
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -542,10 +576,9 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                executeOperation("UPDATE " + tableCopyName + " SET INT=12345678", CompiledQuery.UPDATE);
+                update("UPDATE " + tableCopyName + " SET INT=12345678");
                 try {
-                    executeOperation("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT", CompiledQuery.UPDATE);
-                    fail("Expected exception is not thrown");
+                    assertSqlFails("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT");
                 } catch (Exception e) {
                     assertTrue(e.getMessage().endsWith("UPDATE statements with join are not supported yet for WAL tables"));
                 }
@@ -597,20 +630,52 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
                 sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
 
-                executeOperation("UPDATE " + tableName + " SET " +
-                        "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
-                        "FLOAT=:FLOATVAL, DOUBLE=:DOUBLEVAL, TIMESTAMP=:TIMESTAMPVAL, DATE=:DATEVAL, " +
-                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL, BIN=:BINVAL, " +
-                        "GEOBYTE=:GEOBYTEVAL, GEOSHORT=:GEOSHORTVAL, GEOINT=:GEOINTVAL, GEOLONG=:GEOLONGVAL, UUID=:UUIDVAL " +
-                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                update(
+                        "UPDATE " + tableName + " SET " +
+                                "INT=:INTVAL, " +
+                                "BYTE=:BYTEVAL, " +
+                                "SHORT=:SHORTVAL, " +
+                                "LONG=:LONGVAL, " +
+                                "FLOAT=:FLOATVAL, " +
+                                "DOUBLE=:DOUBLEVAL, " +
+                                "TIMESTAMP=:TIMESTAMPVAL, " +
+                                "DATE=:DATEVAL, " +
+                                "CHAR=:CHARVAL, " +
+                                "BOOLEAN=:BOOLVAL, " +
+                                "STRING=:STRVAL, " +
+                                "LABEL=:SYMVAL, " +
+                                "BIN=:BINVAL, " +
+                                "GEOBYTE=:GEOBYTEVAL, " +
+                                "GEOSHORT=:GEOSHORTVAL, " +
+                                "GEOINT=:GEOINTVAL, " +
+                                "GEOLONG=:GEOLONGVAL, " +
+                                "UUID=:UUIDVAL " +
+                                "WHERE INT > 5"
+                );
                 drainWalQueue();
 
-                executeOperation("UPDATE " + tableCopyName + " SET " +
-                        "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
-                        "FLOAT=:FLOATVAL, DOUBLE=:DOUBLEVAL, TIMESTAMP=:TIMESTAMPVAL, DATE=:DATEVAL, " +
-                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL, BIN=:BINVAL, " +
-                        "GEOBYTE=:GEOBYTEVAL, GEOSHORT=:GEOSHORTVAL, GEOINT=:GEOINTVAL, GEOLONG=:GEOLONGVAL, UUID=:UUIDVAL " +
-                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                update(
+                        "UPDATE " + tableCopyName + " SET " +
+                                "INT=:INTVAL, " +
+                                "BYTE=:BYTEVAL, " +
+                                "SHORT=:SHORTVAL, " +
+                                "LONG=:LONGVAL, " +
+                                "FLOAT=:FLOATVAL, " +
+                                "DOUBLE=:DOUBLEVAL, " +
+                                "TIMESTAMP=:TIMESTAMPVAL, " +
+                                "DATE=:DATEVAL, " +
+                                "CHAR=:CHARVAL, " +
+                                "BOOLEAN=:BOOLVAL, " +
+                                "STRING=:STRVAL, " +
+                                "LABEL=:SYMVAL, " +
+                                "BIN=:BINVAL, " +
+                                "GEOBYTE=:GEOBYTEVAL, " +
+                                "GEOSHORT=:GEOSHORTVAL, " +
+                                "GEOINT=:GEOINTVAL, " +
+                                "GEOLONG=:GEOLONGVAL, " +
+                                "UUID=:UUIDVAL " +
+                                "WHERE INT > 5"
+                );
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -645,11 +710,11 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             replicateAndApplyToAllNodes(tableName, walName);
             TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
 
-            executeOperation("UPDATE " + tableName + " SET INT=rnd_int()", CompiledQuery.UPDATE);
+            update("UPDATE " + tableName + " SET INT=rnd_int()");
             drainWalQueue();
             replicateAndApplyToAllNodes(tableName, walName);
 
-            executeOperation("UPDATE " + tableCopyName + " SET INT=rnd_int()", CompiledQuery.UPDATE);
+            update("UPDATE " + tableCopyName + " SET INT=rnd_int()");
             TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
         });
     }
@@ -674,21 +739,19 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                try {
-                    executeOperation("UPDATE " + tableName + " SET INT=systimestamp()", CompiledQuery.UPDATE);
-                    fail("Expected SQLException is not thrown");
-                } catch (SqlException e) {
-                    assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
-                }
+                expectException(
+                        "UPDATE " + tableName + " SET INT=systimestamp()",
+                        1000, // todo: arbitrary, was not asserted in the test
+                        "inconvertible types: TIMESTAMP -> INT"
+                );
                 drainWalQueue();
                 assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
 
-                try {
-                    executeOperation("UPDATE " + tableCopyName + " SET INT=systimestamp()", CompiledQuery.UPDATE);
-                    fail("Expected SQLException is not thrown");
-                } catch (SqlException e) {
-                    assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
-                }
+                expectException(
+                        "UPDATE " + tableCopyName + " SET INT=systimestamp()",
+                        10000,
+                        "inconvertible types: TIMESTAMP -> INT"
+                );
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -714,10 +777,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                executeOperation("UPDATE " + tableName + " SET INT=12345678", CompiledQuery.UPDATE);
+                update("UPDATE " + tableName + " SET INT=12345678");
                 drainWalQueue();
 
-                executeOperation("UPDATE " + tableCopyName + " SET INT=12345678", CompiledQuery.UPDATE);
+                update("UPDATE " + tableCopyName + " SET INT=12345678");
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -743,10 +806,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                executeOperation("UPDATE " + tableName + " SET INT=12345678 WHERE INT > 5", CompiledQuery.UPDATE);
+                update("UPDATE " + tableName + " SET INT=12345678 WHERE INT > 5");
                 drainWalQueue();
 
-                executeOperation("UPDATE " + tableCopyName + " SET INT=12345678 WHERE INT > 5", CompiledQuery.UPDATE);
+                update("UPDATE " + tableCopyName + " SET INT=12345678 WHERE INT > 5");
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -895,8 +958,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
     private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
         try (TableReader reader = getReader(tableName)) {
-            assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
-                    "maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n");
+            assertSql("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n", "SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'"
+            );
             reader.reload();
             assertEquals(expectedMaxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
         }
@@ -965,11 +1028,11 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 walName = walWriter.getWalName();
             }
 
-            executeOperation("UPDATE " + tableName + " SET LONG=2*" + nowName + "()-" + nowName + "()", CompiledQuery.UPDATE);
+            update("UPDATE " + tableName + " SET LONG=2*" + nowName + "()-" + nowName + "()");
             drainWalQueue();
             replicateAndApplyToAllNodes(tableName, walName);
 
-            executeOperation("UPDATE " + tableCopyName + " SET LONG=2*" + nowName + "()-" + nowName + "()", CompiledQuery.UPDATE);
+            update("UPDATE " + tableCopyName + " SET LONG=2*" + nowName + "()-" + nowName + "()");
             TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
         });
     }
@@ -979,7 +1042,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     }
 
     private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId) throws SqlException {
-        executeOperation("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows, CompiledQuery.ALTER);
+        ddl("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows);
         if (tableId > 0) {
             drainWalQueue();
         }

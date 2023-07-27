@@ -68,8 +68,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
             );
 
             assertSql(
-                    "select distinct * from x where 1 != 1",
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n"
+                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x where 1 != 1"
             );
         });
     }
@@ -131,8 +130,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
             );
 
             assertSql(
-                    "select distinct * from x",
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n"
+                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x"
             );
         });
     }

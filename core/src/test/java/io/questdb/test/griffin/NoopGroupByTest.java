@@ -205,9 +205,9 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     public void testNoopGroupByJoinArithmetic() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table x (id int, ref int, ref3 int)");
-            compile("insert into x values (1,1,1), (1,2,2);");
+            insert("insert into x values (1,1,1), (1,2,2);");
             compile("create table y (id int, ref int, val double)");
-            compile("insert into y values (1,1,1), (1,2,2);");
+            insert("insert into y values (1,1,1), (1,2,2);");
             engine.releaseAllWriters();
             assertQuery(
                     "id\tcolumn\tsum\n" +

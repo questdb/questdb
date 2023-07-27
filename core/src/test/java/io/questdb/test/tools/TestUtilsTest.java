@@ -71,7 +71,7 @@ public final class TestUtilsTest extends AbstractGriffinTest {
 
     private static void addAllRecordsToMap(String query, Map<String, Integer> map) throws SqlException {
         try (
-                RecordCursorFactory factory = fact(query);
+                RecordCursorFactory factory = select(query);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             TestUtils.addAllRecordsToMap(cursor, factory.getMetadata(), map);

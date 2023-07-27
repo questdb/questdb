@@ -2164,7 +2164,6 @@ if __name__ == "__main__":
             }
 
             assertSql(
-                    "t",
                     "a\tb\n" +
                             "2\t1970-01-01T00:00:00.000001Z\n" +
                             "3\t1970-01-01T00:00:00.000002Z\n" +
@@ -2175,7 +2174,7 @@ if __name__ == "__main__":
                             "8\t1970-01-01T00:00:00.000007Z\n" +
                             "9\t1970-01-01T00:00:00.000008Z\n" +
                             "10\t1970-01-01T00:00:00.000009Z\n" +
-                            "11\t1970-01-01T00:00:00.000010Z\n"
+                            "11\t1970-01-01T00:00:00.000010Z\n", "t"
             );
 
             // Drop the table and create it once again with the same contents to verify
@@ -2188,7 +2187,6 @@ if __name__ == "__main__":
                 pstmt.execute();
             }
             assertSql(
-                    "t",
                     "a\tb\n" +
                             "2\t1970-01-01T00:00:00.000001Z\n" +
                             "3\t1970-01-01T00:00:00.000002Z\n" +
@@ -2199,7 +2197,7 @@ if __name__ == "__main__":
                             "8\t1970-01-01T00:00:00.000007Z\n" +
                             "9\t1970-01-01T00:00:00.000008Z\n" +
                             "10\t1970-01-01T00:00:00.000009Z\n" +
-                            "11\t1970-01-01T00:00:00.000010Z\n"
+                            "11\t1970-01-01T00:00:00.000010Z\n", "t"
             );
         });
     }
@@ -2265,8 +2263,7 @@ if __name__ == "__main__":
                 pstmt.execute();
             }
             assertSql(
-                    "t",
-                    "a\tb\n"
+                    "a\tb\n", "t"
             );
         });
     }
@@ -5276,7 +5273,7 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        fail("cannot insert null when the column is designated");
+                        assertSqlFails("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
                         Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
                                 "  Position: 1", expected.getMessage());
@@ -7007,8 +7004,8 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
 
         ddl("create table tab2 (a double);");
-        executeInsert("insert into 'tab2' values (0.7);");
-        executeInsert("insert into 'tab2' values (0.2);");
+        insert("insert into 'tab2' values (0.7);");
+        insert("insert into 'tab2' values (0.2);");
         engine.clear();
 
         final String script = ">0000000804d2162f\n" +
@@ -7051,8 +7048,8 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
 
         ddl("create table tab2 (a double);");
-        executeInsert("insert into 'tab2' values (0.7);");
-        executeInsert("insert into 'tab2' values (0.2);");
+        insert("insert into 'tab2' values (0.7);");
+        insert("insert into 'tab2' values (0.2);");
         engine.clear();
 
         final String script = ">0000000804d2162f\n" +
@@ -7842,7 +7839,7 @@ create table tab as (
                     "    sample_time timestamp,\n" +
                     "    value int\n" +
                     ") timestamp (sample_time) partition by YEAR");
-            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
+            insert("INSERT INTO x VALUES ('ABC',0,0)");
             mayDrainWalQueue();
 
             sink.clear();
@@ -8411,7 +8408,7 @@ create table tab as (
                     try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
                         stmt.setLong(1, 42);
                         stmt.executeUpdate();
-                        fail("id column was dropped, the UPDATE should have failed");
+                        assertSqlFails("id column was dropped, the UPDATE should have failed");
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "Invalid column: id");
                     }
@@ -9486,7 +9483,7 @@ create table tab as (
                         }
                         connection.commit();
 
-                        try (RecordCursorFactory factory = fact("xyz")) {
+                        try (RecordCursorFactory factory = select("xyz")) {
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 final Record record = cursor.getRecord();
                                 int count = 0;
@@ -9834,7 +9831,7 @@ create table tab as (
                 workerPool.start(LOG);
                 for (int i = 0; i < clientCount; i++) {
                     try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
-                        fail("Connection should not be established when server disconnects during authentication");
+                        assertSqlFails("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
 
                     }
@@ -10222,7 +10219,7 @@ create table tab as (
                     connection.commit();
 
                     rnd.reset();
-                    try (RecordCursorFactory factory = fact("xyz")) {
+                    try (RecordCursorFactory factory = select("xyz")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             int count = 0;
@@ -10333,7 +10330,7 @@ create table tab as (
                     }
                     connection.commit();
 
-                    try (RecordCursorFactory factory = fact("xyz")) {
+                    try (RecordCursorFactory factory = select("xyz")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             int count = 0;

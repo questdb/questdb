@@ -39,7 +39,7 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                fail("select * from x where name ~ null");
+                assertSqlFails("select * from x where name ~ null");
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
@@ -52,7 +52,7 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                fail("select * from x where name ~ 'XJ**'");
+                assertSqlFails("select * from x where name ~ 'XJ**'");
             } catch (SqlException e) {
                 Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
@@ -84,7 +84,7 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
                     "XJN\n";
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = fact("select * from x where name ~ 'XJ'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ~ 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);

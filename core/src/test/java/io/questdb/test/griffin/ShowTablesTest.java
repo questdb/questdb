@@ -35,7 +35,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowColumnsWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                             "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
@@ -49,7 +49,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowColumnsWithMissingTable() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances2");
                 Assert.fail();
@@ -62,7 +62,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowColumnsWithSimpleTable() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                             "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
@@ -81,10 +81,10 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowTablesWithDrop() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8("table\nbalances\n", "show tables");
-            alter("create table balances2(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            alter("drop table balances", sqlExecutionContext);
+            ddl("create table balances2(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("drop table balances", sqlExecutionContext);
             assertQuery8("table\nbalances2\n", "show tables");
         });
     }
@@ -92,7 +92,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowTablesWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8("table\nbalances\n", "select * from all_tables()");
         });
     }
@@ -100,7 +100,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8("table\nbalances\n", "show tables");
         });
     }
@@ -124,7 +124,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testSqlSyntax1() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show");
                 Assert.fail();
@@ -143,7 +143,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testSqlSyntax2() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns balances");
                 Assert.fail();
@@ -156,7 +156,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testSqlSyntax3() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances where");
                 Assert.fail();

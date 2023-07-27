@@ -37,11 +37,11 @@ public class KeywordsFunctionFactoryTest extends AbstractGriffinTest {
         CharSequence[] keywords = KEYWORDS.clone();
         Arrays.sort(keywords);
         String expected = "keyword\n" + String.join("\n", keywords) + '\n';
-        assertSql("select keyword from keywords() order by keyword asc", expected);
+        assertSql(expected, "select keyword from keywords() order by keyword asc");
     }
 
     @Test
     public void testSelectKeywordsWithFilter() throws Exception {
-        assertSql("keywords() where keyword = 'add'", "keyword\nadd\n");
+        assertSql("keyword\nadd\n", "keywords() where keyword = 'add'");
     }
 }

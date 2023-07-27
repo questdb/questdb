@@ -55,11 +55,11 @@ public class DropStatementTest extends AbstractGriffinTest {
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE \"" + tab0 + "\" (s string)", sqlExecutionContext);
-            alter("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
-            alter("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
+            ddl("CREATE TABLE \"" + tab0 + "\" (s string)", sqlExecutionContext);
+            ddl("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
+            ddl("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
 
-            alter("DROP ALL TABLES", sqlExecutionContext);
+            ddl("DROP ALL TABLES", sqlExecutionContext);
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
             Assert.assertEquals(0, tableBucket.size());
@@ -72,7 +72,7 @@ public class DropStatementTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE \"" + tab0 + "\" (a int)");
 
-            try (RecordCursorFactory factory = fact("\"" + tab0 + '"')) {
+            try (RecordCursorFactory factory = select("\"" + tab0 + '"')) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                     ddl("DROP TABLE \"" + tab0 + '"');
                 }
@@ -88,7 +88,7 @@ public class DropStatementTest extends AbstractGriffinTest {
             ddl("CREATE TABLE \"large table\" (a int)");
 
             try (TableWriter ignored = getWriter("large table")) {
-                fail("DROP TABLE \"large table\"");
+                assertSqlFails("DROP TABLE \"large table\"");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
             }
@@ -122,7 +122,7 @@ public class DropStatementTest extends AbstractGriffinTest {
     public void testDropTableMissingFrom() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("drop i_am_missing");
+                assertSqlFails("drop i_am_missing");
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
@@ -169,7 +169,7 @@ public class DropStatementTest extends AbstractGriffinTest {
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("x.csv"));
 
             try {
-                fail("DROP TABLE x.csv");
+                assertSqlFails("DROP TABLE x.csv");
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [.]");
@@ -186,13 +186,13 @@ public class DropStatementTest extends AbstractGriffinTest {
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE \"" + tab0 + "\" (s string)");
-            alter("CREATE TABLE \"" + tab1 + "\" (s string)");
-            alter("CREATE TABLE \"" + tab2 + "\" (s string)");
+            ddl("CREATE TABLE \"" + tab0 + "\" (s string)");
+            ddl("CREATE TABLE \"" + tab1 + "\" (s string)");
+            ddl("CREATE TABLE \"" + tab2 + "\" (s string)");
 
-            try (RecordCursorFactory factory = fact("\"" + tab0 + '"')) {
+            try (RecordCursorFactory factory = select("\"" + tab0 + '"')) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    fail("DROP ALL TABLES");
+                    assertSqlFails("DROP ALL TABLES");
                 }
             } catch (CairoException expected) {
                 TestUtils.assertContains(
@@ -213,12 +213,12 @@ public class DropStatementTest extends AbstractGriffinTest {
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE \"" + tab0 + "\" (s string)", sqlExecutionContext);
-            alter("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
-            alter("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
+            ddl("CREATE TABLE \"" + tab0 + "\" (s string)", sqlExecutionContext);
+            ddl("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
+            ddl("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
 
             try (TableWriter ignored = getWriter(tab0)) {
-                alter("DROP ALL TABLES;", sqlExecutionContext);
+                ddl("DROP ALL TABLES;", sqlExecutionContext);
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),

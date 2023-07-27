@@ -1587,7 +1587,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableInVolumeFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                alter("create table tst0 (" +
+                ddl("create table tst0 (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
@@ -4843,7 +4843,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testLexerReset() {
         for (int i = 0; i < 10; i++) {
             try {
-                fact(
+                select(
                         "select \n" +
                                 "-- ltod(Date)\n" +
                                 "count() \n" +
@@ -4950,7 +4950,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMissingWhere() {
         try {
-            fact("select id, x + 10, x from tab id ~ 'HBRO'");
+            select("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -7544,7 +7544,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
                             CreateTableTestUtils.create(tableModels[i]);
                         }
-                        fact("select * from tab");
+                        select("select * from tab");
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
@@ -7695,7 +7695,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try {
-            fact(b);
+            select(b);
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());

@@ -28,11 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -201,17 +202,17 @@ public class SecurityTest extends AbstractGriffinTest {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             memoryRestrictedEngine.reloadTableNames();
 
-            CompiledQuery cq = compile("insert into balances values (1, 'EUR', 140.6)");
-            InsertOperation insertStatement = cq.getInsertOperation();
-            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
-            assertQuery("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances", null, true, true);
+            insert("insert into balances values (1, 'EUR', 140.6)");
+            assertQuery(
+                    "cust_id\tccy\tbalance\n1\tEUR\t140.6\n",
+                    "select * from balances",
+                    null,
+                    true,
+                    true
+            );
 
             try {
-                alter("alter table balances add column newcol int", readOnlyExecutionContext);
-                Assert.fail();
+                assertSqlFails("alter table balances add column newcol int", readOnlyExecutionContext);
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
@@ -362,7 +363,7 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testCopyDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
+                assertSqlFails("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.toString(), "permission denied");
             }
@@ -373,7 +374,7 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                assertSqlFails("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
@@ -392,7 +393,7 @@ public class SecurityTest extends AbstractGriffinTest {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             memoryRestrictedEngine.reloadTableNames();
             try {
-                fail("drop table balances", readOnlyExecutionContext);
+                assertSqlFails("drop table balances", readOnlyExecutionContext);
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
@@ -408,21 +409,18 @@ public class SecurityTest extends AbstractGriffinTest {
 
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
 
-            CompiledQuery cq = compile("insert into balances values (1, 'EUR', 140.6)");
-            InsertOperation insertOperation = cq.getInsertOperation();
-            try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
-            assertQuery("count\n1\n", "select count() from balances", null, false, true);
+            insert("insert into balances values (1, 'EUR', 140.6)");
+            assertQuery(
+                    "count\n1\n",
+                    "select count() from balances",
+
+                    null,
+                    false,
+                    true
+            );
 
             try {
-                cq = compile("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
-                insertOperation = cq.getInsertOperation();
-                try (InsertMethod method = insertOperation.createMethod(readOnlyExecutionContext)) {
-                    method.execute();
-                    method.commit();
-                }
+                insert("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
@@ -957,7 +955,7 @@ public class SecurityTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             try {
-                fail("rename table balances to newname", readOnlyExecutionContext);
+                assertSqlFails("rename table balances to newname", readOnlyExecutionContext);
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }

@@ -352,17 +352,16 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddBothMidTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column s2 symbol");
-            alter("alter table tab add column val double");
+            ddl("alter table tab add column s2 symbol");
+            ddl("alter table tab add column val double");
             ddl("insert into tab select null, rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             assertSql(
-                    "select s2, sum(val) from tab order by s2",
                     "s2\tsum\n" +
                             "\t104083.77969067449\n" +
                             "a1\t103982.62399952614\n" +
                             "a2\t104702.89752880299\n" +
-                            "a3\t104299.02298329721\n"
+                            "a3\t104299.02298329721\n", "select s2, sum(val) from tab order by s2"
             );
         });
     }
@@ -371,10 +370,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddKeyMidTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val from long_sequence(1000000))");
-            alter("alter table tab add column s2 symbol cache");
+            ddl("alter table tab add column s2 symbol cache");
             ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
-            try (RecordCursorFactory factory = fact("select s2, sum(val) from tab order by s2")) {
+            try (RecordCursorFactory factory = select("select s2, sum(val) from tab order by s2")) {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
@@ -430,7 +429,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableAvgDate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val date");
+            ddl("alter table tab add column val date");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
             String expected = "s1\tavg\n" +
                     "\t49882.75926752372\n" +
@@ -442,8 +441,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, avg(val) from tab order by s1",
-                    expected
+                    expected, "select s1, avg(val) from tab order by s1"
             );
         });
     }
@@ -452,7 +450,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableAvgDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val double");
+            ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             String expected = "s1\tavg\n" +
@@ -464,8 +462,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s2\tNaN\n" +
                     "s3\tNaN\n";
             assertSql(
-                    "select s1, avg(val) from tab order by s1",
-                    expected
+                    expected, "select s1, avg(val) from tab order by s1"
             );
         });
     }
@@ -474,7 +471,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableAvgInt() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val int");
+            ddl("alter table tab add column val int");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(0, 100000, 2) from long_sequence(1000000)");
             String expected = "s1\tavg\n" +
                     "\t49985.893055775494\n" +
@@ -486,8 +483,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, avg(val) from tab order by s1",
-                    expected
+                    expected, "select s1, avg(val) from tab order by s1"
             );
         });
     }
@@ -496,7 +492,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableAvgLong() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val long");
+            ddl("alter table tab add column val long");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
 
             String expected = "s1\tavg\n" +
@@ -508,8 +504,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s2\tNaN\n" +
                     "s3\tNaN\n";
             assertSql(
-                    "select s1, avg(val) from tab order by s1",
-                    expected
+                    expected, "select s1, avg(val) from tab order by s1"
             );
         });
     }
@@ -518,7 +513,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableAvgTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val timestamp");
+            ddl("alter table tab add column val timestamp");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
             String expected = "s1\tavg\n" +
                     "\t49882.75926752372\n" +
@@ -530,8 +525,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, avg(val) from tab order by s1",
-                    expected
+                    expected, "select s1, avg(val) from tab order by s1"
             );
         });
     }
@@ -540,7 +534,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableCount() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val long");
+            ddl("alter table tab add column val long");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
             String expected = "s1\tcount\n" +
                     "\t500194\n" +
@@ -552,8 +546,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\t250185\n";
 
             assertSql(
-                    "select s1, count() from tab order by s1",
-                    expected
+                    expected, "select s1, count() from tab order by s1"
             );
         });
     }
@@ -562,7 +555,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableKSumDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val double");
+            ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tksum\n" +
                     "\t104083.7796906751\n" +
@@ -574,8 +567,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, ksum(val) from tab order by s1",
-                    expected
+                    expected, "select s1, ksum(val) from tab order by s1"
             );
         });
     }
@@ -584,7 +576,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMaxDate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val date");
+            ddl("alter table tab add column val date");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
@@ -596,8 +588,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s2\t\n" +
                     "s3\t\n";
             assertSql(
-                    "select s1, max(val) from tab order by s1",
-                    expected
+                    expected, "select s1, max(val) from tab order by s1"
             );
         });
     }
@@ -606,7 +597,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMaxDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val double");
+            ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tmax\n" +
                     "\t0.9999983440839832\n" +
@@ -618,8 +609,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, max(val) from tab order by s1",
-                    expected
+                    expected, "select s1, max(val) from tab order by s1"
             );
         });
     }
@@ -628,7 +618,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMaxInt() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val int");
+            ddl("alter table tab add column val int");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
@@ -641,8 +631,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, max(val) from tab order by s1",
-                    expected
+                    expected, "select s1, max(val) from tab order by s1"
             );
         });
     }
@@ -651,7 +640,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMaxLong() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val long");
+            ddl("alter table tab add column val long");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
@@ -664,8 +653,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, max(val) from tab order by s1",
-                    expected
+                    expected, "select s1, max(val) from tab order by s1"
             );
         });
     }
@@ -674,7 +662,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMaxTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val timestamp");
+            ddl("alter table tab add column val timestamp");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
@@ -686,8 +674,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s2\t\n" +
                     "s3\t\n";
             assertSql(
-                    "select s1, max(val) from tab order by s1",
-                    expected
+                    expected, "select s1, max(val) from tab order by s1"
             );
         });
     }
@@ -696,7 +683,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMinDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val double");
+            ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             String expected = "s1\tmin\n" +
@@ -709,8 +696,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, min(val) from tab order by s1",
-                    expected
+                    expected, "select s1, min(val) from tab order by s1"
             );
         });
     }
@@ -719,7 +705,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMinInt() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val int");
+            ddl("alter table tab add column val int");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(33, 889992, 2) from long_sequence(1000000)");
             String expected = "s1\tmin\n" +
                     "\t33\n" +
@@ -731,8 +717,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, min(val) from tab order by s1",
-                    expected
+                    expected, "select s1, min(val) from tab order by s1"
             );
         });
     }
@@ -741,7 +726,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableMinLong() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val long");
+            ddl("alter table tab add column val long");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmin\n" +
@@ -754,8 +739,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, min(val) from tab order by s1",
-                    expected
+                    expected, "select s1, min(val) from tab order by s1"
             );
         });
     }
@@ -764,7 +748,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableNSumDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val double");
+            ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tnsum\n" +
                     "\t104083.77969067496\n" +
@@ -777,8 +761,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
 
             assertSql(
-                    "select s1, nsum(val) from tab order by s1",
-                    expected
+                    expected, "select s1, nsum(val) from tab order by s1"
             );
         });
     }
@@ -787,7 +770,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableSumDate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val date");
+            ddl("alter table tab add column val date");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(0, 100000, 2) from long_sequence(1000000)");
 
             String expected = "s1\tsum\n" +
@@ -799,8 +782,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s2\t\n" +
                     "s3\t\n";
             assertSql(
-                    "select s1, sum(val) from tab order by s1",
-                    expected
+                    expected, "select s1, sum(val) from tab order by s1"
             );
         });
     }
@@ -809,7 +791,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableSumDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val double");
+            ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             String expected = "s1\tsum\n" +
@@ -821,8 +803,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s2\tNaN\n" +
                     "s3\tNaN\n";
             assertSql(
-                    "select s1, sum(val) from tab order by s1",
-                    expected
+                    expected, "select s1, sum(val) from tab order by s1"
             );
         });
     }
@@ -831,7 +812,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableSumInt() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val int");
+            ddl("alter table tab add column val int");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(-100, 100, 2) from long_sequence(1000000)");
 
             String expected = "s1\tsum\n" +
@@ -844,8 +825,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "s3\tNaN\n";
 
             assertSql(
-                    "select s1, sum(val) from tab order by s1",
-                    expected
+                    expected, "select s1, sum(val) from tab order by s1"
             );
         });
     }
@@ -854,11 +834,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddValueMidTableSumLong() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            alter("alter table tab add column val long");
+            ddl("alter table tab add column val long");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(0, 100000, 2) from long_sequence(1000000)");
 
             assertSql(
-                    "select s1, sum(val) from tab order by s1",
                     "s1\tsum\n" +
                             "\t10422383318\n" +
                             "a1\t10382596338\n" +
@@ -866,7 +845,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             "a3\t10391686269\n" +
                             "s1\tNaN\n" +
                             "s2\tNaN\n" +
-                            "s3\tNaN\n"
+                            "s3\tNaN\n", "select s1, sum(val) from tab order by s1"
             );
         });
     }
@@ -889,7 +868,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolSumAddKeyPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            alter("alter table tab add column s2 symbol cache");
+            ddl("alter table tab add column s2 symbol cache");
             ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             String expected = "s2\tsum\n" +
@@ -899,7 +878,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "a3\t104044.11327\n";
 
             // test with key falling within null columns
-            assertSql("select s2, round(sum(val), 7) sum from tab order by s2", expected);
+            assertSql(expected, "select s2, round(sum(val), 7) sum from tab order by s2");
         });
     }
 
@@ -907,11 +886,11 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolSumAddKeyTimeRange() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            alter("alter table tab add column s2 symbol cache");
+            ddl("alter table tab add column s2 symbol cache");
             ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             // test with key falling within null columns
-            try (RecordCursorFactory factory = fact("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2")) {
+            try (RecordCursorFactory factory = select("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2")) {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
@@ -929,7 +908,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
 
             /// test key on overlap
-            try (RecordCursorFactory factory = fact("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2")) {
+            try (RecordCursorFactory factory = select("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2")) {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
@@ -985,26 +964,24 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolSumAddValueTimeRange() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            alter("alter table tab add column val double ");
+            ddl("alter table tab add column val double ");
             ddl("insert into tab select rnd_symbol('s1','s2','s3', null), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_double(2) from long_sequence(1000000)");
 
             // test with key falling within null columns
             assertSql(
-                    "select s1, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s1",
                     "s1\tsum\n" +
                             "\tNaN\n" +
                             "s1\tNaN\n" +
                             "s2\tNaN\n" +
-                            "s3\tNaN\n"
+                            "s3\tNaN\n", "select s1, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s1"
             );
 
             assertSql(
-                    "select s1, round(sum(val), 8) as sum from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s1",
                     "s1\tsum\n" +
                             "\t13168.08843159\n" +
                             "s1\t12972.77827527\n" +
                             "s2\t13388.11832829\n" +
-                            "s3\t12929.34474745\n"
+                            "s3\t12929.34474745\n", "select s1, round(sum(val), 8) as sum from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s1"
             );
         });
     }
@@ -1013,11 +990,11 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolSumTimeRange() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            alter("alter table tab add column s2 symbol cache");
+            ddl("alter table tab add column s2 symbol cache");
             ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             // test with key falling within null columns
-            try (RecordCursorFactory factory = fact("select s2, sum(val) from tab order by s2")) {
+            try (RecordCursorFactory factory = select("select s2, sum(val) from tab order by s2")) {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
@@ -1426,8 +1403,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 String value = String.valueOf((ts - 1) * 0.5);
                 String expected = "s\n" +
                         (ts > 0 ? value : "NaN") + "\n";
-                assertSql("select sum(val) s from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)",
-                        expected
+                assertSql(expected, "select sum(val) s from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)"
                 );
             }
         });
@@ -1441,9 +1417,9 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             String createSql = "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(0, " + step + ") t from long_sequence(" + count + ")) timestamp(t) partition by DAY";
             ddl(createSql);
-            alter("alter table tab add val2 DOUBLE");
+            ddl("alter table tab add val2 DOUBLE");
             String insetSql = "insert into tab select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(" + count * step + ", " + step + ") t, 1 val2 from long_sequence(" + count + ")";
-            executeInsert(insetSql);
+            insert(insetSql);
 
             // Move upper timestamp boundary
             // [step, ts * step)
@@ -1451,8 +1427,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 String expected = "s1\ts2\n" +
                         ((ts - 1) * 0.5) + "\t" + (ts <= count ? "NaN" : (ts - count) * 1.0) + "\n";
                 assertSql(
-                        "select sum(val) s1,  sum(val2) s2 from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)",
-                        expected
+                        expected, "select sum(val) s1,  sum(val2) s2 from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)"
                 );
             }
 
@@ -1462,8 +1437,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 String expected = "s1\ts2\n" +
                         ((2 * count - ts - 1) * 0.5) + "\t" + (ts < count ? (count - 1) * 1.0 : (2 * count - ts - 1) * 1.0) + "\n";
                 assertSql(
-                        "select sum(val) s1, sum(val2) s2 from tab where t >= CAST(" + (ts * step) + " AS TIMESTAMP) AND t < CAST(" + ((2 * count - 1) * step) + " AS TIMESTAMP)",
-                        expected
+                        expected, "select sum(val) s1, sum(val2) s2 from tab where t >= CAST(" + (ts * step) + " AS TIMESTAMP) AND t < CAST(" + ((2 * count - 1) * step) + " AS TIMESTAMP)"
                 );
             }
         });
@@ -1475,12 +1449,12 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     private static void runCountTestWithColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
-        compile(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        compile(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
-        compile(compiler, "alter table x add column k int", sqlExecutionContext);
-        compile(compiler, "insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
-        compile(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
-        compile(compiler, "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
+        ddl(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
+        ddl(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        ddl(compiler, "alter table x add column k int", sqlExecutionContext);
+        ddl(compiler, "insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
+        ddl(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        ddl(compiler, "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
                 " ((2+3*3600L*1000000)::timestamp,2, 8,8, 8.0, cast(8 as date), 8::timestamp)," +
                 " ((1+4*3600L*1000000)::timestamp,3, null,null, null, null, null)," +
                 " ((2+4*3600L*1000000)::timestamp,4, 10,10, 10.0, cast(10 as date), 10::timestamp) ", sqlExecutionContext);
@@ -1540,12 +1514,12 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
-        compile(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        compile(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
-        compile(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
-        compile(compiler, "insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
-        compile(compiler, "alter table x add column k int", sqlExecutionContext);
-        compile(compiler, "insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
+        ddl(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
+        ddl(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        ddl(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        ddl(compiler, "insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
+        ddl(compiler, "alter table x add column k int", sqlExecutionContext);
+        ddl(compiler, "insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
 
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select k, " +

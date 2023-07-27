@@ -92,20 +92,20 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table currencies(id long, ccy symbol, ts timestamp) timestamp(ts)");
 
-            executeInsert("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
-            assertSql("currencies", "id\tccy\tts\n" +
-                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n");
+            insert("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
+            assertSql("id\tccy\tts\n" +
+                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n", "currencies");
 
             ddl("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies");
-            assertSql("currencies", "id\tccy\tts\n" +
+            assertSql("id\tccy\tts\n" +
                     "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
-                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n");
+                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n", "currencies");
 
             ddl("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies");
-            assertSql("currencies", "id\tccy\tts\n" +
+            assertSql("id\tccy\tts\n" +
                     "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
                     "2\tEUR\t2019-03-10T01:00:00.000000Z\n" +
-                    "3\tGBP\t2019-03-10T02:00:00.000000Z\n");
+                    "3\tGBP\t2019-03-10T02:00:00.000000Z\n", "currencies");
         });
     }
 
@@ -114,20 +114,20 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)");
 
-            executeInsert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
-            assertSql("currencies", "ccy\tid\tts\n" +
-                    "USD\t1\t2019-03-10T00:00:00.000000Z\n");
+            insert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            assertSql("ccy\tid\tts\n" +
+                    "USD\t1\t2019-03-10T00:00:00.000000Z\n", "currencies");
 
             ddl("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
-            assertSql("currencies", "ccy\tid\tts\n" +
+            assertSql("ccy\tid\tts\n" +
                     "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
-                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n");
+                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n", "currencies");
 
             ddl("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
-            assertSql("currencies", "ccy\tid\tts\n" +
+            assertSql("ccy\tid\tts\n" +
                     "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
                     "EUR\t2\t2019-03-10T01:00:00.000000Z\n" +
-                    "GBP\t3\t2019-03-10T02:00:00.000000Z\n");
+                    "GBP\t3\t2019-03-10T02:00:00.000000Z\n", "currencies");
         });
     }
 
@@ -457,8 +457,8 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     ddl("create table tab (id int, val symbol index)");
-                    executeInsert("insert into tab values (1, '')");
-                    assertSql("select id from tab where val = ''", "id\n1\n");
+                    insert("insert into tab values (1, '')");
+                    assertSql("id\n1\n", "select id from tab where val = ''");
                 }
         );
     }
@@ -468,8 +468,8 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     ddl("create table tab (id int, val symbol index)");
-                    executeInsert("insert into tab values (1, '')");
-                    assertSql("select id from tab where val = null", "id\n");
+                    insert("insert into tab values (1, '')");
+                    assertSql("id\n", "select id from tab where val = null");
                 }
         );
     }
@@ -483,7 +483,7 @@ public class InsertTest extends AbstractGriffinTest {
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertOperation insertOperation = cq.getInsertOperation();
 
-                alter("alter table balances drop column ccy", sqlExecutionContext);
+                ddl("alter table balances drop column ccy", sqlExecutionContext);
 
                 insertOperation.createMethod(sqlExecutionContext);
                 Assert.fail();
@@ -496,7 +496,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertExplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            executeInsert("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))");
+            insert("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))");
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
@@ -596,7 +596,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertImplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            executeInsert("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
+            insert("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
@@ -609,7 +609,7 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             try {
-                fail("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
+                assertSqlFails("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(30, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
@@ -631,7 +631,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertMultipleRows() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (ts timestamp, sym symbol) timestamp(ts);");
-            executeInsert("insert into trades VALUES (1262599200000000, 'USDJPY'), (3262599300000000, 'USDFJD');");
+            insert("insert into trades VALUES (1262599200000000, 'USDJPY'), (3262599300000000, 'USDFJD');");
 
             String expected = "ts\tsym\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\n" +
@@ -668,7 +668,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertMultipleRowsExtraParentheses() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (i INT, sym symbol)");
-            executeInsert("insert into trades VALUES ((1), 'USD'), ((2), (('FJD')));");
+            insert("insert into trades VALUES ((1), 'USD'), ((2), (('FJD')));");
 
             String expected = "i\tsym\n" +
                     "1\tUSD\n" +
@@ -771,7 +771,7 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table trades (ts timestamp) timestamp(ts);");
             try {
-                executeInsert("insert into trades VALUES (1), (3), (2);");
+                insert("insert into trades VALUES (1), (3), (2);");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Cannot insert rows out of order to non-partitioned table.");
             }
@@ -794,7 +794,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            executeInsert("insert into balances values (1, 'USD', 356.12)");
+            insert("insert into balances values (1, 'USD', 356.12)");
             String expected = "cust_id\tccy\tbalance\n" +
                     "1\tUSD\t356.12\n";
 
@@ -819,8 +819,8 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     ddl("create table tab (id int, val symbol index)");
-                    executeInsert("insert into tab values (1, NULL)");
-                    assertSql("select id from tab where val = ''", "id\n");
+                    insert("insert into tab values (1, NULL)");
+                    assertSql("id\n", "select id from tab where val = ''");
                 }
         );
     }
@@ -830,8 +830,8 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     ddl("create table tab (id int, val symbol index)");
-                    executeInsert("insert into tab values (1, null)");
-                    assertSql("select id from tab where val = null", "id\n1\n");
+                    insert("insert into tab values (1, null)");
+                    assertSql("id\n1\n", "select id from tab where val = null");
                 }
         );
     }
@@ -873,7 +873,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSingleCharacterSymbol() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table ww (id int, sym symbol)");
-            executeInsert("insert into ww VALUES ( 2, 'A')");
+            insert("insert into ww VALUES ( 2, 'A')");
             String expected = "id\tsym\n" +
                     "2\tA\n";
 
@@ -885,8 +885,8 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table symbols (sym symbol, isNewSymbol BOOLEAN)");
-            executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);");
-            executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);");
+            insert("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);");
+            insert("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);");
 
             String expected = "sym\tisNewSymbol\n" +
                     "USDJPY\tfalse\n" +
@@ -900,8 +900,8 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
-            executeInsert("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);");
+            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            insert("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);");
 
             String expected = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
@@ -915,7 +915,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolPartitionedAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
 
             String expected1 = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
@@ -926,7 +926,7 @@ public class InsertTest extends AbstractGriffinTest {
                 w.truncate();
             }
 
-            executeInsert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+            insert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
 
             String expected2 = "ts\tsym\tbid\task\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
@@ -939,8 +939,8 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolPartitionedFarApart() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
-            executeInsert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            insert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
 
             String expected = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
@@ -954,14 +954,14 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertTimestampWithTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table t (timestamp timestamp) timestamp(timestamp);");
-            executeInsert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
+            insert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
 
             String expected1 = "timestamp\n" +
                     "2020-12-31T15:15:51.663000Z\n";
 
             assertReaderCheckWal(expected1, "t");
 
-            executeInsert("insert into t values (cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone))");
+            insert("insert into t values (cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone))");
 
             String expected2 = expected1 +
                     "2021-12-31T15:15:51.663000Z\n";
@@ -1075,11 +1075,11 @@ public class InsertTest extends AbstractGriffinTest {
         if (commitInsert) {
             ddl("create table tab(seq long, ts timestamp) timestamp(ts)");
             try {
-                executeInsert(ddl2);
+                insert(ddl2);
                 if (exceptionType != null) {
                     Assert.fail("SqlException expected");
                 }
-                assertSql("tab", expected);
+                assertSql(expected, "tab");
             } catch (Throwable e) {
                 if (exceptionType == null) {
                     throw e;
@@ -1094,7 +1094,7 @@ public class InsertTest extends AbstractGriffinTest {
                 if (exceptionType != null) {
                     Assert.fail("SqlException expected");
                 }
-                assertSql("tab", expected);
+                assertSql(expected, "tab");
             } catch (Throwable e) {
                 if (exceptionType == null) throw e;
                 Assert.assertSame(exceptionType, e.getClass());
@@ -1107,11 +1107,11 @@ public class InsertTest extends AbstractGriffinTest {
         if (commitInsert) {
             ddl("create table tab(seq long, ts timestamp)");
             try {
-                executeInsert(ddl2);
+                insert(ddl2);
                 if (exceptionType != null) {
                     Assert.fail("SqlException expected");
                 }
-                assertSql("tab", expected);
+                assertSql(expected, "tab");
             } catch (Throwable e) {
                 if (exceptionType == null) throw e;
                 Assert.assertSame(exceptionType, e.getClass());
@@ -1124,7 +1124,7 @@ public class InsertTest extends AbstractGriffinTest {
                 if (exceptionType != null) {
                     Assert.fail("SqlException expected");
                 }
-                assertSql("tab", expected);
+                assertSql(expected, "tab");
             } catch (Throwable e) {
                 e.printStackTrace();
                 if (exceptionType == null) throw e;
@@ -1293,11 +1293,11 @@ public class InsertTest extends AbstractGriffinTest {
     private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
-            executeInsert("insert into src values (0, 0);");
-            executeInsert("insert into src values (10000, 1);");
-            executeInsert("insert into src values (20000, 2);");
-            executeInsert("insert into src values (30000, 3);");
-            executeInsert("insert into src values (40000, 4);");
+            insert("insert into src values (0, 0);");
+            insert("insert into src values (10000, 1);");
+            insert("insert into src values (20000, 2);");
+            insert("insert into src values (30000, 3);");
+            insert("insert into src values (40000, 4);");
 
             ddl("create table dest (ts timestamp, v long) timestamp(ts) partition by day;");
             drainWalQueue();

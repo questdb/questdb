@@ -82,16 +82,16 @@ public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanSelectCast() throws Exception {
-        assertSql("select cast(0 AS BOOLEAN) IS NULL", "column\nfalse\n");
-        assertSql("select cast(0L AS BOOLEAN) IS NULL", "column\nfalse\n");
-        assertSql("select cast('' AS BOOLEAN) IS NULL", "column\nfalse\n");
-        assertSql("select cast(NULL AS BOOLEAN) IS NULL", "column\nfalse\n");
-        assertSql("select cast(false AS BOOLEAN) IS NULL", "column\nfalse\n");
-        assertSql("select cast(0 AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(0L AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast('' AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(NULL AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(false AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
+        assertSql("column\nfalse\n", "select cast(0 AS BOOLEAN) IS NULL");
+        assertSql("column\nfalse\n", "select cast(0L AS BOOLEAN) IS NULL");
+        assertSql("column\nfalse\n", "select cast('' AS BOOLEAN) IS NULL");
+        assertSql("column\nfalse\n", "select cast(NULL AS BOOLEAN) IS NULL");
+        assertSql("column\nfalse\n", "select cast(false AS BOOLEAN) IS NULL");
+        assertSql("column\ntrue\n", "select cast(0 AS BOOLEAN) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(0L AS BOOLEAN) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast('' AS BOOLEAN) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(NULL AS BOOLEAN) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(false AS BOOLEAN) IS NOT NULL");
     }
 
     @Test
@@ -147,16 +147,16 @@ public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testByteSelectCast() throws Exception {
-        assertSql("select cast(0 AS BYTE) IS NULL", "column\nfalse\n");
-        assertSql("select cast(0L AS BYTE) IS NULL", "column\nfalse\n");
-        assertSql("select cast('' AS BYTE) IS NULL", "column\nfalse\n");
-        assertSql("select cast(NULL AS BYTE) IS NULL", "column\nfalse\n");
-        assertSql("select cast(false AS BYTE) IS NULL", "column\nfalse\n");
-        assertSql("select cast(0 AS BYTE) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(0L AS BYTE) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast('' AS BYTE) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(NULL AS BYTE) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(false AS BYTE) IS NOT NULL", "column\ntrue\n");
+        assertSql("column\nfalse\n", "select cast(0 AS BYTE) IS NULL");
+        assertSql("column\nfalse\n", "select cast(0L AS BYTE) IS NULL");
+        assertSql("column\nfalse\n", "select cast('' AS BYTE) IS NULL");
+        assertSql("column\nfalse\n", "select cast(NULL AS BYTE) IS NULL");
+        assertSql("column\nfalse\n", "select cast(false AS BYTE) IS NULL");
+        assertSql("column\ntrue\n", "select cast(0 AS BYTE) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(0L AS BYTE) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast('' AS BYTE) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(NULL AS BYTE) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(false AS BYTE) IS NOT NULL");
     }
 
     @Test
@@ -211,16 +211,16 @@ public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testCharSelectCast() throws Exception {
-        assertSql("select cast(0 AS CHAR) IS NULL", "column\ntrue\n");
-        assertSql("select cast(0L AS CHAR) IS NULL", "column\ntrue\n");
-        assertSql("select cast('' AS CHAR) IS NULL", "column\ntrue\n");
-        assertSql("select cast(NULL AS CHAR) IS NULL", "column\ntrue\n");
-        assertSql("select cast(false AS CHAR) IS NULL", "column\nfalse\n");
-        assertSql("select cast(0 AS CHAR) IS NOT NULL", "column\nfalse\n");
-        assertSql("select cast(0L AS CHAR) IS NOT NULL", "column\nfalse\n");
-        assertSql("select cast('' AS CHAR) IS NOT NULL", "column\nfalse\n");
-        assertSql("select cast(NULL AS CHAR) IS NOT NULL", "column\nfalse\n");
-        assertSql("select cast(false AS CHAR) IS NOT NULL", "column\ntrue\n");
+        assertSql("column\ntrue\n", "select cast(0 AS CHAR) IS NULL");
+        assertSql("column\ntrue\n", "select cast(0L AS CHAR) IS NULL");
+        assertSql("column\ntrue\n", "select cast('' AS CHAR) IS NULL");
+        assertSql("column\ntrue\n", "select cast(NULL AS CHAR) IS NULL");
+        assertSql("column\nfalse\n", "select cast(false AS CHAR) IS NULL");
+        assertSql("column\nfalse\n", "select cast(0 AS CHAR) IS NOT NULL");
+        assertSql("column\nfalse\n", "select cast(0L AS CHAR) IS NOT NULL");
+        assertSql("column\nfalse\n", "select cast('' AS CHAR) IS NOT NULL");
+        assertSql("column\nfalse\n", "select cast(NULL AS CHAR) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(false AS CHAR) IS NOT NULL");
     }
 
     @Test
@@ -276,15 +276,15 @@ public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testShortSelectCast() throws Exception {
-        assertSql("select cast(0 AS SHORT) IS NULL", "column\nfalse\n");
-        assertSql("select cast(0L AS SHORT) IS NULL", "column\nfalse\n");
-        assertSql("select cast('' AS SHORT) IS NULL", "column\nfalse\n");
-        assertSql("select cast(NULL AS SHORT) IS NULL", "column\nfalse\n");
-        assertSql("select cast(false AS SHORT) IS NULL", "column\nfalse\n");
-        assertSql("select cast(0 AS SHORT) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(0L AS SHORT) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast('' AS SHORT) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(NULL AS SHORT) IS NOT NULL", "column\ntrue\n");
-        assertSql("select cast(false AS SHORT) IS NOT NULL", "column\ntrue\n");
+        assertSql("column\nfalse\n", "select cast(0 AS SHORT) IS NULL");
+        assertSql("column\nfalse\n", "select cast(0L AS SHORT) IS NULL");
+        assertSql("column\nfalse\n", "select cast('' AS SHORT) IS NULL");
+        assertSql("column\nfalse\n", "select cast(NULL AS SHORT) IS NULL");
+        assertSql("column\nfalse\n", "select cast(false AS SHORT) IS NULL");
+        assertSql("column\ntrue\n", "select cast(0 AS SHORT) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(0L AS SHORT) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast('' AS SHORT) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(NULL AS SHORT) IS NOT NULL");
+        assertSql("column\ntrue\n", "select cast(false AS SHORT) IS NOT NULL");
     }
 }

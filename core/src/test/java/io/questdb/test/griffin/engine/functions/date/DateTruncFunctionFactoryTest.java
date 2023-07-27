@@ -36,7 +36,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInvalidKind() {
         try {
-            fail("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
+            assertSqlFails("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid unit 'invalid'", e.getFlyweightMessage());
@@ -46,7 +46,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNullKind() {
         try {
-            fail("select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
+            assertSqlFails("select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
@@ -120,9 +120,8 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
 
     private void assertTimestamp(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> assertSql(
-                sql,
                 "truncated\n" +
-                        expected + "\n"
+                        expected + "\n", sql
         ));
     }
 

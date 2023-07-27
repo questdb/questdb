@@ -38,8 +38,8 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
     public void testInsertGeoNullByte() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table g(a geohash(4b))");
-            executeInsert("insert into g values (cast(null as geohash(5b)))");
-            assertSql("g", "a\n\n");
+            insert("insert into g values (cast(null as geohash(5b)))");
+            assertSql("a\n\n", "g");
         });
     }
 
@@ -47,8 +47,8 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
     public void testInsertGeoNullInt() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table g(a geohash(22b))");
-            executeInsert("insert into g values (cast(null as geohash(24b)))");
-            assertSql("g", "a\n\n");
+            insert("insert into g values (cast(null as geohash(24b)))");
+            assertSql("a\n\n", "g");
         });
     }
 
@@ -56,8 +56,8 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
     public void testInsertGeoNullLong() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table g(a geohash(42b))");
-            executeInsert("insert into g values (cast(null as geohash(44b)))");
-            assertSql("g", "a\n\n");
+            insert("insert into g values (cast(null as geohash(44b)))");
+            assertSql("a\n\n", "g");
         });
     }
 
@@ -65,8 +65,8 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
     public void testInsertGeoNullShort() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table g(a geohash(12b))");
-            executeInsert("insert into g values (cast(null as geohash(14b)))");
-            assertSql("g", "a\n\n");
+            insert("insert into g values (cast(null as geohash(14b)))");
+            assertSql("a\n\n", "g");
         });
     }
 

@@ -154,7 +154,7 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     private void runInserts(String... statements) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : statements) {
-                executeInsert(query);
+                insert(query);
             }
         });
     }

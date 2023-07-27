@@ -60,7 +60,7 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
                     // header
                     actualSink.put("b\n");
 
-                    try (RecordCursorFactory factory = fact("x")) {
+                    try (RecordCursorFactory factory = select("x")) {
 
                         // test that we can read string column without using index
                         try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
@@ -108,9 +108,9 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
                             ") timestamp (t) partition by DAY"
                     );
 
-                    alter("alter table x add column c string");
+                    ddl("alter table x add column c string");
 
-                    executeInsert(
+                    insert(
                             "insert into x " +
                                     "select" +
                                     " rnd_int() a," +
@@ -131,7 +131,7 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
                     // header
                     actualSink.put("b\n");
 
-                    try (RecordCursorFactory factory = fact("x")) {
+                    try (RecordCursorFactory factory = select("x")) {
                         // test that we can read string column without using index
                         try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                             PageFrame frame;

@@ -58,8 +58,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where a = b",
-                    expected
+                    expected, "x where a = b"
             );
         });
     }
@@ -107,8 +106,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where a = b",
-                    expected
+                    expected, "x where a = b"
             );
         });
     }
@@ -140,8 +138,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where a = 'UW'",
-                    expected
+                    expected, "x where a = 'UW'"
             );
         });
     }
@@ -173,8 +170,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where 'UW' = a",
-                    expected
+                    expected, "x where 'UW' = a"
             );
         });
     }
@@ -205,8 +201,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where a = null",
-                    expected
+                    expected, "x where a = null"
             );
         });
     }

@@ -151,12 +151,12 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     update.close();
                 }
 
-                assertSql("testUpdateTimeout", "ts\tx\n" +
+                assertSql("ts\tx\n" +
                         "1970-01-01T00:00:00.000000Z\t5\n" +
                         "1970-01-01T00:00:01.000000Z\t5\n" +
                         "1970-01-01T00:00:02.000000Z\t5\n" +
                         "1970-01-01T00:00:03.000000Z\t5\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\n");
+                        "1970-01-01T00:00:04.000000Z\t5\n", "testUpdateTimeout");
             }
         });
     }
@@ -185,8 +185,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
                 // Non-simple connection
                 try (final Connection connection = getConnection(server1.getPort(), false, true, 1L)) {
-                    PreparedStatement update = connection.prepareStatement("" +
-                            "UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
                     update.setQueryTimeout(1);
                     update.setInt(1, 4);
 
@@ -241,9 +240,9 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     update.executeUpdate();
                 }
 
-                assertSql("select count() from testUpdateTimeout where x = 5",
-                        "count\n" +
-                                "2000\n");
+                assertSql("count\n" +
+                        "2000\n", "select count() from testUpdateTimeout where x = 5"
+                );
             }
         });
     }

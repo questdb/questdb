@@ -809,7 +809,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
             try {
-                fail("select sym, max(sum(x + min(x)) - avg(x)) from test");
+                assertSqlFails("select sym, max(sum(x + min(x)) - avg(x)) from test");
             } catch (SqlException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
             }
@@ -820,7 +820,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     public void testNonNestedGroupByFn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
-            try (RecordCursorFactory ignored = fact("select sym, max(x) - (min(x) + 1) from test")) {
+            try (RecordCursorFactory ignored = select("select sym, max(x) - (min(x) + 1) from test")) {
                 Assert.assertTrue(true);
             }
         });

@@ -141,9 +141,8 @@ public class BitwiseTest extends AbstractGriffinTest {
 
     private void assertBitwiseOp(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> assertSql(
-                sql,
                 "column\n" +
-                        expected
+                        expected, sql
         ));
     }
 }

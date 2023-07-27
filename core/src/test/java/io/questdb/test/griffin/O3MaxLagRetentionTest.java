@@ -36,7 +36,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            alter("alter table my_table add column y symbol", sqlExecutionContext);
+            ddl("alter table my_table add column y symbol", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -46,8 +46,8 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            executeInsert("insert into my_table values(0, 1000, 'a')");
-            alter("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            insert("insert into my_table values(0, 1000, 'a')");
+            ddl("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -57,7 +57,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            alter("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            ddl("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -67,7 +67,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            alter("alter table my_table drop column x", sqlExecutionContext);
+            ddl("alter table my_table drop column x", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -77,10 +77,10 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            executeInsert("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
-            executeInsert("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
+            insert("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
+            insert("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
             assertO3MaxLagValues();
-            alter("alter TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
+            ddl("alter TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -90,7 +90,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            alter("alter table my_table rename column x to y", sqlExecutionContext);
+            ddl("alter table my_table rename column x to y", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }

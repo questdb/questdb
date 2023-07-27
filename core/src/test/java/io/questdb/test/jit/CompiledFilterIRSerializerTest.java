@@ -110,7 +110,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             writer.commit();
         }
 
-        factory = fact("select * from x");
+        factory = select("select * from x");
         Assert.assertTrue(factory.supportPageFrameCursor());
         metadata = factory.getMetadata();
     }

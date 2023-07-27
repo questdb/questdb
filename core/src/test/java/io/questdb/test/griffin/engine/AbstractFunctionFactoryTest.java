@@ -418,7 +418,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
         try {
-            fail(sql);
+            assertSqlFails(sql);
         } catch (Exception e) {
             TestUtils.assertEquals(expectedMsg, e.getMessage());
         }
@@ -427,7 +427,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     protected void assertQuery(CharSequence expected, CharSequence sql) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    RecordCursorFactory factory = fact(sql);
+                    RecordCursorFactory factory = select(sql);
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 assertCursor(expected, cursor, factory.getMetadata(), true);

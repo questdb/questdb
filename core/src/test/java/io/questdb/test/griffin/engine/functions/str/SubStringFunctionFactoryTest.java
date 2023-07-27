@@ -27,12 +27,10 @@ package io.questdb.test.griffin.engine.functions.str;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.str.SubStringFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
-
-import static org.junit.Assert.fail;
 
 public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
@@ -92,7 +90,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
         try {
             call("foo", 3, -1).andAssert(null);
-            fail("non-const negative len is not allowed");
+            assertSqlFails("non-const negative len is not allowed");
         } catch (CairoException e) {
             // negative substring length is not allowed
         }
@@ -104,7 +102,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
                     null,
                     true
             );
-            fail("const negative len is not allowed");
+            assertSqlFails("const negative len is not allowed");
         } catch (SqlException e) {
             // negative substring length is not allowed
         }

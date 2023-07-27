@@ -61,7 +61,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
             );
 
             try {
-                fail("Alter table dups dedup upsert keys(ts)", roExecutionContext);
+                assertSqlFails("Alter table dups dedup upsert keys(ts)", roExecutionContext);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }
@@ -309,7 +309,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 }
             }
 
-            alter("ALTER TABLE " + tableNameStr + " drop column sym");
+            ddl("ALTER TABLE " + tableNameStr + " drop column sym");
             try (TableWriter tw = getWriter(tableToken)) {
                 LongList columnIndexes = new LongList();
                 columnIndexes.add(1);

@@ -74,8 +74,8 @@ public class LatestByTest extends AbstractGriffinTest {
             for (int i = 0; i < iterations; i++) {
                 LOG.info().$("Iteration: ").$(i).$();
 
-                executeInsert("INSERT INTO e VALUES(CAST(" + timestamp + " as TIMESTAMP), '42')");
-                executeInsert("INSERT INTO p VALUES(CAST(" + timestamp + " as TIMESTAMP), '42', 142.31, 42.31, #xpt)");
+                insert("INSERT INTO e VALUES(CAST(" + timestamp + " as TIMESTAMP), '42')");
+                insert("INSERT INTO p VALUES(CAST(" + timestamp + " as TIMESTAMP), '42', 142.31, 42.31, #xpt)");
 
                 String query = "SELECT count() FROM \n" +
                         "( \n" +
@@ -192,7 +192,7 @@ public class LatestByTest extends AbstractGriffinTest {
             compile("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
-            executeInsert("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
+            insert("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
 
             assertQuery("ts\ts2\ts\n" +
                             "1970-01-02T18:00:00.000000Z\td\ta\n" +
@@ -223,7 +223,7 @@ public class LatestByTest extends AbstractGriffinTest {
             compile("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
-            executeInsert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
+            insert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
             assertQuery("ts\ts2\ts\n" +
                             "1970-01-02T23:00:00.000000Z\tc\ta\n" +
@@ -254,7 +254,7 @@ public class LatestByTest extends AbstractGriffinTest {
             compile("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
-            executeInsert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
+            insert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
             assertQuery("s\ts2\tts\n" +
                             "a\tc\t1970-01-02T23:00:00.000000Z\n" +
@@ -397,14 +397,14 @@ public class LatestByTest extends AbstractGriffinTest {
         compile("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
 
         // forecasts for 2020-05-05
-        compile("insert into forecasts values " +
+        insert("insert into forecasts values " +
                 "  ('2020-05-05', '2020-05-02', 40), " +
                 "  ('2020-05-05', '2020-05-03', 41), " +
                 "  ('2020-05-05', '2020-05-04', 42)"
         );
 
         // forecasts for 2020-05-06
-        compile("insert into forecasts values " +
+        insert("insert into forecasts values " +
                 "  ('2020-05-06', '2020-05-01', 140), " +
                 "  ('2020-05-06', '2020-05-03', 141), " +
                 "  ('2020-05-06', '2020-05-05', 142), " +// this row has the same ts as following one and will be de-duped
@@ -458,14 +458,14 @@ public class LatestByTest extends AbstractGriffinTest {
         compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
 
         // forecasts for 2020-05-05
-        compile("insert into forecasts values " +
+        insert("insert into forecasts values " +
                 "  ('2020-05-05', '2020-05-02', 40), " +
                 "  ('2020-05-05', '2020-05-03', 41), " +
                 "  ('2020-05-05', '2020-05-04', 42)"
         );
 
         // forecasts for 2020-05-06
-        compile("insert into forecasts values " +
+        insert("insert into forecasts values " +
                 "  ('2020-05-06', '2020-05-01', 140), " +
                 "  ('2020-05-06', '2020-05-03', 141), " +
                 "  ('2020-05-06', '2020-05-05', 142)"
@@ -1121,19 +1121,19 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
             ddl(createStmt);
-            executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
+            insert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
             String expected = "symbol\tside\ttimestamp\n" +
                     "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
             String query = "SELECT * FROM trades\n" +
                     "WHERE symbol in ('BTC') and side in 'buy'\n" +
                     "LATEST ON timestamp PARTITION BY symbol;";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     private String selectDistinctSym() throws SqlException {
         StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = fact("select distinct s from t order by s limit " + 500)) {
+        try (RecordCursorFactory factory = select("select distinct s from t order by s limit " + 500)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
                 int i = 0;
@@ -1153,7 +1153,7 @@ public class LatestByTest extends AbstractGriffinTest {
                 "( when " + partitionByType + ", " +
                 "version timestamp, " +
                 "temperature double) timestamp(version) partition by day");
-        compile("insert into forecasts values " +
+        insert("insert into forecasts values " +
                 "  (" + valueA + ", '2020-05-02', 40), " +
                 "  (" + valueA + ", '2020-05-03', 41), " +
                 "  (" + valueA + ", '2020-05-04', 42), " +
@@ -1174,17 +1174,17 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table r (symbol symbol, value long, ts timestamp)" +
                     (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day");
-            executeInsert("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
+            insert("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
             ddl("create table t (symbol symbol, value long, ts timestamp)" +
                     (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day");
-            executeInsert("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
+            insert("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
 
             String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +
                     " t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)\n" +
                     "select r.symbol, r.v subscribers, t.v followers\n" +
                     "from r\n" +
                     "join t on symbol";
-            try (RecordCursorFactory factory = fact(query)) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor(
                         "symbol\tsubscribers\tfollowers\n" +
                                 "xyz\t1\t42\n",

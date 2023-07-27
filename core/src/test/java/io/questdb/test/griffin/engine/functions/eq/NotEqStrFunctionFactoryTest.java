@@ -72,8 +72,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where a <> b",
-                    expected
+                    expected, "x where a <> b"
             );
         });
     }
@@ -102,8 +101,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where a <> 'TJ'",
-                    expected
+                    expected, "x where a <> 'TJ'"
             );
         });
     }
@@ -131,8 +129,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where 'TJ' <> a",
-                    expected
+                    expected, "x where 'TJ' <> a"
             );
         });
     }
@@ -167,8 +164,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where a <> null",
-                    expected
+                    expected, "x where a <> null"
             );
         });
     }
@@ -203,8 +199,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                     ")");
 
             assertSql(
-                    "x where null <> a",
-                    expected
+                    expected, "x where null <> a"
             );
         });
     }

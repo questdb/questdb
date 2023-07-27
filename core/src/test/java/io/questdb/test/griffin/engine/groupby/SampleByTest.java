@@ -784,7 +784,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
             try (
-                    RecordCursorFactory factory = fact(
+                    RecordCursorFactory factory = select(
                             "select k, s, first(lat) lat, last(lon) lon " +
                                     "from x " +
                                     "where s in ('a') " +
@@ -882,7 +882,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
             String sql = "select k, s, first(lat) lat, last(lon) lon from x sample by 1h align to calendar time zone $1 with offset $2";
 
-            try (RecordCursorFactory factory = fact(sql)) {
+            try (RecordCursorFactory factory = select(sql)) {
                 sqlExecutionContext.getBindVariableService().setLong(0, 42);
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
                 try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
@@ -894,7 +894,7 @@ public class SampleByTest extends AbstractGriffinTest {
             }
 
             sqlExecutionContext.getBindVariableService().clear();
-            try (RecordCursorFactory factory = fact(sql)) {
+            try (RecordCursorFactory factory = select(sql)) {
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setLong(1, 42);
                 try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
@@ -1498,8 +1498,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 false);
 
         assertMemoryLeak(() -> {
-            alter("alter table xx drop column s", sqlExecutionContext);
-            alter("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            ddl("alter table xx drop column s", sqlExecutionContext);
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         TestUtils.assertSqlCursors(
@@ -1968,13 +1968,13 @@ public class SampleByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
-            executeInsert(
+            insert(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
                             "long_sequence(100)\n");
-            alter("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         String expected = "fk\tlk\tk\ts\n" +
@@ -1982,18 +1982,18 @@ public class SampleByTest extends AbstractGriffinTest {
                 "1970-01-01T01:00:00.000000Z\t1970-01-01T01:39:00.000000Z\t1970-01-01T01:00:00.000000Z\t\n";
 
         // Forced no index execution
-        assertSql("select first(k) fk, last(k) lk, k, s\n" +
+        assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
                         "from xx\n" +
                         "where s = null or s = 'none'\n" +
-                        "sample by 1h",
-                expected);
+                        "sample by 1h"
+        );
 
         // Indexed execution
-        assertSql("select first(k) fk, last(k) lk, k, s\n" +
+        assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
                         "from xx\n" +
                         "where s = null\n" +
-                        "sample by 1h",
-                expected);
+                        "sample by 1h"
+        );
     }
 
     @Test
@@ -2020,14 +2020,14 @@ public class SampleByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
-            executeInsert(
+            insert(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence('1970-01-01T12', 2 * 60 * 60 * 1000000L) k\n" +
                             "from\n" +
                             "long_sequence(8)\n");
-            alter("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
-            executeInsert("insert into xx " +
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            insert("insert into xx " +
                     "select " +
                     "timestamp_sequence('1970-01-03', 1 * 60 * 1000000L),\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
@@ -2062,7 +2062,7 @@ public class SampleByTest extends AbstractGriffinTest {
             ddl("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            executeInsert(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2070,11 +2070,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)\n");
 
-            alter("alter table xx add i1 int", sqlExecutionContext);
-            alter("alter table xx add c1 char", sqlExecutionContext);
-            alter("alter table xx add l1 long", sqlExecutionContext);
+            ddl("alter table xx add i1 int", sqlExecutionContext);
+            ddl("alter table xx add c1 char", sqlExecutionContext);
+            ddl("alter table xx add l1 long", sqlExecutionContext);
 
-            executeInsert(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2085,13 +2085,13 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)");
 
-            alter("alter table xx add f1 float", sqlExecutionContext);
-            alter("alter table xx add d1 double", sqlExecutionContext);
-            alter("alter table xx add s1 symbol", sqlExecutionContext);
-            alter("alter table xx add ss1 short", sqlExecutionContext);
-            alter("alter table xx add b1 byte", sqlExecutionContext);
-            alter("alter table xx add t1 timestamp", sqlExecutionContext);
-            alter("alter table xx add dt date", sqlExecutionContext);
+            ddl("alter table xx add f1 float", sqlExecutionContext);
+            ddl("alter table xx add d1 double", sqlExecutionContext);
+            ddl("alter table xx add s1 symbol", sqlExecutionContext);
+            ddl("alter table xx add ss1 short", sqlExecutionContext);
+            ddl("alter table xx add b1 byte", sqlExecutionContext);
+            ddl("alter table xx add t1 timestamp", sqlExecutionContext);
+            ddl("alter table xx add dt date", sqlExecutionContext);
         });
 
         assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
@@ -2137,7 +2137,7 @@ public class SampleByTest extends AbstractGriffinTest {
             ddl("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            executeInsert(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2145,11 +2145,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)\n");
 
-            alter("alter table xx add i1 int", sqlExecutionContext);
-            alter("alter table xx add c1 char", sqlExecutionContext);
-            alter("alter table xx add l1 long", sqlExecutionContext);
+            ddl("alter table xx add i1 int", sqlExecutionContext);
+            ddl("alter table xx add c1 char", sqlExecutionContext);
+            ddl("alter table xx add l1 long", sqlExecutionContext);
 
-            executeInsert(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2160,17 +2160,17 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)");
 
-            alter("alter table xx add f1 float", sqlExecutionContext);
-            alter("alter table xx add d1 double", sqlExecutionContext);
-            alter("alter table xx add s1 symbol", sqlExecutionContext);
-            alter("alter table xx add ss1 short", sqlExecutionContext);
-            alter("alter table xx add b1 byte", sqlExecutionContext);
-            alter("alter table xx add t1 timestamp", sqlExecutionContext);
-            alter("alter table xx add dt date", sqlExecutionContext);
-            alter("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
-            alter("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
-            alter("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
-            alter("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
+            ddl("alter table xx add f1 float", sqlExecutionContext);
+            ddl("alter table xx add d1 double", sqlExecutionContext);
+            ddl("alter table xx add s1 symbol", sqlExecutionContext);
+            ddl("alter table xx add ss1 short", sqlExecutionContext);
+            ddl("alter table xx add b1 byte", sqlExecutionContext);
+            ddl("alter table xx add t1 timestamp", sqlExecutionContext);
+            ddl("alter table xx add dt date", sqlExecutionContext);
+            ddl("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
+            ddl("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
+            ddl("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
+            ddl("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
         });
 
         assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
@@ -2221,7 +2221,7 @@ public class SampleByTest extends AbstractGriffinTest {
             ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
                     ", index(s capacity 345) timestamp(k) partition by DAY \n");
 
-            executeInsert("insert into xx " +
+            insert("insert into xx " +
                     "select " +
                     "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
                     "rnd_double() d,\n" +
@@ -2229,11 +2229,11 @@ public class SampleByTest extends AbstractGriffinTest {
                     "from\n" +
                     "long_sequence(300)\n");
 
-            assertSql("select sum(d)\n" +
+            assertSql("sum\n" +
+                    "75.42541658721542\n", "select sum(d)\n" +
                             "from xx " +
-                            "where s in ('a')",
-                    "sum\n" +
-                            "75.42541658721542\n");
+                            "where s in ('a')"
+            );
         });
     }
 
@@ -3381,7 +3381,7 @@ public class SampleByTest extends AbstractGriffinTest {
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = fact("select k, count() from x sample by 90m align to calendar time zone $1 with offset $2")) {
+            try (RecordCursorFactory factory = select("select k, count() from x sample by 90m align to calendar time zone $1 with offset $2")) {
                 String expectedMoscow = "k\tcount\n" +
                         "1970-01-02T22:45:00.000000Z\t3\n" +
                         "1970-01-03T00:15:00.000000Z\t18\n" +
@@ -8613,7 +8613,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
 
-            try (final RecordCursorFactory factory = fact("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
+            try (final RecordCursorFactory factory = select("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
                 assertTimestamp("k", factory);
                 String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\t74.19752505948932\t113.1213\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
@@ -10195,8 +10195,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
         assertMemoryLeak(() -> {
-            alter("alter table xx drop column s", sqlExecutionContext);
-            alter("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            ddl("alter table xx drop column s", sqlExecutionContext);
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         String forceNoIndexQuery = query.replace("and s = null", " ");
@@ -10248,7 +10248,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             "), index(s) timestamp(k) partition by DAY"
             );
             try {
-                fail(query);
+                assertSqlFails(query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
                 Assert.assertEquals(errorPosition, ex.getPosition());

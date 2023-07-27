@@ -40,7 +40,7 @@ public class TrickTableReloadTest extends AbstractGriffinTest {
         engine.releaseAllWriters();
 
         try (TableReader reader = getReader("x")) {
-            alter("alter table x add column y symbol", sqlExecutionContext);
+            ddl("alter table x add column y symbol", sqlExecutionContext);
             Assert.assertTrue(reader.reload());
         }
     }

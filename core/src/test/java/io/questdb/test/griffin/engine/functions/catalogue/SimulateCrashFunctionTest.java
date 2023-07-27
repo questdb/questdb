@@ -32,15 +32,13 @@ public class SimulateCrashFunctionTest extends AbstractGriffinTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select simulate_crash('0')",
                 "simulate_crash\n" +
-                        "false\n"
+                        "false\n", "select simulate_crash('0')"
         ));
 
         assertMemoryLeak(() -> assertSql(
-                "select simulate_crash('M')",
                 "simulate_crash\n" +
-                        "false\n"
+                        "false\n", "select simulate_crash('M')"
         ));
     }
 }

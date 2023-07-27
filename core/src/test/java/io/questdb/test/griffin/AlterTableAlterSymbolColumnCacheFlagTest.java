@@ -125,15 +125,15 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
         assertMemoryLeak(() -> {
             ddl("create table x (i int, sym symbol nocache) ;");
-            executeInsert("insert into x values (1, 'GBP')");
-            executeInsert("insert into x values (2, 'CHF')");
-            executeInsert("insert into x values (3, 'GBP')");
-            executeInsert("insert into x values (4, 'JPY')");
-            executeInsert("insert into x values (5, 'USD')");
-            executeInsert("insert into x values (6, 'GBP')");
-            executeInsert("insert into x values (7, 'GBP')");
-            executeInsert("insert into x values (8, 'GBP')");
-            executeInsert("insert into x values (9, 'GBP')");
+            insert("insert into x values (1, 'GBP')");
+            insert("insert into x values (2, 'CHF')");
+            insert("insert into x values (3, 'GBP')");
+            insert("insert into x values (4, 'JPY')");
+            insert("insert into x values (5, 'USD')");
+            insert("insert into x values (6, 'GBP')");
+            insert("insert into x values (7, 'GBP')");
+            insert("insert into x values (8, 'GBP')");
+            insert("insert into x values (9, 'GBP')");
         });
 
         String expectedOrdered = "sym\n" +

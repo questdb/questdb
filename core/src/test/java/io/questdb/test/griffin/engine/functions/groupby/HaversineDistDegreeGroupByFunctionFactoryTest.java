@@ -61,7 +61,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -93,7 +93,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -140,7 +140,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
 
         double distance1;
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab1")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab1")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -150,7 +150,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
 
         double distance2;
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab2")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab2")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -183,7 +183,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -230,7 +230,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = fact("select s, haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select s, haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertTrue(cursor.hasNext());
@@ -289,13 +289,12 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
 
         assertSql(
-                "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear)",
                 "k\ts\thaversine_dist_deg\tsum\n" +
                         "1970-01-01T00:30:00.000000Z\tAAA\t157.01233135733582\t1000.0\n" +
                         "1970-01-01T01:30:00.000000Z\tAAA\t228.55327569899347\t2000.0\n" +
                         "1970-01-01T02:30:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
                         "1970-01-01T03:30:00.000000Z\tAAA\t157.22760372823447\t1000.0\n" +
-                        "1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0\n"
+                        "1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear)"
         );
     }
 
@@ -1128,7 +1127,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -1157,7 +1156,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -1187,7 +1186,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -1222,7 +1221,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -1256,7 +1255,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -1287,7 +1286,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -1322,7 +1321,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -1335,7 +1334,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
     @Test
     public void testPositiveLatLon() throws SqlException {
 
-        fact("create table tab (lat double, lon double, k timestamp)");
+        select("create table tab (lat double, lon double, k timestamp)");
 
         try (TableWriter w = getWriter("tab")) {
             double latDegree = 1;
@@ -1353,7 +1352,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = fact("select haversine_dist_deg(lat, lon, k) from tab")) {
+        try (RecordCursorFactory factory = select("select haversine_dist_deg(lat, lon, k) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

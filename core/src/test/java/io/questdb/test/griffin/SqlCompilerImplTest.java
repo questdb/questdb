@@ -105,8 +105,8 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     @Test
     public void tesFailOnNonBooleanJoinCondition() throws Exception {
-        assertCompile("create table a ( ts timestamp, i int) timestamp(ts) ");
-        assertCompile("create table b ( ts timestamp, i int) timestamp(ts) ");
+        ddl("create table a ( ts timestamp, i int) timestamp(ts) ");
+        ddl("create table b ( ts timestamp, i int) timestamp(ts) ");
 
         String booleanError = "boolean expression expected";
 
@@ -1748,7 +1748,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                final RecordCursorFactory factory = fact(query);
+                final RecordCursorFactory factory = select(query);
                 factory.close();
             } finally {
                 engine.clear();
@@ -2025,7 +2025,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     true
             );
             try {
-                executeInsert("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
+                insert("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2046,7 +2046,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     true
             );
             try {
-                executeInsert("insert into geohash values(##sp052w92p1p82)");
+                insert("insert into geohash values(##sp052w92p1p82)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2075,8 +2075,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     " from long_sequence(8)" +
                     ")");
             assertSql(
-                    "x",
-                    expected
+                    expected, "x"
             );
         });
     }
@@ -2118,7 +2117,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     true
             );
             try {
-                executeInsert("insert into geohash values(#sp@in)");
+                insert("insert into geohash values(#sp@in)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2138,7 +2137,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                 true
         );
         try {
-            executeInsert("insert into geohash values(#sp)");
+            insert("insert into geohash values(#sp)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(27, e.getPosition());
@@ -2157,7 +2156,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                 true
         );
         try {
-            executeInsert("insert into geohash values(#sp052w92p1p8889)");
+            insert("insert into geohash values(#sp052w92p1p8889)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(27, e.getPosition());
@@ -2176,9 +2175,9 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     true,
                     true
             );
-            executeInsert("insert into geohash values(#sp052w92p18)");
-            assertSql("geohash", "geohash\n" +
-                    "sp052w\n");
+            insert("insert into geohash values(#sp052w92p18)");
+            assertSql("geohash\n" +
+                    "sp052w\n", "geohash");
         });
     }
 
@@ -2218,8 +2217,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     " from long_sequence(8)" +
                     ")");
             assertSql(
-                    "x",
-                    expected
+                    expected, "x"
             );
         });
     }
@@ -2866,7 +2864,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     public void testDeallocateMissingStatementName() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("DEALLOCATE");
+                assertSqlFails("DEALLOCATE");
             } catch (SqlException e) {
                 Assert.assertEquals(10, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "statement name expected");
@@ -2878,7 +2876,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     public void testDeallocateMultipleStatementNames() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("deallocate foo bar");
+                assertSqlFails("deallocate foo bar");
             } catch (SqlException e) {
                 Assert.assertEquals(15, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bar]");
@@ -2910,7 +2908,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testEmptyQuery() {
         try {
-            fail("                        ");
+            assertSqlFails("                        ");
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "empty query");
@@ -2938,7 +2936,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     @Test
     public void testFailOnBadFunctionCallInOrderBy() throws Exception {
-        assertCompile("create table test(time TIMESTAMP, symbol STRING);");
+        ddl("create table test(time TIMESTAMP, symbol STRING);");
 
         assertFailure(97, "unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,INT constant)",
                 "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)");
@@ -2946,7 +2944,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     @Test
     public void testFailOnEmptyColumnName() throws Exception {
-        assertCompile("create table tab ( ts timestamp)");
+        ddl("create table tab ( ts timestamp)");
 
         assertFailure(28, "Invalid column: ",
                 "SELECT * FROM tab WHERE SUM(\"\", \"\")");
@@ -2954,7 +2952,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     @Test
     public void testFailOnEmptyInClause() throws Exception {
-        assertCompile("create table tab(event short);");
+        ddl("create table tab(event short);");
 
         assertFailure(54, "too few arguments for 'in' [found=1,expected=2]", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ");
         assertFailure(54, "too few arguments for 'in'", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())");
@@ -2983,9 +2981,9 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
-            assertSql("select * from x where \"#0101a\" = '#1234'", "#0101a\n" +
+            assertSql("#0101a\n" +
                     "#1234\n" +
-                    "#1234\n");
+                    "#1234\n", "select * from x where \"#0101a\" = '#1234'");
         });
     }
 
@@ -2993,7 +2991,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     public void testGeoLiteralAsColName2() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )");
-            assertSql("select * from x where #1234 = \"#0101a\"", "#0101a\n");
+            assertSql("#0101a\n", "select * from x where #1234 = \"#0101a\"");
         });
     }
 
@@ -3002,8 +3000,8 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             StringSink bitString = Misc.getThreadLocalBuilder();
             bitString.put(Chars.repeat("0", 59)).put('1');
-            assertSql("select ##" + bitString + " as geobits", "geobits\n" +
-                    "000000000001\n");
+            assertSql("geobits\n" +
+                    "000000000001\n", "select ##" + bitString + " as geobits");
         });
     }
 
@@ -3012,7 +3010,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
-                fail("select * from x where str = #1234 '"); // random char at the end
+                assertSqlFails("select * from x where str = #1234 '"); // random char at the end
             } catch (SqlException ex) {
                 // Add error test assertion
                 Assert.assertEquals("[34] dangling expression", ex.getMessage());
@@ -3025,7 +3023,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
-                fail("select * from x where str = #1234'"); // random char at the end
+                assertSqlFails("select * from x where str = #1234'"); // random char at the end
             } catch (SqlException ex) {
                 // Add error test assertion
                 Assert.assertEquals("[33] dangling expression", ex.getMessage());
@@ -3570,7 +3568,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
             try {
-                fail("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+                assertSqlFails("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
             } catch (SqlException e) {
                 Assert.assertEquals(14, e.getPosition());
                 Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
@@ -3815,9 +3813,9 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertFromStringToLong256() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
-            alter("create table l256(v long256)", sqlExecutionContext);
-            alter("insert into l256 select * from t", sqlExecutionContext);
+            ddl("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
+            ddl("create table l256(v long256)", sqlExecutionContext);
+            ddl("insert into l256 select * from t", sqlExecutionContext);
             if (configuration.getWalEnabledDefault()) {
                 drainWalQueue();
             }
@@ -3844,7 +3842,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     true
             );
             try {
-                executeInsert("insert into geohash values(##11211)");
+                insert("insert into geohash values(##11211)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -3865,7 +3863,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     true
             );
             try {
-                executeInsert("insert into geohash values(##10001)");
+                insert("insert into geohash values(##10001)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -3975,130 +3973,130 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testInsertNullSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            alter("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            insert("INSERT INTO symbolic_index VALUES ('123456')");
+            insert("INSERT INTO symbolic_index VALUES ('1')");
+            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
-            assertSql("symbolic_index_other", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
-            assertSql("symbolic_index_other WHERE s = NULL", "s\n");
-            assertSql("symbolic_index_other WHERE s IS NULL", "s\n");
-            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n");
-            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
-            assertSql("symbolic_index_other WHERE NULL = s", "s\n");
-            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n");
-            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other");
+            assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
+            assertSql("s\n", "symbolic_index_other WHERE s = NULL");
+            assertSql("s\n", "symbolic_index_other WHERE s IS NULL");
+            assertSql("s\n123456\n1\n", "symbolic_index_other WHERE s != ''");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s != NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s IS NOT NULL");
+            assertSql("s\n\n", "symbolic_index_other WHERE '' = s");
+            assertSql("s\n", "symbolic_index_other WHERE NULL = s");
+            assertSql("s\n123456\n1\n", "symbolic_index_other WHERE '' != s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE NULL != s");
 
-            executeInsert("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
-            assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
-            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
-            assertSql("symbolic_index_other WHERE s = NULL", "s\n\n");
-            assertSql("symbolic_index_other WHERE s IS NULL", "s\n\n");
-            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
-            assertSql("symbolic_index_other WHERE NULL = s", "s\n\n");
-            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+            insert("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
+            assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
+            assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
+            assertSql("s\n\n", "symbolic_index_other WHERE s = NULL");
+            assertSql("s\n\n", "symbolic_index_other WHERE s IS NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s != ''");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s != NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s IS NOT NULL");
+            assertSql("s\n\n", "symbolic_index_other WHERE '' = s");
+            assertSql("s\n\n", "symbolic_index_other WHERE NULL = s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE '' != s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE NULL != s");
         });
     }
 
     @Test
     public void testInsertNullSymbolWithIndex() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            insert("INSERT INTO symbolic_index VALUES ('123456')");
+            insert("INSERT INTO symbolic_index VALUES ('1')");
+            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
 
-            assertSql("symbolic_index", "s\n123456\n1\n\n\n");
-            assertSql("symbolic_index WHERE s = ''", "s\n\n");
-            assertSql("symbolic_index WHERE s = NULL", "s\n\n");
-            assertSql("symbolic_index WHERE s IS NULL", "s\n\n");
-            assertSql("symbolic_index WHERE s != ''", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE s != NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE s IS NOT NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE '' = s", "s\n\n");
-            assertSql("symbolic_index WHERE NULL = s", "s\n\n");
-            assertSql("symbolic_index WHERE '' != s", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE NULL != s", "s\n123456\n1\n\n");
+            assertSql("s\n123456\n1\n\n\n", "symbolic_index");
+            assertSql("s\n\n", "symbolic_index WHERE s = ''");
+            assertSql("s\n\n", "symbolic_index WHERE s = NULL");
+            assertSql("s\n\n", "symbolic_index WHERE s IS NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE s != ''");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE s != NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE s IS NOT NULL");
+            assertSql("s\n\n", "symbolic_index WHERE '' = s");
+            assertSql("s\n\n", "symbolic_index WHERE NULL = s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE '' != s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE NULL != s");
         });
     }
 
     @Test
     public void testInsertNullSymbolWithIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            alter("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            insert("INSERT INTO symbolic_index VALUES ('123456')");
+            insert("INSERT INTO symbolic_index VALUES ('1')");
+            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
-            assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
-            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
-            assertSql("symbolic_index_other WHERE s = NULL", "s\n\n");
-            assertSql("symbolic_index_other WHERE s IS NULL", "s\n\n");
-            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
-            assertSql("symbolic_index_other WHERE NULL = s", "s\n\n");
-            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+            assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
+            assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
+            assertSql("s\n\n", "symbolic_index_other WHERE s = NULL");
+            assertSql("s\n\n", "symbolic_index_other WHERE s IS NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s != ''");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s != NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s IS NOT NULL");
+            assertSql("s\n\n", "symbolic_index_other WHERE '' = s");
+            assertSql("s\n\n", "symbolic_index_other WHERE NULL = s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE '' != s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE NULL != s");
         });
     }
 
     @Test
     public void testInsertNullSymbolWithoutIndex() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
-            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            ddl("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            insert("INSERT INTO symbolic_index VALUES ('123456')");
+            insert("INSERT INTO symbolic_index VALUES ('1')");
+            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
 
-            assertSql("symbolic_index", "s\n123456\n1\n\n\n");
-            assertSql("symbolic_index WHERE s = ''", "s\n\n");
-            assertSql("symbolic_index WHERE s = NULL", "s\n\n");
-            assertSql("symbolic_index WHERE s IS NULL", "s\n\n");
-            assertSql("symbolic_index WHERE s != ''", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE s != NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE s IS NOT NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE '' = s", "s\n\n");
-            assertSql("symbolic_index WHERE NULL = s", "s\n\n");
-            assertSql("symbolic_index WHERE '' != s", "s\n123456\n1\n\n");
-            assertSql("symbolic_index WHERE NULL != s", "s\n123456\n1\n\n");
+            assertSql("s\n123456\n1\n\n\n", "symbolic_index");
+            assertSql("s\n\n", "symbolic_index WHERE s = ''");
+            assertSql("s\n\n", "symbolic_index WHERE s = NULL");
+            assertSql("s\n\n", "symbolic_index WHERE s IS NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE s != ''");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE s != NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE s IS NOT NULL");
+            assertSql("s\n\n", "symbolic_index WHERE '' = s");
+            assertSql("s\n\n", "symbolic_index WHERE NULL = s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE '' != s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index WHERE NULL != s");
         });
     }
 
     @Test
     public void testInsertNullSymbolWithoutIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
-            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
-            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            alter("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            ddl("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            insert("INSERT INTO symbolic_index VALUES ('123456')");
+            insert("INSERT INTO symbolic_index VALUES ('1')");
+            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
-            assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
-            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
-            assertSql("symbolic_index_other WHERE s = NULL", "s\n\n");
-            assertSql("symbolic_index_other WHERE s IS NULL", "s\n\n");
-            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
-            assertSql("symbolic_index_other WHERE NULL = s", "s\n\n");
-            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n\n");
-            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+            assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
+            assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
+            assertSql("s\n\n", "symbolic_index_other WHERE s = NULL");
+            assertSql("s\n\n", "symbolic_index_other WHERE s IS NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s != ''");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s != NULL");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE s IS NOT NULL");
+            assertSql("s\n\n", "symbolic_index_other WHERE '' = s");
+            assertSql("s\n\n", "symbolic_index_other WHERE NULL = s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE '' != s");
+            assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE NULL != s");
         });
     }
 
@@ -4112,23 +4110,23 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table xy (ts timestamp)");
             // execute insert with micros
-            executeInsert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
+            insert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
 
             // execute insert with millis
-            executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
+            insert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
 
             // insert null
-            executeInsert("insert into xy(ts) values (null)");
+            insert("insert into xy(ts) values (null)");
 
             // test bad format
             try {
-                executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
+                insert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `2020-01-10T18:00:01.800Zz` [STRING -> TIMESTAMP]");
             }
 
-            assertSql("xy", expected);
+            assertSql(expected, "xy");
         });
     }
 
@@ -4146,8 +4144,8 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                         "  x INT" +
                         ") TIMESTAMP(ts) PARTITION BY DAY"
         );
-        executeInsert("INSERT INTO t1(ts, x) VALUES (1, 1)");
-        executeInsert("INSERT INTO t2(ts, x) VALUES (1, 2)");
+        insert("INSERT INTO t1(ts, x) VALUES (1, 1)");
+        insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
         // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
@@ -4201,7 +4199,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted1() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE trigonometry AS " +
+            ddl("CREATE TABLE trigonometry AS " +
                     "(SELECT" +
                     "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
                     "     rnd_symbol('A', 'B', 'C') sym," +
@@ -4229,7 +4227,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted2() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE trigonometry AS " +
+            ddl("CREATE TABLE trigonometry AS " +
                     "(SELECT" +
                     "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
                     "     rnd_symbol('A', 'B', 'C') sym," +
@@ -4323,11 +4321,11 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             compile("reindex table rebuild_index column sym lock exclusive");
-            assertSql("select * from rebuild_index where sym = '1'", "sym\tx\n" +
+            assertSql("sym\tx\n" +
                     "1\t1\n" +
                     "1\t10\n" +
                     "1\t11\n" +
-                    "1\t12\n");
+                    "1\t12\n", "select * from rebuild_index where sym = '1'");
         });
     }
 
@@ -4341,12 +4339,12 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
-            assertSql("select * from rebuild_index where sym = '1'",
-                    "sym\tx\tts\n" +
-                            "1\t1\t1970-01-01T00:00:00.000000Z\n" +
-                            "1\t10\t1970-01-05T12:00:00.000000Z\n" +
-                            "1\t11\t1970-01-06T00:00:00.000000Z\n" +
-                            "1\t12\t1970-01-06T12:00:00.000000Z\n");
+            assertSql("sym\tx\tts\n" +
+                    "1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "1\t10\t1970-01-05T12:00:00.000000Z\n" +
+                    "1\t11\t1970-01-06T00:00:00.000000Z\n" +
+                    "1\t12\t1970-01-06T12:00:00.000000Z\n", "select * from rebuild_index where sym = '1'"
+            );
         });
     }
 
@@ -4574,7 +4572,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectDoubleInListWithBindVariable() throws Exception {
-        assertCompile("create table x as (select 1D c union all select null::double )");
+        ddl("create table x as (select 1D c union all select null::double )");
 
         bindVariableService.clear();
         bindVariableService.setStr("val", "1");
@@ -4704,7 +4702,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectLongInListWithBindVariable() throws Exception {
-        assertCompile("create table x as (select 1L c union all select null::long )");
+        ddl("create table x as (select 1L c union all select null::long )");
 
         bindVariableService.clear();
         bindVariableService.setStr("val", "1");
@@ -4925,7 +4923,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastByteFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -4958,7 +4956,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastDoubleFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select * from (select rnd_double(2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -4981,7 +4979,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastFloatFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select * from (select rnd_float(2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5008,7 +5006,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastIntFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5035,7 +5033,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastLongFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5061,7 +5059,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastShortFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select * from (select rnd_short(2,10) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5074,7 +5072,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastStringFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5087,7 +5085,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertCastSymbolFail(int castTo) {
         try {
-            fail(
+            assertSqlFails(
                     "create table y as (" +
                             "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5141,7 +5139,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
         assertMemoryLeak(ff,
                 () -> {
                     try {
-                        fail(sql);
+                        assertSqlFails(sql);
                     } catch (SqlException e) {
                         Assert.assertEquals(13, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), message);
@@ -5152,7 +5150,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
 
     private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql, Class<?> exception) {
         try {
-            fail(sql);
+            assertSqlFails(sql);
         } catch (Throwable e) {
             Assert.assertSame(exception, e.getClass());
             if (e instanceof FlyweightMessageContainer) {
@@ -5173,7 +5171,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                 () -> {
                     ddl("create table x (a INT, b INT)");
                     try {
-                        executeInsert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                        insert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                         Assert.fail();
                     } catch (CairoException ignore) {
                     }
@@ -5184,7 +5182,7 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, w.size());
                     }
 
-                    executeInsert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                    insert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                     try (TableWriter w = getWriter("x")) {
                         Assert.assertEquals(1000000, w.size());
                     }
@@ -5224,16 +5222,16 @@ public class SqlCompilerImplTest extends AbstractGriffinTest {
                     true,
                     true
             );
-            executeInsert(String.format("insert into geohash values(%s)", geoHash));
-            assertSql("geohash", expected);
+            insert(String.format("insert into geohash values(%s)", geoHash));
+            assertSql(expected, "geohash");
         });
     }
 
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {
         assertMemoryLeak(() -> {
             ddl(ddl);
-            executeInsert(insert);
-            assertSql(select, expectedData);
+            insert(insert);
+            assertSql(expectedData, select);
         });
     }
 

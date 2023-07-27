@@ -76,7 +76,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             }
 
             try {
-                fail("select DISTINCT sym from tab order by 1 LIMIT 3");
+                assertSqlFails("select DISTINCT sym from tab order by 1 LIMIT 3");
             } catch (OutOfMemoryError e) {
                 // ignore
             }
@@ -137,7 +137,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             }
 
             try {
-                fail("select DISTINCT sym from tab order by 1 LIMIT 3");
+                assertSqlFails("select DISTINCT sym from tab order by 1 LIMIT 3");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
             }

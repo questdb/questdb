@@ -427,13 +427,12 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
         try {
             assertSql(
-                    "select s from x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' limit -5",
                     "s\n" +
                             "A\n" +
                             "A\n" +
                             "A\n" +
                             "A\n" +
-                            "A\n"
+                            "A\n", "select s from x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' limit -5"
             );
             Assert.fail();
         } catch (CairoException ex) {
@@ -485,7 +484,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
         try {
             assertSql(
-                    "x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' order by v",
                     "v\ts\n" +
                             "3393210801760647293\tA\n" +
                             "3433721896286859656\tA\n" +
@@ -493,7 +491,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             "3669882909701240516\tA\n" +
                             "3820631780839257855\tA\n" +
                             "4039070554630775695\tA\n" +
-                            "4290477379978201771\tA\n"
+                            "4290477379978201771\tA\n", "x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' order by v"
             );
             Assert.fail();
         } catch (CairoException ex) {

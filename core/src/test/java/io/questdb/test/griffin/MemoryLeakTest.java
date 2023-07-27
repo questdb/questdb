@@ -26,19 +26,16 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,18 +50,16 @@ public class MemoryLeakTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             int N = 1_000_000;
             populateUsersTable(engine, N);
-            final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
             bindVariableService.setLong("low", 0L);
             bindVariableService.setLong("high", 0L);
-            try (final SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService)) {
-                StringSink sink = new StringSink();
+            try {
                 sink.clear();
                 sink.put("users");
                 sink.put(" where sequence > :low and sequence < :high latest on timestamp partition by id");
-                try (RecordCursorFactory rcf = compile(sink, executionContext).getRecordCursorFactory()) {
+                try (RecordCursorFactory rcf = select(sink)) {
                     bindVariableService.setLong("low", 0);
                     bindVariableService.setLong("high", N + 1);
-                    Misc.free(rcf.getCursor(executionContext));
+                    Misc.free(rcf.getCursor(sqlExecutionContext));
                 }
             } finally {
                 Assert.assertEquals(Unsafe.getMemUsed(), getUsed());
@@ -87,7 +82,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
-            compile(compiler, "create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
+            ddl(compiler, "create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
             try {
                 try (TableWriter writer = getWriter("users")) {

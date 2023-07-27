@@ -985,8 +985,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWhenImportingAfterColumnWasRecreated() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab62 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
-            compile(compiler, "alter table tab62 drop column line;", sqlExecutionContext);
-            compile(compiler, "alter table tab62 add column line symbol;", sqlExecutionContext);
+            ddl(compiler, "alter table tab62 drop column line;", sqlExecutionContext);
+            ddl(compiler, "alter table tab62 add column line symbol;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab62", "test-quotes-small.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -1002,8 +1002,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWhenImportingAfterColumnWasRecreatedNoHeader() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
-            compile(compiler, "alter table tab44 drop column txt;", sqlExecutionContext);
-            compile(compiler, "alter table tab44 add column txt symbol;", sqlExecutionContext);
+            ddl(compiler, "alter table tab44 drop column txt;", sqlExecutionContext);
+            ddl(compiler, "alter table tab44 add column txt symbol;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab44", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, false);

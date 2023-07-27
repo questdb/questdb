@@ -55,9 +55,8 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testCastGeoHashToNullEqNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select cast(null as geohash(1c)) = null",
                 "column\n" +
-                        "true\n"
+                        "true\n", "select cast(null as geohash(1c)) = null"
         ));
     }
 
@@ -99,9 +98,8 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
                     ")");
             assertSql(
-                    "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
                     "geohash\n" +
-                            "sp052w92p1\n"
+                            "sp052w92p1\n", "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash"
             );
         });
     }
@@ -135,9 +133,8 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(5000)" +
                     ")");
             assertSql(
-                    "x where a = b",
                     "a\tb\n" +
-                            "11010001011\t11010001011\n"
+                            "11010001011\t11010001011\n", "x where a = b"
             );
         });
     }
@@ -152,7 +149,6 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(8)" +
                     ")");
             assertSql(
-                    "x where a != b",
                     "a\tb\n" +
                             "01001110110\t0010000110110\n" +
                             "10001101001\t1111101110110\n" +
@@ -161,7 +157,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                             "10011100111\t0011100001011\n" +
                             "01110110001\t1011000100110\n" +
                             "11010111111\t1000110001001\n" +
-                            "10010110001\t0101011010111\n"
+                            "10010110001\t0101011010111\n", "x where a != b"
             );
         });
     }
@@ -246,8 +242,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     "from long_sequence(1)" +
                     ")");
             assertSql(
-                    "geohash where geohash1 = geohash2",
-                    "geohash1\tgeohash2\n"
+                    "geohash1\tgeohash2\n", "geohash where geohash1 = geohash2"
             );
         });
     }

@@ -1009,10 +1009,9 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
 
             // this is a bit confusing. for booleans, every value x != 0 will evaluate to 1
             // however, for int etc, only the value 1 will evaluate to 1
-            assertSql("select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
-                            "from tt",
-                    "sum\n" +
-                            (type.equals("BOOLEAN") ? "10\n" : "1\n")
+            assertSql("sum\n" +
+                    (type.equals("BOOLEAN") ? "10\n" : "1\n"), "select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
+                            "from tt"
             );
 
             ddl("drop table tt");

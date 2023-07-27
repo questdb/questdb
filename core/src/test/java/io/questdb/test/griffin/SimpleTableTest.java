@@ -39,15 +39,15 @@ public class SimpleTableTest extends AbstractGriffinTest {
     public void testTimeStampWithTimezone() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table t (timestamp timestamp) timestamp(timestamp);");
-            executeInsert("insert into t values (1);");
+            insert("insert into t values (1);");
 
             String expected1 = "time\n" +
                     "1970-01-01T00:00:00.000001Z\n";
 
-            assertSql("select timestamp time from t;", expected1);
+            assertSql(expected1, "select timestamp time from t;");
 
             try {
-                fail("select timestamp with time zone from t;");
+                assertSqlFails("select timestamp with time zone from t;");
             } catch (SqlException e) {
                 Assert.assertEquals(31, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
@@ -56,14 +56,14 @@ public class SimpleTableTest extends AbstractGriffinTest {
             String expected2 = "with\n" +
                     "1970-01-01T00:00:00.000001Z\n";
 
-            assertSql("select timestamp with from t;", expected2);
+            assertSql(expected2, "select timestamp with from t;");
 
             String expected3 = "time\ttimestamp\n" +
                     "2020-12-31T15:15:51.663000Z\t1970-01-01T00:00:00.000001Z\n";
 
-            assertSql("select timestamp with time zone '2020-12-31 15:15:51.663+00:00' time, timestamp from t;", expected3);
+            assertSql(expected3, "select timestamp with time zone '2020-12-31 15:15:51.663+00:00' time, timestamp from t;");
 
-            assertSql("select cast('2020-12-31 15:15:51.663+00:00' as timestamp with time zone) time, timestamp from t;", expected3);
+            assertSql(expected3, "select cast('2020-12-31 15:15:51.663+00:00' as timestamp with time zone) time, timestamp from t;");
         });
     }
 
@@ -74,7 +74,7 @@ public class SimpleTableTest extends AbstractGriffinTest {
             createPopulateTable(tm, 2, "2020-01-01", 1);
         }
 
-        assertSql("select ts from tab1 where id > 1", "ts\n" +
-                "2020-01-01T00:00:00.000000Z\n");
+        assertSql("ts\n" +
+                "2020-01-01T00:00:00.000000Z\n", "select ts from tab1 where id > 1");
     }
 }

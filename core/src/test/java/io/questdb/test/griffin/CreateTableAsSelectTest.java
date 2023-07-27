@@ -59,7 +59,7 @@ public class CreateTableAsSelectTest extends AbstractGriffinTest {
 
     private void assertFailure() {
         try {
-            fail("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);");
+            assertSqlFails("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table. See log for details.");
             Assert.assertEquals(13, e.getPosition());
@@ -68,11 +68,11 @@ public class CreateTableAsSelectTest extends AbstractGriffinTest {
 
     private void createSrcTable() throws SqlException {
         ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
-        executeInsert("insert into src values (0, 0);");
-        executeInsert("insert into src values (10000, 1);");
-        executeInsert("insert into src values (20000, 2);");
-        executeInsert("insert into src values (30000, 3);");
-        executeInsert("insert into src values (40000, 4);");
+        insert("insert into src values (0, 0);");
+        insert("insert into src values (10000, 1);");
+        insert("insert into src values (20000, 2);");
+        insert("insert into src values (30000, 3);");
+        insert("insert into src values (40000, 4);");
     }
 
     private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {

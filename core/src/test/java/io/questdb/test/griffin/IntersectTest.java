@@ -46,7 +46,7 @@ public class IntersectTest extends AbstractGriffinTest {
                     "1\tA\n";
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = fact("(select i,s from x) intersect (select i,first(s) from y)")) {
+            try (RecordCursorFactory factory = select("(select i,s from x) intersect (select i,first(s) from y)")) {
                 assertCursor(expected, factory, true, false);
             }
         });
@@ -119,7 +119,7 @@ public class IntersectTest extends AbstractGriffinTest {
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -147,7 +147,7 @@ public class IntersectTest extends AbstractGriffinTest {
                             " long_sequence(10))"
             );
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = fact("select * from x intersect y")) {
+            try (RecordCursorFactory factory = select("select * from x intersect y")) {
                 assertCursor(expected2, factory, true, false);
             }
         });
@@ -175,7 +175,7 @@ public class IntersectTest extends AbstractGriffinTest {
                             " FROM long_sequence(7) x)"
             );
             snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -196,7 +196,7 @@ public class IntersectTest extends AbstractGriffinTest {
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = fact("select distinct t from x intersect y intersect z")) {
+            try (RecordCursorFactory factory = select("select distinct t from x intersect y intersect z")) {
                 assertCursor(expected2, factory, true, false);
             }
         });

@@ -34,8 +34,7 @@ public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
     public void testPrefixedTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
                 () -> assertSql(
-                        "select pg_catalog.txid_current();",
-                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
+                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", "select pg_catalog.txid_current();"
                 )
         );
     }
@@ -44,8 +43,7 @@ public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
     public void testTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
                 () -> assertSql(
-                        "select txid_current();",
-                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
+                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", "select txid_current();"
                 )
         );
     }

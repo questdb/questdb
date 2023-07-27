@@ -121,7 +121,7 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     }
 
     private static void testSql(int breakTestLimit, String sql) throws SqlException {
-        try (RecordCursorFactory factory = fact(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             for (int i = 0; i < breakTestLimit; i++) {
                 breakConnection = i;
                 try {

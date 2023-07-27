@@ -620,7 +620,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     private void runJitQuery(CharSequence query) throws SqlException {
-        try (final RecordCursorFactory factory = fact(query)) {
+        try (final RecordCursorFactory factory = select(query)) {
             Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
@@ -632,7 +632,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         long resultSize;
 
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        try (RecordCursorFactory factory = fact(query)) {
+        try (RecordCursorFactory factory = select(query)) {
             Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
             try (CountingRecordCursor cursor = new CountingRecordCursor(factory.getCursor(sqlExecutionContext))) {
                 TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);

@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -99,14 +97,14 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 compile("alter table testPurge drop column x");
 
                 purgeJobInstance.set(purgeJob);
-                executeUpdate("UPDATE testPurge SET sym1='123'");
+                update("UPDATE testPurge SET sym1='123'");
 
-                assertSql("testPurge", "ts\tstr\tsym1\tsym2\n" +
+                assertSql("ts\tstr\tsym1\tsym2\n" +
                         "1970-01-01T00:00:00.000000Z\ta\t123\t2\n" +
                         "1970-01-02T00:00:00.000000Z\td\t123\t4\n" +
                         "1970-01-03T00:00:00.000000Z\tc\t123\t3\n" +
                         "1970-01-04T00:00:00.000000Z\ta\t123\t1\n" +
-                        "1970-01-05T00:00:00.000000Z\tc\t123\t2\n");
+                        "1970-01-05T00:00:00.000000Z\tc\t123\t2\n", "testPurge");
 
                 String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
                 String[] files = {"sym1.d"};
@@ -133,7 +131,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 compile("alter table testPurge drop column x");
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET sym1='123', str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET sym1='123', str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
 
@@ -168,7 +166,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 String[] files = {"sym2.d", "sym2.k", "sym2.v"};
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET x = 100, sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET x = 100, sym2='EE' WHERE ts >= '1970-01-02'");
                     runPurgeJob(purgeJob);
 
                     // Open reader does not allow to delete the files
@@ -220,7 +218,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 );
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
 
@@ -269,8 +267,8 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                         TableReader rdr1 = getReader("testPurge1");
                         TableReader rdr2 = getReader("testPurge2")
                 ) {
-                    executeUpdate("UPDATE testPurge1 SET x = 100, str = 'abc' WHERE ts >= '1970-01-02'");
-                    executeUpdate("UPDATE testPurge2 SET x = 100, str = 'dcf' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge1 SET x = 100, str = 'abc' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge2 SET x = 100, str = 'dcf' WHERE ts >= '1970-01-02'");
                     rdr1.openPartition(0);
                     rdr2.openPartition(0);
                 }
@@ -303,7 +301,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
             );
 
             try (TableReader rdr = getReader("testPurge")) {
-                executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                update("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                 rdr.openPartition(0);
 
                 String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
@@ -341,10 +339,10 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 );
                 compile("alter table testPurge drop column x");
                 compile("alter table testPurge add column x int");
-                compile("insert into testPurge(str,sym1,sym2,x,ts) values('str', 'sym1', 'sym2', 123, '1970-02-01')");
+                insert("insert into testPurge(str,sym1,sym2,x,ts) values('str', 'sym1', 'sym2', 123, '1970-02-01')");
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
 
@@ -447,14 +445,6 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         return new ColumnPurgeJob(engine);
     }
 
-    private void executeUpdate(String query) throws SqlException {
-        final CompiledQuery cq = compile(query);
-        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (OperationFuture fut = cq.execute(null)) {
-            fut.await();
-        }
-    }
-
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
         engine.releaseInactive();
         currentMicros += 10L * iteration++;
@@ -492,7 +482,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                     " rnd_symbol('1', '2', '3', '4') sym2" +
                     " from long_sequence(5)");
 
-            executeUpdate("UPDATE " + tableName + " SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
+            update("UPDATE " + tableName + " SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
             rdr.openPartition(0);
         }
 

@@ -43,8 +43,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.CompiledQuery.ALTER;
-
 public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     private static final String LastPartitionTs = "2023-10-15";
@@ -78,9 +76,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     insert("insert into " + tableName + " values(5, '2023-10-15T00:00:02.000000Z')");
                     dropPartition(tableName, "2023-10-12");
                     dropPartition(tableName, LastPartitionTs);
-                    assertSql(tableName, TableHeader +
+                    assertSql(TableHeader +
                             "1\t2023-10-10T00:00:00.000000Z\n" +
-                            "2\t2023-10-11T00:00:00.000000Z\n");
+                            "2\t2023-10-11T00:00:00.000000Z\n", tableName);
                     insert("insert into " + tableName + " values(5, '2023-10-12T00:00:00.000000Z')");
                     insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
 
@@ -185,9 +183,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
                     insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
                     insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')"); // spureous row from the future
-                    assertSql(tableName, TableHeader +
+                    assertSql(TableHeader +
                             "5\t2023-10-15T00:00:00.000000Z\n" +
-                            "1\t2023-10-16T00:00:00.000000Z\n"); // new active partition
+                            "1\t2023-10-16T00:00:00.000000Z\n", tableName); // new active partition
                     dropPartition(tableName, "2023-10-16");
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
@@ -220,9 +218,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     dropPartition(tableName, LastPartitionTs); // drop active partition
 
                     dropPartition(tableName, "2023-10-12"); // drop new active partition
-                    assertSql(tableName, TableHeader +
+                    assertSql(TableHeader +
                             "1\t2023-10-10T00:00:00.000000Z\n" +
-                            "2\t2023-10-11T00:00:00.000000Z\n");
+                            "2\t2023-10-11T00:00:00.000000Z\n", tableName);
 
                     insert("insert into " + tableName + " values(5, '2023-10-12T00:00:17.000000Z')");
                     insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
@@ -458,7 +456,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             TableReader reader0 = getReader(tableName);
                             TableReader reader1 = getReader(tableName)
                     ) {
-                        assertSql(tableName, expectedTable);
+                        assertSql(expectedTable, tableName);
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
 
@@ -467,11 +465,11 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         reader1.reload();
                         Assert.assertEquals(5, reader0.size());
                         Assert.assertEquals(5, reader1.size());
-                        assertSql(tableName, expectedTableAfterFirstDrop);
+                        assertSql(expectedTableAfterFirstDrop, tableName);
 
                         insert("insert into " + tableName + " values(8, '2023-10-12T00:00:05.000001Z')");
                         insert("insert into " + tableName + " values(7, '2023-10-15T00:00:01.000000Z')");
-                        assertSql(tableName, expectedTableInTransaction);
+                        assertSql(expectedTableInTransaction, tableName);
                         reader0.reload();
                         reader1.reload();
                         Assert.assertEquals(7, reader0.size());
@@ -532,13 +530,13 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
 
-                        assertSql(tableName, expectedTable);
+                        assertSql(expectedTable, tableName);
 
                         writer.removePartition(lastTs);
 
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
-                        assertSql(tableName, expectedTableAfterDrop);
+                        assertSql(expectedTableAfterDrop, tableName);
                         reader0.reload();
                         reader1.reload();
                         Assert.assertEquals(6, reader0.size());
@@ -654,13 +652,13 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
 
-                        assertSql(tableName, expectedTable);
+                        assertSql(expectedTable, tableName);
 
                         writer.removePartition(lastTs);
 
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
-                        assertSql(tableName, expectedTableAfterDrop);
+                        assertSql(expectedTableAfterDrop, tableName);
                         reader0.reload();
                         reader1.reload();
                         Assert.assertEquals(6, reader0.size());
@@ -699,8 +697,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
-                    Assert.assertEquals(ALTER,
-                            alter("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
+
+                    ddl("alter table " + tableName + " drop partition where timestamp > 0");
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
                 }
         );
@@ -712,7 +710,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName, TableHeader);
                     try {
-                        alter("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
+                        ddl("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
                     } catch (SqlException e) {
                         Assert.assertEquals(("alter table " + tableName + " drop partition where ").length(), e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "no partitions matched WHERE clause");
@@ -763,7 +761,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                             Assert.assertEquals(2, reader0.size());
                             Assert.assertEquals(3, reader1.size());
-                            assertSql(tableName, expectedTableInTracsaction);
+                            assertSql(expectedTableInTracsaction, tableName);
 
                             dropPartition(tableName, LastPartitionTs);
 
@@ -774,7 +772,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             Assert.assertEquals(1, reader0.size());
                             Assert.assertEquals(1, reader1.size());
                             try (
-                                    RecordCursorFactory factory = fact(tableName);
+                                    RecordCursorFactory factory = select(tableName);
                                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                             ) {
                                 assertCursor(expectedTableAfterDrop, cursor, factory.getMetadata(), true);
@@ -877,7 +875,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     private void assertTableX(String tableName, String expectedRows, String expectedMinMaxCount) throws SqlException {
         engine.releaseAllReaders();
-        assertSql(tableName, expectedRows);
+        assertSql(expectedRows, tableName);
         engine.releaseAllWriters();
         try (Path path = new Path().of(root).concat(tableName).concat(LastPartitionTs)) {
             TestUtils.txnPartitionConditionally(path, txn);
@@ -886,7 +884,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         } finally {
             Misc.free(workerPool);
         }
-        assertSql("select min(timestamp), max(timestamp), count() from " + tableName, expectedMinMaxCount);
+        assertSql(expectedMinMaxCount, "select min(timestamp), max(timestamp), count() from " + tableName);
     }
 
     private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
@@ -898,7 +896,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         for (int i = 0, n = insertStmt.length; i < n; i++) {
             insert(insertStmt[i]);
         }
-        assertSql(tableName, expected);
+        assertSql(expected, tableName);
 
         workerPool = new TestWorkerPool(1);
         O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
@@ -909,17 +907,15 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @SuppressWarnings("SameParameterValue")
     private void detachPartition(String tableName, String partitionName) throws SqlException {
-        Assert.assertEquals(ALTER,
-                alter("alter table " + tableName + " detach partition list '" + partitionName + "'", sqlExecutionContext).getType());
+        ddl("alter table " + tableName + " detach partition list '" + partitionName + "'");
     }
 
     private void dropPartition(String tableName, String partitionName) throws SqlException {
-        Assert.assertEquals(ALTER,
-                alter("alter table " + tableName + " drop partition list '" + partitionName + "'", sqlExecutionContext).getType());
+        ddl("alter table " + tableName + " drop partition list '" + partitionName + "'");
     }
 
     private void insert(String stmt) throws SqlException {
-        alter(stmt, sqlExecutionContext);
+        ddl(stmt, sqlExecutionContext);
         txn++;
     }
 }

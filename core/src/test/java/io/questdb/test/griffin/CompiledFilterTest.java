@@ -113,7 +113,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String expected = "aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp\n" +
                     "false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.4882\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -158,7 +158,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String expected = "sym\tl\tts\n" +
                     "B\t3\t1970-01-05T15:23:20.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
 
             ddl("insert into x select " +
@@ -173,7 +173,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "F\t7\t1970-01-06T19:01:40.000000Z\n" +
                     "D\t9\t1970-01-06T19:18:20.000000Z\n";
 
-            assertSql(query, expected2);
+            assertSql(expected2, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -216,7 +216,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0\n" +
                     "1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -241,7 +241,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "2\t1970-01-01T00:00:00.100000Z\n" +
                     "1\t1970-01-01T00:00:00.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -277,7 +277,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "1\t1970-01-01T00:00:00.000000Z\n" +
                     "2\t1970-01-01T00:00:00.100000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -295,10 +295,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "4\t1970-01-05T15:31:40.000000Z\n" +
                     "5\t1970-01-05T15:40:00.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
 
-            try (RecordCursorFactory factory = fact(query)) {
+            try (RecordCursorFactory factory = select(query)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final Record record = cursor.getRecord();
                     // 1. iteration
@@ -334,7 +334,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     " timestamp_sequence(400000000000, 500000000) ts" +
                     " from long_sequence(5)) timestamp(ts)");
 
-            alter("alter table x add column j long", sqlExecutionContext);
+            ddl("alter table x add column j long", sqlExecutionContext);
 
             ddl("insert into x select " +
                     " (x+5) l," +
@@ -347,10 +347,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "4\t1970-01-05T15:31:40.000000Z\tNaN\n" +
                     "5\t1970-01-05T15:40:00.000000Z\tNaN\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
 
-            try (RecordCursorFactory factory = fact(query)) {
+            try (RecordCursorFactory factory = select(query)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final Record record = cursor.getRecord();
                     // 1. iteration
@@ -452,7 +452,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             // query and table column indexes to be different.
             final String query = "select ts, sym from x where sym = :sym";
 
-            try (RecordCursorFactory factory = fact(query)) {
+            try (RecordCursorFactory factory = select(query)) {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -484,7 +484,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
         final String query = "select $2 as a, l from x where l = $1";
 
-        try (RecordCursorFactory factory = fact(query)) {
+        try (RecordCursorFactory factory = select(query)) {
             if (jit) {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
             }
@@ -517,7 +517,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
         final String query = "select :v2 as a, l from x where l = :v1";
 
-        try (RecordCursorFactory factory = fact(query)) {
+        try (RecordCursorFactory factory = select(query)) {
             if (jit) {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
             }
@@ -560,7 +560,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String query = "select * from x where l + :l = " + (Numbers.LONG_NaN + value);
             final String expected = "l\tts\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -575,7 +575,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(20)) timestamp(ts)");
 
-            alter("alter table t1 add column j long");
+            ddl("alter table t1 add column j long");
 
             ddl("insert into t1 select " +
                     " x," +
@@ -583,7 +583,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     " rnd_long() j " +
                     "from long_sequence(20)");
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -688,7 +688,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String expected = "l\tts\n" +
                     "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }

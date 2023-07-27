@@ -47,7 +47,7 @@ public class HashJoinTest extends AbstractGriffinTest {
     @Test
     public void testHashJoinDoesntAllocateMemoryPriorToCursorOpenAndAfterCursorCloseForNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table weather_data_historical (\n" +
+            ddl("create table weather_data_historical (\n" +
                     "  sensor_time timestamp not null,\n" +
                     "  sensor_day symbol,\n" +
                     "  min_temperature_out float,\n" +
@@ -77,7 +77,7 @@ public class HashJoinTest extends AbstractGriffinTest {
             long tagBeforeFactory = getMemUsedByFactories();
             System.gc();
 
-            try (final RecordCursorFactory factory = fact("  select a1.sensor_day, \n" +
+            try (final RecordCursorFactory factory = select("  select a1.sensor_day, \n" +
                     "  warmest_day, to_str(a2.sensor_time, 'yyyy') as warmest_day_year, \n" +
                     "  coldest_day, to_str(a3.sensor_time, 'yyyy') as coldest_day_year,\n" +
                     "  warmest_night, to_str(a4.sensor_time, 'yyyy') as warmest_night_year,\n" +
@@ -126,9 +126,9 @@ public class HashJoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table taba (i long, locale_name symbol )");
             compile("create table tabb (i long, state symbol, city symbol)");
-            compile("insert into taba values (1, 'pl')");
-            compile("insert into tabb values (1, 'a', 'pl')");
-            compile("insert into tabb values (1, 'b', 'b')");
+            insert("insert into taba values (1, 'pl')");
+            insert("insert into tabb values (1, 'a', 'pl')");
+            insert("insert into tabb values (1, 'b', 'b')");
 
             assertQuery("i\tlocale_name\ti1\tstate\tcity\n" +
                     "1\tpl\t1\ta\tpl\n", "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);

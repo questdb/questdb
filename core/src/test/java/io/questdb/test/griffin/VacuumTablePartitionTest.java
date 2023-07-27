@@ -60,7 +60,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxError1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("vacuum asdf");
+                assertSqlFails("vacuum asdf");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "'partitions' expected");
                 Assert.assertEquals("vacuum ".length(), ex.getPosition());
@@ -72,7 +72,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxError2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("vacuum partitions asdfad");
+                assertSqlFails("vacuum partitions asdfad");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist [table=asdfad]");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
@@ -84,7 +84,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxError4() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("vacuum partitions ");
+                assertSqlFails("vacuum partitions ");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table name expected");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
@@ -97,7 +97,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl (x long, ts timestamp) timestamp(ts)");
             try {
-                fail("vacuum partitions tbl asdf");
+                assertSqlFails("vacuum partitions tbl asdf");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "end of line or ';' expected");
                 Assert.assertEquals("vacuum partitions tbl ".length(), ex.getPosition());
@@ -110,7 +110,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl (x long, ts timestamp) timestamp(ts)");
             try {
-                fail("vacuum partitions tbl");
+                assertSqlFails("vacuum partitions tbl");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table 'tbl' is not partitioned");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
@@ -122,7 +122,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxErrorTableSpecialChars() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("VACUUM partitions ..\\root");
+                assertSqlFails("VACUUM partitions ..\\root");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "'.' is an invalid table name");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());

@@ -41,10 +41,9 @@ public class MaxFloatGroupByFunctionTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) LIMIT 2",
                 "ts\tmin\tmax\tfirst\tlast\tcount\n" +
                         "2020-01-01T00:28:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
-                        "2020-01-01T00:29:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n"
+                        "2020-01-01T00:29:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) LIMIT 2"
         );
     }
 }

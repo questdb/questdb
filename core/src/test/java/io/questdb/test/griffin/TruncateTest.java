@@ -55,16 +55,16 @@ public class TruncateTest extends AbstractGriffinTest {
                             ") timestamp (timestamp)"
             );
 
-            alter("alter table y drop column symbol1", sqlExecutionContext);
+            ddl("alter table y drop column symbol1", sqlExecutionContext);
             ddl("truncate table y");
             try (TableWriter w = getWriter("y")) {
                 TableWriter.Row row = w.newRow(123);
                 row.cancel();
             }
 
-            executeInsert("insert into y values(223)");
+            insert("insert into y values(223)");
 
-            try (RecordCursorFactory factory = fact("select * from y")) {
+            try (RecordCursorFactory factory = select("select * from y")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
@@ -110,7 +110,7 @@ public class TruncateTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                fail("truncate table x keep symbol maps bla-bla-bla");
+                assertSqlFails("truncate table x keep symbol maps bla-bla-bla");
             } catch (SqlException e) {
                 Assert.assertEquals(34, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected [token='bla']");
@@ -124,7 +124,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableKeyword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                fail("truncate x", sqlExecutionContext);
+                assertSqlFails("truncate x", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(9, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "TABLE expected");
@@ -136,7 +136,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableKeyword2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                fail("truncate");
+                assertSqlFails("truncate");
             } catch (SqlException e) {
                 Assert.assertEquals(8, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "TABLE expected");
@@ -148,7 +148,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                fail("truncate table", sqlExecutionContext);
+                assertSqlFails("truncate table", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(14, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -161,7 +161,7 @@ public class TruncateTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                fail("truncate table x,", sqlExecutionContext);
+                assertSqlFails("truncate table x,", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -175,7 +175,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableName3() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                fail("truncate table with");
+                assertSqlFails("truncate table with");
             } catch (SqlException e) {
                 Assert.assertEquals(15, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -188,7 +188,7 @@ public class TruncateTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                fail("truncate table x, keep");
+                assertSqlFails("truncate table x, keep");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -203,7 +203,7 @@ public class TruncateTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                fail("truncate table x y z");
+                assertSqlFails("truncate table x y z");
             } catch (SqlException e) {
                 Assert.assertEquals(19, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "',' or 'keep' expected");
@@ -369,7 +369,7 @@ public class TruncateTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                fail("truncate table x keep bla-bla-bla");
+                assertSqlFails("truncate table x keep bla-bla-bla");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "SYMBOL expected");
@@ -384,7 +384,7 @@ public class TruncateTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                fail("truncate table x keep symbol bla-bla-bla");
+                assertSqlFails("truncate table x keep symbol bla-bla-bla");
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "MAPS expected");
@@ -436,7 +436,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
             useBarrier.await();
             try {
-                fail("truncate table x,y");
+                assertSqlFails("truncate table x,y");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' could not be truncated: [-1]: table busy");
@@ -491,7 +491,7 @@ public class TruncateTest extends AbstractGriffinTest {
             );
 
             try {
-                fail("truncate table x, y,z");
+                assertSqlFails("truncate table x, y,z");
             } catch (SqlException e) {
                 Assert.assertEquals(20, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=z]");
@@ -560,7 +560,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     true
             );
 
-            try (RecordCursorFactory factory = fact("select * from x")) {
+            try (RecordCursorFactory factory = select("select * from x")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
@@ -588,7 +588,7 @@ public class TruncateTest extends AbstractGriffinTest {
             TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
 
             ddl("truncate table x");
-            executeInsert("insert into x\n" +
+            insert("insert into x\n" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
                     " from long_sequence(10)");
@@ -645,9 +645,9 @@ public class TruncateTest extends AbstractGriffinTest {
                                     " from long_sequence(1000)"
                     );
 
-                    assertSql("select column_with_top from testTruncateWithColumnTop limit -2", "column_with_top\n" +
+                    assertSql("column_with_top\n" +
                             "999\n" +
-                            "1000\n");
+                            "1000\n", "select column_with_top from testTruncateWithColumnTop limit -2");
                 }
         );
     }
@@ -764,13 +764,13 @@ public class TruncateTest extends AbstractGriffinTest {
                             ") timestamp (timestamp)"
             );
 
-            try (RecordCursorFactory factory = fact("select * from y")) {
+            try (RecordCursorFactory factory = select("select * from y")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                 }
 
-                alter("alter table y drop column symbol1", sqlExecutionContext);
+                ddl("alter table y drop column symbol1", sqlExecutionContext);
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
@@ -792,7 +792,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             ") timestamp (timestamp)"
             );
 
-            try (RecordCursorFactory factory = fact(query)) {
+            try (RecordCursorFactory factory = select(query)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);

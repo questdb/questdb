@@ -55,10 +55,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table xyz(time timestamp, cast2 geohash(8c)) timestamp(time) partition by DAY;";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
+            insert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "touch\n{\"data_pages\": 2, \"index_key_pages\":0, \"index_values_pages\": 0}\n";
             String query = "select touch(select time, cast2 from xyz);";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -70,11 +70,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table xyz(time timestamp, cast geohash(8c)) timestamp(time) partition by DAY;";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
+            insert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "time\tcast\n" +
                     "2020-12-31T23:59:59.000000Z\tu33d8b12\n";
             String query = "select time, cast from xyz;";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -101,19 +101,19 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2021-01'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021-01'";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2020-11'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-11'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -124,16 +124,16 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2020-12'
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -144,15 +144,15 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2021'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -163,7 +163,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -183,7 +183,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -203,7 +203,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -223,7 +223,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -243,7 +243,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -263,7 +263,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000001Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -283,7 +283,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -303,7 +303,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -323,7 +323,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -342,7 +342,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -361,7 +361,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -381,7 +381,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -401,7 +401,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -420,7 +420,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -439,7 +439,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -459,7 +459,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -480,7 +480,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -497,7 +497,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -516,7 +516,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -535,7 +535,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -555,7 +555,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -574,7 +574,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -593,7 +593,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -627,7 +627,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             for (int i = 0; i < iterations; i++) {
                 String insert = "insert into xts " +
                         "select timestamp_sequence(" + start + "L, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")";
-                executeInsert(insert);
+                insert(insert);
                 for (long ts = 0; ts < count; ts++) {
                     long nextTs = start + ts * hour;
                     datesArr.add(new Object[]{nextTs, formatter.format(nextTs / 1000L)});
@@ -660,7 +660,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
                     "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
 
@@ -804,7 +804,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert as select
-            executeInsert("insert into interval_test select x, timestamp_sequence(" +
+            insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.DAY_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
@@ -814,12 +814,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2022-11-22T00:00:00.000000Z\n" +
                     "5\t2022-11-23T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2022-11-21T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2022-11-21'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -830,7 +830,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH";
             ddl(createStmt);
             //insert as select
-            executeInsert("insert into interval_test select x, timestamp_sequence(" +
+            insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
@@ -840,12 +840,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2023-02-17T00:00:00.000000Z\n" +
                     "5\t2023-03-19T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2023-01-18T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2023-01'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -856,7 +856,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK";
             ddl(createStmt);
             //insert as select
-            executeInsert("insert into interval_test select x, timestamp_sequence(" +
+            insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.WEEK_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
@@ -866,12 +866,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2022-12-10T00:00:00.000000Z\n" +
                     "5\t2022-12-17T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2022-12-03T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2022-12-03'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -882,7 +882,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR";
             ddl(createStmt);
             //insert as select
-            executeInsert("insert into interval_test select x, timestamp_sequence(" +
+            insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
@@ -892,12 +892,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2025-11-18T00:00:00.000000Z\n" +
                     "5\t2026-11-18T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2024-11-18T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2024'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -942,7 +942,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -968,7 +968,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             ddl(createStmt);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -1005,7 +1005,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1176,7 +1176,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1197,7 +1197,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1269,7 +1269,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1286,7 +1286,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1306,7 +1306,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1385,7 +1385,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1406,7 +1406,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             ddl(createStmt);
 
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            executeInsert("insert into tt " +
+            insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
@@ -1458,16 +1458,16 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
-        assertSql(query, expected);
+        assertSql(expected, query);
 
         String joining = query.indexOf("where") > 0 ? " and " : " where ";
 
         // Non-impacting additions to WHERE
-        assertSql(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)", expected);
-        assertSql(query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())", expected);
-        assertSql(query + joining + columnName + " > dateadd('y', -1000, now())", expected);
-        assertSql(query + joining + columnName + " <= dateadd('y', 1000, now())", expected);
-        assertSql(query + joining + columnName + " not in '1970-01-01'", expected);
+        assertSql(expected, query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)");
+        assertSql(expected, query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())");
+        assertSql(expected, query + joining + columnName + " > dateadd('y', -1000, now())");
+        assertSql(expected, query + joining + columnName + " <= dateadd('y', 1000, now())");
+        assertSql(expected, query + joining + columnName + " not in '1970-01-01'");
     }
 
     private void assertTimestampTtFailedQuery(String expectedError, String query) {
@@ -1478,7 +1478,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     private void assertTimestampTtFailedQuery0(String expectedError, String query) {
         try {
-            fail(query);
+            assertSqlFails(query);
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
         }

@@ -52,9 +52,9 @@ public class GroupByRewriteTest extends AbstractGriffinTest {
     public void testRewriteAggregateOnJoin1() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE taba ( ax int, aid int );");
-            compile("INSERT INTO taba values (1,1), (2,2)");
+            insert("INSERT INTO taba values (1,1), (2,2)");
             compile("CREATE TABLE tabb ( bx int, bid int );");
-            compile("INSERT INTO tabb values (3,1), (4,2)");
+            insert("INSERT INTO tabb values (3,1), (4,2)");
 
             assertQuery("sum\tsum1\tsum2\tsum3\n" +
                             "3\t7\t23\t27\n",

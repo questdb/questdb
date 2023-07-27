@@ -262,7 +262,11 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         return doubleEquals(a, b, EPSILON);
     }
 
-    public static void executeInsert(CharSequence insertSql) throws SqlException {
+    public static void insert(CharSequence insertSql) throws SqlException {
+        insert(insertSql, sqlExecutionContext);
+    }
+
+    public static void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.insert(compiler, sqlExecutionContext, insertSql);
         }
@@ -303,7 +307,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                alter(ddl, sqlExecutionContext);
+                ddl(ddl, sqlExecutionContext);
                 if (configuration.getWalEnabledDefault()) {
                     drainWalQueue();
                 }
@@ -505,23 +509,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    @NotNull
-    protected static CompiledQuery alter(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return compile(compiler, query, executionContext);
-        }
-    }
-
-    protected static CompiledQuery alter(CharSequence query) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return compile(compiler, query, sqlExecutionContext);
-        }
-    }
-
-    protected static void assertCompile(CharSequence query) throws Exception {
-        assertMemoryLeak(() -> compile(query));
-    }
-
     protected static void assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
@@ -678,7 +665,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected static void assertQuery(Record[] expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, @Nullable CharSequence ddl2, @Nullable Record[] expected2, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                alter(ddl, sqlExecutionContext);
+                ddl(ddl, sqlExecutionContext);
             }
 
             snapshotMemoryUsage();
@@ -695,7 +682,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                     assertVariableColumns(factory, sqlExecutionContext);
 
                     if (ddl2 != null) {
-                        alter(ddl2, sqlExecutionContext);
+                        ddl(ddl2, sqlExecutionContext);
 
                         int count = 3;
                         while (count > 0) {
@@ -825,39 +812,34 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         assertFactoryMemoryUsage();
     }
 
-    @NotNull
-    protected static CompiledQuery compile(CharSequence query) throws SqlException {
-        return alter(query, sqlExecutionContext);
+    protected static void compile(CharSequence query) throws SqlException {
+        ddl(query, sqlExecutionContext);
     }
 
-    @NotNull
-    protected static CompiledQuery compile(CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return alter(query, sqlExecutionContext);
+    protected static void compile(CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        ddl(query, sqlExecutionContext);
     }
 
-    @NotNull
-    // todo: this is "alter"
-    protected static CompiledQuery compile(SqlCompiler compiler, CharSequence query) throws SqlException {
-        return compile(compiler, query, sqlExecutionContext);
+    protected static void ddl(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ddl(compiler, query, executionContext);
+        }
     }
 
-    @NotNull
-    // todo: this is "alter"
-    protected static CompiledQuery compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    protected static void ddl(CharSequence query) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ddl(compiler, query, sqlExecutionContext);
+        }
+    }
+
+    protected static void ddl(SqlCompiler compiler, CharSequence query) throws SqlException {
+        ddl(compiler, query, sqlExecutionContext);
+    }
+
+    protected static void ddl(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
         try (OperationFuture future = cc.execute(null)) {
             future.await();
-        }
-        return cc;
-    }
-
-    protected static void ddl(CharSequence ddlSql) throws SqlException {
-        ddl(ddlSql, sqlExecutionContext);
-    }
-
-    protected static void ddl(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile(ddlSql, sqlExecutionContext);
         }
     }
 
@@ -870,7 +852,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     protected static void expectException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         try {
-            fail(sql);
+            assertSqlFails(sql);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
@@ -883,7 +865,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     protected static void expectException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
         try {
-            fail(sql, sqlExecutionContext, fullFatJoins);
+            assertSqlFails(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
@@ -896,7 +878,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     protected static void expectInsertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         try {
-            executeInsert(sql);
+            insert(sql);
             Assert.fail();
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
@@ -908,23 +890,23 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected static RecordCursorFactory fact(CharSequence selectSql) throws SqlException {
+    protected static RecordCursorFactory select(CharSequence selectSql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
         }
     }
 
-    protected static void fail(CharSequence sql) throws SqlException {
-        fail(sql, sqlExecutionContext);
+    protected static void assertSqlFails(CharSequence sql) throws SqlException {
+        assertSqlFails(sql, sqlExecutionContext);
         Assert.fail();
     }
 
-    protected static void fail(CharSequence sql, SqlExecutionContext executionContext) throws SqlException {
+    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext) throws SqlException {
         ddl(sql, executionContext);
         Assert.fail();
     }
 
-    protected static void fail(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws SqlException {
+    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws SqlException {
         ddl(sql, executionContext, fullFatJoins);
         Assert.fail();
     }
@@ -979,7 +961,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                 assertVariableColumns(factory, sqlExecutionContext);
 
                 if (ddl2 != null) {
-                    alter(ddl2, sqlExecutionContext);
+                    ddl(ddl2, sqlExecutionContext);
                     if (configuration.getWalEnabledDefault()) {
                         drainWalQueue();
                     }
@@ -1048,10 +1030,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    alter(ddl, sqlExecutionContext);
+                    ddl(ddl, sqlExecutionContext);
                 }
                 try {
-                    fail(query);
+                    assertSqlFails(query);
                 } catch (SqlException | ImplicitCastException | CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
@@ -1189,7 +1171,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     protected void assertQueryPlain(String expected, String query) throws SqlException {
         snapshotMemoryUsage();
-        try (RecordCursorFactory factory = fact(query)) {
+        try (RecordCursorFactory factory = select(query)) {
             assertFactoryCursor5(expected, null, factory, true, sqlExecutionContext, true);
         }
     }
@@ -1202,7 +1184,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertSql(CharSequence sql, CharSequence expected) throws SqlException {
+    protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
         }
@@ -1215,10 +1197,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertSqlRunWithJit(CharSequence query) throws Exception {
-        CompiledQuery cc = compile(query);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-            Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+    protected void assertSqlRunWithJit(CharSequence selectSql) throws Exception {
+        try (RecordCursorFactory factory = select(selectSql)) {
+            Assert.assertTrue("JIT was not enabled for selectSql: " + selectSql, factory.usesCompiledFilter());
         }
     }
 
@@ -1269,19 +1250,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         ) {
             TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
             for (int i = 0; i < insertIterations; i++) {
-                executeInsert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
+                insert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
             }
         }
         return tableToken;
-    }
-
-    protected void executeOperation(QuestDBTestNode node, String query, int opType) throws SqlException {
-        CompiledQuery cq = compile(query, node.getSqlExecutionContext());
-        Assert.assertEquals(opType, cq.getType());
-    }
-
-    protected void executeOperation(String query, int opType) throws SqlException {
-        executeOperation(node1, query, opType);
     }
 
     protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
@@ -1303,6 +1275,16 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                 return planSink;
             } finally {
                 Misc.free(factory);
+            }
+        }
+    }
+
+    protected long update(CharSequence updateSql) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CompiledQuery cc = compiler.compile(updateSql, sqlExecutionContext);
+            try (OperationFuture future = cc.execute(null)) {
+                future.await();
+                return future.getAffectedRowsCount();
             }
         }
     }

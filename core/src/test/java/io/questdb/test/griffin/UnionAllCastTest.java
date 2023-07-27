@@ -606,12 +606,12 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testExceptDoubleFloat() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
 
             ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -629,14 +629,14 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testExceptDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
             ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -656,12 +656,12 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testExceptFloatDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
 
             ddl("create table events2 (contact symbol, groupid float, eventid string)");
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -679,14 +679,14 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testExceptSort() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
             ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -1446,14 +1446,14 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testIntersectDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
             ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -1473,14 +1473,14 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testIntersectSort() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
             ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected

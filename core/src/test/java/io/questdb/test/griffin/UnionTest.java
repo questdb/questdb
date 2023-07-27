@@ -38,11 +38,11 @@ public class UnionTest extends AbstractGriffinTest {
     public void testExcept() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            insert("insert into events2 values ('amy', 'grp1', 'flash')");
+            insert("insert into events2 values ('joey', 'grp2', 'sit')");
+            insert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            insert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            insert("insert into events2 values ('stewy', 'grp1', 'flash')");
 
             assertQuery(
                     "groupid\tcontact\n" +
@@ -66,7 +66,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query1 = "select '2020-04-21', 1\n" +
                     "except\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = fact(query1)) {
+            try (RecordCursorFactory rcf = select(query1)) {
                 assertCursor(expected1, rcf, true, false);
             }
 
@@ -75,7 +75,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query2 = "select '2020-04-21' a, 1 b\n" +
                     "except\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = fact(query2)) {
+            try (RecordCursorFactory rcf = select(query2)) {
                 assertCursor(expected2, rcf, true, false);
             }
         });
@@ -85,18 +85,18 @@ public class UnionTest extends AbstractGriffinTest {
     public void testExceptSymbolsDifferentTables() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events1 (contact symbol, groupid symbol, eventid string)");
-            executeInsert("insert into events1 values ('1', 'grp1', 'flash')");
-            executeInsert("insert into events1 values ('2', 'grp1', 'stand')");
-            executeInsert("insert into events1 values ('3', 'grp1', 'flash')");
-            executeInsert("insert into events1 values ('4', 'grp1', 'flash')");
-            executeInsert("insert into events1 values ('5', 'grp2', 'sit')");
+            insert("insert into events1 values ('1', 'grp1', 'flash')");
+            insert("insert into events1 values ('2', 'grp1', 'stand')");
+            insert("insert into events1 values ('3', 'grp1', 'flash')");
+            insert("insert into events1 values ('4', 'grp1', 'flash')");
+            insert("insert into events1 values ('5', 'grp2', 'sit')");
 
             ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
-            executeInsert("insert into events2 values ('5', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('4', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('3', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('2', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('1', 'grp1', 'flash')");
+            insert("insert into events2 values ('5', 'grp2', 'sit')");
+            insert("insert into events2 values ('4', 'grp1', 'flash')");
+            insert("insert into events2 values ('3', 'grp1', 'flash')");
+            insert("insert into events2 values ('2', 'grp1', 'stand')");
+            insert("insert into events2 values ('1', 'grp1', 'flash')");
 
             assertQuery(
                     "contact\teventid\n" +
@@ -151,11 +151,11 @@ public class UnionTest extends AbstractGriffinTest {
     public void testIntersect() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            insert("insert into events2 values ('amy', 'grp1', 'flash')");
+            insert("insert into events2 values ('joey', 'grp2', 'sit')");
+            insert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            insert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            insert("insert into events2 values ('stewy', 'grp1', 'flash')");
 
             assertQuery(
                     "groupid\tcontact\n" +
@@ -177,7 +177,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query1 = "select '2020-04-21', 1\n" +
                     "intersect\n" +
                     "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = fact(query1)) {
+            try (RecordCursorFactory rcf = select(query1)) {
                 assertCursor(expected1, rcf, true, false);
             }
 
@@ -186,7 +186,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query2 = "select '2020-04-21' a, 1 b\n" +
                     "intersect\n" +
                     "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = fact(query2)) {
+            try (RecordCursorFactory rcf = select(query2)) {
                 assertCursor(expected2, rcf, true, false);
             }
         });
@@ -440,15 +440,13 @@ public class UnionTest extends AbstractGriffinTest {
                         .replace("#CLAUSE" + i + "#", "order by x desc")
                         .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
                         .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                try (RecordCursorFactory ignore = fact(orderQuery)) {
-                }
+                select(orderQuery).close();
 
                 String limitQuery = template.replace("#SET#", setOperation)
                         .replace("#CLAUSE" + i + "#", "limit 1        ")
                         .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
                         .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                try (RecordCursorFactory ignore = fact(limitQuery)) {
-                }
+                select(limitQuery).close();
             }
         }
     }
@@ -580,7 +578,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
 
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -608,7 +606,7 @@ public class UnionTest extends AbstractGriffinTest {
                     " long_sequence(10))"
             );
 
-            try (RecordCursorFactory factory = fact("select * from x union all y")) {
+            try (RecordCursorFactory factory = select("select * from x union all y")) {
                 assertCursor(expected2, factory, false, true);
             }
         });
@@ -623,7 +621,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query1 = "select '2020-04-21', 1\n" +
                     "union all\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = fact(query1)) {
+            try (RecordCursorFactory rcf = select(query1)) {
                 assertCursor(expected1, rcf, false, true);
             }
 
@@ -633,7 +631,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query2 = "select '2020-04-21' a, 1 b\n" +
                     "union all\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = fact(query2)) {
+            try (RecordCursorFactory rcf = select(query2)) {
                 assertCursor(expected2, rcf, false, true);
             }
         });
@@ -671,7 +669,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -684,7 +682,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " FROM long_sequence(7) x)"
             ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            try (RecordCursorFactory factory = fact("select distinct t from x union all y order by t")) {
+            try (RecordCursorFactory factory = select("select distinct t from x union all y order by t")) {
                 assertCursor(expected2, factory, true, true);
             }
         });
@@ -735,7 +733,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -756,7 +754,7 @@ public class UnionTest extends AbstractGriffinTest {
             ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             try (
-                    RecordCursorFactory factory = fact(
+                    RecordCursorFactory factory = select(
                             "select t from (" +
                                     "select * from (select distinct t from x order by 1) " +
                                     "union all " +
@@ -795,7 +793,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " FROM long_sequence(5) x)"
             );
 
-            assertSql("select typeof(t), t from (select t from x union all y)", "typeof\tt\n" +
+            assertSql("typeof\tt\n" +
                     "STRING\tCAR\n" +
                     "STRING\tCAR\n" +
                     "STRING\tVAN\n" +
@@ -809,9 +807,9 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tBICYCLE\n" +
                     "STRING\tSCOOTER\n" +
                     "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n");
+                    "STRING\tBICYCLE\n", "select typeof(t), t from (select t from x union all y)");
 
-            assertSql("select typeof(t), t from (select t from x union all y order by t)", "typeof\tt\n" +
+            assertSql("typeof\tt\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
@@ -825,9 +823,9 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tSCOOTER\n" +
-                    "STRING\tVAN\n");
+                    "STRING\tVAN\n", "select typeof(t), t from (select t from x union all y order by t)");
 
-            assertSql("select typeof(t), t from (select t from x union all y) order by t", "typeof\tt\n" +
+            assertSql("typeof\tt\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
@@ -841,7 +839,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tSCOOTER\n" +
-                    "STRING\tVAN\n");
+                    "STRING\tVAN\n", "select typeof(t), t from (select t from x union all y) order by t");
 
             assertQuery("typeof\tt\n" +
                             "STRING\tBICYCLE\n" +
@@ -926,7 +924,7 @@ public class UnionTest extends AbstractGriffinTest {
             ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             try (
-                    RecordCursorFactory factory = fact(
+                    RecordCursorFactory factory = select(
                             "select t from (" +
                                     "select distinct t from x " +
                                     "union all " +
@@ -1027,7 +1025,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
 
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -1078,7 +1076,7 @@ public class UnionTest extends AbstractGriffinTest {
                     " long_sequence(4))"
             );
 
-            try (RecordCursorFactory factory = fact("select * from x union y union z")) {
+            try (RecordCursorFactory factory = select("select * from x union y union z")) {
                 assertCursor(expected2, factory, false, false);
             }
         });
@@ -1172,7 +1170,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
 
-            try (RecordCursorFactory rcf = fact("x")) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
@@ -1225,7 +1223,7 @@ public class UnionTest extends AbstractGriffinTest {
                     " long_sequence(24))"
             );
 
-            try (RecordCursorFactory factory = fact("select * from x union all y union z")) {
+            try (RecordCursorFactory factory = select("select * from x union all y union z")) {
                 assertCursor(expected2, factory, false, false);
             }
         });
@@ -1234,8 +1232,8 @@ public class UnionTest extends AbstractGriffinTest {
     @Test
     public void testUnionGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            alter("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
-            alter("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            ddl("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            ddl("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
 
             assertQuery("typeof\ts\tsum\n" +
                             "STRING\tb\t9.711630235623893\n" +

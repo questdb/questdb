@@ -525,7 +525,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
     private void testInsert(String valueType, String value, String targetColumnType, String expectedValue) throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab(x " + targetColumnType + " );");
-            executeInsert("insert into tab values (cast(" + value + " as " + valueType + " ));");
+            insert("insert into tab values (cast(" + value + " as " + valueType + " ));");
 
             String expected = "x\n" + expectedValue + "\n";
 
@@ -541,7 +541,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
         try {
             assertMemoryLeak(() -> {
                 ddl("create table tab(x " + targetColumnType + " );");
-                executeInsert("insert into tab values (cast(" + value + " as " + valueType + " ));");
+                insert("insert into tab values (cast(" + value + " as " + valueType + " ));");
             });
 
             Assert.fail("SqlException should be thrown!");

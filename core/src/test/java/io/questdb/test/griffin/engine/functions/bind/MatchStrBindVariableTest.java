@@ -37,7 +37,7 @@ public class MatchStrBindVariableTest extends AbstractGriffinTest {
     @Test
     public void testConstant() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = fact("select x from long_sequence(1) where '1GQO2' ~ $1")) {
+            try (RecordCursorFactory factory = select("select x from long_sequence(1) where '1GQO2' ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
@@ -80,7 +80,7 @@ public class MatchStrBindVariableTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() s from long_sequence(100))");
 
-            try (RecordCursorFactory factory = fact("x where s ~ $1")) {
+            try (RecordCursorFactory factory = select("x where s ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);

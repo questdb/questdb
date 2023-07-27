@@ -109,129 +109,125 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableAsSelectInheritsColumnIndex() throws Exception {
-        assertCompile("create table old(s string,sym symbol index, ts timestamp)");
-        assertQuery("s\tsym\tts\n", "select * from new",
-                "create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date)", null);
+        ddl("create table old(s string,sym symbol index, ts timestamp)");
+        ddl("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date)");
+        assertSql(
+                "s\tsym\tts\n",
+                "select * from new"
+        );
 
         assertColumnsIndexed("new", "s");
     }
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumn() throws Exception {
-        assertCompile("create table old(s string,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), cast(s as symbol), index(s)", null);
-
+        ddl("create table old(s string,l long, ts timestamp)");
+        ddl("create table new as (select * from old), cast(s as symbol), index(s)");
+        assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
     }
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV2() throws Exception {
-        assertCompile("create table old(s string,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), index(s), cast(s as symbol)", null);
-
+        ddl("create table old(s string,l long, ts timestamp)");
+        ddl("create table new as (select * from old), index(s), cast(s as symbol)");
+        assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
     }
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV3() throws Exception {
-        assertCompile("create table old(s string,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), cast(s as symbol), index(s)", null);
-
+        ddl("create table old(s string,l long, ts timestamp)");
+        ddl("create table new as (select * from old), cast(s as symbol), index(s)");
+        assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
     }
 
     @Test
     public void testCreateTableAsSelectWithCastAndIndex_v2() throws Exception {
-        assertCompile("create table old(s symbol,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), index(s), cast(l as int)", null);
-
+        ddl("create table old(s symbol,l long, ts timestamp)");
+        ddl("create table new as (select * from old), index(s), cast(l as int)");
+        assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
     }
 
     @Test
     public void testCreateTableAsSelectWithCastAndSeparateIndex() throws Exception {
-        assertCompile("create table old(s symbol,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), cast(l as int), index(s)", null);
-
+        ddl("create table old(s symbol,l long, ts timestamp)");
+        ddl("create table new as (select * from old), cast(l as int), index(s)");
+        assertSql("s\tl\tts\n", "new");
         assertColumnsIndexed("new", "s");
     }
 
     @Test(expected = SqlException.class)
     public void testCreateTableAsSelectWithCastSymbolToStringAndIndexOnIt() throws Exception {
-        assertCompile("create table old(s symbol,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), index(s), cast(s as string)", null);
+        ddl("create table old(s symbol,l long, ts timestamp)");
+        ddl("create table new as (select * from old), index(s), cast(s as string)");
+        assertSql("s\tl\tts\n", "new");
     }
 
     @Test(expected = SqlException.class)
     public void testCreateTableAsSelectWithIndexOnSymbolCastedToString() throws Exception {
-        assertCompile("create table old(s symbol,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), cast(s as string), index(s)", null);
+        ddl("create table old(s symbol,l long, ts timestamp)");
+        ddl("create table new as (select * from old), cast(s as string), index(s)");
+        assertSql("s\tl\tts\n", "new");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleCasts() throws Exception {
-        assertCompile("create table old(s symbol,l long, ts timestamp)");
-        assertQuery("s\tl\tts\n", "select * from new",
-                "create table new as (select * from old), cast(s as string), cast(l as long), cast(ts as date)", null);
+        ddl("create table old(s symbol,l long, ts timestamp)");
+        ddl("create table new as (select * from old), cast(s as string), cast(l as long), cast(ts as date)");
+        assertSql("s\tl\tts\n", "new");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleIndexes() throws Exception {
-        assertCompile("create table old(s1 symbol,s2 symbol, s3 symbol)");
-        assertQuery("s1\ts2\ts3\n", "select * from new", "create table new as (select * from old), index(s1), index(s2), index(s3)", null);
-
+        ddl("create table old(s1 symbol,s2 symbol, s3 symbol)");
+        ddl("create table new as (select * from old), index(s1), index(s2), index(s3)");
+        assertSql("s1\ts2\ts3\n", "new");
         assertColumnsIndexed("new", "s1", "s2", "s3");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexes() throws Exception {
-        assertCompile("create table old(s string,sym symbol, ts timestamp)");
-        assertQuery("s\tsym\tts\n", "select * from new",
-                "create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)", null);
-
+        ddl("create table old(s string,sym symbol, ts timestamp)");
+        ddl("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
+        assertSql("s\tsym\tts\n", "new");
         assertColumnsIndexed("new", "s", "sym");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV2() throws Exception {
-        assertCompile("create table old(s string,sym symbol, ts timestamp)");
-        assertQuery("s\tsym\tts\n", "select * from new",
-                "create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)", null);
-
+        ddl("create table old(s string,sym symbol, ts timestamp)");
+        ddl("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
+        assertSql("s\tsym\tts\n", "select * from new");
         assertColumnsIndexed("new", "s", "sym");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV3() throws Exception {
-        assertCompile("create table old(s string,sym symbol, ts timestamp)");
-        assertQuery("s\tsym\tts\n", "select * from new",
-                "create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date), index(sym), cast(sym as symbol)", null);
-
+        ddl("create table old(s string,sym symbol, ts timestamp)");
+        ddl("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date), index(sym), cast(sym as symbol)");
+        assertSql("s\tsym\tts\n", "select * from new");
         assertColumnsIndexed("new", "s", "sym");
     }
 
     @Test
     public void testCreateTableAsSelectWithNoIndex() throws Exception {
-        assertCompile("create table old(s1 symbol)");
-        assertQuery("s1\n", "select * from new", "create table new as (select * from old)", null);
+        ddl("create table old(s1 symbol)");
+        ddl("create table new as (select * from old)");
+        assertQuery("s1\n", "select * from new", null, null);
     }
 
     @Test
     public void testCreateTableAsSelectWithOneCast() throws Exception {
-        assertCompile("create table old(s1 symbol,s2 symbol, s3 symbol)");
+        ddl("create table old(s1 symbol,s2 symbol, s3 symbol)");
         assertQuery("s1\ts2\ts3\n", "select * from new", "create table new as (select * from old), cast(s1 as string)", null);
     }
 
     @Test
     public void testCreateTableAsSelectWithOneIndex() throws Exception {
-        assertCompile("create table old(s1 symbol,s2 symbol, s3 symbol)");
+        ddl("create table old(s1 symbol,s2 symbol, s3 symbol)");
         assertQuery("s1\ts2\ts3\n", "select * from new", "create table new as (select * from old), index(s1)", null);
 
         assertColumnsIndexed("new", "s1");
@@ -239,29 +235,31 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableFromLikeTableWithIndex() throws Exception {
-        assertCompile("create table tab (s symbol), index(s)");
+        ddl("create table tab (s symbol), index(s)");
         assertQuery("s\n", "select * from x", "create table x (like tab)", null);
         assertColumnsIndexed("x", "s");
     }
 
     @Test
     public void testCreateTableFromLikeTableWithMultipleIndices() throws Exception {
-        assertCompile("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
+        ddl("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
         assertQuery("s1\ts2\ts3\n", "select * from x", "create table x(like tab)", null);
         assertColumnsIndexed("x", "s1", "s2", "s3");
     }
 
     @Test
     public void testCreateTableFromLikeTableWithNoIndex() throws Exception {
-        assertCompile("create table y (s1 symbol)");
+        ddl("create table y (s1 symbol)");
         assertQuery("s1\n", "select * from tab", "create table tab (like y)", null);
     }
 
     @Test
     public void testCreateTableFromLikeTableWithPartition() throws Exception {
-        assertCompile("create table x (" +
+        ddl(
+                "create table x (" +
                 "a INT," +
-                "t timestamp) timestamp(t) partition by MONTH");
+                "t timestamp) timestamp(t) partition by MONTH"
+        );
         assertQuery("a\tt\n", "select * from tab", "create table tab (like x)", "t");
         assertPartitionAndTimestamp();
     }
@@ -350,14 +348,14 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableIfNotExistsExistingLikeAndDestinationTable() throws Exception {
-        assertCompile("create table x (s1 symbol)");
-        assertCompile("create table y (s2 symbol)");
+        ddl("create table x (s1 symbol)");
+        ddl("create table y (s2 symbol)");
         assertQuery("s1\n", "select * from x", "create table if not exists x (like y)", null);
     }
 
     @Test
     public void testCreateTableIfNotExistsExistingLikeTable() throws Exception {
-        assertCompile("create table y (s2 symbol)");
+        ddl("create table y (s2 symbol)");
         assertQuery("s2\n", "select * from x", "create table if not exists x (like y)", null);
     }
 
@@ -382,10 +380,9 @@ public class CreateTableTest extends AbstractGriffinTest {
                 {"gh2", "GEOHASH(4b)"}
         };
 
-        assertCompile("create table x (" +
-                getColumnDefinitions(columnTypes) + ")"
-        );
-        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tu\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
+        ddl("create table x (" + getColumnDefinitions(columnTypes) + ")");
+        ddl("create table tab (like x)");
+        assertSql("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
         assertColumnTypes(columnTypes);
 
     }
@@ -408,21 +405,28 @@ public class CreateTableTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableLikeTableWithIndexBlockCapacity() throws Exception {
         int indexBlockCapacity = 128;
-        assertCompile("create table x (" +
-                "a INT," +
-                "y SYMBOL NOCACHE INDEX CAPACITY " + indexBlockCapacity + "," +
-                "t timestamp) timestamp(t) partition by MONTH");
-        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
-        SymbolParameters parameters = new SymbolParameters(null, false, true, indexBlockCapacity);
-        assertSymbolParameters(parameters);
+        ddl(
+                "create table x (" +
+                        "a INT," +
+                        "y SYMBOL NOCACHE INDEX CAPACITY " + indexBlockCapacity + "," +
+                        "t timestamp) timestamp(t) partition by MONTH"
+        );
+        ddl("create table tab ( like x)");
+
+        assertSql("a\ty\tt\n", "tab");
+        assertSymbolParameters(new SymbolParameters(null, false, true, indexBlockCapacity));
     }
 
     @Test
     public void testCreateTableLikeTableWithMaxUncommittedRowsAndO3MaxLag() throws Exception {
         int maxUncommittedRows = 20;
         int o3MaxLag = 200;
-        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", o3MaxLag = " + o3MaxLag + "us");
-        assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
+        ddl(
+                "create table y (s2 symbol, ts TIMESTAMP) timestamp(ts)" +
+                        " PARTITION BY DAY" +
+                        " WITH maxUncommittedRows = " + maxUncommittedRows + ", o3MaxLag = " + o3MaxLag + "us");
+        ddl("create table x (like y)");
+        assertSql("s2\tts\n", "select * from x");
         assertWithClauseParameters(maxUncommittedRows, o3MaxLag);
     }
 
@@ -435,13 +439,15 @@ public class CreateTableTest extends AbstractGriffinTest {
     public void testCreateTableLikeTableWithSymbolCapacity() throws Exception {
         int symbolCapacity = 128;
 
-        assertCompile("create table x (" +
-                "a INT," +
-                "y SYMBOL CAPACITY " + symbolCapacity + " NOCACHE," +
-                "t timestamp) timestamp(t) partition by MONTH");
-        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
-        SymbolParameters parameters = new SymbolParameters(symbolCapacity, false, false, null);
-        assertSymbolParameters(parameters);
+        ddl(
+                "create table x (" +
+                        "a INT," +
+                        "y SYMBOL CAPACITY " + symbolCapacity + " NOCACHE," +
+                        "t timestamp) timestamp(t) partition by MONTH"
+        );
+        ddl("create table tab ( like x)");
+        assertSql("a\ty\tt\n", "select * from tab");
+        assertSymbolParameters(new SymbolParameters(symbolCapacity, false, false, null));
     }
 
     @Test
@@ -677,7 +683,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     private void assertFailure(String sql, int position) throws Exception {
         assertMemoryLeak(() -> {
             try {
-                alter(sql, sqlExecutionContext);
+                ddl(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -729,9 +735,9 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void createTableLike(boolean isWalEnabled) throws Exception {
         String walParameterValue = isWalEnabled ? "WAL" : "BYPASS WAL";
-
-        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
-        assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
+        ddl("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
+        ddl("create table x (like y)");
+        assertSql("s2\tts\n", "select * from x");
         assertWalEnabled(isWalEnabled);
     }
 
@@ -747,11 +753,14 @@ public class CreateTableTest extends AbstractGriffinTest {
     private void testCreateTableLikeTableWithCachedSymbol(boolean isSymbolCached) throws Exception {
         String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
 
-        assertCompile("create table x (" +
-                "a INT," +
-                "y SYMBOL " + symbolCacheParameterValue + "," +
-                "t timestamp) timestamp(t) partition by MONTH");
-        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
+        ddl(
+                "create table x (" +
+                        "a INT," +
+                        "y SYMBOL " + symbolCacheParameterValue + "," +
+                        "t timestamp) timestamp(t) partition by MONTH"
+        );
+        ddl("create table tab ( like x)");
+        assertSql("a\ty\tt\n", "select * from tab");
         SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
         assertSymbolParameters(parameters);
     }

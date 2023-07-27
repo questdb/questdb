@@ -65,9 +65,8 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     @Test
     public void testCastEqNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select cast('x' as geohash(1c)) = null",
                 "column\n" +
-                        "false\n"
+                        "false\n", "select cast('x' as geohash(1c)) = null"
         ));
     }
 

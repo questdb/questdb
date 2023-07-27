@@ -55,9 +55,9 @@ public class JoinTest extends AbstractGriffinTest {
                     "          member boolean\n" +
                     "        ) timestamp(ts) PARTITION by month");
 
-            compile("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
-            compile("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
-            compile("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
+            insert("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
+            insert("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
+            insert("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
 
             compile("create table table_2 (\n" +
                     "          ts timestamp,\n" +
@@ -66,8 +66,8 @@ public class JoinTest extends AbstractGriffinTest {
                     "          address string\n" +
                     "        ) timestamp(ts) PARTITION by month");
 
-            compile("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
-            compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+            insert("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
+            insert("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
         });
 
         // query "2"
@@ -1643,7 +1643,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testCrossTripleOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = fact("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
+            try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
                 Assert.assertNotNull(factory);
                 sink.clear();
                 printer.printHeader(factory.getMetadata(), sink);
@@ -1670,21 +1670,23 @@ public class JoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x (xid int, a int, b int)");
             ddl("create table y (yid int, a int, b int)");
-            fact("select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2").close();
-            fact("select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2").close();
+            select("select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2").close();
+            select("select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2").close();
         });
     }
 
     @Test
     public void testJoinColumnPropagationIntoJoinModel() throws Exception {
-        assertCompile("CREATE TABLE trades (" +
+        ddl(
+                "CREATE TABLE trades (" +
                 "  symbol SYMBOL," +
                 "  price DOUBLE," +
                 "  amount DOUBLE," +
                 "  timestamp TIMESTAMP " +
-                ") timestamp (timestamp) PARTITION BY DAY;");
+                ") timestamp (timestamp) PARTITION BY DAY;"
+        );
 
-        assertCompile("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
+        insert("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
 
         for (String joinType : Arrays.asList("JOIN", "LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
             String query = ("SELECT amount, price1\n" +
@@ -1778,7 +1780,7 @@ public class JoinTest extends AbstractGriffinTest {
     public void testJoinInnerFunctionInJoinExpression() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);");
-            executeInsert("INSERT INTO x VALUES (now(), 42)");
+            insert("INSERT INTO x VALUES (now(), 42)");
             assertQuery("count\n" +
                     "1\n", "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()", null, false, true);
         });
@@ -1991,27 +1993,27 @@ public class JoinTest extends AbstractGriffinTest {
                         ")"
         );
 
-        assertSql("select \"in\", \"from\" from x",
-                "in\tfrom\n" +
-                        "2\t3\n" +
-                        "4\t6\n" +
-                        "6\t9\n");
+        assertSql("in\tfrom\n" +
+                "2\t3\n" +
+                "4\t6\n" +
+                "6\t9\n", "select \"in\", \"from\" from x"
+        );
 
-        assertSql("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
+        assertSql("in\tfrom\tin1\tfrom1\n" +
+                "2\t3\t2\t3\n" +
+                "4\t6\t4\t6\n" +
+                "6\t9\t6\t9\n", "select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
                         "from x " +
-                        "join x as x1 on x.i = x1.i",
-                "in\tfrom\tin1\tfrom1\n" +
-                        "2\t3\t2\t3\n" +
-                        "4\t6\t4\t6\n" +
-                        "6\t9\t6\t9\n");
+                        "join x as x1 on x.i = x1.i"
+        );
 
-        assertSql("select *, x.\"in\" + x1.\"from\" " +
+        assertSql("i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
+                "1\t2\t3\t1\t2\t3\t5\n" +
+                "2\t4\t6\t2\t4\t6\t10\n" +
+                "3\t6\t9\t3\t6\t9\t15\n", "select *, x.\"in\" + x1.\"from\" " +
                         "from x " +
-                        "join x as x1 on x.i = x1.i",
-                "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
-                        "1\t2\t3\t1\t2\t3\t5\n" +
-                        "2\t4\t6\t2\t4\t6\t10\n" +
-                        "3\t6\t9\t3\t6\t9\t15\n");
+                        "join x as x1 on x.i = x1.i"
+        );
     }
 
     @Test
@@ -2047,7 +2049,7 @@ public class JoinTest extends AbstractGriffinTest {
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
 
             try {
-                assertSql(sql, "");
+                assertSql("", sql);
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
@@ -2285,9 +2287,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (5), (4), (3), (2), (1);");
+            insert("insert into t2 values (5), (4), (3), (2), (1);");
 
             assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 3",
                     "i\tj\n" +
@@ -2303,9 +2305,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition10() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
+            insert("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = s1",
                     "i\ts1\tj\ts2\n" +
@@ -2321,9 +2323,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition11() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
+            insert("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
                     "i\ts1\tj\ts2\n" +
@@ -2339,9 +2341,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition12() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+            insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
@@ -2359,7 +2361,7 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition13() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
@@ -2377,7 +2379,7 @@ public class JoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+            insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n");
@@ -2399,9 +2401,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition16() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b');");
+            insert("insert into t1 values (1, 'a'), (2, 'b');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (1,'f'), (1, 'g'), (1, 'd'), (3,'c');");
+            insert("insert into t2 values (1,'a'), (1,'f'), (1, 'g'), (1, 'd'), (3,'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
@@ -2415,9 +2417,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition17() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string, ts1 timestamp) timestamp(ts1)");
-            compile("insert into t1 values (1, 'a', 1), (2, 'b', 2);");
+            insert("insert into t1 values (1, 'a', 1), (2, 'b', 2);");
             compile("create table t2 (j int, s2 string, ts2 timestamp) timestamp(ts2) ");
-            compile("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
+            insert("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc",
                     "i\ts1\tts1\tj\ts2\tts2\n" +
@@ -2431,9 +2433,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition18() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 symbol)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 symbol)");
-            compile("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
+            insert("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
                     "i\ts1\tj\ts2\n" +
@@ -2449,9 +2451,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (5), (4), (3), (2), (1);");
+            insert("insert into t2 values (5), (4), (3), (2), (1);");
 
             assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 5",
                     "i\tj\n" +
@@ -2467,9 +2469,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (5), (4), (3), (2), (1);");
+            insert("insert into t2 values (5), (4), (3), (2), (1);");
 
             assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) = 3",
                     "i\tj\n" +
@@ -2485,9 +2487,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (1), (5), (2), (4), (3);");
+            insert("insert into t2 values (1), (5), (2), (4), (3);");
 
             assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) <= 0",
                     "i\tj\n" +
@@ -2503,9 +2505,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (1), (5), (2), (4), (3);");
+            insert("insert into t2 values (1), (5), (2), (4), (3);");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
                     "i\tj\n" +
@@ -2521,9 +2523,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition6() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (1), (5), (2), (4), (3);");
+            insert("insert into t2 values (1), (5), (2), (4), (3);");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (j = 2 or i = 4)",
                     "i\tj\n" +
@@ -2539,9 +2541,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition7() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (-4), (5);");
+            insert("insert into t1 values (1), (2), (3), (-4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (1), (5), (-2), (-4), (3);");
+            insert("insert into t2 values (1), (5), (-2), (-4), (3);");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
                     "i\tj\n" +
@@ -2557,9 +2559,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition8() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
+            insert("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = 'a'",
                     "i\tj\ts2\n" +
@@ -2575,9 +2577,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinOnFunctionCondition9() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
+            insert("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and s2 ~ '[ad]'",
                     "i\tj\ts2\n" +
@@ -2593,9 +2595,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinWithWhere1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+            insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and i = 1 where 1 = 1",
                     "i\ts1\tj\ts2\n" +
@@ -2611,9 +2613,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinWithWhere2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+            insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and j = 1 where 1 = 1",
                     "i\ts1\tj\ts2\n" +
@@ -2629,9 +2631,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinWithWhere3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+            insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1",
                     "i\ts1\tj\ts2\n" +
@@ -2643,9 +2645,9 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftHashJoinWithWhere4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
-            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (1, 'a');");
+            insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (1, 'a');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1 or j = null",
                     "i\ts1\tj\ts2\n" +
@@ -2662,7 +2664,7 @@ public class JoinTest extends AbstractGriffinTest {
 
             String query = "select * from t1 left join t2 on t1.i+10 = t2.j";
 
-            assertSql(query, "i\tj\n");
+            assertSql("i\tj\n", query);
         });
     }
 
@@ -2672,13 +2674,13 @@ public class JoinTest extends AbstractGriffinTest {
             compile("create table t1 as (select x i from long_sequence(5))");
             compile("create table t2 as (select x+10 j from long_sequence(3))");
 
-            assertSql("select * from t1 left join t2 on t1.i+10 = t2.j",
-                    "i\tj\n" +
-                            "1\t11\n" +
-                            "2\t12\n" +
-                            "3\t13\n" +
-                            "4\tNaN\n" +
-                            "5\tNaN\n");
+            assertSql("i\tj\n" +
+                    "1\t11\n" +
+                    "2\t12\n" +
+                    "3\t13\n" +
+                    "4\tNaN\n" +
+                    "5\tNaN\n", "select * from t1 left join t2 on t1.i+10 = t2.j"
+            );
         });
     }
 
@@ -2688,13 +2690,13 @@ public class JoinTest extends AbstractGriffinTest {
             compile("create table t1 as (select x i from long_sequence(5))");
             compile("create table t2 as (select x-3 j from long_sequence(3))");//-2,-1,0
 
-            assertSql("select * from t1 left join t2 on t1.i = - t2.j",
-                    "i\tj\n" +
-                            "1\t-1\n" +
-                            "2\t-2\n" +
-                            "3\tNaN\n" +
-                            "4\tNaN\n" +
-                            "5\tNaN\n");
+            assertSql("i\tj\n" +
+                    "1\t-1\n" +
+                    "2\t-2\n" +
+                    "3\tNaN\n" +
+                    "4\tNaN\n" +
+                    "5\tNaN\n", "select * from t1 left join t2 on t1.i = - t2.j"
+            );
         });
     }
 
@@ -2702,19 +2704,19 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftJoinOnFunctionCondition3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (-2), (3), (-4), (5);");
+            insert("insert into t1 values (1), (-2), (3), (-4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (-1), (-2), (3), (0), (-5);");
+            insert("insert into t2 values (-1), (-2), (3), (0), (-5);");
 
             String query = "select * from t1 left join t2 on abs(t1.i) = abs(t2.j)";
 
-            assertSql(query,
-                    "i\tj\n" +
-                            "1\t-1\n" +
-                            "-2\t-2\n" +
-                            "3\t3\n" +
-                            "-4\tNaN\n" +
-                            "5\t-5\n");
+            assertSql("i\tj\n" +
+                    "1\t-1\n" +
+                    "-2\t-2\n" +
+                    "3\t3\n" +
+                    "-4\tNaN\n" +
+                    "5\t-5\n", query
+            );
         });
     }
 
@@ -2722,17 +2724,17 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftJoinOnFunctionCondition4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (-1), (-2), (-3), (-4), (-5);");
+            insert("insert into t2 values (-1), (-2), (-3), (-4), (-5);");
 
-            assertSql("select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)",
-                    "i\tj\n" +
-                            "1\tNaN\n" +
-                            "2\tNaN\n" +
-                            "3\tNaN\n" +
-                            "4\t-4\n" +
-                            "5\t-5\n");
+            assertSql("i\tj\n" +
+                    "1\tNaN\n" +
+                    "2\tNaN\n" +
+                    "3\tNaN\n" +
+                    "4\t-4\n" +
+                    "5\t-5\n", "select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)"
+            );
         });
     }
 
@@ -2740,21 +2742,21 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftJoinOnFunctionCondition5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+            insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("select * from t1 left join t2 on i > 4  ",
-                    "i\tj\n" +
-                            "1\tNaN\n" +
-                            "2\tNaN\n" +
-                            "3\tNaN\n" +
-                            "4\tNaN\n" +
-                            "5\t-5\n" +
-                            "5\t-4\n" +
-                            "5\t-3\n" +
-                            "5\t-2\n" +
-                            "5\t-1\n");
+            assertSql("i\tj\n" +
+                    "1\tNaN\n" +
+                    "2\tNaN\n" +
+                    "3\tNaN\n" +
+                    "4\tNaN\n" +
+                    "5\t-5\n" +
+                    "5\t-4\n" +
+                    "5\t-3\n" +
+                    "5\t-2\n" +
+                    "5\t-1\n", "select * from t1 left join t2 on i > 4  "
+            );
         });
     }
 
@@ -2762,18 +2764,18 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftJoinOnFunctionCondition6() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+            insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("select * from t1 left join t2 on i > 4 and j < -3 ",
-                    "i\tj\n" +
-                            "1\tNaN\n" +
-                            "2\tNaN\n" +
-                            "3\tNaN\n" +
-                            "4\tNaN\n" +
-                            "5\t-5\n" +
-                            "5\t-4\n");
+            assertSql("i\tj\n" +
+                    "1\tNaN\n" +
+                    "2\tNaN\n" +
+                    "3\tNaN\n" +
+                    "4\tNaN\n" +
+                    "5\t-5\n" +
+                    "5\t-4\n", "select * from t1 left join t2 on i > 4 and j < -3 "
+            );
         });
     }
 
@@ -2781,21 +2783,21 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftJoinOnFunctionCondition7() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+            insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("select * from t1 left join t2 on i*j >= -4 ",
-                    "i\tj\n" +
-                            "1\t-4\n" +
-                            "1\t-3\n" +
-                            "1\t-2\n" +
-                            "1\t-1\n" +
-                            "2\t-2\n" +
-                            "2\t-1\n" +
-                            "3\t-1\n" +
-                            "4\t-1\n" +
-                            "5\tNaN\n");
+            assertSql("i\tj\n" +
+                    "1\t-4\n" +
+                    "1\t-3\n" +
+                    "1\t-2\n" +
+                    "1\t-1\n" +
+                    "2\t-2\n" +
+                    "2\t-1\n" +
+                    "3\t-1\n" +
+                    "4\t-1\n" +
+                    "5\tNaN\n", "select * from t1 left join t2 on i*j >= -4 "
+            );
         });
     }
 
@@ -2803,17 +2805,17 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLeftJoinOnFunctionCondition8() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
-            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            insert("insert into t1 values (1), (2), (3), (4), (5);");
             compile("create table t2 (j int)");
-            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+            insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4",
-                    "i\tj\n" +
-                            "1\t-1\n" +
-                            "2\t-2\n" +
-                            "3\tNaN\n" +
-                            "4\tNaN\n" +
-                            "5\tNaN\n");
+            assertSql("i\tj\n" +
+                    "1\t-1\n" +
+                    "2\t-2\n" +
+                    "3\tNaN\n" +
+                    "4\tNaN\n" +
+                    "5\tNaN\n", "select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
+            );
         });
     }
 
@@ -2826,13 +2828,13 @@ public class JoinTest extends AbstractGriffinTest {
 
             String query = "select * from t1 left join (select * k from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
 
-            assertSql(query,
-                    "i\tj\tk\n" +
-                            "1\t11\tNaN\n" +
-                            "2\t12\tNaN\n" +
-                            "3\t13\tNaN\n" +
-                            "4\tNaN\tNaN\n" +
-                            "5\tNaN\tNaN\n");
+            assertSql("i\tj\tk\n" +
+                    "1\t11\tNaN\n" +
+                    "2\t12\tNaN\n" +
+                    "3\t13\tNaN\n" +
+                    "4\tNaN\tNaN\n" +
+                    "5\tNaN\tNaN\n", query
+            );
         });
     }
 
@@ -2844,10 +2846,10 @@ public class JoinTest extends AbstractGriffinTest {
 
             String query = "select * from t1 left join t2 on i=j and abs(1) = 0";
 
-            assertSql(query, "i\tj\n" +
+            assertSql("i\tj\n" +
                     "1\tNaN\n" +
                     "2\tNaN\n" +
-                    "3\tNaN\n");
+                    "3\tNaN\n", query);
         });
     }
 
@@ -2956,11 +2958,11 @@ public class JoinTest extends AbstractGriffinTest {
             compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             compile("insert into t2 select x, x::timestamp from long_sequence(3)");
 
-            assertSql("select * from t1 lt join t2 on l1=l2",
-                    "l1\tts1\tl2\tts2\n" +
-                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
-                            "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
-                            "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n");
+            assertSql("l1\tts1\tl2\tts2\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n", "select * from t1 lt join t2 on l1=l2"
+            );
         });
     }
 
@@ -2968,15 +2970,15 @@ public class JoinTest extends AbstractGriffinTest {
     public void testLtJoinWithoutCondition() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            insert("insert into t1 select x, x::timestamp from long_sequence(3)");
             compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
-            compile("insert into t2 select x, x::timestamp from long_sequence(3)");
+            insert("insert into t2 select x, x::timestamp from long_sequence(3)");
 
-            assertSql("select * from t1 lt join t2",
-                    "l1\tts1\tl2\tts2\n" +
-                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
-                            "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
-                            "3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z\n");
+            assertSql("l1\tts1\tl2\tts2\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z\n", "select * from t1 lt join t2"
+            );
         });
     }
 
@@ -2985,28 +2987,31 @@ public class JoinTest extends AbstractGriffinTest {
         // Here we test case when all slave records have newer timestamps than what's in the master table.
         assertMemoryLeak(() -> {
             compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            insert("insert into t1 select x, x::timestamp from long_sequence(3)");
             compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
-            compile("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
+            insert("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
 
-            assertSql("select * from t1 lt join t2",
-                    "l1\tts1\tl2\tts2\n" +
-                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
-                            "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
-                            "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n");
+            assertSql("l1\tts1\tl2\tts2\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n", "select * from t1 lt join t2"
+            );
         });
     }
 
     @Test
     public void testMultipleJoinsWithTopLevelSelect() throws Exception {
-        assertCompile("CREATE TABLE train ( " +
+        ddl(
+                "CREATE TABLE train ( " +
                 "  id INT, " +
                 "  date timestamp, " +
                 "  store_nbr INT, " +
                 "  family SYMBOL, " +
                 "  sales DOUBLE " +
-                ") timestamp (date) PARTITION BY YEAR");
-        assertCompile("insert into train values (1, '2015-05-31T00:00:00', 1, 'A', 1.0 )");
+                ") timestamp (date) PARTITION BY YEAR"
+        );
+
+        insert("insert into train values (1, '2015-05-31T00:00:00', 1, 'A', 1.0 )");
 
         String query = "WITH train_lim as (select id, date, store_nbr, family, sales from train where date < '2017-07-16' AND date > '2012-12-29') " +
                 "SELECT s.id  " +
@@ -3359,7 +3364,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoinFailsBecauseSubqueryDoesntSupportRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
-            alter("CREATE TABLE trade (\n" +
+            ddl("CREATE TABLE trade (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  instrument SYMBOL,\n" +
                     "  price DOUBLE,\n" +
@@ -3705,15 +3710,15 @@ public class JoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // ASKS
             ddl("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
-            executeInsert("insert into asks values(100, 0)");
-            executeInsert("insert into asks values(101, 2);");
-            executeInsert("insert into asks values(102, 4);");
+            insert("insert into asks values(100, 0)");
+            insert("insert into asks values(101, 2);");
+            insert("insert into asks values(102, 4);");
 
             // BIDS
             ddl("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
-            executeInsert("insert into bids values(101, 1);");
-            executeInsert("insert into bids values(102, 3);");
-            executeInsert("insert into bids values(103, 5);");
+            insert("insert into bids values(101, 1);");
+            insert("insert into bids values(102, 3);");
+            insert("insert into bids values(103, 5);");
 
             String query =
                     "select \n" +
@@ -3760,7 +3765,7 @@ public class JoinTest extends AbstractGriffinTest {
 
     private void assertFailure(String query, String expectedMessage, int position) {
         try {
-            alter(query, sqlExecutionContext);
+            ddl(query, sqlExecutionContext);
             Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
         } catch (SqlException | ImplicitCastException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
@@ -3769,7 +3774,7 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     private void assertHashJoinSql(String query, String expected) throws SqlException {
-        assertSql(query, expected);
+        assertSql(expected, query);
         printSql(query, true);
         TestUtils.assertEquals("full fat join", expected, sink);
     }
@@ -4274,7 +4279,7 @@ public class JoinTest extends AbstractGriffinTest {
                     " from long_sequence(100000)) timestamp (ts)");
 
             try {
-                fail(sql, sqlExecutionContext, fullFatJoins);
+                assertSqlFails(sql, sqlExecutionContext, fullFatJoins);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
                 TestUtils.assertContains(ex.getFlyweightMessage(), "ts.d");
@@ -4819,7 +4824,7 @@ public class JoinTest extends AbstractGriffinTest {
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
 
             assertSql(sql, expected, true);
-            assertSql(sql, expected);
+            assertSql(expected, sql);
         });
     }
 
@@ -4972,7 +4977,7 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             assertSql(query, expected, true);
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
@@ -5011,7 +5016,7 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             assertSql(query, expected, true);
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 

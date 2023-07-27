@@ -296,7 +296,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            alter(
+            ddl(
                     "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
                     sqlExecutionContext
             );

@@ -208,16 +208,14 @@ public class CopyTest extends AbstractGriffinTest {
             try {
                 // selects nothing because ID is invalid
                 assertSql(
-                        "copy 'ffffffffffffffff' cancel",
                         "id\tstatus\n" +
-                                "ffffffffffffffff\tunknown\n"
+                                "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
                 );
 
                 // this one should succeed
                 assertSql(
-                        "copy '" + importId + "' cancel",
                         "id\tstatus\n" +
-                                importId + "\tcancelled\n"
+                                importId + "\tcancelled\n", "copy '" + importId + "' cancel"
                 );
             } finally {
                 copyRequestJob.drain(0);
@@ -248,9 +246,8 @@ public class CopyTest extends AbstractGriffinTest {
 
                 // cancel request should succeed
                 assertSql(
-                        "copy '" + copyID + "' cancel",
                         "id\tstatus\n" +
-                                copyID + "\tcancelled\n"
+                                copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
                 );
             } finally {
                 copyRequestJob.drain(0);
@@ -655,17 +652,15 @@ public class CopyTest extends AbstractGriffinTest {
             try {
                 // this one should be rejected
                 assertSql(
-                        "copy 'ffffffffffffffff' cancel",
                         "id\tstatus\n" +
-                                "ffffffffffffffff\tunknown\n"
+                                "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
 
                 );
 
                 // this one should succeed
                 assertSql(
-                        "copy '" + copyID + "' cancel",
                         "id\tstatus\n" +
-                                copyID + "\tcancelled\n"
+                                copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
                 );
             } finally {
                 copyRequestJob.drain(0);
@@ -1089,7 +1084,7 @@ public class CopyTest extends AbstractGriffinTest {
                 "('1972-09-28T00:00:00.000000Z','line1001','desc 1001',0.918270255022)" :
                 "('line1001','1972-09-28T00:00:00.000000Z',0.918270255022,'desc 1001')";
 
-        executeInsert("insert into x values" + values);
+        insert("insert into x values" + values);
         if (walEnabled) {
             drainWalQueue();
         }
@@ -1151,7 +1146,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     protected static String runAndFetchCopyID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (
-                RecordCursorFactory factory = fact(copySql);
+                RecordCursorFactory factory = select(copySql);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             Assert.assertTrue(cursor.hasNext());
@@ -1184,7 +1179,7 @@ public class CopyTest extends AbstractGriffinTest {
             boolean supportsRandomAccess,
             boolean expectSize
     ) throws SqlException {
-        try (final RecordCursorFactory factory = fact(query)) {
+        try (final RecordCursorFactory factory = select(query)) {
             assertFactoryCursor5(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize);
         }
     }

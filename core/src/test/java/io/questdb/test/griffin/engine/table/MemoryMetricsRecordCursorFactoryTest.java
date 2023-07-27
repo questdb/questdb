@@ -49,7 +49,7 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSql() throws Exception {
-        try (RecordCursorFactory factory = fact("select * from memory_metrics()")) {
+        try (RecordCursorFactory factory = select("select * from memory_metrics()")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
 

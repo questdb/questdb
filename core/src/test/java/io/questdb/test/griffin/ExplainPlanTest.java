@@ -1058,19 +1058,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testExplainCreateTable() throws Exception {
-        assertSql("explain create table a ( l long, d double)",
-                "QUERY PLAN\n" +
-                        "Create table: a\n");
+        assertSql("QUERY PLAN\n" +
+                "Create table: a\n", "explain create table a ( l long, d double)"
+        );
     }
 
     @Test
     public void testExplainCreateTableAsSelect() throws Exception {
-        assertSql("explain create table a as (select x, 1 from long_sequence(10))",
-                "QUERY PLAN\n" +
-                        "Create table: a\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [x,1]\n" +
-                        "        long_sequence count: 10\n");
+        assertSql("QUERY PLAN\n" +
+                "Create table: a\n" +
+                "    VirtualRecord\n" +
+                "      functions: [x,1]\n" +
+                "        long_sequence count: 10\n", "explain create table a as (select x, 1 from long_sequence(10))"
+        );
     }
 
     @Test
@@ -1082,7 +1082,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "   ts timestamp,\n" +
                     "   val double  \n" +
                     ") timestamp(ts);");
-            compile("insert into tab values ( 'XXX', 0::timestamp, 1 );");
+            insert("insert into tab values ( 'XXX', 0::timestamp, 1 );");
 
             assertPlan("  select\n" +
                             "   ts,\n" +
@@ -1106,9 +1106,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testExplainInsert() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");
-            assertSql("explain insert into a values (1, 2.0)",
-                    "QUERY PLAN\n" +
-                            "Insert into table: a\n");
+            assertSql("QUERY PLAN\n" +
+                    "Insert into table: a\n", "explain insert into a values (1, 2.0)"
+            );
         });
     }
 
@@ -1116,12 +1116,12 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");
-            assertSql("explain insert into a select x, 1 from long_sequence(10)",
-                    "QUERY PLAN\n" +
-                            "Insert into table: a\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [x,1]\n" +
-                            "        long_sequence count: 10\n");
+            assertSql("QUERY PLAN\n" +
+                    "Insert into table: a\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [x,1]\n" +
+                    "        long_sequence count: 10\n", "explain insert into a select x, 1 from long_sequence(10)"
+            );
         });
     }
 
@@ -1141,11 +1141,11 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testExplainSelect() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");
-            assertSql("explain select * from a;",
-                    "QUERY PLAN\n" +
-                            "DataFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Frame forward scan on: a\n");
+            assertSql("QUERY PLAN\n" +
+                    "DataFrame\n" +
+                    "    Row forward scan\n" +
+                    "    Frame forward scan on: a\n", "explain select * from a;"
+            );
         });
     }
 
@@ -1190,12 +1190,12 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testExplainSelectWithCte3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");
-            assertSql("explain with b as (select * from a limit 10) select * from b;",
-                    "QUERY PLAN\n" +
-                            "Limit lo: 10\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: a\n");
+            assertSql("QUERY PLAN\n" +
+                    "Limit lo: 10\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: a\n", "explain with b as (select * from a limit 10) select * from b;"
+            );
         });
     }
 
@@ -1203,14 +1203,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testExplainUpdate1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");
-            assertSql("explain update a set l = 1, d=10.1;",
-                    "QUERY PLAN\n" +
-                            "Update table: a\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [1,10.1]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: a\n");
+            assertSql("QUERY PLAN\n" +
+                    "Update table: a\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [1,10.1]\n" +
+                    "        DataFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: a\n", "explain update a set l = 1, d=10.1;"
+            );
         });
     }
 
@@ -1219,21 +1219,21 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table a ( l1 long, d1 double)");
             compile("create table b ( l2 long, d2 double)");
-            assertSql("explain update a set l1 = 1, d1=d2 from b where l1=l2;",
-                    "QUERY PLAN\n" +
-                            "Update table: a\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [1,d1]\n" +
-                            "        SelectedRecord\n" +
-                            "            Hash Join Light\n" +
-                            "              condition: l2=l1\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: a\n" +
-                            "                Hash\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: b\n");
+            assertSql("QUERY PLAN\n" +
+                    "Update table: a\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [1,d1]\n" +
+                    "        SelectedRecord\n" +
+                    "            Hash Join Light\n" +
+                    "              condition: l2=l1\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: a\n" +
+                    "                Hash\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: b\n", "explain update a set l1 = 1, d1=d2 from b where l1=l2;"
+            );
         });
     }
 
@@ -1382,8 +1382,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testExplainWithJsonFormat4() throws Exception {
-        assertCompile("create table taba (a1 int, a2 long)");
-        assertCompile("create table tabb (b1 int, b2 long)");
+        ddl("create table taba (a1 int, a2 long)");
+        ddl("create table tabb (b1 int, b2 long)");
         assertQuery("QUERY PLAN\n" +
                         "[\n" +
                         "  {\n" +
@@ -1904,7 +1904,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByKeyedOnExcept() throws Exception {
-        assertCompile("create table a ( i int, d double)");
+        ddl("create table a ( i int, d double)");
 
         assertPlan("create table b ( j int, e double)",
                 "select d, max(i) from (select * from a except select * from b)",
@@ -1923,7 +1923,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByKeyedOnIntersect() throws Exception {
-        assertCompile("create table a ( i int, d double)");
+        ddl("create table a ( i int, d double)");
 
         assertPlan("create table b ( j int, e double)",
                 "select d, max(i) from (select * from a intersect select * from b)",
@@ -4796,7 +4796,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan 
         assertMemoryLeak(() -> {
             compile("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
-            compile("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+            insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String queryDesc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
             bindVariableService.clear();
@@ -4981,7 +4981,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectIndexedSymbols08() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s symbol index)");
-            compile("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
+            insert("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
 
             String query = "select * from a where s != 'a' order by s";
             assertPlan(query,
@@ -6894,9 +6894,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "          member boolean\n" +
                     "        ) timestamp(ts) PARTITION by month");
 
-            compile("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
-            compile("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
-            compile("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
+            insert("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
+            insert("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
+            insert("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
 
             compile("create table table_2 (\n" +
                     "          ts timestamp,\n" +
@@ -6905,8 +6905,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "          address string\n" +
                     "        ) timestamp(ts) PARTITION by month");
 
-            compile("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
-            compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+            insert("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
+            insert("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
         });
     }
 
@@ -6943,7 +6943,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
             compile("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
-            compile("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+            insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
             bindVariableService.clear();
@@ -6991,7 +6991,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
             compile("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
-            compile("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+            insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
             bindVariableService.clear();
@@ -7041,7 +7041,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");
             compile("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
-            compile("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
+            insert("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "S1");

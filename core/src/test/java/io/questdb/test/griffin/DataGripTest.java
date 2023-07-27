@@ -99,13 +99,12 @@ public class DataGripTest extends AbstractGriffinTest {
     public void testGetTxId() throws Exception {
         assertMemoryLeak(
                 () -> assertSql(
-                        "select case\n" +
+                        "current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", "select case\n" +
                                 "  when pg_catalog.pg_is_in_recovery()\n" +
                                 "    then null\n" +
                                 "  else\n" +
                                 "    pg_catalog.txid_current()::varchar::bigint\n" +
-                                "  end as current_txid",
-                        "current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
+                                "  end as current_txid"
                 )
         );
     }
@@ -115,9 +114,8 @@ public class DataGripTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table y as (select x from long_sequence(10))");
             assertSql(
-                    "select COUNT(*) from y",
                     "count\n" +
-                            "10\n"
+                            "10\n", "select COUNT(*) from y"
             );
         });
     }
@@ -188,9 +186,8 @@ public class DataGripTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table y as (select x from long_sequence(10))");
             assertSql(
-                    "select COUNT(*) from y",
                     "count\n" +
-                            "10\n"
+                            "10\n", "select COUNT(*) from y"
             );
         });
     }

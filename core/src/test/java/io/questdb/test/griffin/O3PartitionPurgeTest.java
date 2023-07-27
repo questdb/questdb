@@ -61,17 +61,17 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
             // OOO insert
-            executeInsert("insert into tbl select 4, '1970-01-10T09'");
+            insert("insert into tbl select 4, '1970-01-10T09'");
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
             try (TableReader rdr = getReader("tbl")) {
 
                 try (TableReader rdr2 = getReader("tbl")) {
                     // in order insert
-                    executeInsert("insert into tbl select 2, '1970-01-10T11'");
+                    insert("insert into tbl select 2, '1970-01-10T11'");
 
                     // OOO insert
-                    executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                    insert("insert into tbl select 4, '1970-01-10T09'");
 
                     runPartitionPurgeJobs();
 
@@ -117,7 +117,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     barrier.await();
                     for (int i = 0; i < 32; i++) {
                         for (int j = 0; j < tableCount; j++) {
-                            executeInsert("insert into tbl" + j +
+                            insert("insert into tbl" + j +
                                     " select 2, '1970-01-10T10' from long_sequence(1) " +
                                     "union all " +
                                     "select 1, '1970-01-09T09'  from long_sequence(1)");
@@ -173,7 +173,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             // This should lock partition 1970-01-10.1 from being deleted from disk
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
-                executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                insert("insert into tbl select 4, '1970-01-10T09'");
             }
 
             TableToken tableToken = engine.verifyTableName("tbl");
@@ -201,7 +201,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 TableToken tableToken = engine.verifyTableName("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
-                        alter("alter table tbl drop partition where ts >= '1970-01-10T03'", sqlExecutionContext);
+                        ddl("alter table tbl drop partition where ts >= '1970-01-10T03'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail
@@ -266,10 +266,10 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 if (rnd.nextBoolean()) {
                     // deffo OOO insert
-                    executeInsert("insert into " + tableName + " select 4, '" + partition + "T09'");
+                    insert("insert into " + tableName + " select 4, '" + partition + "T09'");
                 } else {
                     // in order insert if last partition
-                    executeInsert("insert into " + tableName + " select 2, '" + partition + "T11'");
+                    insert("insert into " + tableName + " select 2, '" + partition + "T11'");
                 }
 
                 // lock reader on this transaction
@@ -324,15 +324,15 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ddl("create table " + tableName + " as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
             // OOO insert
-            executeInsert("insert into " + tableName + " select 4, '1970-01-10T09'");
+            insert("insert into " + tableName + " select 4, '1970-01-10T09'");
 
             // in order insert
-            executeInsert("insert into " + tableName + " select 2, '1970-01-10T11'");
+            insert("insert into " + tableName + " select 2, '1970-01-10T11'");
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
             try (TableReader rdr = getReader(tableName)) {
                 // OOO insert
-                executeInsert("insert into " + tableName + " select 4, '1970-01-10T09'");
+                insert("insert into " + tableName + " select 4, '1970-01-10T09'");
 
                 // This should not fail
                 rdr.openPartition(0);
@@ -359,7 +359,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
                 // OOO inserts partition 1970-01-09
-                executeInsert("insert into tbl select 4, '1970-01-09T10'");
+                insert("insert into tbl select 4, '1970-01-09T10'");
 
                 TableToken tableToken = engine.verifyTableName("tbl");
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
@@ -367,13 +367,13 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 try (TableReader rdr = getReader("tbl")) {
                     // OOO inserts partition 1970-01-09
-                    executeInsert("insert into tbl select 4, '1970-01-09T09'");
+                    insert("insert into tbl select 4, '1970-01-09T09'");
 
                     path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.2").concat("x.d").$();
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     try (TableReader rdr2 = getReader("tbl")) {
-                        alter("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
+                        ddl("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail
@@ -409,17 +409,17 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             // This should lock partition 1970-01-10.1 from being deleted from disk
             try (TableReader rdr = getReader("tbl")) {
                 // OOO insert
-                executeInsert("insert into tbl select 4, '2022-02-24T19'");
+                insert("insert into tbl select 4, '2022-02-24T19'");
 
                 try (TableReader rdr2 = getReader("tbl")) {
                     // in order insert
-                    executeInsert("insert into tbl select 2, '2022-02-26T19'");
+                    insert("insert into tbl select 2, '2022-02-26T19'");
 
                     path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.1");
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     // OOO insert
-                    executeInsert("insert into tbl select 4, '2022-02-24T19'");
+                    insert("insert into tbl select 4, '2022-02-24T19'");
 
                     runPartitionPurgeJobs();
 
@@ -496,7 +496,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             // This should lock partition 1970-01-10.1 from being deleted from disk
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
-                executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                insert("insert into tbl select 4, '1970-01-10T09'");
             }
 
             try (Path path = new Path()) {
@@ -533,7 +533,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             // This should lock partition 1970-01-10.1 from being deleted from disk
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
-                executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                insert("insert into tbl select 4, '1970-01-10T09'");
             }
 
             try (Path path = new Path()) {
@@ -563,16 +563,16 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
             // OOO insert
-            executeInsert("insert into tbl select 4, '1970-01-10T09'");
+            insert("insert into tbl select 4, '1970-01-10T09'");
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
             try (TableReader rdr = getReader("tbl")) {
 
                 // in order insert
-                executeInsert("insert into tbl select 2, '1970-01-10T11'");
+                insert("insert into tbl select 2, '1970-01-10T11'");
 
                 // OOO insert
-                executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                insert("insert into tbl select 4, '1970-01-10T09'");
 
                 // This should not fail
                 rdr.openPartition(0);
@@ -598,7 +598,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             // This should lock partition 1970-01-10.1 to not do delete in writer
             try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
-                executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                insert("insert into tbl select 4, '1970-01-10T09'");
             }
 
             engine.releaseInactive();
@@ -616,7 +616,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table " + tableName + " as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
-            executeInsert("insert into " + tableName +
+            insert("insert into " + tableName +
                     " select 2, '1970-01-11T09' from long_sequence(1) " +
                     "union all " +
                     " select 2, '1970-01-12T09' from long_sequence(1) " +
@@ -662,7 +662,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 TableToken tableToken = engine.verifyTableName("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
-                        alter("alter table tbl drop partition list '1970-01-10T00'", sqlExecutionContext);
+                        ddl("alter table tbl drop partition list '1970-01-10T00'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail
@@ -684,7 +684,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
-                        alter("alter table tbl drop partition list '1970-01-10T07'", sqlExecutionContext);
+                        ddl("alter table tbl drop partition list '1970-01-10T07'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
                         // This should not fail
@@ -723,7 +723,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 readers[i] = rdr;
 
                 // OOO insert
-                executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                insert("insert into tbl select 4, '1970-01-10T09'");
 
                 runPartitionPurgeJobs();
             }
@@ -765,14 +765,14 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 readers[2 * i] = rdr;
 
                 // in order insert
-                executeInsert("insert into tbl select 2, '1970-01-10T11'");
+                insert("insert into tbl select 2, '1970-01-10T11'");
 
                 runPartitionPurgeJobs();
 
                 TableReader rdr2 = getReader("tbl");
                 readers[2 * i + 1] = rdr2;
                 // OOO insert
-                executeInsert("insert into tbl select 4, '1970-01-10T09'");
+                insert("insert into tbl select 4, '1970-01-10T09'");
 
                 runPartitionPurgeJobs();
             }

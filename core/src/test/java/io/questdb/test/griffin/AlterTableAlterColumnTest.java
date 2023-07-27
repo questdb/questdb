@@ -36,8 +36,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.griffin.CompiledQuery.ALTER;
-
 public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
     @Test
@@ -46,7 +44,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, alter("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
+                    ddl("alter table x alter column ik add index capacity 1024");
 
                     try (TableWriter writer = getWriter("x")) {
                         int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
@@ -69,7 +67,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         }
                     }
 
-                    Assert.assertEquals(ALTER, alter("alter table x alter column ik add index", sqlExecutionContext).getType());
+                    ddl("alter table x alter column ik add index");
 
                     try (TableReader reader = getReader("x")) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
@@ -137,7 +135,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    alter("alter table x alter column ik add index", sqlExecutionContext);
+                    ddl("alter table x alter column ik add index", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -183,7 +181,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                fact(sql);
+                select(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);

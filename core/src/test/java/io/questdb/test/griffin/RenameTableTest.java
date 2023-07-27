@@ -78,26 +78,26 @@ public class RenameTableTest extends AbstractGriffinTest {
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("rename table " + tableName + " to " + upperCaseName);
-            compile("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
-            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+            insert("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
+            insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
 
             TableToken newTableDirectoryName = engine.verifyTableName(upperCaseName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
 
-            assertSql("select * from " + upperCaseName, "x\tsym2\tts\n" +
+            assertSql("x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                     "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
-                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + upperCaseName);
 
             compile("rename table " + upperCaseName + " to " + newTableName);
 
-            assertSql("select * from " + newTableName, "x\tsym2\tts\n" +
+            assertSql("x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                     "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
-                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + newTableName);
         });
     }
 
@@ -134,7 +134,7 @@ public class RenameTableTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                fail(sql);
+                assertSqlFails(sql);
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "literal or constant expected");

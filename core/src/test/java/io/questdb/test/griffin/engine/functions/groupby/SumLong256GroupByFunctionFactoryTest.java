@@ -32,8 +32,8 @@ public class SumLong256GroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSumAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select sum(x) from (select cast(null as long256) x from long_sequence(100000))",
-                "sum\n\n"));
+                "sum\n\n", "select sum(x) from (select cast(null as long256) x from long_sequence(100000))"
+        ));
     }
 
     @Test
@@ -47,14 +47,14 @@ public class SumLong256GroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSumSeq() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select sum(x), sum(y) from (select cast(x as long256) x, x as y from long_sequence(100000))",
-                "sum\tsum1\n0x012a06b550\t5000050000\n"));
+                "sum\tsum1\n0x012a06b550\t5000050000\n", "select sum(x), sum(y) from (select cast(x as long256) x, x as y from long_sequence(100000))"
+        ));
     }
 
     @Test
     public void testSumSeqWithFilter() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select sum(x), sum(y) from (select cast(x as long256) x, x as y from long_sequence(100000) where x > 10000)",
-                "sum\tsum1\n0x01270bb148\t4950045000\n"));
+                "sum\tsum1\n0x01270bb148\t4950045000\n", "select sum(x), sum(y) from (select cast(x as long256) x, x as y from long_sequence(100000) where x > 10000)"
+        ));
     }
 }

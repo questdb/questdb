@@ -58,9 +58,8 @@ public class InsertCastTest extends AbstractGriffinTest {
                 }
             }
             assertSql(
-                    "y",
                     "a\n" +
-                            "9\n"
+                            "9\n", "y"
             );
         });
     }
@@ -500,10 +499,9 @@ public class InsertCastTest extends AbstractGriffinTest {
                 }
             }
             assertSql(
-                    "y",
                     "a\n" +
                             "1.7E25\n" +
-                            "NaN\n"
+                            "NaN\n", "y"
             );
         });
     }
@@ -707,10 +705,9 @@ public class InsertCastTest extends AbstractGriffinTest {
                 }
             }
             assertSql(
-                    "y",
                     "a\n" +
                             "2\n" +
-                            "8\n"
+                            "8\n", "y"
             );
         });
     }
@@ -745,15 +742,14 @@ public class InsertCastTest extends AbstractGriffinTest {
             ddl("create table y(a char, b string);");
             ddl("create table x as (select cast(rnd_byte()%10 as string) a from long_sequence(5));");
             // execute insert statement for each value of reference table
-            executeInsert("insert into y select a,a from x");
+            insert("insert into y select a,a from x");
             assertSql(
-                    "y",
                     "a\tb\n" +
                             "6\t6\n" +
                             "2\t2\n" +
                             "7\t7\n" +
                             "7\t7\n" +
-                            "9\t9\n"
+                            "9\t9\n", "y"
             );
         });
     }
@@ -877,21 +873,20 @@ public class InsertCastTest extends AbstractGriffinTest {
             // insert table
             ddl("create table y(a char);");
             // execute insert statement for each value of reference table
-            executeInsert("insert into y values (cast('A' as string))");
-            executeInsert("insert into y values (cast('7' as string))");
+            insert("insert into y values (cast('A' as string))");
+            insert("insert into y values (cast('7' as string))");
             try {
-                executeInsert("insert into y values ('cc')");
+                insert("insert into y values ('cc')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            executeInsert("insert into y values (cast('K' as string))");
+            insert("insert into y values (cast('K' as string))");
             assertSql(
-                    "y",
                     "a\n" +
                             "A\n" +
                             "7\n" +
-                            "K\n"
+                            "K\n", "y"
             );
         });
     }
@@ -924,11 +919,10 @@ public class InsertCastTest extends AbstractGriffinTest {
                 }
             }
             assertSql(
-                    "y",
                     "a\n" +
                             "2012-04-11T10:45:11.000Z\n" +
                             "2012-04-11T10:45:11.344Z\n" +
-                            "\n"
+                            "\n", "y"
             );
         });
     }
@@ -950,21 +944,20 @@ public class InsertCastTest extends AbstractGriffinTest {
             // insert table
             ddl("create table y(a date);");
             // execute insert statement for each value of reference table
-            executeInsert("insert into y values ('2022-01-01T00:00:00.045Z');");
-            executeInsert("insert into y values ('2022-01-01T00:00:00.076Z');");
+            insert("insert into y values ('2022-01-01T00:00:00.045Z');");
+            insert("insert into y values ('2022-01-01T00:00:00.076Z');");
             try {
-                executeInsert("insert into y values ('c')");
+                insert("insert into y values ('c')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            executeInsert("insert into y values ('2222-01-01T00:00:00.124Z');");
+            insert("insert into y values ('2222-01-01T00:00:00.124Z');");
             assertSql(
-                    "y",
                     "a\n" +
                             "2022-01-01T00:00:00.045Z\n" +
                             "2022-01-01T00:00:00.076Z\n" +
-                            "2222-01-01T00:00:00.124Z\n"
+                            "2222-01-01T00:00:00.124Z\n", "y"
             );
         });
     }
@@ -1118,11 +1111,10 @@ public class InsertCastTest extends AbstractGriffinTest {
                 }
             }
             assertSql(
-                    "y",
                     "a\n" +
                             "2012-04-11T10:45:11.000000Z\n" +
                             "2012-04-11T10:45:11.344999Z\n" +
-                            "\n"
+                            "\n", "y"
             );
         });
     }
@@ -1144,21 +1136,20 @@ public class InsertCastTest extends AbstractGriffinTest {
             // insert table
             ddl("create table y(a " + "timestamp" + ");");
             // execute insert statement for each value of reference table
-            executeInsert("insert into y values ('2022-01-01T00:00:00.000045Z');");
-            executeInsert("insert into y values ('2222-01-01T00:00:00.000076Z');");
+            insert("insert into y values ('2022-01-01T00:00:00.000045Z');");
+            insert("insert into y values ('2222-01-01T00:00:00.000076Z');");
             try {
-                executeInsert("insert into y values ('c')");
+                insert("insert into y values ('c')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            executeInsert("insert into y values ('2222-01-01T00:00:00.000124Z');");
+            insert("insert into y values ('2222-01-01T00:00:00.000124Z');");
             assertSql(
-                    "y",
                     "a\n" +
                             "2022-01-01T00:00:00.000045Z\n" +
                             "2222-01-01T00:00:00.000076Z\n" +
-                            "2222-01-01T00:00:00.000124Z\n"
+                            "2222-01-01T00:00:00.000124Z\n", "y"
             );
         });
     }
@@ -1257,11 +1248,10 @@ public class InsertCastTest extends AbstractGriffinTest {
     public void testInsertNullDateIntoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x(ts timestamp)");
-            executeInsert("insert into x values (cast(null as date))");
+            insert("insert into x values (cast(null as date))");
             assertSql(
-                    "x",
                     "ts\n" +
-                            "\n"
+                            "\n", "x"
             );
         });
     }
@@ -1272,27 +1262,26 @@ public class InsertCastTest extends AbstractGriffinTest {
             ddl("create table y(a " + type + ");");
             ddl("create table x as (select rnd_float()*100 a from long_sequence(5));");
             ddl("insert into y select rnd_float()*100 a from long_sequence(5);");
-            executeInsert("insert into y values (cast ('NaN' as float));");
+            insert("insert into y values (cast ('NaN' as float));");
             // execute insert statement for each value of reference table
             ddl("insert into y select a from x");
 
             try {
-                executeInsert("insert into y values (cast ('" + outOfRangeLeft + "' as float));");
+                insert("insert into y values (cast ('" + outOfRangeLeft + "' as float));");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
 
             try {
-                executeInsert("insert into y values (cast ('" + outOfRangeRight + "' as float));");
+                insert("insert into y values (cast ('" + outOfRangeRight + "' as float));");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
 
             assertSql(
-                    "y",
-                    expected
+                    expected, "y"
             );
         });
     }
@@ -1320,7 +1309,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1340,7 +1329,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                 insert.execute(sqlExecutionContext);
                 insert.execute(sqlExecutionContext);
             }
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1349,17 +1338,17 @@ public class InsertCastTest extends AbstractGriffinTest {
             // insert table
             ddl("create table y(a " + toType + ");");
             // execute insert statement for each value of reference table
-            executeInsert("insert into y values ('4')");
-            executeInsert("insert into y values ('7')");
+            insert("insert into y values ('4')");
+            insert("insert into y values ('7')");
             try {
                 // 'a' is an invalid geohash and also invalid number
-                executeInsert("insert into y values ('a')");
+                insert("insert into y values ('a')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            executeInsert("insert into y values ('1')");
-            assertSql("y", expected);
+            insert("insert into y values ('1')");
+            assertSql(expected, "y");
         });
     }
 
@@ -1370,7 +1359,7 @@ public class InsertCastTest extends AbstractGriffinTest {
             ddl("create table x as (select cast(rnd_int(0,10,0)+47 as char) a from long_sequence(5));");
             // execute insert statement for each value of reference table
             ddl("insert into y select a from x");
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1396,7 +1385,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1422,7 +1411,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1449,10 +1438,9 @@ public class InsertCastTest extends AbstractGriffinTest {
                 }
             }
             assertSql(
-                    "y",
                     "a\n" +
                             "12\n" +
-                            "31\n"
+                            "31\n", "y"
             );
         });
     }
@@ -1483,7 +1471,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1492,16 +1480,16 @@ public class InsertCastTest extends AbstractGriffinTest {
             // insert table
             ddl("create table y(a " + toType + ");");
             // execute insert statement for each value of reference table
-            executeInsert("insert into y values ('45')");
-            executeInsert("insert into y values ('76')");
+            insert("insert into y values ('45')");
+            insert("insert into y values ('76')");
             try {
-                executeInsert("insert into y values ('cc')");
+                insert("insert into y values ('cc')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            executeInsert("insert into y values ('124')");
-            assertSql("y", expected);
+            insert("insert into y values ('124')");
+            assertSql(expected, "y");
         });
     }
 
@@ -1512,7 +1500,7 @@ public class InsertCastTest extends AbstractGriffinTest {
             ddl("create table x as (select cast(rnd_byte() as string) a from long_sequence(5));");
             // execute insert statement for each value of reference table
             ddl("insert into y select a,a from x");
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1538,7 +1526,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 
@@ -1560,7 +1548,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                 bindVariableService.setTimestamp(0, 88990229990007L);
                 insert.execute(sqlExecutionContext);
             }
-            assertSql("y", expected);
+            assertSql(expected, "y");
         });
     }
 }

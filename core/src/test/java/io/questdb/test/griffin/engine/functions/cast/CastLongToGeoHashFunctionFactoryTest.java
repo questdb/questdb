@@ -33,51 +33,43 @@ public class CastLongToGeoHashFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     assertSql(
-                            "select cast(99889L as geohash(1c))",
                             "cast\n" +
-                                    "j\n"
+                                    "j\n", "select cast(99889L as geohash(1c))"
                     );
 
                     assertSql(
-                            "select cast(899808896L as geohash(2c))",
                             "cast\n" +
-                                    "n0\n"
+                                    "n0\n", "select cast(899808896L as geohash(2c))"
                     );
 
                     assertSql(
-                            "select cast(899808896L as geohash(4c))",
                             "cast\n" +
-                                    "3zn0\n"
+                                    "3zn0\n", "select cast(899808896L as geohash(4c))"
                     );
 
                     assertSql(
-                            "select cast(899808896L as geohash(8c))",
                             "cast\n" +
-                                    "00uu3zn0\n"
+                                    "00uu3zn0\n", "select cast(899808896L as geohash(8c))"
                     );
 
                     assertSql(
-                            "select cast(cast(null as long) as geohash(1c))",
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(1c))"
                     );
 
                     assertSql(
-                            "select cast(cast(null as long) as geohash(2c))",
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(2c))"
                     );
 
                     assertSql(
-                            "select cast(cast(null as long) as geohash(4c))",
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(4c))"
                     );
 
                     assertSql(
-                            "select cast(cast(null as long) as geohash(8c))",
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(8c))"
                     );
                 }
         );

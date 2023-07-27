@@ -35,16 +35,15 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp) timestamp(timestamp);");
 
-            executeInsert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);");
-            executeInsert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);");
-            executeInsert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);");
-            executeInsert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);");
-            executeInsert("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);");
+            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);");
+            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);");
+            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);");
+            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);");
+            insert("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);");
 
             assertSql(
-                    "(select * from balances where cust_id=1 latest on timestamp partition by balance_ccy) where not inactive;",
                     "cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp\n" +
-                            "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n"
+                            "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n", "(select * from balances where cust_id=1 latest on timestamp partition by balance_ccy) where not inactive;"
             );
         });
     }
@@ -54,11 +53,11 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table state_table(time timestamp, id int, state symbol) timestamp(time);");
 
-            executeInsert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            executeInsert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            executeInsert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            executeInsert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            executeInsert("insert into state_table values(systimestamp(), 12345, 'ON');");
+            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            insert("insert into state_table values(systimestamp(), 12345, 'ON');");
 
             TestUtils.assertSql(
                     engine,

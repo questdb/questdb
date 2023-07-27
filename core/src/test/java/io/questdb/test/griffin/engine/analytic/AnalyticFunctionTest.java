@@ -51,12 +51,12 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                     "AA\t2\t1\n" +
                     "CC\t1\t1\n" +
                     "BB\t2\t2\n";
-            assertSql(query, expected);
+            assertSql(expected, query);
 
             // AnalyticContext should be properly clean up when we try to execute the next query.
 
             try {
-                alter("select row_number() from trades", sqlExecutionContext);
+                ddl("select row_number() from trades", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(7, e.getPosition());

@@ -41,7 +41,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
             bindVariableService.setStr(0, "H");
-            try (RecordCursorFactory factory = fact("select * from x where name ilike '%' || $1 || '%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%' || $1 || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -57,7 +57,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
             bindVariableService.setStr("str", "H");
-            try (RecordCursorFactory factory = fact("select * from x where name ilike '%' || :str || '%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%' || :str || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -81,7 +81,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike ''")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike ''")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -105,7 +105,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike '[][n'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '[][n'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -119,7 +119,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     public void testLikeCharacterNoMatch() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-            try (RecordCursorFactory factory = fact("select * from x where  name ilike 'H'")) {
+            try (RecordCursorFactory factory = select("select * from x where  name ilike 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -144,7 +144,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike 'aBcGe'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike 'aBcGe'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -159,7 +159,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     public void testLikeStringNoMatch() throws Exception {
         assertMemoryLeak(() -> {
                     ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-                    try (RecordCursorFactory factory = fact("select * from x where name ilike 'XJ'")) {
+                    try (RecordCursorFactory factory = select("select * from x where name ilike 'XJ'")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             sink.clear();
                             printer.print(cursor, factory.getMetadata(), true, sink);
@@ -184,7 +184,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike 'AbC%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike 'AbC%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -210,7 +210,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike '%GgG'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%GgG'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -234,7 +234,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike '%BcG%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%BcG%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -258,7 +258,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike '_B%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '_B%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -282,7 +282,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name ilike '_BC__'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '_BC__'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -297,7 +297,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                fail("select * from x where name ilike rnd_str('foo','bar')");
+                assertSqlFails("select * from x where name ilike rnd_str('foo','bar')");
             } catch (SqlException e) {
                 Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
@@ -310,7 +310,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = fact("select * from x where not name ilike 'H'")) {
+            try (RecordCursorFactory factory = select("select * from x where not name ilike 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -325,7 +325,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = fact("select * from x where not name ilike 'XJ'")) {
+            try (RecordCursorFactory factory = select("select * from x where not name ilike 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);

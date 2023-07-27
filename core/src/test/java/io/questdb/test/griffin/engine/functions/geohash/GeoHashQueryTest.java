@@ -93,12 +93,12 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             for (int l = ColumnType.GEO_HASH_MAX_BITS_LENGTH; l > 0; l--) {
                 String tableName = "pos" + l;
                 ddl(String.format("create table %s(x long)", tableName));
-                alter(String.format("alter table %s add hash geohash(%sb)", tableName, l));
+                ddl(String.format("alter table %s add hash geohash(%sb)", tableName, l));
 
                 String columnType = l % 5 == 0 ? (l / 5) + "c" : l + "b";
-                assertSql("show columns from " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                         "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
-                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\tfalse\n", columnType));
+                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\tfalse\n", columnType), "show columns from " + tableName);
             }
         });
     }
@@ -108,7 +108,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                alter("alter table pos add hash geohash(1)");
+                ddl("alter table pos add hash geohash(1)");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
@@ -122,7 +122,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                fail("alter table pos add hash geohash");
+                assertSqlFails("alter table pos add hash geohash");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
                 Assert.assertEquals("alter table pos add hash geohash".length(), e.getPosition());
@@ -135,7 +135,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                fail("alter table pos add hash geohash()");
+                assertSqlFails("alter table pos add hash geohash()");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
                 Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
@@ -148,7 +148,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)", sqlExecutionContext);
             try {
-                fail("alter table pos add hash geohash(11)");
+                assertSqlFails("alter table pos add hash geohash(11)");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
@@ -162,7 +162,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                fail("alter table pos add hash geohash(11c 1)");
+                assertSqlFails("alter table pos add hash geohash(11c 1)");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH type literal, expected ')' found='1'");
@@ -176,7 +176,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                fail("alter table pos add hash geohash(11c");
+                assertSqlFails("alter table pos add hash geohash(11c");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH type literal, expected ')'");
@@ -191,10 +191,10 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             for (int l = 12; l > 0; l--) {
                 String tableName = "pos" + l;
                 ddl(String.format("create table %s(x long)", tableName));
-                alter(String.format("alter table %s add hash geohash(%sc)", tableName, l));
-                assertSql("show columns from " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                ddl(String.format("alter table %s add hash geohash(%sc)", tableName, l));
+                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                         "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
-                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\tfalse\n", l));
+                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\tfalse\n", l), "show columns from " + tableName);
             }
         });
     }
@@ -225,18 +225,17 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                 writer.commit();
             }
 
-            assertSql("t1",
-                    "geo1\tgeo2\tgeo4\tgeo8\tgeo9\tx\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t0\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t1\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t2\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t3\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t4\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t5\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t6\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t7\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t8\n" +
-                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t9\n"
+            assertSql("geo1\tgeo2\tgeo4\tgeo8\tgeo9\tx\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t0\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t1\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t2\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t3\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t4\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t5\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t6\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t7\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t8\n" +
+                    "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t9\n", "t1"
             );
         });
     }
@@ -261,10 +260,10 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                 writer.commit();
             }
 
-            assertSql("t1",
-                    "geo1\tgeo2\tgeo4\tgeo8\tx\n" +
-                            "\t\t\t\t0\n" +
-                            "\t\t\t\t1\n");
+            assertSql("geo1\tgeo2\tgeo4\tgeo8\tx\n" +
+                    "\t\t\t\t0\n" +
+                    "\t\t\t\t1\n", "t1"
+            );
         });
     }
 
@@ -280,15 +279,15 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(2))");
 
-            assertSql("select * from t1 join t2 on t1.geo4 = t2.geo4",
-                    "geo4\tx\tgeo41\tx1\n" +
-                            "1234\t3\t1234\t1\n" +
-                            "3456\t4\t3456\t2\n" +
-                            "3456\t5\t3456\t2\n" +
-                            "3456\t6\t3456\t2\n" +
-                            "3456\t7\t3456\t2\n" +
-                            "1234\t8\t1234\t1\n" +
-                            "1234\t10\t1234\t1\n");
+            assertSql("geo4\tx\tgeo41\tx1\n" +
+                    "1234\t3\t1234\t1\n" +
+                    "3456\t4\t3456\t2\n" +
+                    "3456\t5\t3456\t2\n" +
+                    "3456\t6\t3456\t2\n" +
+                    "3456\t7\t3456\t2\n" +
+                    "1234\t8\t1234\t1\n" +
+                    "1234\t10\t1234\t1\n", "select * from t1 join t2 on t1.geo4 = t2.geo4"
+            );
         });
     }
 
@@ -303,35 +302,35 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "hash2 geohash(2c), " +
                     "hash1 geohash(1c)" +
                     ")");
-            executeInsert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','0f91tzzz','0f91tzzz','0f91tzzz','0f91tzzz')");
-            assertSql("select cast(hash8 as geohash(6c)), cast(hash4 as geohash(3c)), cast(hash2 as geohash(1c)), cast(hash1 as geohash(1b)) from pos",
-                    "cast\tcast1\tcast2\tcast3\n" +
-                            "0f91tz\t0f9\t0\t0\n");
+            insert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','0f91tzzz','0f91tzzz','0f91tzzz','0f91tzzz')");
+            assertSql("cast\tcast1\tcast2\tcast3\n" +
+                    "0f91tz\t0f9\t0\t0\n", "select cast(hash8 as geohash(6c)), cast(hash4 as geohash(3c)), cast(hash2 as geohash(1c)), cast(hash1 as geohash(1b)) from pos"
+            );
         });
     }
 
     @Test
     public void testGeoHashDowncast() throws Exception {
-        assertMemoryLeak(() -> assertSql("select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)\n" +
+        assertMemoryLeak(() -> assertSql("cast\n" +
+                "questd\n" +
+                "questd\n", "select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)\n" +
                         "UNION ALL\n" +
-                        "select cast('questdb' as geohash(6c)) from long_sequence(1)",
-                "cast\n" +
-                        "questd\n" +
-                        "questd\n"));
+                        "select cast('questdb' as geohash(6c)) from long_sequence(1)"
+        ));
     }
 
     @Test
     public void testGeoHashDowncastNull() throws Exception {
-        assertMemoryLeak(() -> assertSql("select cast(cast(NULL as geohash(7c)) as geohash(6c)) from long_sequence(1)",
-                "cast\n" +
-                        "\n"));
+        assertMemoryLeak(() -> assertSql("cast\n" +
+                "\n", "select cast(cast(NULL as geohash(7c)) as geohash(6c)) from long_sequence(1)"
+        ));
     }
 
     @Test
     public void testGeoHashDowncastSameSize() throws Exception {
-        assertMemoryLeak(() -> assertSql("select cast(cast('questdb' as geohash(7c)) as geohash(35b)) from long_sequence(1)",
-                "cast\n" +
-                        "questdb\n"));
+        assertMemoryLeak(() -> assertSql("cast\n" +
+                "questdb\n", "select cast(cast('questdb' as geohash(7c)) as geohash(35b)) from long_sequence(1)"
+        ));
     }
 
     @Test
@@ -342,10 +341,10 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("select * from t1 where geo4 = cast('questdb' as geohash(7c))",
-                    "geo4\tx\n" +
-                            "questdb\t1\n" +
-                            "questdb\t2\n");
+            assertSql("geo4\tx\n" +
+                    "questdb\t1\n" +
+                    "questdb\t2\n", "select * from t1 where geo4 = cast('questdb' as geohash(7c))"
+            );
         });
     }
 
@@ -363,18 +362,18 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(2))");
 
-            assertSql("with g1 as (select distinct * from t1)," +
+            assertSql("geo4\tgeo1\tx\tgeo41\tgeo11\tx1\n" +
+                    "ques\tq\t1\tques\t3\t2\n" +
+                    "1234\t3\t2\t1234\tq\t1\n" +
+                    "ques\t1\t5\tques\t3\t2\n" +
+                    "1234\t3\t6\t1234\tq\t1\n" +
+                    "1234\t1\t7\t1234\tq\t1\n" +
+                    "1234\tq\t8\t1234\tq\t1\n" +
+                    "ques\t1\t9\tques\t3\t2\n" +
+                    "ques\t1\t10\tques\t3\t2\n", "with g1 as (select distinct * from t1)," +
                             "g2 as (select distinct * from t2)" +
-                            "select * from g1 join g2 on g1.geo4 = g2.geo4",
-                    "geo4\tgeo1\tx\tgeo41\tgeo11\tx1\n" +
-                            "ques\tq\t1\tques\t3\t2\n" +
-                            "1234\t3\t2\t1234\tq\t1\n" +
-                            "ques\t1\t5\tques\t3\t2\n" +
-                            "1234\t3\t6\t1234\tq\t1\n" +
-                            "1234\t1\t7\t1234\tq\t1\n" +
-                            "1234\tq\t8\t1234\tq\t1\n" +
-                            "ques\t1\t9\tques\t3\t2\n" +
-                            "ques\t1\t10\tques\t3\t2\n");
+                            "select * from g1 join g2 on g1.geo4 = g2.geo4"
+            );
         });
     }
 
@@ -394,20 +393,20 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(2)) timestamp(ts)");
 
-            assertSql("with g1 as (select distinct * from t1)," +
+            assertSql("geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1\n" +
+                    "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tNaN\t\n" +
+                    "1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tNaN\t\n" +
+                    "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tNaN\t\n" +
+                    "ques\t1\t5\t1970-01-01T00:00:04.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "1234\t3\t6\t1970-01-01T00:00:05.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "1234\t1\t7\t1970-01-01T00:00:06.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n", "with g1 as (select distinct * from t1)," +
                             "g2 as (select distinct * from t2)" +
-                            "select * from g1 lt join g2 on g1.geo4 = g2.geo4",
-                    "geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1\n" +
-                            "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tNaN\t\n" +
-                            "1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                            "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tNaN\t\n" +
-                            "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tNaN\t\n" +
-                            "ques\t1\t5\t1970-01-01T00:00:04.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
-                            "1234\t3\t6\t1970-01-01T00:00:05.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                            "1234\t1\t7\t1970-01-01T00:00:06.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                            "1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                            "ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
-                            "ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n");
+                            "select * from g1 lt join g2 on g1.geo4 = g2.geo4"
+            );
         });
     }
 
@@ -425,10 +424,10 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(2))");
 
-            assertSql("select * from t1 join t2 on t1.x = t2.x",
-                    "geo4\tgeo8\tx\tgeo1\tgeo2\tx1\n" +
-                            "9v1s\t46swgj10\t1\ts\t1c\t1\n" +
-                            "jnw9\tzfuqd3bf\t2\tm\t71\t2\n");
+            assertSql("geo4\tgeo8\tx\tgeo1\tgeo2\tx1\n" +
+                    "9v1s\t46swgj10\t1\ts\t1c\t1\n" +
+                    "jnw9\tzfuqd3bf\t2\tm\t71\t2\n", "select * from t1 join t2 on t1.x = t2.x"
+            );
         });
     }
 
@@ -440,11 +439,11 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("select * from t1 where cast(geo4 as geohash(5c)) != geo4 ",
-                    "geo4\tx\n" +
-                            "questdb\t1\n" +
-                            "questdb\t2\n" +
-                            "1234567\t3\n");
+            assertSql("geo4\tx\n" +
+                    "questdb\t1\n" +
+                    "questdb\t2\n" +
+                    "1234567\t3\n", "select * from t1 where cast(geo4 as geohash(5c)) != geo4 "
+            );
         });
     }
 
@@ -456,9 +455,9 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("select * from t1 where geo4 != cast('questdb' as geohash(7c))",
-                    "geo4\tx\n" +
-                            "1234567\t3\n");
+            assertSql("geo4\tx\n" +
+                    "1234567\t3\n", "select * from t1 where geo4 != cast('questdb' as geohash(7c))"
+            );
         });
     }
 
@@ -468,11 +467,11 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             for (int l = 12; l > 0; l--) {
                 String tableName = "pos" + l;
                 ddl(String.format("create table %s(hash geohash(%sc))", tableName, l));
-                executeInsert(String.format("insert into %s values('1234567890quest')", tableName));
+                insert(String.format("insert into %s values('1234567890quest')", tableName));
                 String value = "1234567890quest".substring(0, l);
-                assertSql("select hash from " + tableName,
-                        "hash\n"
-                                + value + "\n");
+                assertSql("hash\n"
+                        + value + "\n", "select hash from " + tableName
+                );
             }
         });
     }
@@ -485,9 +484,9 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("select first(geo4), last(geo4) from t1",
-                    "first\tlast\n" +
-                            "questdb\t1234567\n");
+            assertSql("first\tlast\n" +
+                    "questdb\t1234567\n", "select first(geo4), last(geo4) from t1"
+            );
         });
     }
 
@@ -495,7 +494,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     public void testGeoHashUpcast() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("select cast(cast('questdb' as geohash(6c)) as geohash(7c)) from long_sequence(1)");
+                assertSqlFails("select cast(cast('questdb' as geohash(6c)) as geohash(7c)) from long_sequence(1)");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "CAST cannot narrow values from GEOHASH(30b) to GEOHASH(35b)");
             }
@@ -507,8 +506,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(time timestamp, uuid symbol, hash8 geohash(8c))", sqlExecutionContext);
             try {
-                executeInsert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
-                Assert.fail();
+                assertSqlFails("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
             } catch (ImplicitCastException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible value: `f91t` [STRING -> GEOHASH(8c)]");
             }
@@ -519,7 +517,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     public void testInvalidGeoHashRnd() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSql("select rnd_geohash(0) from long_sequence(1)", "");
+                assertSql("", "select rnd_geohash(0) from long_sequence(1)");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "precision must be in [1..60] range");
@@ -531,7 +529,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     public void testInvalidGeoHashRnd2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSql("select rnd_geohash(61) from long_sequence(1)", "");
+                assertSql("", "select rnd_geohash(61) from long_sequence(1)");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "precision must be in [1..60] range");
@@ -541,28 +539,28 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testMakeGeoHashFromCoords() throws Exception {
-        assertMemoryLeak(() -> assertSql("select make_geohash(lon,lat,40) as h8c\n" +
+        assertMemoryLeak(() -> assertSql("h8c\n" +
+                "jr1nj0dv\n" +
+                "29tdrk0h\n" +
+                "9su67p3e\n", "select make_geohash(lon,lat,40) as h8c\n" +
                         "from ( select \n" +
                         "(rnd_double()*180.0 - 90.0) as lat,\n" +
                         "(rnd_double()*360.0 - 180.0) as lon\n" +
-                        "from long_sequence(3))",
-                "h8c\n" +
-                        "jr1nj0dv\n" +
-                        "29tdrk0h\n" +
-                        "9su67p3e\n"));
+                        "from long_sequence(3))"
+        ));
     }
 
     @Test
     public void testMakeGeoHashNullOnOutOfRange() throws Exception {
-        assertMemoryLeak(() -> assertSql("select make_geohash(lon, lat,40) as h8c\n" +
+        assertMemoryLeak(() -> assertSql("h8c\n" +
+                "\n" +
+                "u9tdrk0h\n" +
+                "\n", "select make_geohash(lon, lat,40) as h8c\n" +
                         "from ( select \n" +
                         "(rnd_double()*180.0) as lat,\n" +
                         "(rnd_double()*360.0) as lon\n" +
-                        "from long_sequence(3))",
-                "h8c\n" +
-                        "\n" +
-                        "u9tdrk0h\n" +
-                        "\n"));
+                        "from long_sequence(3))"
+        ));
     }
 
     @Test
@@ -582,9 +580,9 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     " make_geohash(lon, lat, 40) as g8c  " +
                     " from pos)");
 
-            assertSql("select * from tb1",
-                    "g1c\tg2c\tg4c\tg8c\n" +
-                            "9\t9v\t9v1s\t9v1s8hm7\n");
+            assertSql("g1c\tg2c\tg4c\tg8c\n" +
+                    "9\t9v\t9v1s\t9v1s8hm7\n", "select * from tb1"
+            );
         });
     }
 
@@ -596,10 +594,10 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(2))");
 
-            alter("alter table t1 add a1 geohash(1c)");
-            alter("alter table t1 add a2 geohash(2c)");
-            alter("alter table t1 add a4 geohash(4c)");
-            alter("alter table t1 add a8 geohash(8c)");
+            ddl("alter table t1 add a1 geohash(1c)");
+            ddl("alter table t1 add a2 geohash(2c)");
+            ddl("alter table t1 add a4 geohash(4c)");
+            ddl("alter table t1 add a8 geohash(8c)");
 
             ddl("insert into t1 select x," +
                     "timestamp_sequence(0, 1000000) ts," +
@@ -610,12 +608,12 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "from long_sequence(2)"
             );
 
-            assertSql("t1",
-                    "x\tts\ta1\ta2\ta4\ta8\n" +
-                            "1\t1970-01-01T00:00:00.000000Z\t\t\t\t\n" +
-                            "2\t1970-01-01T00:00:01.000000Z\t\t\t\t\n" +
-                            "1\t1970-01-01T00:00:00.000000Z\tq\tqu\t1234\t90123456\n" +
-                            "2\t1970-01-01T00:00:01.000000Z\t3\t34\t3456\t12345672\n");
+            assertSql("x\tts\ta1\ta2\ta4\ta8\n" +
+                    "1\t1970-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                    "2\t1970-01-01T00:00:01.000000Z\t\t\t\t\n" +
+                    "1\t1970-01-01T00:00:00.000000Z\tq\tqu\t1234\t90123456\n" +
+                    "2\t1970-01-01T00:00:01.000000Z\t3\t34\t3456\t12345672\n", "t1"
+            );
         });
     }
 }

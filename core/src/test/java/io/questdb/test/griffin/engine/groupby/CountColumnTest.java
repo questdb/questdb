@@ -45,9 +45,9 @@ public class CountColumnTest extends AbstractGriffinTest {
     public void testKeyedCountAllColumnTypesOnDataWithColTops() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
-            compile("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
+            insert("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
             compile("alter table x add column k int");
-            compile("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");
+            insert("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");
 
             compile("alter table x add column i int, " +
                     " l long, " +
@@ -63,11 +63,11 @@ public class CountColumnTest extends AbstractGriffinTest {
                     " gi geohash(20b), " +
                     " gl geohash(40b) ");
 
-            compile("insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null,null,null,null,null,null,null,null,null,null,null,null)");
-            compile("insert into x values ((2+3*3600L*1000000)::timestamp,2, 8,8,8f,8d,cast(8 as date),8::timestamp,rnd_long256(),'8','8',rnd_geohash(5) ,rnd_geohash(10),rnd_geohash(20),rnd_geohash(40))");
+            insert("insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null,null,null,null,null,null,null,null,null,null,null,null)");
+            insert("insert into x values ((2+3*3600L*1000000)::timestamp,2, 8,8,8f,8d,cast(8 as date),8::timestamp,rnd_long256(),'8','8',rnd_geohash(5) ,rnd_geohash(10),rnd_geohash(20),rnd_geohash(40))");
 
-            compile("insert into x values ((1+4*3600L*1000000)::timestamp,3, null,null,null,null,null,null,null,null,null,null,null,null,null)");
-            compile("insert into x values ((2+4*3600L*1000000)::timestamp,4, 10,10,10f,10d,cast(10 as date),10::timestamp,rnd_long256(),'10','10',rnd_geohash(5) ,rnd_geohash(10),rnd_geohash(20),rnd_geohash(40))");
+            insert("insert into x values ((1+4*3600L*1000000)::timestamp,3, null,null,null,null,null,null,null,null,null,null,null,null,null)");
+            insert("insert into x values ((2+4*3600L*1000000)::timestamp,4, 10,10,10f,10d,cast(10 as date),10::timestamp,rnd_long256(),'10','10',rnd_geohash(5) ,rnd_geohash(10),rnd_geohash(20),rnd_geohash(40))");
         });
 
         assertQuery("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
@@ -492,14 +492,14 @@ public class CountColumnTest extends AbstractGriffinTest {
     public void testVectorizedKeyedCountWithColTops() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
-            compile("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
+            insert("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
             compile("alter table x add column k int");
-            compile("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");
+            insert("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");
             compile("alter table x add column i int, l long ");
-            compile("insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null)");
-            compile("insert into x values ((2+3*3600L*1000000)::timestamp,2, 8,8)");
-            compile("insert into x values ((1+4*3600L*1000000)::timestamp,3, null,null)");
-            compile("insert into x values ((2+4*3600L*1000000)::timestamp,4, 10,10) ");
+            insert("insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null)");
+            insert("insert into x values ((2+3*3600L*1000000)::timestamp,2, 8,8)");
+            insert("insert into x values ((1+4*3600L*1000000)::timestamp,3, null,null)");
+            insert("insert into x values ((2+4*3600L*1000000)::timestamp,4, 10,10) ");
         });
 
         assertQuery("k\tc1\tcstar\tci\tcl\n" +

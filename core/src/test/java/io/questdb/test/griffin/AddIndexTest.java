@@ -45,10 +45,10 @@ public class AddIndexTest extends AbstractGriffinTest {
                             "    from long_sequence(1000)\n" +
                             ") timestamp(ts) partition by DAY"
             );
-            alter("alter table trades add column sym2 symbol");
-            alter("alter table trades alter column sym2 add index");
+            ddl("alter table trades add column sym2 symbol");
+            ddl("alter table trades alter column sym2 add index");
 
-            assertSql("trades where sym2 = 'ABB'", "sym\tprice\tts\tsym2\n");
+            assertSql("sym\tprice\tts\tsym2\n", "trades where sym2 = 'ABB'");
         });
     }
 
@@ -66,7 +66,7 @@ public class AddIndexTest extends AbstractGriffinTest {
                             ") timestamp(ts) partition by DAY"
             );
 
-            alter("alter table trades add column sym2 symbol");
+            ddl("alter table trades add column sym2 symbol");
             ddl(
                     "insert into trades \n" +
                             "    select \n" +
@@ -77,11 +77,11 @@ public class AddIndexTest extends AbstractGriffinTest {
                             "    from long_sequence(" + rowCount + ")\n"
             );
 
-            alter("alter table trades alter column sym2 add index");
+            ddl("alter table trades alter column sym2 add index");
             // While row count is derived from append page size, the expected row count value is hardcoded
             // as a string. Test will fail should append page size change.
-            assertSql("select count(*) from trades where sym2 = 'ABB'", "count\n" +
-                    "175654\n");
+            assertSql("count\n" +
+                    "175654\n", "select count(*) from trades where sym2 = 'ABB'");
         });
     }
 
@@ -97,10 +97,10 @@ public class AddIndexTest extends AbstractGriffinTest {
                             "    from long_sequence(10000)\n" +
                             ") timestamp(ts) partition by DAY"
             );
-            alter("alter table trades alter column sym add index");
+            ddl("alter table trades alter column sym add index");
 
             try {
-                alter("alter table trades alter column sym add index");
+                ddl("alter table trades alter column sym add index");
                 Assert.fail();
             } catch (SqlException | CairoException e) {
                 Assert.assertEquals(12, e.getPosition());

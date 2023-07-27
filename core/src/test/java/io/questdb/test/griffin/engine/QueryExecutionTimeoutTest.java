@@ -458,13 +458,13 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                 if (dml != null || query != null) {
                     unsetTimeout();
                 }
-                compile(compiler, ddl, context);
+                ddl(compiler, ddl, context);
                 if (dml != null) {
                     if (query == null) {
                         resetTimeout();
                     }
 
-                    compile(compiler, dml, context);
+                    ddl(compiler, dml, context);
                 }
 
                 if (query != null) {

@@ -70,7 +70,8 @@ public class Long128Tests extends AbstractGriffinTest {
 
     @Test
     public void testGroupByLong128Column() throws Exception {
-        assertQuery("ts\tcount\n" +
+        assertQuery(
+                "ts\tcount\n" +
                         "00000000-0000-0000-0000-000000000000\t1\n" +
                         "00000000-0000-0001-0000-000000000000\t2\n" +
                         "00000000-0000-0002-0000-000000000001\t2\n" +
@@ -98,7 +99,8 @@ public class Long128Tests extends AbstractGriffinTest {
 
     @Test
     public void testGroupByLong128ColumnWithNulls() throws Exception {
-        assertQuery("ts\tcount\n" +
+        assertQuery(
+                "ts\tcount\n" +
                         "\t10\n" +
                         "00000000-0000-0004-0000-000000000002\t1\n" +
                         "00000000-0000-0008-0000-000000000004\t1\n" +
@@ -137,7 +139,8 @@ public class Long128Tests extends AbstractGriffinTest {
         );
         engine.clear();
 
-        assertQuery("ts\tts1\tts11\ti\n" +
+        assertQuery(
+                "ts\tts1\tts11\ti\n" +
                         "00000000-0000-0006-0000-000000000003\t00000000-0000-0006-0000-000000000003\t2022-02-24T00:00:00.000000Z\t1\n" +
                         "00000000-0000-000c-0000-000000000006\t00000000-0000-000c-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2\n" +
                         "00000000-0000-0012-0000-000000000009\t00000000-0000-0012-0000-000000000009\t2022-02-24T00:00:02.000000Z\t3\n" +
@@ -171,7 +174,8 @@ public class Long128Tests extends AbstractGriffinTest {
         engine.clear();
         configOverrideDefaultMapType("compact");
 
-        assertQuery("ts\tts1\tts11\ti\n" +
+        assertQuery(
+                "ts\tts1\tts11\ti\n" +
                         "00000000-0000-0006-0000-000000000003\t00000000-0000-0006-0000-000000000003\t2022-02-24T00:00:00.000000Z\t1\n" +
                         "00000000-0000-000c-0000-000000000006\t00000000-0000-000c-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2\n" +
                         "00000000-0000-0012-0000-000000000009\t00000000-0000-0012-0000-000000000009\t2022-02-24T00:00:02.000000Z\t3\n" +
@@ -204,7 +208,8 @@ public class Long128Tests extends AbstractGriffinTest {
         );
         engine.clear();
 
-        assertQuery("ts\tts1\tts11\ti\n" +
+        assertQuery(
+                "ts\tts1\tts11\ti\n" +
                         "00000000-0000-0002-0000-000000000001\t00000000-0000-0001-0000-000000000001\t2022-02-24T00:00:00.000000Z\t1\n" +
                         "00000000-0000-0004-0000-000000000002\t00000000-0000-0002-0000-000000000002\t2022-02-24T00:00:01.000000Z\t2\n" +
                         "00000000-0000-0006-0000-000000000003\t00000000-0000-0003-0000-000000000003\t2022-02-24T00:00:02.000000Z\t3\n" +
@@ -230,21 +235,24 @@ public class Long128Tests extends AbstractGriffinTest {
 
     @Test
     public void testLatestOn() throws Exception {
-        assertCompile("create table x (ts timestamp, l long128, i int) timestamp(ts) partition by DAY");
-        assertCompile("insert into x values ('2020-01-01T00:00:00.000000Z', to_long128(0, 0), 0)");
-        assertCompile("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(1, 1), 2)");
-        assertCompile("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(2, 2), 0)");
+        ddl("create table x (ts timestamp, l long128, i int) timestamp(ts) partition by DAY");
+        insert("insert into x values ('2020-01-01T00:00:00.000000Z', to_long128(0, 0), 0)");
+        insert("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(1, 1), 2)");
+        insert("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(2, 2), 0)");
 
-        assertQuery("ts\tl\ti\n" +
+        assertSql(
+                "ts\tl\ti\n" +
                         "2020-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000000\t0\n" +
                         "2020-01-02T00:01:00.000000Z\t00000000-0000-0001-0000-000000000001\t2\n" +
                         "2020-01-02T00:01:00.000000Z\t00000000-0000-0002-0000-000000000002\t0\n",
-                "select ts, l, i from x latest on ts partition by l", null, "ts", true, true);
+                "select ts, l, i from x latest on ts partition by l"
+        );
     }
 
     @Test
     public void testLong128ValueNotSet() throws Exception {
-        assertQuery13("ts\tcount\n" +
+        assertQuery13(
+                "ts\tcount\n" +
                         "\t10\n" +
                         "00000000-0000-0004-0000-000000000002\t1\n" +
                         "00000000-0000-0008-0000-000000000004\t1\n" +
@@ -285,7 +293,8 @@ public class Long128Tests extends AbstractGriffinTest {
 
     @Test
     public void testOrderByLong128Column() throws Exception {
-        assertQuery("ts\tts1\ti\n" +
+        assertQuery(
+                "ts\tts1\ti\n" +
                         "00000000-0000-0005-ffff-fffffffffff6\t2022-02-24T00:00:09.000000Z\t10\n" +
                         "00000000-0000-0004-ffff-fffffffffff8\t2022-02-24T00:00:07.000000Z\t8\n" +
                         "00000000-0000-0004-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n" +
@@ -312,7 +321,8 @@ public class Long128Tests extends AbstractGriffinTest {
 
     @Test
     public void testOrderByLong128ColumnAndOtherFields() throws Exception {
-        assertQuery("ts\tts1\ti\n" +
+        assertQuery(
+                "ts\tts1\ti\n" +
                         "00000000-0000-0000-ffff-ffffffffffff\t2022-02-24T00:00:00.000000Z\t0\n" +
                         "00000000-0000-0001-ffff-fffffffffffe\t2022-02-24T00:00:01.000000Z\t1\n" +
                         "00000000-0000-0001-ffff-fffffffffffd\t2022-02-24T00:00:02.000000Z\t1\n" +
@@ -375,7 +385,6 @@ public class Long128Tests extends AbstractGriffinTest {
 
             compile("update testUpdateLong128ColumnToNull set uuid = null where i < 5");
             assertSql(
-                    "testUpdateLong128ColumnToNull",
                     "uuid\tts1\ti\n" +
                             "\t2022-02-24T00:00:00.000000Z\t1\n" +
                             "\t2022-02-24T00:00:01.000000Z\t2\n" +
@@ -386,7 +395,7 @@ public class Long128Tests extends AbstractGriffinTest {
                             "00000000-0000-0003-ffff-fffffffffff9\t2022-02-24T00:00:06.000000Z\t7\n" +
                             "00000000-0000-0004-ffff-fffffffffff8\t2022-02-24T00:00:07.000000Z\t8\n" +
                             "00000000-0000-0004-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n" +
-                            "00000000-0000-0005-ffff-fffffffffff6\t2022-02-24T00:00:09.000000Z\t10\n"
+                            "00000000-0000-0005-ffff-fffffffffff6\t2022-02-24T00:00:09.000000Z\t10\n", "testUpdateLong128ColumnToNull"
             );
 
         });

@@ -37,7 +37,7 @@ public class NotMatchCharFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = fact("select * from x where name !~ 'H'")) {
+            try (RecordCursorFactory factory = select("select * from x where name !~ 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);

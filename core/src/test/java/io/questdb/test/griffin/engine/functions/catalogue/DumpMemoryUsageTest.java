@@ -33,9 +33,8 @@ public class DumpMemoryUsageTest extends AbstractGriffinTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select dump_memory_usage",
                 "dump_memory_usage\n" +
-                        "true\n"
+                        "true\n", "select dump_memory_usage"
         ));
         // this sleep to allow async logger to print out the values,
         // although we don't assert them it is less awkward than calling

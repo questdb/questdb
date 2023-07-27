@@ -42,7 +42,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     public void testInvalidConstantOffset() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("select to_utc(0, '25:40')");
+                assertSqlFails("select to_utc(0, '25:40')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -54,7 +54,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     public void testInvalidConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("select to_utc(0, 'UUU')");
+                assertSqlFails("select to_utc(0, 'UUU')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -66,7 +66,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     public void testNullConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("select to_utc(0, null)");
+                assertSqlFails("select to_utc(0, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
@@ -94,7 +94,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     public void testVarNullTimezone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                fail("select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)");
+                assertSqlFails("select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)");
             } catch (SqlException e) {
                 Assert.assertEquals(64, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");

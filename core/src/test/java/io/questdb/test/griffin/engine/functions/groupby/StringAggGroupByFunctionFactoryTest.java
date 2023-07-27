@@ -70,7 +70,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                     ") timestamp(ts))"
             );
             try {
-                fail("select a, string_agg(s, ',') from x");
+                assertSqlFails("select a, string_agg(s, ',') from x");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "value type is not supported: STRING");
             }

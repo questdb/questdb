@@ -44,8 +44,8 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             " from long_sequence(96)," +
                             "), index(m) timestamp(ts) partition by DAY"
             );
-            alter("alter table t_col_top_ooo_day add column день symbol");// .execute(null).await();
-            alter("alter table t_col_top_ooo_day add column str string");//.execute(null).await();
+            ddl("alter table t_col_top_ooo_day add column день symbol");// .execute(null).await();
+            ddl("alter table t_col_top_ooo_day add column str string");//.execute(null).await();
             ddl(
                     "insert into t_col_top_ooo_day " +
                             "select " +
@@ -78,24 +78,24 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             ", rnd_str()" +
                             " from long_sequence(10),"
             );
-            assertSql("t_col_top_ooo_day where день = 'a'",
-                    "x\tm\tts\tдень\tstr\n" +
-                            "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
-                            "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
-                            "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
-                            "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
-                            "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
-                            "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
-                            "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
-                            "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
-                            "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
-                            "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
-                            "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
-                            "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
-                            "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
-                            "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
-                            "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
-                            "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n");
+            assertSql("x\tm\tts\tдень\tstr\n" +
+                    "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                    "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
+                    "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
+                    "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
+                    "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
+                    "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
+                    "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
+                    "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
+                    "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
+                    "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                    "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
+                    "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
+                    "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
+                    "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
+                    "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
+                    "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n", "t_col_top_ooo_day where день = 'a'"
+            );
 
             ddl(
                     "insert into t_col_top_ooo_day " +
@@ -108,29 +108,29 @@ public class ColumnVersionTest extends AbstractGriffinTest {
                             " from long_sequence(36)"
             );
 
-            assertSql("t_col_top_ooo_day where день = 'a'",
-                    "x\tm\tts\tдень\tstr\n" +
-                            "1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ\n" +
-                            "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
-                            "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
-                            "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
-                            "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
-                            "19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF\n" +
-                            "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
-                            "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
-                            "31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI\n" +
-                            "32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV\n" +
-                            "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
-                            "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
-                            "35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX\n" +
-                            "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
-                            "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
-                            "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
-                            "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
-                            "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
-                            "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
-                            "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
-                            "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n");
+            assertSql("x\tm\tts\tдень\tstr\n" +
+                    "1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ\n" +
+                    "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                    "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
+                    "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
+                    "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
+                    "19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF\n" +
+                    "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
+                    "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
+                    "31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI\n" +
+                    "32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV\n" +
+                    "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
+                    "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
+                    "35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX\n" +
+                    "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
+                    "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                    "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
+                    "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
+                    "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
+                    "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
+                    "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
+                    "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n", "t_col_top_ooo_day where день = 'a'"
+            );
         });
     }
 

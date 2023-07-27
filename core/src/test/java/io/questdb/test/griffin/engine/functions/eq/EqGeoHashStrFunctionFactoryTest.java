@@ -39,9 +39,8 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
                             "from long_sequence(1)" +
                             ")");
             assertSql(
-                    "geohash where 'sp052w92p1' = geohash1",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where 'sp052w92p1' = geohash1"
             );
         });
     }
@@ -56,9 +55,8 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
                             "from long_sequence(1)" +
                             ")");
             assertSql(
-                    "geohash where geohash1 = 'sp052w92p1'",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where geohash1 = 'sp052w92p1'"
             );
         });
     }
@@ -73,9 +71,8 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
                             "from long_sequence(1)" +
                             ")");
             assertSql(
-                    "geohash where geohash2 = null",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where geohash2 = null"
             );
         });
     }
@@ -90,9 +87,8 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
                             "from long_sequence(1)" +
                             ")");
             assertSql(
-                    "geohash where 'sp052w92p0' != geohash1",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where 'sp052w92p0' != geohash1"
             );
         });
     }
@@ -107,9 +103,8 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
                             "from long_sequence(1)" +
                             ")");
             assertSql(
-                    "geohash where geohash1 != 'sp052w92p0'",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where geohash1 != 'sp052w92p0'"
             );
         });
     }
@@ -124,8 +119,7 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
                             "from long_sequence(1)" +
                             ")");
             assertSql(
-                    "geohash where geohash2 != null",
-                    "geohash1\tgeohash2\n"
+                    "geohash1\tgeohash2\n", "geohash where geohash2 != null"
             );
         });
     }

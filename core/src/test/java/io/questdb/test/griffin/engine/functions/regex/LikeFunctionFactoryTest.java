@@ -44,7 +44,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
             bindVariableService.setStr(0, "H");
-            try (RecordCursorFactory factory = fact("select * from x where name like '%' || $1 || '%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like '%' || $1 || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -60,7 +60,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
             bindVariableService.setStr("str", "H");
-            try (RecordCursorFactory factory = fact("select * from x where name like '%' || :str || '%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like '%' || :str || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -84,7 +84,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name like ''")) {
+            try (RecordCursorFactory factory = select("select * from x where name like ''")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -108,7 +108,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name like '[][n'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like '[][n'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -122,7 +122,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     public void testLikeCharacterNoMatch() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-            try (RecordCursorFactory factory = fact("select * from x where  name like 'H'")) {
+            try (RecordCursorFactory factory = select("select * from x where  name like 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -200,7 +200,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     public void testLikeStringNoMatch() throws Exception {
         assertMemoryLeak(() -> {
                     ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-                    try (RecordCursorFactory factory = fact("select * from x where name like 'XJ'")) {
+                    try (RecordCursorFactory factory = select("select * from x where name like 'XJ'")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             sink.clear();
                             printer.print(cursor, factory.getMetadata(), true, sink);
@@ -225,7 +225,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name like 'ABC%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like 'ABC%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -250,7 +250,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name like '%GGG'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like '%GGG'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -274,7 +274,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name like '%BCG%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like '%BCG%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -298,7 +298,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name like '_B%'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like '_B%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -322,7 +322,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             ddl(sql);
 
-            try (RecordCursorFactory factory = fact("select * from x where name like '_BC__'")) {
+            try (RecordCursorFactory factory = select("select * from x where name like '_BC__'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -337,7 +337,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                fail("select * from x where name like rnd_str('foo','bar')");
+                assertSqlFails("select * from x where name like rnd_str('foo','bar')");
             } catch (SqlException e) {
                 Assert.assertEquals(32, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
@@ -350,7 +350,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = fact("select * from x where not name like 'H'")) {
+            try (RecordCursorFactory factory = select("select * from x where not name like 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -365,7 +365,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = fact("select * from x where not name like 'XJ'")) {
+            try (RecordCursorFactory factory = select("select * from x where not name like 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);

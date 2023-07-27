@@ -105,44 +105,48 @@ public class UpdateTest extends AbstractGriffinTest {
                             " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : "")
             );
 
-            executeUpdate("UPDATE up SET x = 1");
+            update("UPDATE up SET x = 1");
 
-            assertSql("up", "ts\tv\tx\tz\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
-                    "1970-01-01T00:00:02.000000Z\t3\t1\t3\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\t1\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\t1\t5\n");
+            assertSql(
+                    "ts\tv\tx\tz\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
+                            "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
+                            "1970-01-01T00:00:02.000000Z\t3\t1\t3\n" +
+                            "1970-01-01T00:00:03.000000Z\t4\t1\t4\n" +
+                            "1970-01-01T00:00:04.000000Z\t5\t1\t5\n", "up"
+            );
 
-            executeUpdate("UPDATE up SET z = 2");
+            update("UPDATE up SET z = 2");
 
-            assertSql("up", "ts\tv\tx\tz\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t2\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
-                    "1970-01-01T00:00:02.000000Z\t3\t1\t2\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\t1\t2\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\t1\t2\n");
+            assertSql(
+                    "ts\tv\tx\tz\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t2\n" +
+                            "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
+                            "1970-01-01T00:00:02.000000Z\t3\t1\t2\n" +
+                            "1970-01-01T00:00:03.000000Z\t4\t1\t2\n" +
+                            "1970-01-01T00:00:04.000000Z\t5\t1\t2\n", "up"
+            );
 
-            executeUpdate("UPDATE up SET v = 33");
+            update("UPDATE up SET v = 33");
 
-            assertSql("up", "ts\tv\tx\tz\n" +
+            assertSql("ts\tv\tx\tz\n" +
                     "1970-01-01T00:00:00.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:01.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:02.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:03.000000Z\t33\t1\t2\n" +
-                    "1970-01-01T00:00:04.000000Z\t33\t1\t2\n");
+                    "1970-01-01T00:00:04.000000Z\t33\t1\t2\n", "up");
 
-            compile("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
-            compile("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
+            insert("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
+            insert("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
-            assertSql("up", "ts\tv\tx\tz\n" +
+            assertSql("ts\tv\tx\tz\n" +
                     "1970-01-01T00:00:00.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:01.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:02.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:03.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:04.000000Z\t33\t1\t2\n" +
                     "1970-01-01T00:00:05.000000Z\t10\t10\t10\n" +
-                    "1970-01-01T00:00:06.000000Z\t100\t100\t100\n");
+                    "1970-01-01T00:00:06.000000Z\t100\t100\t100\n", "up");
         });
     }
 
@@ -159,14 +163,16 @@ public class UpdateTest extends AbstractGriffinTest {
                             " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : "")
             );
 
-            executeUpdate("UPDATE up SET x = 1 WHERE x > 10");
+            update("UPDATE up SET x = 1 WHERE x > 10");
 
-            assertSql("up", "ts\tv\tx\tz\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2\n" +
-                    "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\t5\t5\n");
+            assertSql(
+                    "ts\tv\tx\tz\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
+                            "1970-01-01T00:00:01.000000Z\t2\t2\t2\n" +
+                            "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
+                            "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
+                            "1970-01-01T00:00:04.000000Z\t5\t5\t5\n", "up"
+            );
         });
     }
 
@@ -183,14 +189,16 @@ public class UpdateTest extends AbstractGriffinTest {
                             " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : "")
             );
 
-            executeUpdate("UPDATE up SET x = 1 WHERE 1 != 1");
+            update("UPDATE up SET x = 1 WHERE 1 != 1");
 
-            assertSql("up", "ts\tv\tx\tz\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2\n" +
-                    "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\t5\t5\n");
+            assertSql(
+                    "ts\tv\tx\tz\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
+                            "1970-01-01T00:00:01.000000Z\t2\t2\t2\n" +
+                            "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
+                            "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
+                            "1970-01-01T00:00:04.000000Z\t5\t5\t5\n", "up"
+            );
         });
     }
 
@@ -202,34 +210,37 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x" +
                     " from long_sequence(5)" +
                     "), index(symCol) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
-            assertSql("up",
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n"
+            assertSql("symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up"
             );
 
-            CompiledQuery cq = compile("up where symCol = 'WCP'");
-            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
-                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                    executeUpdate("update up set symCol = null");
+            try (RecordCursorFactory factory = select("up where symCol = 'WCP'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    update("update up set symCol = null");
                     // Index is updated
-                    assertSql("up where symCol = null",
+                    assertSql(
                             "symCol\tts\tx\n" +
                                     "\t1970-01-01T00:00:00.000000Z\t1\n" +
                                     "\t1970-01-01T00:00:01.000000Z\t2\n" +
                                     "\t1970-01-01T00:00:02.000000Z\t3\n" +
                                     "\t1970-01-01T00:00:03.000000Z\t4\n" +
-                                    "\t1970-01-01T00:00:04.000000Z\t5\n"
+                                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up where symCol = null"
                     );
 
                     // Old index is still working
-                    assertCursor("symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n", cursor, cursorFactory.getMetadata(), true);
+                    assertCursor(
+                            "symCol\tts\tx\n" +
+                                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n",
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
                 }
             }
         });
@@ -253,21 +264,20 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)" +
                     "), index(symCol) timestamp(ts) Partition by hour" + (walEnabled ? " WAL" : ""));
 
-            CompiledQuery cq = compile("up where symCol = 'WCP'");
-            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
-                try (RecordCursor ignored = cursorFactory.getCursor(sqlExecutionContext)) {
+            try (
+                    RecordCursorFactory factory = select("up where symCol = 'WCP'");
+                    RecordCursor ignored = factory.getCursor(sqlExecutionContext)
+            ) {
 
-                    executeUpdate("update up set symCol = null where ts >= '1970-01-01T03'");
-                    // Index is updated
-                    assertSql("up",
-                            "symCol\tts\tx\n" +
-                                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                                    "WCP\t1970-01-01T01:00:00.000000Z\t2\n" +
-                                    "WCP\t1970-01-01T02:00:00.000000Z\t3\n" +
-                                    "\t1970-01-01T03:00:00.000000Z\t4\n" +
-                                    "\t1970-01-01T04:00:00.000000Z\t5\n"
-                    );
-                }
+                update("update up set symCol = null where ts >= '1970-01-01T03'");
+                // Index is updated
+                assertSql("symCol\tts\tx\n" +
+                        "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                        "WCP\t1970-01-01T01:00:00.000000Z\t2\n" +
+                        "WCP\t1970-01-01T02:00:00.000000Z\t3\n" +
+                        "\t1970-01-01T03:00:00.000000Z\t4\n" +
+                        "\t1970-01-01T04:00:00.000000Z\t5\n", "up"
+                );
             }
         });
     }
@@ -289,7 +299,7 @@ public class UpdateTest extends AbstractGriffinTest {
             compile("alter table symInd add column sym_index symbol index");
 
             // More data in order
-            executeInsert(
+            insert(
                     "insert into symInd " +
                             " select " +
                             " timestamp_sequence('1970-01-01T02:30', 60*1000000L) ts," +
@@ -299,7 +309,7 @@ public class UpdateTest extends AbstractGriffinTest {
             );
 
             // O3 data in the first partition
-            executeInsert(
+            insert(
                     "insert into symInd " +
                             " select " +
                             " timestamp_sequence(1, 2 * 60*1000000L) ts," +
@@ -309,22 +319,18 @@ public class UpdateTest extends AbstractGriffinTest {
             );
 
             // Update column to itself. Should rebuild whole index
-            executeUpdate("update symInd set sym_index = sym_index");
+            update("update symInd set sym_index = sym_index");
 
             assertSql(
-                    "select count(), min(ts), max(ts) from symInd where sym_index = null",
                     "count\tmin\tmax\n" +
-                            "75\t1970-01-01T00:00:00.000000Z\t1970-01-01T02:28:00.000000Z\n"
+                            "75\t1970-01-01T00:00:00.000000Z\t1970-01-01T02:28:00.000000Z\n", "select count(), min(ts), max(ts) from symInd where sym_index = null"
             );
 
             for (int i = 0; i < 60; i += 10) {
                 // Index is updated
-                TestUtils.assertSqlCursors(
-                        engine,
-                        sqlExecutionContext,
+                assertSqlCursors(
                         "symInd where (sym_index || '') = '" + i + "'",
-                        "symInd where sym_index = '" + i + "'",
-                        LOG
+                        "symInd where sym_index = '" + i + "'"
                 );
             }
         });
@@ -381,8 +387,8 @@ public class UpdateTest extends AbstractGriffinTest {
             );
 
             try (TableWriter writer = getWriter("up")) {
-                try {
-                    CompiledQuery cq = compile("UPDATE up SET s1 = '11', s2 = '22'");
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    CompiledQuery cq = compiler.compile("UPDATE up SET s1 = '11', s2 = '22'", sqlExecutionContext);
                     Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
                     try (OperationFuture fut = cq.execute(eventSubSequence)) {
                         writer.tick();
@@ -438,17 +444,21 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdate("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y FROM down1 JOIN down2 ON down1.s = down2.s)" +
-                    "UPDATE up SET x = sm, y = jn.y" +
-                    " FROM jn " +
-                    " WHERE up.s = jn.s");
+            update(
+                    "WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y FROM down1 JOIN down2 ON down1.s = down2.s)" +
+                            "UPDATE up SET x = sm, y = jn.y" +
+                            " FROM jn " +
+                            " WHERE up.s = jn.s"
+            );
 
-            assertSql("up", "ts\ts\tx\ty\n" +
-                    "1970-01-01T00:00:00.000000Z\ta\t101\t100\n" +
-                    "1970-01-01T00:00:01.000000Z\ta\t101\t100\n" +
-                    "1970-01-01T00:00:02.000000Z\tb\t303\t300\n" +
-                    "1970-01-01T00:00:03.000000Z\t\t505\t500\n" +
-                    "1970-01-01T00:00:04.000000Z\t\t505\t500\n");
+            assertSql(
+                    "ts\ts\tx\ty\n" +
+                            "1970-01-01T00:00:00.000000Z\ta\t101\t100\n" +
+                            "1970-01-01T00:00:01.000000Z\ta\t101\t100\n" +
+                            "1970-01-01T00:00:02.000000Z\tb\t303\t300\n" +
+                            "1970-01-01T00:00:03.000000Z\t\t505\t500\n" +
+                            "1970-01-01T00:00:04.000000Z\t\t505\t500\n", "up"
+            );
         });
     }
 
@@ -464,26 +474,28 @@ public class UpdateTest extends AbstractGriffinTest {
             );
 
             // Bump table version
-            alter("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
-            executeUpdate("UPDATE testUpdateAddedColumn SET y = x + 1 WHERE ts between '1970-01-01T12' and '1970-01-02T12'");
+            ddl("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
+            update("UPDATE testUpdateAddedColumn SET y = x + 1 WHERE ts between '1970-01-01T12' and '1970-01-02T12'");
 
-            assertSql("testUpdateAddedColumn", "ts\tx\ty\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
-                    "1970-01-01T06:00:00.000000Z\t1\tNaN\n" +
-                    "1970-01-01T12:00:00.000000Z\t2\t3\n" +
-                    "1970-01-01T18:00:00.000000Z\t3\t4\n" +
-                    "1970-01-02T00:00:00.000000Z\t4\t5\n" +
-                    "1970-01-02T06:00:00.000000Z\t5\t6\n" +
-                    "1970-01-02T12:00:00.000000Z\t6\t7\n" +
-                    "1970-01-02T18:00:00.000000Z\t7\tNaN\n" +
-                    "1970-01-03T00:00:00.000000Z\t8\tNaN\n" +
-                    "1970-01-03T06:00:00.000000Z\t9\tNaN\n");
+            assertSql(
+                    "ts\tx\ty\n" +
+                            "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
+                            "1970-01-01T06:00:00.000000Z\t1\tNaN\n" +
+                            "1970-01-01T12:00:00.000000Z\t2\t3\n" +
+                            "1970-01-01T18:00:00.000000Z\t3\t4\n" +
+                            "1970-01-02T00:00:00.000000Z\t4\t5\n" +
+                            "1970-01-02T06:00:00.000000Z\t5\t6\n" +
+                            "1970-01-02T12:00:00.000000Z\t6\t7\n" +
+                            "1970-01-02T18:00:00.000000Z\t7\tNaN\n" +
+                            "1970-01-03T00:00:00.000000Z\t8\tNaN\n" +
+                            "1970-01-03T06:00:00.000000Z\t9\tNaN\n", "testUpdateAddedColumn"
+            );
 
-            compile("alter table testUpdateAddedColumn drop column y");
-            compile("alter table testUpdateAddedColumn add column y int");
-            executeUpdate("UPDATE testUpdateAddedColumn SET y = COALESCE(y, x + 2) WHERE x%2 = 0");
+            ddl("alter table testUpdateAddedColumn drop column y");
+            ddl("alter table testUpdateAddedColumn add column y int");
+            update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, x + 2) WHERE x%2 = 0");
 
-            assertSql("testUpdateAddedColumn", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t0\t2\n" +
                     "1970-01-01T06:00:00.000000Z\t1\tNaN\n" +
                     "1970-01-01T12:00:00.000000Z\t2\t4\n" +
@@ -493,12 +505,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-02T12:00:00.000000Z\t6\t8\n" +
                     "1970-01-02T18:00:00.000000Z\t7\tNaN\n" +
                     "1970-01-03T00:00:00.000000Z\t8\t10\n" +
-                    "1970-01-03T06:00:00.000000Z\t9\tNaN\n");
+                    "1970-01-03T06:00:00.000000Z\t9\tNaN\n", "testUpdateAddedColumn");
 
             compile("alter table testUpdateAddedColumn drop column x");
-            executeUpdate("UPDATE testUpdateAddedColumn SET y = COALESCE(y, 1)");
+            update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, 1)");
 
-            assertSql("testUpdateAddedColumn", "ts\ty\n" +
+            assertSql("ts\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t2\n" +
                     "1970-01-01T06:00:00.000000Z\t1\n" +
                     "1970-01-01T12:00:00.000000Z\t4\n" +
@@ -508,7 +520,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-02T12:00:00.000000Z\t8\n" +
                     "1970-01-02T18:00:00.000000Z\t1\n" +
                     "1970-01-03T00:00:00.000000Z\t10\n" +
-                    "1970-01-03T06:00:00.000000Z\t1\n");
+                    "1970-01-03T06:00:00.000000Z\t1\n", "testUpdateAddedColumn");
         });
     }
 
@@ -593,9 +605,9 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET bin1 = cast(null as binary) WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
+            update("UPDATE up SET bin1 = cast(null as binary) WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql("up", "ts\tbin1\tlng2\n" +
+            assertSql("ts\tbin1\tlng2\n" +
                     "1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91\n" +
                     "00000010 3b 72 db f3\t1\n" +
                     "1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94\n" +
@@ -608,7 +620,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-02T18:00:00.000000Z\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b\n" +
                     "00000010 b1 3e e3 f1\t8\n" +
                     "1970-01-03T00:00:00.000000Z\t\t9\n" +
-                    "1970-01-03T06:00:00.000000Z\t00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3\t10\n");
+                    "1970-01-03T06:00:00.000000Z\t00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3\t10\n", "up");
         });
     }
 
@@ -623,16 +635,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            alter("alter table up add column bin2 binary", sqlExecutionContext);
-            alter("insert into up select * from " +
+            ddl("alter table up add column bin2 binary", sqlExecutionContext);
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_bin(10, 20, 0) as bin1," +
                     " x + 10 as lng2," +
                     " rnd_bin(10, 20, 0) as bin2" +
                     " from long_sequence(5))", sqlExecutionContext);
-            executeUpdate("UPDATE up SET bin1 = cast(null as binary), bin2 = cast(null as binary) WHERE lng2 in (6,8,10,12,14)");
+            update("UPDATE up SET bin1 = cast(null as binary), bin2 = cast(null as binary) WHERE lng2 in (6,8,10,12,14)");
 
-            assertSql("up", "ts\tbin1\tlng2\tbin2\n" +
+            assertSql("ts\tbin1\tlng2\tbin2\n" +
                     "1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91\n" +
                     "00000010 3b 72 db f3\t1\t\n" +
                     "1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94\n" +
@@ -651,7 +663,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-08T04:40:00.000000Z\t\t12\t\n" +
                     "1970-01-08T10:40:00.000000Z\t00000000 e0 b0 e9 98 f7 67 62 28 60 b0 ec 0b 92\t13\t00000000 24 bc 2e 60 6a 1c 0b 20 a2 86 89 37 11 2c\n" +
                     "1970-01-08T16:40:00.000000Z\t\t14\t\n" +
-                    "1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2\n");
+                    "1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2\n", "up");
         });
     }
 
@@ -667,21 +679,21 @@ public class UpdateTest extends AbstractGriffinTest {
                             " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : "")
             );
 
-            assertSql("up", "ts\txint\txbool\n" +
+            assertSql("ts\txint\txbool\n" +
                     "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
                     "1970-01-01T00:00:01.000000Z\t2\ttrue\n" +
                     "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
                     "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n");
+                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n", "up");
 
-            executeUpdate("UPDATE up SET xbool = false WHERE xint = 2");
+            update("UPDATE up SET xbool = false WHERE xint = 2");
 
-            assertSql("up", "ts\txint\txbool\n" +
+            assertSql("ts\txint\txbool\n" +
                     "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
                     "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
                     "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
                     "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n");
+                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n", "up");
         });
     }
 
@@ -694,14 +706,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+            update("UPDATE up SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t2\n" +
                     "1970-01-01T00:00:02.000000Z\tNaN\n" +
                     "1970-01-01T00:00:03.000000Z\tNaN\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -719,12 +731,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdateFails("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
-                    "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
-                    ")" +
-                    "UPDATE up SET s = sm, y = jn.y" +
-                    " FROM jn " +
-                    " WHERE jn.s = up.s", 147, "inconvertible types: LONG -> SYMBOL");
+            expectException(
+                    "WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
+                            "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
+                            ")" +
+                            "UPDATE up SET s = sm, y = jn.y" +
+                            " FROM jn " +
+                            " WHERE jn.s = up.s",
+                    147,
+                    "inconvertible types: LONG -> SYMBOL"
+            );
         });
     }
 
@@ -748,99 +764,131 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // All combinations to update xint
-            executeUpdateFails("UPDATE up SET xint = xdouble", 21, "inconvertible types: DOUBLE -> INT [from=, to=xint]");
-            executeUpdateFails("UPDATE up SET xint = xlong", 21, "inconvertible types: LONG -> INT [from=, to=xint]");
-            executeUpdateFails("UPDATE up SET xshort = xlong", 23, "inconvertible types: LONG -> SHORT [from=, to=xshort]");
-            executeUpdateFails("UPDATE up SET xchar = xlong", 22, "inconvertible types: LONG -> CHAR [from=, to=xchar]");
-            executeUpdateFails("UPDATE up SET xbyte = xlong", 22, "inconvertible types: LONG -> BYTE [from=, to=xbyte]");
-            executeUpdateFails("UPDATE up SET xlong = xl256", 22, "inconvertible types: LONG256 -> LONG [from=, to=xlong]");
-            executeUpdateFails("UPDATE up SET xl256 = xlong", 22, "inconvertible types: LONG -> LONG256 [from=, to=xl256]");
-            executeUpdateFails("UPDATE up SET xchar = xlong", 22, "inconvertible types: LONG -> CHAR [from=, to=xchar]");
+            expectException(
+                    "UPDATE up SET xint = xdouble",
+                    21,
+                    "inconvertible types: DOUBLE -> INT [from=, to=xint]"
+            );
+            expectException(
+                    "UPDATE up SET xint = xlong",
+                    21,
+                    "inconvertible types: LONG -> INT [from=, to=xint]"
+            );
+            expectException(
+                    "UPDATE up SET xshort = xlong",
+                    23,
+                    "inconvertible types: LONG -> SHORT [from=, to=xshort]"
+            );
+            expectException(
+                    "UPDATE up SET xchar = xlong",
+                    22,
+                    "inconvertible types: LONG -> CHAR [from=, to=xchar]"
+            );
+            expectException(
+                    "UPDATE up SET xbyte = xlong",
+                    22,
+                    "inconvertible types: LONG -> BYTE [from=, to=xbyte]"
+            );
+            expectException(
+                    "UPDATE up SET xlong = xl256",
+                    22,
+                    "inconvertible types: LONG256 -> LONG [from=, to=xlong]"
+            );
+            expectException(
+                    "UPDATE up SET xl256 = xlong",
+                    22,
+                    "inconvertible types: LONG -> LONG256 [from=, to=xl256]"
+            );
+            expectException(
+                    "UPDATE up SET xchar = xlong",
+                    22,
+                    "inconvertible types: LONG -> CHAR [from=, to=xchar]"
+            );
 
             String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
                     "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
 
-            executeUpdate("UPDATE up SET xint=xshort");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xint=xshort WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xint=xshort");
+            assertSql(expected, "up");
+            update("UPDATE up SET xint=xshort WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xlong=xshort");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xlong=xshort WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xlong=xshort");
+            assertSql(expected, "up");
+            update("UPDATE up SET xlong=xshort WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xlong=xchar");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xlong=xchar WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xlong=xchar");
+            assertSql(expected, "up");
+            update("UPDATE up SET xlong=xchar WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xfloat=xint");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xfloat=xint WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xfloat=xint");
+            assertSql(expected, "up");
+            update("UPDATE up SET xfloat=xint WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xdouble=xfloat");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xdouble=xfloat WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xdouble=xfloat");
+            assertSql(expected, "up");
+            update("UPDATE up SET xdouble=xfloat WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xdouble=xlong");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xdouble=xlong");
+            assertSql(expected, "up");
+            update("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xshort=xbyte");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xshort=xbyte WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xshort=xbyte");
+            assertSql(expected, "up");
+            update("UPDATE up SET xshort=xbyte WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xshort=xchar");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xshort=xchar WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xshort=xchar");
+            assertSql(expected, "up");
+            update("UPDATE up SET xshort=xchar WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xchar=xshort");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xchar=xshort WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xchar=xshort");
+            assertSql(expected, "up");
+            update("UPDATE up SET xchar=xshort WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xint=xchar");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xint=xchar WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xint=xchar");
+            assertSql(expected, "up");
+            update("UPDATE up SET xint=xchar WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xdouble=xlong");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xdouble=xlong");
+            assertSql(expected, "up");
+            update("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xlong=xts");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xlong=xts WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xlong=xts");
+            assertSql(expected, "up");
+            update("UPDATE up SET xlong=xts WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xdate=xlong");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xdate=xlong WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xdate=xlong");
+            assertSql(expected, "up");
+            update("UPDATE up SET xdate=xlong WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
-            executeUpdate("UPDATE up SET xts=xdate");
+            update("UPDATE up SET xts=xdate");
             // above call modified data from micro to milli. Revert the data back
-            executeUpdate("UPDATE up SET xts=xlong");
-            assertSql("up", expected);
-            executeUpdate("UPDATE up SET xts=xlong WHERE ts='1970-01-01'");
-            assertSql("up", expected);
+            update("UPDATE up SET xts=xlong");
+            assertSql(expected, "up");
+            update("UPDATE up SET xts=xlong WHERE ts='1970-01-01'");
+            assertSql(expected, "up");
 
             // Update all at once
-            executeUpdate("UPDATE up SET xint=xshort, xfloat=xint, xdouble=xfloat, xshort=xbyte, xlong=xts, xts=xlong");
-            assertSql("up", expected);
+            update("UPDATE up SET xint=xshort, xfloat=xint, xdouble=xfloat, xshort=xbyte, xlong=xts, xts=xlong");
+            assertSql(expected, "up");
 
             //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
             if (!walEnabled) {
                 // Update without conversion
-                executeUpdate("UPDATE up" +
+                update("UPDATE up" +
                         " SET xint=up2.xint," +
                         " xfloat=up2.xfloat," +
                         " xdouble=up2.xdouble," +
@@ -852,7 +900,7 @@ public class UpdateTest extends AbstractGriffinTest {
                         " xbyte=up2.xbyte " +
                         " FROM up up2 " +
                         " WHERE up.ts = up2.ts AND up.ts = '1970-01-01'");
-                assertSql("up", expected);
+                assertSql(expected, "up");
             }
         });
     }
@@ -869,7 +917,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up " +
+            update("UPDATE up " +
                     "SET " +
                     "g1c = cast('questdb' as geohash(7c)), " +
                     "g3c = cast('questdb' as geohash(7c)), " +
@@ -877,12 +925,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     "g7c = cast('questdb' as geohash(7c)) " +
                     "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tg1c\tg3c\tg5c\tg7c\n" +
+            assertSql("ts\tg1c\tg3c\tg5c\tg7c\n" +
                     "1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b\n" +
                     "1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6\n" +
                     "1970-01-01T00:00:02.000000Z\tq\tque\tquest\tquestdb\n" +
                     "1970-01-01T00:00:03.000000Z\tq\tque\tquest\tquestdb\n" +
-                    "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n");
+                    "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n", "up");
         });
     }
 
@@ -898,7 +946,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up " +
+            update("UPDATE up " +
                     "SET " +
                     "g1c = g7c, " +
                     "g3c = g7c, " +
@@ -906,12 +954,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     "g7c = g7c " +
                     "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tg1c\tg3c\tg5c\tg7c\n" +
+            assertSql("ts\tg1c\tg3c\tg5c\tg7c\n" +
                     "1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b\n" +
                     "1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6\n" +
                     "1970-01-01T00:00:02.000000Z\tq\tq4s\tq4s2x\tq4s2xyt\n" +
                     "1970-01-01T00:00:03.000000Z\tb\tbuy\tbuyv3\tbuyv3pv\n" +
-                    "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n");
+                    "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n", "up");
         });
     }
 
@@ -926,11 +974,11 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            alter("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
-            alter("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
-            alter("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
-            alter("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
-            alter("insert into up select * from " +
+            ddl("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
+            ddl("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
+            ddl("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
+            ddl("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
@@ -940,9 +988,9 @@ public class UpdateTest extends AbstractGriffinTest {
                     " rnd_geohash(40) as geo8" +
                     " from long_sequence(5))", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET geo1 = cast('q' as geohash(1c)), geo2 = 'qu', geo4='quest', geo8='questdb0' WHERE lng2 in (6, 8, 10, 12, 14)");
+            update("UPDATE up SET geo1 = cast('q' as geohash(1c)), geo2 = 'qu', geo4='quest', geo8='questdb0' WHERE lng2 in (6, 8, 10, 12, 14)");
 
-            assertSql("up", "ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8\n" +
+            assertSql("ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8\n" +
                     "1970-01-01T00:00:00.000000Z\t15\t1\t\t\t\t\n" +
                     "1970-01-01T06:00:00.000000Z\t15\t2\t\t\t\t\n" +
                     "1970-01-01T12:00:00.000000Z\t\t3\t\t\t\t\n" +
@@ -957,7 +1005,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-08T04:40:00.000000Z\t\t12\tq\tqu\tquest\tquestdb0\n" +
                     "1970-01-08T10:40:00.000000Z\t\t13\t8\t1y\tcd0fj\t5h18p8vz\n" +
                     "1970-01-08T16:40:00.000000Z\t\t14\tq\tqu\tquest\tquestdb0\n" +
-                    "1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty\n");
+                    "1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty\n", "up");
         });
     }
 
@@ -971,14 +1019,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET geo3 = 'questdb', geo5 = 'questdb' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+            update("UPDATE up SET geo3 = 'questdb', geo5 = 'questdb' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tgeo3\tgeo5\n" +
+            assertSql("ts\tgeo3\tgeo5\n" +
                     "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +
                     "1970-01-01T00:00:01.000000Z\tjnw\tzfuqd\n" +
                     "1970-01-01T00:00:02.000000Z\tque\tquest\n" +
                     "1970-01-01T00:00:03.000000Z\tque\tquest\n" +
-                    "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n");
+                    "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n", "up");
         });
     }
 
@@ -991,14 +1039,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET x = x WHERE x > 1 and x < 4");
+            update("UPDATE up SET x = x WHERE x > 1 and x < 4");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t2\n" +
                     "1970-01-01T00:00:02.000000Z\t3\n" +
                     "1970-01-01T00:00:03.000000Z\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -1011,10 +1059,10 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            alter("alter table up add column y long", sqlExecutionContext);
-            executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
+            ddl("alter table up add column y long", sqlExecutionContext);
+            update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
                     "1970-01-01T06:56:40.000000Z\t2\t42\n" +
                     "1970-01-01T13:53:20.000000Z\t3\tNaN\n" +
@@ -1024,7 +1072,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-02T17:40:00.000000Z\t7\tNaN\n" +
                     "1970-01-03T00:36:40.000000Z\t8\t42\n" +
                     "1970-01-03T07:33:20.000000Z\t9\tNaN\n" +
-                    "1970-01-03T14:30:00.000000Z\t10\tNaN\n");
+                    "1970-01-03T14:30:00.000000Z\t10\tNaN\n", "up");
         });
     }
 
@@ -1039,8 +1087,8 @@ public class UpdateTest extends AbstractGriffinTest {
                 createPopulateTable(tml, 10, "2020-01-01", 2);
             }
 
-            executeUpdate("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T00;6h;12h;24'");
-            assertSql("up", "xint\txsym\tts\n" +
+            update("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T00;6h;12h;24'");
+            assertSql("xint\txsym\tts\n" +
                     "-1000\tCPSW\t2020-01-01T04:47:59.900000Z\n" +
                     "2\tHYRX\t2020-01-01T09:35:59.800000Z\n" +
                     "-1000\t\t2020-01-01T14:23:59.700000Z\n" +
@@ -1050,10 +1098,10 @@ public class UpdateTest extends AbstractGriffinTest {
                     "7\tVTJW\t2020-01-02T09:35:59.300000Z\n" +
                     "-1000\t\t2020-01-02T14:23:59.200000Z\n" +
                     "9\tCPSW\t2020-01-02T19:11:59.100000Z\n" +
-                    "10\t\t2020-01-02T23:59:59.000000Z\n");
+                    "10\t\t2020-01-02T23:59:59.000000Z\n", "up");
 
-            executeUpdate("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T06;6h;12h;24' and xint > 7");
-            assertSql("up", "xint\txsym\tts\n" +
+            update("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T06;6h;12h;24' and xint > 7");
+            assertSql("xint\txsym\tts\n" +
                     "-1000\tCPSW\t2020-01-01T04:47:59.900000Z\n" +
                     "2\tHYRX\t2020-01-01T09:35:59.800000Z\n" +
                     "-1000\t\t2020-01-01T14:23:59.700000Z\n" +
@@ -1063,7 +1111,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "7\tVTJW\t2020-01-02T09:35:59.300000Z\n" +
                     "-1000\t\t2020-01-02T14:23:59.200000Z\n" +
                     "-1000\tCPSW\t2020-01-02T19:11:59.100000Z\n" +
-                    "-1000\t\t2020-01-02T23:59:59.000000Z\n");
+                    "-1000\t\t2020-01-02T23:59:59.000000Z\n", "up");
         });
     }
 
@@ -1077,16 +1125,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            alter("alter table up add column y long", sqlExecutionContext);
-            alter("insert into up select * from " +
+            ddl("alter table up add column y long", sqlExecutionContext);
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence(250000000000, 25000000000) ts," +
                     " cast(x as int) + 10 as x," +
                     " cast(x as long) * 10 as y" +
                     " from long_sequence(10))", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 9 or x = 6 or x = 13 or x = 20");
+            update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 9 or x = 6 or x = 13 or x = 20");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
                     "1970-01-01T06:56:40.000000Z\t2\t42\n" +
                     "1970-01-01T13:53:20.000000Z\t3\tNaN\n" +
@@ -1106,7 +1154,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-05T15:06:40.000000Z\t17\t70\n" +
                     "1970-01-05T22:03:20.000000Z\t18\t80\n" +
                     "1970-01-06T05:00:00.000000Z\t19\t90\n" +
-                    "1970-01-06T11:56:40.000000Z\t20\t42\n");
+                    "1970-01-06T11:56:40.000000Z\t20\t42\n", "up");
         });
     }
 
@@ -1121,22 +1169,22 @@ public class UpdateTest extends AbstractGriffinTest {
                 createPopulateTable(tml, 5, "2020-01-01", 2);
             }
 
-            executeUpdate("UPDATE up SET xint = -1000 WHERE ts > '2020-01-02T14'");
-            assertSql("up", "xint\txsym\tts\n" +
+            update("UPDATE up SET xint = -1000 WHERE ts > '2020-01-02T14'");
+            assertSql("xint\txsym\tts\n" +
                     "1\tCPSW\t2020-01-01T09:35:59.800000Z\n" +
                     "2\tHYRX\t2020-01-01T19:11:59.600000Z\n" +
                     "3\t\t2020-01-02T04:47:59.400000Z\n" +
                     "-1000\tVTJW\t2020-01-02T14:23:59.200000Z\n" +  // Updated
-                    "-1000\tPEHN\t2020-01-02T23:59:59.000000Z\n"    // Updated
+                    "-1000\tPEHN\t2020-01-02T23:59:59.000000Z\n", "up"     // Updated
             );
 
-            executeUpdate("UPDATE up SET xint = -2000 WHERE ts > '2020-01-02T14' AND xsym = 'VTJW'");
-            assertSql("up", "xint\txsym\tts\n" +
+            update("UPDATE up SET xint = -2000 WHERE ts > '2020-01-02T14' AND xsym = 'VTJW'");
+            assertSql("xint\txsym\tts\n" +
                     "1\tCPSW\t2020-01-01T09:35:59.800000Z\n" +
                     "2\tHYRX\t2020-01-01T19:11:59.600000Z\n" +
                     "3\t\t2020-01-02T04:47:59.400000Z\n" +
                     "-2000\tVTJW\t2020-01-02T14:23:59.200000Z\n" +  // Updated
-                    "-1000\tPEHN\t2020-01-02T23:59:59.000000Z\n");
+                    "-1000\tPEHN\t2020-01-02T23:59:59.000000Z\n", "up");
         });
     }
 
@@ -1149,14 +1197,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET x = 1");
+            update("UPDATE up SET x = 1");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t1\n" +
                     "1970-01-01T00:00:02.000000Z\t1\n" +
                     "1970-01-01T00:00:03.000000Z\t1\n" +
-                    "1970-01-01T00:00:04.000000Z\t1\n");
+                    "1970-01-01T00:00:04.000000Z\t1\n", "up");
         });
     }
 
@@ -1171,21 +1219,22 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as int) x" +
                     " from long_sequence(1))" +
                     " timestamp(ts) partition by DAY");
-            assertSql("up", "ts\tx\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\n");
+            assertSql("ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n", "up");
 
-            CompiledQuery cc = compile("UPDATE up SET x = 2");
-            Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cc = compiler.compile("UPDATE up SET x = 2", sqlExecutionContext);
+                Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+                try (UpdateOperation updateOperation = cc.getUpdateOperation()) {
+                    // Bump table version
+                    ddl("alter table up add column y long", sqlExecutionContext);
+                    ddl("alter table up drop column y", sqlExecutionContext);
 
-            try (UpdateOperation updateOperation = cc.getUpdateOperation()) {
-                // Bump table version
-                alter("alter table up add column y long", sqlExecutionContext);
-                alter("alter table up drop column y", sqlExecutionContext);
-
-                applyUpdate(updateOperation);
-                Assert.fail();
-            } catch (TableReferenceOutOfDateException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "table='up'");
+                    applyUpdate(updateOperation);
+                    Assert.fail();
+                } catch (TableReferenceOutOfDateException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "table='up'");
+                }
             }
         });
     }
@@ -1202,18 +1251,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts)");
 
-            CompiledQuery cq = compile("UPDATE up SET x = 123 WHERE x > 1 and x < 5");
-            try (OperationFuture fut = cq.execute(eventSubSequence)) {
-                Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
-                Assert.assertEquals(3, fut.getAffectedRowsCount());
-            }
+            update("UPDATE up SET x = 123 WHERE x > 1 and x < 5");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t123\n" +
                     "1970-01-01T00:00:02.000000Z\t123\n" +
                     "1970-01-01T00:00:03.000000Z\t123\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -1227,13 +1272,13 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            alter("alter table up add column y long", sqlExecutionContext);
-            alter("alter table up drop column y", sqlExecutionContext);
+            ddl("alter table up add column y long", sqlExecutionContext);
+            ddl("alter table up drop column y", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET x = 44");
+            update("UPDATE up SET x = 44");
 
-            assertSql("up", "ts\tx\n" +
-                    "1970-01-01T00:00:00.000000Z\t44\n");
+            assertSql("ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t44\n", "up");
         });
     }
 
@@ -1273,16 +1318,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            alter("alter table up add column y long", sqlExecutionContext);
-            alter("insert into up select * from " +
+            ddl("alter table up add column y long", sqlExecutionContext);
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
                     " from long_sequence(5))", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET y = 42 where x = 9 or x = 10 or x = 11");
+            update("UPDATE up SET y = 42 where x = 9 or x = 10 or x = 11");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
                     "1970-01-01T00:00:01.000000Z\t1\tNaN\n" +
                     "1970-01-01T00:00:02.000000Z\t2\tNaN\n" +
@@ -1297,7 +1342,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:01:41.000000Z\t11\t42\n" +
                     "1970-01-01T00:01:42.000000Z\t12\t30\n" +
                     "1970-01-01T00:01:43.000000Z\t13\t40\n" +
-                    "1970-01-01T00:01:44.000000Z\t14\t50\n");
+                    "1970-01-01T00:01:44.000000Z\t14\t50\n", "up");
         });
     }
 
@@ -1311,16 +1356,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            alter("alter table up add column y long", sqlExecutionContext);
-            alter("insert into up select * from " +
+            ddl("alter table up add column y long", sqlExecutionContext);
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
                     " from long_sequence(5))", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET y = 42 where x = 5 or x = 7 or x = 10 or x = 13 or x = 14");
+            update("UPDATE up SET y = 42 where x = 5 or x = 7 or x = 10 or x = 13 or x = 14");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
                     "1970-01-01T00:00:01.000000Z\t1\tNaN\n" +
                     "1970-01-01T00:00:02.000000Z\t2\tNaN\n" +
@@ -1335,7 +1380,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:01:41.000000Z\t11\t20\n" +
                     "1970-01-01T00:01:42.000000Z\t12\t30\n" +
                     "1970-01-01T00:01:43.000000Z\t13\t42\n" +
-                    "1970-01-01T00:01:44.000000Z\t14\t42\n");
+                    "1970-01-01T00:01:44.000000Z\t14\t42\n", "up");
         });
     }
 
@@ -1347,11 +1392,11 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
-            alter("alter table up add column y long", sqlExecutionContext);
+            ddl("alter table up add column y long", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
+            update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
                     "1970-01-01T00:01:40.000000Z\t2\t42\n" +
                     "1970-01-01T00:03:20.000000Z\t3\tNaN\n" +
@@ -1361,7 +1406,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:10:00.000000Z\t7\tNaN\n" +
                     "1970-01-01T00:11:40.000000Z\t8\t42\n" +
                     "1970-01-01T00:13:20.000000Z\t9\tNaN\n" +
-                    "1970-01-01T00:15:00.000000Z\t10\tNaN\n");
+                    "1970-01-01T00:15:00.000000Z\t10\tNaN\n", "up");
         });
     }
 
@@ -1375,16 +1420,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            alter("alter table up add column y long", sqlExecutionContext);
-            alter("insert into up select * from " +
+            ddl("alter table up add column y long", sqlExecutionContext);
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
                     " from long_sequence(5))", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET y = 42 where x = 6 or x = 8 or x = 12 or x = 14");
+            update("UPDATE up SET y = 42 where x = 6 or x = 8 or x = 12 or x = 14");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
                     "1970-01-01T00:00:01.000000Z\t1\tNaN\n" +
                     "1970-01-01T00:00:02.000000Z\t2\tNaN\n" +
@@ -1399,7 +1444,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:01:41.000000Z\t11\t20\n" +
                     "1970-01-01T00:01:42.000000Z\t12\t42\n" +
                     "1970-01-01T00:01:43.000000Z\t13\t40\n" +
-                    "1970-01-01T00:01:44.000000Z\t14\t42\n");
+                    "1970-01-01T00:01:44.000000Z\t14\t42\n", "up");
         });
     }
 
@@ -1415,31 +1460,31 @@ public class UpdateTest extends AbstractGriffinTest {
                     sqlExecutionContext);
 
             // char
-            executeUpdate("update up set s = 'a' where s = 'bar'");
-            assertSql("up", "s\tts\tx\n" +
+            update("update up set s = 'a' where s = 'bar'");
+            assertSql("s\tts\tx\n" +
                     "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "a\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "a\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "a\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "a\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
             // string
-            executeUpdate("update up set s = 'baz' where s = 'a'");
-            assertSql("up", "s\tts\tx\n" +
+            update("update up set s = 'baz' where s = 'a'");
+            assertSql("s\tts\tx\n" +
                     "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "baz\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "baz\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "baz\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "baz\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
             // UUID
-            executeUpdate("update up set s = cast('11111111-1111-1111-1111-111111111111' as uuid) where s = 'baz'");
-            assertSql("up", "s\tts\tx\n" +
+            update("update up set s = cast('11111111-1111-1111-1111-111111111111' as uuid) where s = 'baz'");
+            assertSql("s\tts\tx\n" +
                     "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -1454,9 +1499,9 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET str1 = concat('questdb', str1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
+            update("UPDATE up SET str1 = concat('questdb', str1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql("up", "ts\tstr1\tlng2\n" +
+            assertSql("ts\tstr1\tlng2\n" +
                     "1970-01-01T00:00:00.000000Z\t15\t1\n" +
                     "1970-01-01T06:00:00.000000Z\t15\t2\n" +
                     "1970-01-01T12:00:00.000000Z\tquestdb\t-1\n" +
@@ -1466,7 +1511,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-02T12:00:00.000000Z\tquestdb190232\t-1\n" +
                     "1970-01-02T18:00:00.000000Z\t\t8\n" +
                     "1970-01-03T00:00:00.000000Z\tquestdb15\t-1\n" +
-                    "1970-01-03T06:00:00.000000Z\t\t10\n");
+                    "1970-01-03T06:00:00.000000Z\t\t10\n", "up");
         });
     }
 
@@ -1481,9 +1526,9 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
+            update("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql("up", "ts\tstr1\tlng2\n" +
+            assertSql("ts\tstr1\tlng2\n" +
                     "1970-01-01T00:00:00.000000Z\t15\t1\n" +
                     "1970-01-01T06:00:00.000000Z\t15\t2\n" +
                     "1970-01-01T12:00:00.000000Z\tquestdb\t3\n" +
@@ -1493,7 +1538,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-02T12:00:00.000000Z\tquestdb\t7\n" +
                     "1970-01-02T18:00:00.000000Z\t\t8\n" +
                     "1970-01-03T00:00:00.000000Z\tquestdb\t9\n" +
-                    "1970-01-03T06:00:00.000000Z\t\t10\n");
+                    "1970-01-03T06:00:00.000000Z\t\t10\n", "up");
         });
     }
 
@@ -1508,11 +1553,11 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
-            assertSql("select count() from up where str1 = 'questdb'", "count\n" +
-                    "7201\n");
-            assertSql("select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1", "count\n" +
-                    "7201\n");
+            update("UPDATE up SET str1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
+            assertSql("count\n" +
+                    "7201\n", "select count() from up where str1 = 'questdb'");
+            assertSql("count\n" +
+                    "7201\n", "select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
         });
     }
 
@@ -1527,18 +1572,18 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            alter("alter table up add column str2 string", sqlExecutionContext);
+            ddl("alter table up add column str2 string", sqlExecutionContext);
 
-            alter("insert into up select * from " +
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence('1970-01-01T00:30', 6 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str2" +
                     " from long_sequence(10))", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET str1 = 'questdb2', str2 = 'questdb2' WHERE ts = '1970-01-01T01:18:00.000000Z'");
+            update("UPDATE up SET str1 = 'questdb2', str2 = 'questdb2' WHERE ts = '1970-01-01T01:18:00.000000Z'");
 
-            assertSql("up", "ts\tstr1\tlng2\tstr2\n" +
+            assertSql("ts\tstr1\tlng2\tstr2\n" +
                     "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
                     "1970-01-01T00:03:00.000000Z\t15\t2\t\n" +
                     "1970-01-01T00:06:00.000000Z\t\t3\t\n" +
@@ -1558,7 +1603,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T01:06:00.000000Z\t15\t17\t1\n" +
                     "1970-01-01T01:12:00.000000Z\trdgb\t18\t\n" +
                     "1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2\n" +
-                    "1970-01-01T01:24:00.000000Z\t\t20\t15\n");
+                    "1970-01-01T01:24:00.000000Z\t\t20\t15\n", "up");
         });
     }
 
@@ -1573,17 +1618,17 @@ public class UpdateTest extends AbstractGriffinTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            alter("alter table up add column str2 string", sqlExecutionContext);
-            alter("insert into up select * from " +
+            ddl("alter table up add column str2 string", sqlExecutionContext);
+            ddl("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str2" +
                     " from long_sequence(5))", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET str1 = 'questdb1', str2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
+            update("UPDATE up SET str1 = 'questdb1', str2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
 
-            assertSql("up", "ts\tstr1\tlng2\tstr2\n" +
+            assertSql("ts\tstr1\tlng2\tstr2\n" +
                     "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
                     "1970-01-01T06:00:00.000000Z\t15\t2\t\n" +
                     "1970-01-01T12:00:00.000000Z\t\t3\t\n" +
@@ -1598,7 +1643,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-08T04:40:00.000000Z\tquestdb1\t12\tquestdb2\n" +
                     "1970-01-08T10:40:00.000000Z\t\t13\t15\n" +
                     "1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2\n" +
-                    "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n");
+                    "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n", "up");
         });
     }
 
@@ -1614,25 +1659,25 @@ public class UpdateTest extends AbstractGriffinTest {
                             " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : "")
             );
 
-            executeUpdate("UPDATE up \n" +
+            update("UPDATE up \n" +
                     "SET sym = NULLIF(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
 
-            assertSql("up", "ts\tsym\tts2\n" +
+            assertSql("ts\tsym\tts2\n" +
                     "1970-01-01T00:00:00.000000Z\t\t\n" +
                     "1970-01-01T00:00:01.000000Z\t\t\n" +
                     "1970-01-01T00:00:02.000000Z\t\t\n" +
                     "1970-01-01T00:00:03.000000Z\t\t\n" +
-                    "1970-01-01T00:00:04.000000Z\t\t\n");
+                    "1970-01-01T00:00:04.000000Z\t\t\n", "up");
 
-            executeUpdate("UPDATE up \n" +
+            update("UPDATE up \n" +
                     "SET sym = COALESCE(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
 
-            assertSql("up", "ts\tsym\tts2\n" +
+            assertSql("ts\tsym\tts2\n" +
                     "1970-01-01T00:00:00.000000Z\tn\t\n" +
                     "1970-01-01T00:00:01.000000Z\tn\t\n" +
                     "1970-01-01T00:00:02.000000Z\tn\t\n" +
                     "1970-01-01T00:00:03.000000Z\tn\t\n" +
-                    "1970-01-01T00:00:04.000000Z\tn\t\n");
+                    "1970-01-01T00:00:04.000000Z\tn\t\n", "up");
         });
     }
 
@@ -1644,24 +1689,23 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
-            assertSql("up", "symCol\tts\tx\n" +
+            assertSql("symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
-            CompiledQuery cq = compile("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'");
-            try (OperationFuture fut = cq.execute(eventSubSequence)) {
-                Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
-                Assert.assertEquals(2, fut.getAffectedRowsCount());
-            }
-            assertSql("up", "symCol\tts\tx\n" +
-                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
+            Assert.assertEquals(2, update("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'"));
+
+            assertSql(
+                    "symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "VTJ\t1970-01-01T00:00:04.000000Z\t5\n", "up"
+            );
         });
     }
 
@@ -1674,14 +1718,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE \"віт ер\" SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+            update("UPDATE \"віт ер\" SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("\"віт ер\"", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t2\n" +
                     "1970-01-01T00:00:02.000000Z\tNaN\n" +
                     "1970-01-01T00:00:03.000000Z\tNaN\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "\"віт ер\"");
         });
     }
 
@@ -1697,14 +1741,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as int) x" +
                     " from long_sequence(5))");
 
-            executeUpdate("UPDATE up SET x = 12");
+            update("UPDATE up SET x = 12");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t12\n" +
                     "1970-01-01T00:00:01.000000Z\t12\n" +
                     "1970-01-01T00:00:02.000000Z\t12\n" +
                     "1970-01-01T00:00:03.000000Z\t12\n" +
-                    "1970-01-01T00:00:04.000000Z\t12\n");
+                    "1970-01-01T00:00:04.000000Z\t12\n", "up");
         });
     }
 
@@ -1717,7 +1761,11 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdateFails("UPDATE up SET ts = 1", 14, "Designated timestamp column cannot be updated");
+            expectException(
+                    "UPDATE up SET ts = 1",
+                    14,
+                    "Designated timestamp column cannot be updated"
+            );
         });
     }
 
@@ -1730,14 +1778,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET ts1 = '1970-02-01' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+            update("UPDATE up SET ts1 = '1970-02-01' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tts1\n" +
+            assertSql("ts\tts1\n" +
                     "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +
                     "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\n" +
                     "1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z\n" +
                     "1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z\n" +
-                    "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\n");
+                    "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\n", "up");
         });
     }
 
@@ -1751,14 +1799,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET ts1 = sym WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+            update("UPDATE up SET ts1 = sym WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tts1\tsym\n" +
+            assertSql("ts\tts1\tsym\n" +
                     "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:01.000Z\n" +
                     "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000Z\n" +
                     "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:03.000Z\n" +
                     "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000Z\n" +
-                    "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:05.000Z\n");
+                    "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:05.000Z\n", "up");
         });
     }
 
@@ -1772,11 +1820,11 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             sqlExecutionContext.getBindVariableService().setInt(0, 100);
-            executeUpdate("UPDATE up SET x = $1 WHERE x > 1 and x < 4");
+            update("UPDATE up SET x = $1 WHERE x > 1 and x < 4");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t100\n");
+                    "1970-01-01T00:00:01.000000Z\t100\n", "up");
         });
     }
 
@@ -1789,14 +1837,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET x = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+            update("UPDATE up SET x = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t2\n" +
                     "1970-01-01T00:00:02.000000Z\tNaN\n" +
                     "1970-01-01T00:00:03.000000Z\tNaN\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -1809,12 +1857,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
-            assertSql("up", "symCol\tts\tx\n" +
+            assertSql("symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
             ddl("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -1822,14 +1870,18 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql("t2", "symCol2\tts\tx\n" +
+            assertSql("symCol2\tts\tx\n" +
                     "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "t2");
 
-            executeUpdateFails("UPDATE up SET symCol = 'VTJ' JOIN t2 ON up.x = t2.x", 29, "FROM, WHERE or EOF expected");
+            expectException(
+                    "UPDATE up SET symCol = 'VTJ' JOIN t2 ON up.x = t2.x",
+                    29,
+                    "FROM, WHERE or EOF expected"
+            );
         });
     }
 
@@ -1846,17 +1898,17 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdate("WITH jn AS (select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s)" +
+            update("WITH jn AS (select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s)" +
                     "UPDATE up SET x = sm" +
                     " FROM jn " +
                     " WHERE up.s = jn.s");
 
-            assertSql("up", "ts\ts\tx\n" +
+            assertSql("ts\ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\ta\t101\n" +
                     "1970-01-01T00:00:01.000000Z\tc\t2\n" +
                     "1970-01-01T00:00:02.000000Z\tb\t303\n" +
                     "1970-01-01T00:00:03.000000Z\t\t505\n" +
-                    "1970-01-01T00:00:04.000000Z\tb\t303\n");
+                    "1970-01-01T00:00:04.000000Z\tb\t303\n", "up");
         });
     }
 
@@ -1870,11 +1922,11 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             sqlExecutionContext.getBindVariableService().setInt(0, 2);
-            executeUpdate("UPDATE up SET x = 100 WHERE x < $1");
+            update("UPDATE up SET x = 100 WHERE x < $1");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t100\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\n");
+                    "1970-01-01T00:00:01.000000Z\t2\n", "up");
         });
     }
 
@@ -1888,14 +1940,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET y = 10L * x WHERE x > 1 and x < 4");
+            update("UPDATE up SET y = 10L * x WHERE x > 1 and x < 4");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t2\t20\n" +
                     "1970-01-01T00:00:02.000000Z\t3\t30\n" +
                     "1970-01-01T00:00:03.000000Z\t4\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\t5\n", "up");
         });
     }
 
@@ -1909,14 +1961,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            executeUpdate("UPDATE up SET y = 10 * x WHERE x > 1 and x < 4");
+            update("UPDATE up SET y = 10 * x WHERE x > 1 and x < 4");
 
-            assertSql("up", "ts\tx\ty\n" +
+            assertSql("ts\tx\ty\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t2\t20\n" +
                     "1970-01-01T00:00:02.000000Z\t3\t30\n" +
                     "1970-01-01T00:00:03.000000Z\t4\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\t5\n", "up");
         });
     }
 
@@ -1938,16 +1990,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdate("UPDATE up SET x = y" +
+            update("UPDATE up SET x = y" +
                     " FROM down " +
                     " WHERE up.x < 4;");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t100\n" +
                     "1970-01-01T00:00:01.000000Z\t100\n" +
                     "1970-01-01T00:00:02.000000Z\t100\n" +
                     "1970-01-01T00:00:03.000000Z\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -1969,16 +2021,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdate("UPDATE up SET x = y + x" +
+            update("UPDATE up SET x = y + x" +
                     " FROM down " +
                     " WHERE up.ts = down.ts and x > 1 and x < 4");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t202\n" +
                     "1970-01-01T00:00:02.000000Z\t303\n" +
                     "1970-01-01T00:00:03.000000Z\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -2000,16 +2052,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdate("UPDATE up SET x = y" +
+            update("UPDATE up SET x = y" +
                     " FROM down " +
                     " WHERE up.ts = down.ts and up.x < down.y and up.x < 4 and down.y > 100;");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t200\n" +
                     "1970-01-01T00:00:02.000000Z\t300\n" +
                     "1970-01-01T00:00:03.000000Z\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -2031,16 +2083,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdate("UPDATE up SET x = y" +
+            update("UPDATE up SET x = y" +
                     " FROM down " +
                     " WHERE up.ts = down.ts and x < 4");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t100\n" +
                     "1970-01-01T00:00:01.000000Z\t200\n" +
                     "1970-01-01T00:00:02.000000Z\t300\n" +
                     "1970-01-01T00:00:03.000000Z\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
         });
     }
 
@@ -2062,16 +2114,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            executeUpdate("UPDATE up SET x = y + 1" +
+            update("UPDATE up SET x = y + 1" +
                     " FROM down " +
                     " WHERE up.x < down.y;");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t151\n" +
                     "1970-01-01T00:00:01.000000Z\t251\n" +
                     "1970-01-01T00:00:02.000000Z\t300\n" +
                     "1970-01-01T00:00:03.000000Z\t400\n" +
-                    "1970-01-01T00:00:04.000000Z\t500\n");
+                    "1970-01-01T00:00:04.000000Z\t500\n", "up");
         });
     }
 
@@ -2084,12 +2136,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? "partition by DAY WAL" : ""));
 
-            assertSql("up", "symCol\tts\tx\n" +
+            assertSql("symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
             ddl("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -2097,14 +2149,18 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql("t2", "symCol2\tts\tx\n" +
+            assertSql("symCol2\tts\tx\n" +
                     "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "t2");
 
-            executeUpdateFails("UPDATE up SET symCol = 'VTJ' FROM t2 CROSS JOIN up ON up.x = t2.x", 37, "JOIN is not supported on UPDATE statement");
+            expectException(
+                    "UPDATE up SET symCol = 'VTJ' FROM t2 CROSS JOIN up ON up.x = t2.x",
+                    37,
+                    "JOIN is not supported on UPDATE statement"
+            );
         });
     }
 
@@ -2117,14 +2173,18 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
-            assertSql("up", "symCol\tts\tx\n" +
+            assertSql("symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
-            executeUpdateFails("UPDATE up SET symCol = 'ABC' LATEST ON ts PARTITION BY symCol", 29, "FROM, WHERE or EOF expected");
+            expectException(
+                    "UPDATE up SET symCol = 'ABC' LATEST ON ts PARTITION BY symCol",
+                    29,
+                    "FROM, WHERE or EOF expected"
+            );
         });
     }
 
@@ -2137,12 +2197,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
-            assertSql("up", "symCol\tts\tx\n" +
+            assertSql("symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
             ddl("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -2150,14 +2210,18 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql("t2", "symCol2\tts\tx\n" +
+            assertSql("symCol2\tts\tx\n" +
                     "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "t2");
 
-            executeUpdateFails("UPDATE up SET symCol = (select symCol2 from t2 where x = 4)", 24, "query is not allowed here");
+            expectException(
+                    "UPDATE up SET symCol = (select symCol2 from t2 where x = 4)",
+                    24,
+                    "query is not allowed here"
+            );
         });
     }
 
@@ -2173,12 +2237,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)");
 
-            assertSql("up", "symCol\tts\tx\n" +
+            assertSql("symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
             ddl("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -2186,24 +2250,23 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql("t2", "symCol2\tts\tx\n" +
+            assertSql("symCol2\tts\tx\n" +
                     "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
                     "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
                     "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+                    "\t1970-01-01T00:00:04.000000Z\t5\n", "t2");
 
-            CompiledQuery cq = compile("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2");
-            try (OperationFuture fut = cq.execute(eventSubSequence)) {
-                Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
-                Assert.assertEquals(1, fut.getAffectedRowsCount());
-            }
-            assertSql("up", "symCol\tts\tx\n" +
-                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
+            Assert.assertEquals(1, update("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2"));
+
+            assertSql(
+                    "symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "VTJ\t1970-01-01T00:00:04.000000Z\t5\n", "up"
+            );
         });
     }
 
@@ -2218,48 +2281,26 @@ public class UpdateTest extends AbstractGriffinTest {
         ddl(createTableSql);
 
         ddl("create table down1 (s symbol index, y int)" + (walEnabled ? " WAL" : ""));
-        executeInsert("insert into down1 values ('a', 1)");
-        executeInsert("insert into down1 values ('a', 2)");
-        executeInsert("insert into down1 values ('b', 3)");
-        executeInsert("insert into down1 values ('b', 4)");
-        executeInsert("insert into down1 values (null, 5)");
-        executeInsert("insert into down1 values (null, 6)");
+        insert("insert into down1 values ('a', 1)");
+        insert("insert into down1 values ('a', 2)");
+        insert("insert into down1 values ('b', 3)");
+        insert("insert into down1 values ('b', 4)");
+        insert("insert into down1 values (null, 5)");
+        insert("insert into down1 values (null, 6)");
 
         ddl("create table  down2 (s symbol index, y long)" + (walEnabled ? " WAL" : ""));
-        executeInsert("insert into down2 values ('a', 100)");
-        executeInsert("insert into down2 values ('b', 300)");
-        executeInsert("insert into down2 values (null, 500)");
+        insert("insert into down2 values ('a', 100)");
+        insert("insert into down2 values ('b', 300)");
+        insert("insert into down2 values (null, 500)");
 
         // Check what will be in JOIN between down1 and down2
-        assertSql("select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s", "sm\ts\n" +
+        assertSql("sm\ts\n" +
                 "101\ta\n" +
                 "102\ta\n" +
                 "303\tb\n" +
                 "304\tb\n" +
                 "505\t\n" +
-                "506\t\n");
-    }
-
-    private void executeUpdate(String query) throws SqlException {
-        try {
-            if (walEnabled) {
-                circuitBreaker.setTimeout(1);
-            }
-            executeOperation(query, CompiledQuery.UPDATE);
-        } finally {
-            circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
-        }
-
-    }
-
-    private void executeUpdateFails(String sql, int position, String reason) {
-        try {
-            executeUpdate(sql);
-            Assert.fail();
-        } catch (SqlException exception) {
-            TestUtils.assertContains(exception.getFlyweightMessage(), reason);
-            Assert.assertEquals(position, exception.getPosition());
-        }
+                "506\t\n", "select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s");
     }
 
     private void testInsertAfterFailed(boolean closeWriter) throws Exception {
@@ -2286,36 +2327,38 @@ public class UpdateTest extends AbstractGriffinTest {
                             " timestamp(ts) partition by DAY"
             );
 
-            try {
-                executeUpdate("UPDATE up SET x = 1");
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
-            }
+            expectException(
+                    "UPDATE up SET x = 1",
+                    0,
+                    "could not open read-write"
+            );
 
             if (closeWriter) {
                 engine.releaseInactive();
             }
 
-            assertSql("up",
+            assertSql(
                     "ts\tv\tx\tz\n" +
                             "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
                             "1970-01-02T00:00:00.000000Z\t2\t2\t2\n" +
                             "1970-01-03T00:00:00.000000Z\t3\t3\t3\n" +
                             "1970-01-04T00:00:00.000000Z\t4\t4\t4\n" +
-                            "1970-01-05T00:00:00.000000Z\t5\t5\t5\n");
+                            "1970-01-05T00:00:00.000000Z\t5\t5\t5\n", "up"
+            );
 
-            compile("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
-            compile("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
+            insert("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
+            insert("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
-            assertSql("up", "ts\tv\tx\tz\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                    "1970-01-01T00:00:05.000000Z\t10\t10\t10\n" +
-                    "1970-01-01T00:00:06.000000Z\t100\t100\t100\n" +
-                    "1970-01-02T00:00:00.000000Z\t2\t2\t2\n" +
-                    "1970-01-03T00:00:00.000000Z\t3\t3\t3\n" +
-                    "1970-01-04T00:00:00.000000Z\t4\t4\t4\n" +
-                    "1970-01-05T00:00:00.000000Z\t5\t5\t5\n");
+            assertSql(
+                    "ts\tv\tx\tz\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
+                            "1970-01-01T00:00:05.000000Z\t10\t10\t10\n" +
+                            "1970-01-01T00:00:06.000000Z\t100\t100\t100\n" +
+                            "1970-01-02T00:00:00.000000Z\t2\t2\t2\n" +
+                            "1970-01-03T00:00:00.000000Z\t3\t3\t3\n" +
+                            "1970-01-04T00:00:00.000000Z\t4\t4\t4\n" +
+                            "1970-01-05T00:00:00.000000Z\t5\t5\t5\n", "up"
+            );
         });
     }
 
@@ -2327,19 +2370,22 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
                     (walEnabled ? " partition by DAY WAL" : ""));
 
-            executeUpdate("update up set symCol = 'VTJ' where symCol = 'WCP'");
-            assertSql("up", "symCol\tts\tx\n" +
-                    "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+            update("update up set symCol = 'VTJ' where symCol = 'WCP'");
+            assertSql(
+                    "symCol\tts\tx\n" +
+                            "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "\t1970-01-01T00:00:04.000000Z\t5\n", "up"
+            );
 
-            try (RecordCursorFactory factory = fact("up where symCol = 'VTJ'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(indexed, cursor.isUsingIndex());
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                }
+            try (
+                    RecordCursorFactory factory = select("up where symCol = 'VTJ'");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(indexed, cursor.isUsingIndex());
+                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
             }
             TestUtils.assertEquals("symCol\tts\tx\n" +
                     "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -2347,7 +2393,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n", sink);
 
-            assertSql("up where symCol = 'WCP'", "symCol\tts\tx\n");
+            assertSql("symCol\tts\tx\n", "up where symCol = 'WCP'");
         });
     }
 
@@ -2359,27 +2405,33 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
                     (walEnabled ? " partition by DAY WAL" : ""));
 
-            executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
-            assertSql("up", "symCol\tts\tx\n" +
-                    "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+            update("update up set symCol = 'ABC' where symCol = 'WCP'");
+            assertSql(
+                    "symCol\tts\tx\n" +
+                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "\t1970-01-01T00:00:04.000000Z\t5\n", "up"
+            );
 
-            assertQuery("symCol\n" +
+            assertQuery(
+                    "symCol\n" +
                             "\n" +
                             "ABC\n" +
                             "VTJ\n",
                     "select distinct symCol from up order by symCol",
                     null,
                     true,
-                    true);
+                    true
+            );
 
-            assertSql("select symCol, count() from up order by symCol", "symCol\tcount\n" +
-                    "\t1\n" +
-                    "ABC\t3\n" +
-                    "VTJ\t1\n");
+            assertSql(
+                    "symCol\tcount\n" +
+                            "\t1\n" +
+                            "ABC\t3\n" +
+                            "VTJ\t1\n", "select symCol, count() from up order by symCol"
+            );
         });
     }
 
@@ -2391,17 +2443,22 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
                     (walEnabled ? " partition by DAY WAL" : ""));
 
-            executeUpdate("update up set symCol = 'ABC' where symCol is null");
-            assertSql("up", "symCol\tts\tx\n" +
-                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "ABC\t1970-01-01T00:00:04.000000Z\t5\n");
+            update("update up set symCol = 'ABC' where symCol is null");
+            assertSql(
+                    "symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "ABC\t1970-01-01T00:00:04.000000Z\t5\n", "up"
+            );
 
-            assertSql("up where symCol = 'ABC'", "symCol\tts\tx\n" +
-                    "ABC\t1970-01-01T00:00:04.000000Z\t5\n");
-            assertSql("up where symCol is null", "symCol\tts\tx\n");
+            assertSql(
+                    "symCol\tts\tx\n" +
+                            "ABC\t1970-01-01T00:00:04.000000Z\t5\n", "up where symCol = 'ABC'"
+            );
+
+            assertSql("symCol\tts\tx\n", "up where symCol is null");
         });
     }
 
@@ -2413,26 +2470,32 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
                     (walEnabled ? " partition by DAY WAL" : ""));
 
-            executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
-            assertSql("up", "symCol\tts\tx\n" +
-                    "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+            update("update up set symCol = 'ABC' where symCol = 'WCP'");
+            assertSql(
+                    "symCol\tts\tx\n" +
+                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "\t1970-01-01T00:00:04.000000Z\t5\n", "up"
+            );
 
-            try (RecordCursorFactory factory = fact("up where symCol = 'ABC'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(indexed, cursor.isUsingIndex());
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                }
+            try (
+                    RecordCursorFactory factory = select("up where symCol = 'ABC'");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(indexed, cursor.isUsingIndex());
+                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
             }
-            TestUtils.assertEquals("symCol\tts\tx\n" +
-                    "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "ABC\t1970-01-01T00:00:02.000000Z\t3\n", sink);
+            TestUtils.assertEquals(
+                    "symCol\tts\tx\n" +
+                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n",
+                    sink
+            );
 
-            assertSql("up where symCol = 'WCP'", "symCol\tts\tx\n");
+            assertSql("symCol\tts\tx\n", "up where symCol = 'WCP'");
         });
     }
 
@@ -2464,37 +2527,51 @@ public class UpdateTest extends AbstractGriffinTest {
             th.start();
 
             barrier.await(); // table is locked
-            CompiledQuery cq = compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4");
-            try (OperationFuture fut = cq.execute(eventSubSequence)) {
-                Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
-                Assert.assertEquals(0, fut.getAffectedRowsCount());
-                barrier.await(); // update is on writer async cmd queue
 
-                if (errorMsg == null) {
-                    fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
-                    Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
-                    Assert.assertEquals(2, fut.getAffectedRowsCount());
-                } else {
-                    try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext);
+                try (OperationFuture fut = cq.execute(eventSubSequence)) {
+                    Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
+                    Assert.assertEquals(0, fut.getAffectedRowsCount());
+                    barrier.await(); // update is on writer async cmd queue
+
+                    if (errorMsg == null) {
                         fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
-                        Assert.fail("Expected exception missing");
-                    } catch (TableReferenceOutOfDateException | SqlException e) {
-                        Assert.assertEquals(errorMsg, e.getMessage());
-                        Assert.assertEquals(0, fut.getAffectedRowsCount());
+                        Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
+                        Assert.assertEquals(2, fut.getAffectedRowsCount());
+                    } else {
+                        try {
+                            fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
+                            Assert.fail("Expected exception missing");
+                        } catch (TableReferenceOutOfDateException | SqlException e) {
+                            Assert.assertEquals(errorMsg, e.getMessage());
+                            Assert.assertEquals(0, fut.getAffectedRowsCount());
+                        }
                     }
                 }
             }
             th.join();
 
-            assertSql("up", expectedData);
+            assertSql(expectedData, "up");
         });
     }
 
     @Override
-    protected void assertSql(CharSequence sql, CharSequence expected) throws SqlException {
+    protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
         if (walEnabled) {
             drainWalQueue();
         }
-        super.assertSql(sql, expected);
+        super.assertSql(expected, sql);
+    }
+
+    protected long update(CharSequence updateSql) throws SqlException {
+        try {
+            if (walEnabled) {
+                circuitBreaker.setTimeout(1);
+            }
+            return super.update(updateSql);
+        } finally {
+            circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
+        }
     }
 }

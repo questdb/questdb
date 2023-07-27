@@ -59,12 +59,12 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
             cloneCreateTable("C", true);
             cloneCreateTable("D", true);
 
-            executeInsert("insert into B values (1, 'A', '2022-12-05T01', 'B')");
+            insert("insert into B values (1, 'A', '2022-12-05T01', 'B')");
             compile("update B set x = 101");
-            executeInsert("insert into B values (2, 'C', '2022-12-05T02', 'D')");
-            executeInsert("insert into C values (1, 'A', '2022-12-05T01', 'B')");
-            executeInsert("insert into C values (2, 'C', '2022-12-05T02', 'D')");
-            executeInsert("insert into D values (1, 'A', '2022-12-05T01', 'B')");
+            insert("insert into B values (2, 'C', '2022-12-05T02', 'D')");
+            insert("insert into C values (1, 'A', '2022-12-05T01', 'B')");
+            insert("insert into C values (2, 'C', '2022-12-05T02', 'D')");
+            insert("insert into D values (1, 'A', '2022-12-05T01', 'B')");
 
             drainWalQueue();
 
@@ -72,18 +72,18 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
-            assertSql("wal_tables() order by name", "name\tsuspended\twriterTxn\tsequencerTxn\n" +
+            assertSql("name\tsuspended\twriterTxn\tsequencerTxn\n" +
                     "B\ttrue\t1\t3\n" +
                     "C\tfalse\t2\t2\n" +
-                    "D\tfalse\t1\t1\n");
+                    "D\tfalse\t1\t1\n", "wal_tables() order by name");
 
-            assertSql("select name, suspended, writerTxn from wal_tables() order by name", "name\tsuspended\twriterTxn\n" +
+            assertSql("name\tsuspended\twriterTxn\n" +
                     "B\ttrue\t1\n" +
                     "C\tfalse\t2\n" +
-                    "D\tfalse\t1\n");
+                    "D\tfalse\t1\n", "select name, suspended, writerTxn from wal_tables() order by name");
 
-            assertSql("select name, suspended, writerTxn from wal_tables() where name = 'B'", "name\tsuspended\twriterTxn\n" +
-                    "B\ttrue\t1\n");
+            assertSql("name\tsuspended\twriterTxn\n" +
+                    "B\ttrue\t1\n", "select name, suspended, writerTxn from wal_tables() where name = 'B'");
         });
     }
 
@@ -94,7 +94,7 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
             cloneCreateTable("B", true);
             cloneCreateTable("C", true);
 
-            try (RecordCursorFactory factory = fact("wal_tables()")) {
+            try (RecordCursorFactory factory = select("wal_tables()")) {
                 // RecordCursorFactory could be cached in QueryCache and reused
                 // so let's run the query few times using the same factory
                 for (int i = 0; i < 5; i++) {

@@ -55,33 +55,33 @@ public class WalTelemetryTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY WAL");
 
             currentMicros = 2000L;
-            executeInsert("insert into " + tableName +
+            insert("insert into " + tableName +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
             currentMicros = 3000L;
             drainWalQueue();
 
             currentMicros = 4000L;
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n", tableName);
 
             telemetryJob.runSerially();
             telemetryJob.close();
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
-            assertSql(sysPrefix + TelemetryWalTask.TABLE_NAME, "created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\n" +
+            assertSql("created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\n" +
                     "1970-01-01T00:00:00.004000Z\t103\t4\t1\t1\t-1\t-1\t2.0000\n" +
                     "1970-01-01T00:00:00.004000Z\t105\t4\t1\t1\t5\t0\t0.0000\n" +
                     "1970-01-01T00:00:00.004000Z\t103\t4\t1\t2\t-1\t-1\t1.0000\n" +
-                    "1970-01-01T00:00:00.004000Z\t105\t4\t1\t2\t1\t1\t0.0000\n");
+                    "1970-01-01T00:00:00.004000Z\t105\t4\t1\t2\t1\t1\t0.0000\n", sysPrefix + TelemetryWalTask.TABLE_NAME);
 
-            assertSql(TelemetryTask.TABLE_NAME + " where event >= 0", "created\tevent\torigin\n" +
+            assertSql("created\tevent\torigin\n" +
                     "1970-01-01T00:00:00.001000Z\t100\t1\n" +
-                    "1970-01-01T00:00:00.004000Z\t101\t1\n");
+                    "1970-01-01T00:00:00.004000Z\t101\t1\n", TelemetryTask.TABLE_NAME + " where event >= 0");
         });
     }
 }

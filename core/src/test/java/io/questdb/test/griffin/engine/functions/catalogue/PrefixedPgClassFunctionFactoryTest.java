@@ -136,7 +136,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     public void testLeakAfterIncompleteFetch() throws Exception {
         assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = fact("select * from pg_catalog.pg_class")) {
+            try (RecordCursorFactory factory = select("select * from pg_catalog.pg_class")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
@@ -303,7 +303,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = fact("select * from pg_catalog.pg_class() order by relname")) {
+            try (RecordCursorFactory factory = select("select * from pg_catalog.pg_class() order by relname")) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true, sink);
