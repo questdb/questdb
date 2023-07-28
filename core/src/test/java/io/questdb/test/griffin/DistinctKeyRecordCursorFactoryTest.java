@@ -67,16 +67,8 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            // remove partition
-            final String partition = "2020-02";
-
-            TableToken tableToken = engine.verifyTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition).$()) {
-                Assert.assertEquals(0, Files.rmdir(path));
-            }
-
             try {
-                assertSqlFails("select DISTINCT sym from tab order by 1 LIMIT 3");
+                assertSqlFails("select DISTINCT sym from tab order by 1 LIMIT 3", sqlExecutionContext);
             } catch (OutOfMemoryError e) {
                 // ignore
             }

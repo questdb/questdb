@@ -29,4 +29,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     @TestOnly
     ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;
+
+    @TestOnly
+    void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException;
 }

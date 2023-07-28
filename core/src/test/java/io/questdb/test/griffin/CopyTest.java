@@ -319,7 +319,7 @@ public class CopyTest extends AbstractCairoTest {
         }
 
         CopyRunnable stmt = () -> {
-           ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
@@ -1158,7 +1158,7 @@ public class CopyTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
-            ddl("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"");
+            drop("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"");
             try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 Thread processingThread = createJobThread(copyRequestJob, processed);
                 processingThread.start();

@@ -57,7 +57,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
 
-public class SqlCompilerImpl implements Closeable, SqlCompiler {
+public class SqlCompilerImpl implements SqlCompiler, Closeable {
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
@@ -350,6 +350,7 @@ public class SqlCompilerImpl implements Closeable, SqlCompiler {
 
     // test only
     @TestOnly
+    @Override
     public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
         clear();
         lexer.of(expression);

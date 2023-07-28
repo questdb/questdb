@@ -56,7 +56,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         return new C(delegate, this, tableName, entry, index);
     }
 
-    static class C implements PoolTenant, SqlCompiler {
+    static class C implements SqlCompiler, PoolTenant {
         private final SqlCompiler delegate;
         private final int index;
         private Entry<C> entry;
@@ -157,6 +157,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
             return delegate.testParseExpression(expression, model);
+        }
+
+        @Override
+        public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
+            delegate.testParseExpression(expression, listener);
         }
 
         @Override

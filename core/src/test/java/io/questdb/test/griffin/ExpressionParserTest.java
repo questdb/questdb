@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -1201,7 +1200,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     private void assertFail(String content, int pos, String contains) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ((SqlCompilerImpl) compiler).testParseExpression(content, rpnBuilder);
+            compiler.testParseExpression(content, rpnBuilder);
             Assert.fail("expected exception");
         } catch (SqlException e) {
             Assert.assertEquals(pos, e.getPosition());
@@ -1214,7 +1213,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     private void x(CharSequence expectedRpn, String content) throws SqlException {
         rpnBuilder.reset();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ((SqlCompilerImpl) compiler).testParseExpression(content, rpnBuilder);
+            compiler.testParseExpression(content, rpnBuilder);
         }
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }

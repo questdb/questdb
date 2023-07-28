@@ -37,7 +37,6 @@ public class CopyNoMangleTest extends AbstractCairoTest {
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractCairoTest.setUpStatic();
-        configOverrideMangleTableDirNames(false);
 
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
@@ -46,13 +45,18 @@ public class CopyNoMangleTest extends AbstractCairoTest {
 
     @Test
     public void testWhenWorkIsTheSameAsDataDirThenParallelCopyThrowsException() throws Exception {
+        configOverrideMangleTableDirNames(false);
         String inputWorkRootTmp = inputWorkRoot;
         inputWorkRoot = temp.getRoot().getAbsolutePath();
 
-        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
+        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchCopyID(
+                "copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ",
+                sqlExecutionContext
+        );
 
-        CopyTest.CopyRunnable test = () -> assertQuery("message\ncould not remove import work directory because it points to one of main directories\n",
+        CopyTest.CopyRunnable test = () -> assertQuery(
+                "message\ncould not remove import work directory because it points to one of main directories\n",
                 "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true,

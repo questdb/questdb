@@ -346,13 +346,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
     public static long getMemUsedByFactories() {
         long memUsed = 0;
-
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             if (FACTORY_TAGS[i]) {
                 memUsed += Unsafe.getMemUsedByTag(i);
             }
         }
-
         return memUsed;
     }
 
@@ -424,7 +422,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
-
     }
 
     public static void snapshotMemoryUsage() {
@@ -982,17 +979,30 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertSqlFails(CharSequence sql) throws SqlException {
-        AbstractCairoTest.assertSqlFails(sql, sqlExecutionContext);
-        Assert.fail();
+        assertSqlFails(sql, sqlExecutionContext);
     }
 
     protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext) throws SqlException {
-        AbstractCairoTest.ddl(sql, executionContext);
-        Assert.fail();
+        assertSqlFails(sql, executionContext, false);
     }
 
     protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws SqlException {
-        AbstractCairoTest.ddl(sql, executionContext, fullFatJoins);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            CompiledQuery cq = compiler.compile(sql, executionContext);
+            if (cq.getRecordCursorFactory() != null) {
+                try (
+                        RecordCursorFactory factory = cq.getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(executionContext)
+                ) {
+                    cursor.hasNext();
+                }
+            } else {
+                try (OperationFuture future = cq.execute(null)) {
+                    future.await();
+                }
+            }
+        }
         Assert.fail();
     }
 
@@ -1236,6 +1246,42 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
             drainWalQueue(walApplyJob);
         }
+    }
+
+    protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final CompiledQuery cc = compiler.compile(dropSql, sqlExecutionContext);
+            switch (cc.getType()) {
+                case UPDATE:
+                case DROP:
+                    try (OperationFuture fut = cc.execute(eventSubSeq)) {
+                        if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
+                            throw SqlException.$(0, "drop table timeout");
+                        }
+                    }
+                    break;
+                case ALTER:
+                    Assert.fail("Please use ddl() call for ALTER");
+                    break;
+                case INSERT:
+                case INSERT_AS_SELECT:
+                    Assert.fail("Please use insert() call for INSERT");
+                case SELECT:
+                    Assert.fail("Please use select() call for SELECT");
+                default:
+                    Assert.fail("Please try ddl() call");
+            }
+        } catch (SqlException | CairoException ex) {
+            if (!Chars.contains(ex.getFlyweightMessage(), "table does not exist")) {
+                throw ex;
+            }
+        } catch (TableReferenceOutOfDateException e) {
+            // ignore
+        }
+    }
+
+    protected static void drop(CharSequence dropSql) throws SqlException {
+        drop(dropSql, sqlExecutionContext, null);
     }
 
     protected static void dumpMemoryUsage() {
@@ -1800,41 +1846,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         return tableToken;
-    }
-
-    protected void drop(CharSequence dropSql) throws SqlException {
-        drop(dropSql, sqlExecutionContext, null);
-    }
-
-    protected void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final CompiledQuery cc = compiler.compile(dropSql, sqlExecutionContext);
-            switch (cc.getType()) {
-                case UPDATE:
-                    try (OperationFuture fut = cc.execute(eventSubSeq)) {
-                        if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
-                            throw SqlException.$(0, "drop table timeout");
-                        }
-                    }
-                    break;
-                case ALTER:
-                    Assert.fail("Please use ddl() call for ALTER");
-                    break;
-                case INSERT:
-                case INSERT_AS_SELECT:
-                    Assert.fail("Please use insert() call for INSERT");
-                case SELECT:
-                    Assert.fail("Please use select() call for SELECT");
-                default:
-                    Assert.fail("Please try ddl() call");
-            }
-        } catch (SqlException | CairoException ex) {
-            if (!Chars.contains(ex.getFlyweightMessage(), "table does not exist")) {
-                throw ex;
-            }
-        } catch (TableReferenceOutOfDateException e) {
-            // ignore
-        }
     }
 
     protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {

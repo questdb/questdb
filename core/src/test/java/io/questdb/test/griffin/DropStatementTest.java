@@ -110,10 +110,10 @@ public class DropStatementTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // non existing table, must not fail
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("una tabla de queso"));
-            ddl("DROP TABLE IF EXISTS \"una tabla de queso\";");
-            ddl("create tbale \"una tabla de queso\"(a int)");
+            drop("DROP TABLE IF EXISTS \"una tabla de queso\";");
+            ddl("create table \"una tabla de queso\"(a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("una tabla de queso"));
-            ddl("DROP TABLE IF EXISTS \"una tabla de queso\";");
+            drop("DROP TABLE IF EXISTS \"una tabla de queso\";");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("una tabla de queso"));
         });
     }
