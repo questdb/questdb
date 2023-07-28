@@ -774,6 +774,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.IPv4PlusIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.IntPlusIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.math.IPv4MinusIntFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4MinusIPv4FunctionFactory,
 
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory,
