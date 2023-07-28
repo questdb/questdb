@@ -3530,7 +3530,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4BitwiseNot() throws Exception {
+    public void testIPv4BitwiseNotVar() throws Exception {
         assertQuery("column\n" +
                         "255.255.255.243\n" +
                         "255.255.255.246\n" +
@@ -3647,32 +3647,306 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4StrBitwiseNot() throws Exception {
-        assertSql("select ~'1.1.1.1'", "column\n" +
+    public void testIPv4BitwiseNotConst() throws Exception {
+        assertSql("select ~ ipv4 '1.1.1.1'", "column\n" +
                 "254.254.254.254\n");
     }
 
     @Test
-    public void testIPv4StrBitwiseOr() throws Exception {
-        assertSql("select '1.1.1.1' | '255.0.0.0'", "column\n" +
+    public void testIPv4StrBitwiseOrHalfConst() throws Exception {
+        assertQuery("column\n" +
+                        "255.0.0.12\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.13\n" +
+                        "255.0.0.8\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.20\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.15\n" +
+                        "255.0.0.8\n" +
+                        "255.0.0.20\n" +
+                        "255.0.0.15\n" +
+                        "255.0.0.15\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.8\n" +
+                        "255.0.0.16\n" +
+                        "255.0.0.19\n" +
+                        "255.0.0.14\n" +
+                        "255.0.0.3\n" +
+                        "255.0.0.2\n" +
+                        "255.0.0.20\n" +
+                        "255.0.0.8\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.13\n" +
+                        "255.0.0.8\n" +
+                        "255.0.0.5\n" +
+                        "255.0.0.18\n" +
+                        "255.0.0.20\n" +
+                        "255.0.0.20\n" +
+                        "255.0.0.5\n" +
+                        "255.0.0.5\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.10\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.16\n" +
+                        "255.0.0.6\n" +
+                        "255.0.0.7\n" +
+                        "255.0.0.18\n" +
+                        "255.0.0.2\n" +
+                        "255.0.0.17\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.5\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.1\n" +
+                        "255.0.0.7\n" +
+                        "255.0.0.16\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.1\n" +
+                        "255.0.0.2\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.10\n" +
+                        "255.0.0.17\n" +
+                        "255.0.0.11\n" +
+                        "255.0.0.5\n" +
+                        "255.0.0.18\n" +
+                        "255.0.0.15\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.2\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.4\n" +
+                        "255.0.0.1\n" +
+                        "255.0.0.13\n" +
+                        "255.0.0.8\n" +
+                        "255.0.0.19\n" +
+                        "255.0.0.7\n" +
+                        "255.0.0.18\n" +
+                        "255.0.0.6\n" +
+                        "255.0.0.2\n" +
+                        "255.0.0.3\n" +
+                        "255.0.0.2\n" +
+                        "255.0.0.16\n" +
+                        "255.0.0.12\n" +
+                        "255.0.0.1\n" +
+                        "255.0.0.11\n" +
+                        "255.0.0.6\n" +
+                        "255.0.0.6\n" +
+                        "255.0.0.3\n" +
+                        "255.0.0.10\n" +
+                        "255.0.0.15\n" +
+                        "255.0.0.5\n" +
+                        "255.0.0.6\n" +
+                        "255.0.0.2\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.16\n" +
+                        "255.0.0.18\n" +
+                        "255.0.0.15\n" +
+                        "255.0.0.16\n" +
+                        "255.0.0.9\n" +
+                        "255.0.0.1\n" +
+                        "255.0.0.20\n" +
+                        "255.0.0.18\n" +
+                        "255.0.0.15\n" +
+                        "255.0.0.10\n" +
+                        "255.0.0.12\n" +
+                        "255.0.0.1\n" +
+                        "255.0.0.7\n" +
+                        "255.0.0.5\n" +
+                        "255.0.0.11\n" +
+                        "255.0.0.16\n" +
+                        "255.0.0.12\n",
+                "select ip | ipv4 '255.0.0.0' from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,20,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(100)" +
+                        ") ",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testIPv4BitwiseOrVar() throws Exception {
+        assertQuery("column\n" +
+                        "0.0.0.12\n" +
+                        "0.0.0.22\n" +
+                        "0.0.0.27\n" +
+                        "0.0.0.29\n" +
+                        "0.0.0.17\n" +
+                        "0.0.0.23\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.19\n" +
+                        "0.0.0.31\n" +
+                        "0.0.0.11\n" +
+                        "0.0.0.20\n" +
+                        "0.0.0.12\n" +
+                        "0.0.0.23\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.19\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.13\n" +
+                        "0.0.0.20\n" +
+                        "0.0.0.17\n" +
+                        "0.0.0.6\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.25\n" +
+                        "0.0.0.13\n" +
+                        "0.0.0.13\n" +
+                        "0.0.0.29\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.29\n" +
+                        "0.0.0.12\n" +
+                        "0.0.0.21\n" +
+                        "0.0.0.27\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.18\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.21\n" +
+                        "0.0.0.12\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.22\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.22\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.19\n" +
+                        "0.0.0.26\n" +
+                        "0.0.0.3\n" +
+                        "0.0.0.14\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.30\n" +
+                        "0.0.0.21\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.14\n" +
+                        "0.0.0.30\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.19\n" +
+                        "0.0.0.29\n" +
+                        "0.0.0.23\n" +
+                        "0.0.0.12\n" +
+                        "0.0.0.19\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.13\n" +
+                        "0.0.0.28\n" +
+                        "0.0.0.11\n" +
+                        "0.0.0.6\n" +
+                        "0.0.0.22\n" +
+                        "0.0.0.21\n" +
+                        "0.0.0.3\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.29\n" +
+                        "0.0.0.30\n" +
+                        "0.0.0.23\n" +
+                        "0.0.0.27\n" +
+                        "0.0.0.30\n" +
+                        "0.0.0.14\n" +
+                        "0.0.0.11\n" +
+                        "0.0.0.19\n" +
+                        "0.0.0.20\n" +
+                        "0.0.0.25\n" +
+                        "0.0.0.26\n" +
+                        "0.0.0.30\n" +
+                        "0.0.0.30\n" +
+                        "0.0.0.17\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.31\n" +
+                        "0.0.0.23\n" +
+                        "0.0.0.14\n" +
+                        "0.0.0.11\n" +
+                        "0.0.0.29\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.11\n" +
+                        "0.0.0.13\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.23\n" +
+                        "0.0.0.22\n" +
+                        "0.0.0.23\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.15\n" +
+                        "0.0.0.14\n" +
+                        "0.0.0.11\n" +
+                        "0.0.0.15\n",
+                "select ip | ip2 from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,20,0)::ipv4 ip," +
+                        "    rnd_int(1,20,0)::ipv4 ip2," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(100)" +
+                        ") ",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testIPv4BitwiseOrConst() throws Exception {
+        assertSql("select ipv4 '1.1.1.1' | ipv4 '255.0.0.0'", "column\n" +
                 "255.1.1.1\n");
     }
 
     @Test
-    public void testIPv4StrBitwiseAnd() throws Exception {
-        assertSql("select '1.1.1.1' & '0.0.1.1'", "column\n" +
-                "0.0.1.1\n");
+    public void testStrIPv4Cast() throws Exception {
+        assertSql("select ipv4 '1.1.1.1'", "cast\n" +
+                "1.1.1.1\n");
     }
 
     @Test
-    public void testIPv4StrBitwiseAndFails() throws Exception {
-        assertSql("select '1.1.1.1' & '0.0.1'", "column\n" +
+    public void testStrIPv4CastOverflow() throws Exception {
+        assertSql("select ipv4 '256.5.5.5'", "cast\n" +
                 "null\n");
     }
 
     @Test
-    public void testIPv4StrBitwiseNotFails() throws Exception {
-        assertSql("select ~'apple'", "column\n" +
+    public void testStrIPv4CastInvalid() throws Exception {
+        assertSql("select ipv4 '1.1.1.1'", "cast\n" +
+                "1.1.1.1\n");
+    }
+
+    @Test
+    public void testStrIPv4CastNull() throws Exception {
+        assertSql("select ipv4 '1.1.1.1'", "cast\n" +
+                "1.1.1.1\n");
+    }
+
+    @Test
+    public void testIPv4BitwiseAndConst() throws Exception {
+        assertSql("select ipv4 '1.1.1.1' & ipv4 '0.0.1.1'", "column\n" +
+                "0.0.1.1\n");
+    }
+
+    @Test
+    public void testIPv4BitwiseAndFailsConst() throws Exception {
+        assertSql("select ipv4 '1.1.1.1' & ipv4 '0.0.1'", "column\n" +
+                "null\n");
+    }
+
+    @Test(expected = ImplicitCastException.class)
+    public void testIPv4BitwiseAndFailsStr() throws Exception {
+        compiler.compile("select '1.1.1.1' & '0.0.1.1'", sqlExecutionContext);
+    }
+
+    @Test(expected = ImplicitCastException.class)
+    public void testIPv4BitwiseNotFailsStr() throws Exception {
+        compiler.compile("select ~ '0.0.1.1'", sqlExecutionContext);
+    }
+
+    @Test(expected = ImplicitCastException.class)
+    public void testIPv4BitwiseOrFailsStr() throws Exception {
+        compiler.compile("select '1.1.1.1' | '0.0.1.1'", sqlExecutionContext);
+    }
+
+    @Test
+    public void testIPv4BitwiseNotFails() throws Exception {
+        assertSql("select ~ ipv4 'apple'", "column\n" +
                 "null\n");
     }
 
@@ -3779,7 +4053,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "null\n" +
                         "null\n" +
                         "null\n",
-                "select ip & 'apple' from test",
+                "select ip & ipv4 'apple' from test",
                 "create table test as " +
                         "(" +
                         "  select" +
@@ -3794,7 +4068,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIPv4BitwiseAnd() throws Exception {
+    public void testIPv4BitwiseAndHalfConst() throws Exception {
         assertQuery("column\n" +
                         "0.0.0.12\n" +
                         "0.0.0.9\n" +
@@ -3896,11 +4170,129 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.11\n" +
                         "0.0.0.16\n" +
                         "0.0.0.12\n",
-                "select ip & '255.255.255.255' from test",
+                "select ip & ipv4 '255.255.255.255' from test",
                 "create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(100)" +
+                        ") ",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testIPv4BitwiseAndVar() throws Exception {
+        assertQuery("column\n" +
+                        "0.0.0.12\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.8\n" +
+                        "0.0.0.16\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "0.0.0.20\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.5\n" +
+                        "null\n" +
+                        "0.0.0.9\n" +
+                        "0.0.0.5\n" +
+                        "0.0.0.4\n" +
+                        "null\n" +
+                        "0.0.0.6\n" +
+                        "0.0.0.5\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.5\n" +
+                        "null\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "0.0.0.4\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.18\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.5\n" +
+                        "0.0.0.2\n" +
+                        "null\n" +
+                        "0.0.0.2\n" +
+                        "null\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.6\n" +
+                        "null\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.14\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.8\n" +
+                        "null\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.8\n" +
+                        "null\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.6\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.16\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.2\n" +
+                        "null\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.16\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.5\n" +
+                        "0.0.0.5\n" +
+                        "0.0.0.1\n" +
+                        "null\n" +
+                        "0.0.0.12\n" +
+                        "null\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.10\n" +
+                        "0.0.0.8\n" +
+                        "0.0.0.9\n" +
+                        "0.0.0.8\n" +
+                        "0.0.0.16\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.16\n" +
+                        "null\n" +
+                        "null\n" +
+                        "0.0.0.2\n" +
+                        "null\n" +
+                        "0.0.0.6\n",
+                "select ip & ip2 from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_int(1,20,0)::ipv4 ip," +
+                        "    rnd_int(1,20,0)::ipv4 ip2," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
@@ -4013,7 +4405,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "255.0.0.11\n" +
                         "255.0.0.16\n" +
                         "255.0.0.12\n",
-                "select ip | '255.0.0.0' from test",
+                "select ip | ipv4 '255.0.0.0' from test",
                 "create table test as " +
                         "(" +
                         "  select" +

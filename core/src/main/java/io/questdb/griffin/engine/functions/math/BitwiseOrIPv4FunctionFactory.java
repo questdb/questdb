@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 public class BitwiseOrIPv4FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "|(XS)";
+        return "|(XX)";
     }
 
     @Override
@@ -65,7 +65,7 @@ public class BitwiseOrIPv4FunctionFactory implements FunctionFactory {
         @Override
         public int getIPv4(Record rec) {
             final int l = left.getIPv4(rec);
-            final int r = Numbers.parseIPv4Quiet(right.getStr(rec));
+            final int r = right.getIPv4(rec);
             return l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL ? l | r : Numbers.IPv4_NULL;
         }
 
