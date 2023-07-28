@@ -159,7 +159,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-                TestUtils.insert(compiler, sqlExecutionContext, "insert into src values (now(), 'foo')");
+                TestUtils.insert(compiler, "insert into src values (now(), 'foo')", sqlExecutionContext);
                 assertQueryDisallowed("insert into src select now(), name from src");
             }
         });

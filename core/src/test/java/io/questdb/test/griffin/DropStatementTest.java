@@ -55,11 +55,11 @@ public class DropStatementTest extends AbstractCairoTest {
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"" + tab0 + "\" (s string)", sqlExecutionContext);
-            ddl("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
-            ddl("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
+            ddl("CREATE TABLE \"" + tab0 + "\" (s string)");
+            ddl("CREATE TABLE \"" + tab1 + "\" (s string)");
+            ddl("CREATE TABLE \"" + tab2 + "\" (s string)");
 
-            ddl("DROP ALL TABLES", sqlExecutionContext);
+            drop("DROP ALL TABLES");
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
             Assert.assertEquals(0, tableBucket.size());
@@ -74,7 +74,7 @@ public class DropStatementTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("\"" + tab0 + '"')) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    ddl("DROP TABLE \"" + tab0 + '"');
+                    drop("DROP TABLE \"" + tab0 + '"');
                 }
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
@@ -100,7 +100,7 @@ public class DropStatementTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE instrument (a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("instrument"));
-            ddl("DROP TABLE instrument");
+            drop("DROP TABLE instrument");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("instrument"));
         });
     }
@@ -133,9 +133,9 @@ public class DropStatementTest extends AbstractCairoTest {
     @Test
     public void testDropTableQuoted() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"large table\" (a int)", sqlExecutionContext);
+            ddl("CREATE TABLE \"large table\" (a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("large table"));
-            ddl("DROP TABLE \"large table\"", sqlExecutionContext);
+            drop("DROP TABLE \"large table\"");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("large table"));
         });
     }
@@ -146,7 +146,7 @@ public class DropStatementTest extends AbstractCairoTest {
             ddl("CREATE TABLE научный (a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("научный"));
 
-            ddl("DROP TABLE научный");
+            drop("DROP TABLE научный");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("научный"));
         });
     }
@@ -157,7 +157,7 @@ public class DropStatementTest extends AbstractCairoTest {
             ddl("CREATE TABLE \"научный руководитель\"(a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("научный руководитель"));
 
-            ddl("DROP TABLE \"научный руководитель\"");
+            drop("DROP TABLE \"научный руководитель\"");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("научный руководитель"));
         });
     }
@@ -175,7 +175,7 @@ public class DropStatementTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [.]");
             }
 
-            ddl("DROP TABLE \"x.csv\"");
+            drop("DROP TABLE \"x.csv\"");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("x.csv"));
         });
     }

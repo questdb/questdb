@@ -599,7 +599,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             ddl("alter table t1 add a4 geohash(4c)");
             ddl("alter table t1 add a8 geohash(8c)");
 
-            ddl("insert into t1 select x," +
+            insert("insert into t1 select x," +
                     "timestamp_sequence(0, 1000000) ts," +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +

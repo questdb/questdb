@@ -33,7 +33,7 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     public void testSymEqChar() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            ddl(
+            insert(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -57,7 +57,7 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     public void testSymEqCharFunction() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            ddl(
+            insert(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -81,7 +81,7 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     public void testSymEqCharFunctionConst() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            ddl("insert into tanc2 \n" +
+            insert("insert into tanc2 \n" +
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
                     "rnd_str(2,2,3) instrument,\n" +
@@ -103,7 +103,7 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     public void testSymEqCharNotFound() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            ddl(
+            insert(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +

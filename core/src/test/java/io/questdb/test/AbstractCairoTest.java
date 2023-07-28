@@ -146,7 +146,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             RecordMetadata metadata,
             boolean fragmentedSymbolTables
     ) {
-        return AbstractCairoTest.assertCursor(
+        return assertCursor(
                 expected,
                 supportsRandomAccess,
                 sizeExpected,
@@ -182,9 +182,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         TestUtils.assertCursor(expected, cursor, metadata, true, sink);
 
-        AbstractCairoTest.testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
+        testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
         cursor.toTop();
-        AbstractCairoTest.testStringsLong256AndBinary(metadata, cursor);
+        testStringsLong256AndBinary(metadata, cursor);
 
         // test API where same record is being updated by cursor
         cursor.toTop();
@@ -337,7 +337,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static boolean doubleEquals(double a, double b) {
-        return AbstractCairoTest.doubleEquals(a, b, EPSILON);
+        return doubleEquals(a, b, EPSILON);
     }
 
     //ignores:
@@ -355,12 +355,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static void insert(CharSequence insertSql) throws SqlException {
-        AbstractCairoTest.insert(insertSql, sqlExecutionContext);
+        insert(insertSql, sqlExecutionContext);
     }
 
     public static void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.insert(compiler, sqlExecutionContext, insertSql);
+            insert(compiler, insertSql, sqlExecutionContext);
         }
     }
 
@@ -492,12 +492,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                AbstractCairoTest.ddl(ddl, sqlExecutionContext);
+                compile(ddl);
                 if (configuration.getWalEnabledDefault()) {
                     drainWalQueue();
                 }
             }
-            AbstractCairoTest.printSqlResult3(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, null);
+            printSqlResult3(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, null);
         });
     }
 
@@ -516,6 +516,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
             if (expected != null && symbolTable instanceof StaticSymbolTable) {
                 StaticSymbolTable staticSymbolTable = (StaticSymbolTable) symbolTable;
                 Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
+            }
+        }
+    }
+
+    private static void drop0(@Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {
+        try (OperationFuture fut = cq.execute(eventSubSeq)) {
+            if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
+                throw SqlException.$(0, "drop table timeout");
             }
         }
     }
@@ -640,7 +648,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     new Thread(() -> {
                         try {
                             TestUtils.await(barrier);
-                            AbstractCairoTest.assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, clonedSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
+                            assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, clonedSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
                             e.printStackTrace();
@@ -653,7 +661,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     new Thread(() -> {
                         try {
                             TestUtils.await(barrier);
-                            AbstractCairoTest.assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, originalSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
+                            assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, originalSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
                             e.printStackTrace();
@@ -711,7 +719,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         boolean cursorAsserted;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertEquals("supports random access", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
-            cursorAsserted = AbstractCairoTest.assertCursor(expected, supportsRandomAccess, sizeExpected, sizeCanBeVariable, cursor, factory.getMetadata(), factory.fragmentedSymbolTables());
+            cursorAsserted = assertCursor(expected, supportsRandomAccess, sizeExpected, sizeCanBeVariable, cursor, factory.getMetadata(), factory.fragmentedSymbolTables());
         }
 
         assertFactoryMemoryUsage();
@@ -721,7 +729,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            AbstractCairoTest.testSymbolAPI(factory.getMetadata(), cursor, factory.fragmentedSymbolTables());
+            testSymbolAPI(factory.getMetadata(), cursor, factory.fragmentedSymbolTables());
         }
 
         assertFactoryMemoryUsage();
@@ -733,7 +741,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean supportsRandomAccess,
             boolean expectSize
     ) throws SqlException {
-        AbstractCairoTest.assertCursor(expected, factory, supportsRandomAccess, expectSize, false);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, false);
     }
 
     protected static void assertCursor(
@@ -743,7 +751,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws SqlException {
-        AbstractCairoTest.assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, sqlExecutionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, sqlExecutionContext);
     }
 
     protected static void assertCursorRawRecords(Record[] expected, RecordCursorFactory factory, boolean expectSize) {
@@ -762,9 +770,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            AbstractCairoTest.testSymbolAPI(metadata, cursor, factory.fragmentedSymbolTables());
+            testSymbolAPI(metadata, cursor, factory.fragmentedSymbolTables());
             cursor.toTop();
-            AbstractCairoTest.testStringsLong256AndBinary(metadata, cursor);
+            testStringsLong256AndBinary(metadata, cursor);
 
             cursor.toTop();
             final Record record = cursor.getRecord();
@@ -798,10 +806,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             Assert.assertEquals(expected[expectedRow].getTimestamp(col), record.getTimestamp(col));
                             break;
                         case ColumnType.FLOAT:
-                            Assert.assertTrue(AbstractCairoTest.doubleEquals(expected[expectedRow].getFloat(col), record.getFloat(col)));
+                            Assert.assertTrue(doubleEquals(expected[expectedRow].getFloat(col), record.getFloat(col)));
                             break;
                         case ColumnType.DOUBLE:
-                            Assert.assertTrue(AbstractCairoTest.doubleEquals(expected[expectedRow].getDouble(col), record.getDouble(col)));
+                            Assert.assertTrue(doubleEquals(expected[expectedRow].getDouble(col), record.getDouble(col)));
                             break;
                         case ColumnType.STRING:
                             TestUtils.assertEquals(expected[expectedRow].getStr(col), record.getStr(col));
@@ -867,28 +875,28 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertQuery(Record[] expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean expectSize) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, null, null, expectSize);
+        assertQuery(expected, query, ddl, expectedTimestamp, null, null, expectSize);
     }
 
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, null, null, true, false, false);
+        assertQuery(expected, query, ddl, expectedTimestamp, null, null, true, false, false);
     }
 
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
+        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
     }
 
     /**
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, @Nullable CharSequence ddl2, @Nullable CharSequence expected2, boolean supportsRandomAccess) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, false, false);
+        assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, false, false);
     }
 
     protected static void assertQuery(Record[] expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, @Nullable CharSequence ddl2, @Nullable Record[] expected2, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                AbstractCairoTest.ddl(ddl, sqlExecutionContext);
+                compile(ddl);
             }
 
             snapshotMemoryUsage();
@@ -897,22 +905,22 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
                 RecordCursorFactory factory = cc.getRecordCursorFactory();
                 try {
-                    AbstractCairoTest.assertTimestamp(expectedTimestamp, factory);
-                    AbstractCairoTest.assertCursorRawRecords(expected, factory, expectSize);
+                    assertTimestamp(expectedTimestamp, factory);
+                    assertCursorRawRecords(expected, factory, expectSize);
                     // make sure we get the same outcome when we get factory to create new cursor
-                    AbstractCairoTest.assertCursorRawRecords(expected, factory, expectSize);
+                    assertCursorRawRecords(expected, factory, expectSize);
                     // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                    AbstractCairoTest.assertVariableColumns(factory, sqlExecutionContext);
+                    assertVariableColumns(factory, sqlExecutionContext);
 
                     if (ddl2 != null) {
-                        AbstractCairoTest.ddl(ddl2, sqlExecutionContext);
+                        ddl(ddl2, sqlExecutionContext);
 
                         int count = 3;
                         while (count > 0) {
                             try {
-                                AbstractCairoTest.assertCursorRawRecords(expected2, factory, expectSize);
+                                assertCursorRawRecords(expected2, factory, expectSize);
                                 // and again
-                                AbstractCairoTest.assertCursorRawRecords(expected2, factory, expectSize);
+                                assertCursorRawRecords(expected2, factory, expectSize);
                                 return;
                             } catch (TableReferenceOutOfDateException e) {
                                 Misc.free(factory);
@@ -929,40 +937,40 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, @Nullable CharSequence ddl2, @Nullable CharSequence expected2, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws Exception {
-        AbstractCairoTest.assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
     }
 
     /**
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
+        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
     }
 
     /**
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery11(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, @Nullable CharSequence ddl2, @Nullable CharSequence expected2) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, true, false, false);
+        assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, true, false, false);
     }
 
     /**
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery13(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, @Nullable CharSequence ddl2, @Nullable CharSequence expected2, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, false);
+        assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, false);
     }
 
     /**
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery9(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false
+        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false
         );
     }
 
     protected static void assertQueryExpectSize(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, ddl, null, null, null, true, true, false);
+        assertQuery(expected, query, ddl, null, null, null, true, true, false);
     }
 
     protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
@@ -1009,7 +1017,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) throws SqlException {
-        AbstractCairoTest.assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
+        assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
     }
 
     /**
@@ -1034,7 +1042,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             Assert.assertTrue("Column '" + expectedTimestamp + "' can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
             Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
-            AbstractCairoTest.assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
+            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
         }
     }
 
@@ -1063,12 +1071,41 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertFactoryMemoryUsage();
     }
 
-    protected static void compile(CharSequence query) throws SqlException {
-        AbstractCairoTest.ddl(query, sqlExecutionContext);
+    protected static void compile(CharSequence sql) throws SqlException {
+        compile(sql, sqlExecutionContext);
     }
 
-    protected static void compile(CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        AbstractCairoTest.ddl(query, sqlExecutionContext);
+    protected static void compile(CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compile(compiler, sql, sqlExecutionContext);
+        }
+    }
+
+    protected static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+        switch (cq.getType()) {
+            default:
+                try (OperationFuture future = cq.execute(null)) {
+                    future.await();
+                }
+                break;
+            case INSERT:
+            case INSERT_AS_SELECT:
+                final InsertOperation insertOperation = cq.getInsertOperation();
+                if (insertOperation != null) {
+                    // for insert as select the operation is null
+                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                        insertMethod.execute();
+                        insertMethod.commit();
+                    }
+                }
+                break;
+            case DROP:
+                drop0(null, cq);
+                break;
+            case SELECT:
+                Assert.fail("use select()");
+        }
     }
 
     protected static void configOverrideColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
@@ -1196,31 +1233,39 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void ddl(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            AbstractCairoTest.ddl(compiler, query, executionContext);
+            ddl(compiler, query, executionContext);
         }
     }
 
     protected static void ddl(CharSequence query) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            AbstractCairoTest.ddl(compiler, query, sqlExecutionContext);
-        }
+        ddl(query, sqlExecutionContext);
     }
 
     protected static void ddl(SqlCompiler compiler, CharSequence query) throws SqlException {
-        AbstractCairoTest.ddl(compiler, query, sqlExecutionContext);
+        ddl(compiler, query, sqlExecutionContext);
     }
 
     protected static void ddl(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
-        try (OperationFuture future = cc.execute(null)) {
-            future.await();
+        switch (cc.getType()) {
+            default:
+                try (OperationFuture future = cc.execute(null)) {
+                    future.await();
+                }
+                break;
+            case INSERT:
+                Assert.fail("use insert()");
+            case DROP:
+                Assert.fail("use drop()");
+            case SELECT:
+                Assert.fail("use select()");
         }
     }
 
     protected static void ddl(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
-            compiler.compile(ddlSql, sqlExecutionContext);
+            ddl(compiler, ddlSql, sqlExecutionContext);
         }
     }
 
@@ -1249,15 +1294,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final CompiledQuery cc = compiler.compile(dropSql, sqlExecutionContext);
-            switch (cc.getType()) {
+            final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
+            switch (cq.getType()) {
                 case UPDATE:
                 case DROP:
-                    try (OperationFuture fut = cc.execute(eventSubSeq)) {
-                        if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
-                            throw SqlException.$(0, "drop table timeout");
-                        }
-                    }
+                    drop0(eventSubSeq, cq);
                     break;
                 case ALTER:
                     Assert.fail("Please use ddl() call for ALTER");
@@ -1291,7 +1332,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void expectException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         try {
-            AbstractCairoTest.assertSqlFails(sql);
+            assertSqlFails(sql);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
@@ -1304,7 +1345,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void expectException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
         try {
-            AbstractCairoTest.assertSqlFails(sql, sqlExecutionContext, fullFatJoins);
+            assertSqlFails(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
@@ -1317,7 +1358,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void expectInsertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         try {
-            AbstractCairoTest.insert(sql);
+            insert(sql);
             Assert.fail();
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
@@ -1329,7 +1370,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void forEachNode(AbstractCairoTest.QuestDBNodeTask task) {
+    protected static void forEachNode(QuestDBNodeTask task) {
         for (int i = 0; i < nodes.size(); i++) {
             task.run(nodes.get(i));
         }
@@ -1362,6 +1403,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableWriter getWriter(TableToken tt) {
         return engine.getWriter(tt, "testing");
+    }
+
+    protected static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        TestUtils.insert(compiler, insertSql, sqlExecutionContext);
     }
 
     protected static QuestDBTestNode newNode(int nodeId) {
@@ -1398,7 +1443,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void printSqlResult(CharSequence expected, CharSequence query, CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        AbstractCairoTest.printSqlResult3(expected, query, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false, null);
+        printSqlResult3(expected, query, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false, null);
     }
 
     protected static void printSqlResult(
@@ -1422,19 +1467,19 @@ public abstract class AbstractCairoTest extends AbstractTest {
             if (expectedPlan != null) {
                 planSink.clear();
                 factory.toPlan(planSink);
-                AbstractCairoTest.assertCursor(expectedPlan, new ExplainPlanFactory(factory, ExplainModel.FORMAT_TEXT), false, expectSize, sizeCanBeVariable);
+                assertCursor(expectedPlan, new ExplainPlanFactory(factory, ExplainModel.FORMAT_TEXT), false, expectSize, sizeCanBeVariable);
             }
             try {
-                AbstractCairoTest.assertTimestamp(expectedTimestamp, factory);
+                assertTimestamp(expectedTimestamp, factory);
                 CharSequence expected = expectedSupplier.get();
-                AbstractCairoTest.assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
+                assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
                 // make sure we get the same outcome when we get factory to create new cursor
-                AbstractCairoTest.assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
+                assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                AbstractCairoTest.assertVariableColumns(factory, sqlExecutionContext);
+                assertVariableColumns(factory, sqlExecutionContext);
 
                 if (ddl2 != null) {
-                    AbstractCairoTest.ddl(ddl2, sqlExecutionContext);
+                    compile(ddl2);
                     if (configuration.getWalEnabledDefault()) {
                         drainWalQueue();
                     }
@@ -1442,9 +1487,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     int count = 3;
                     while (count > 0) {
                         try {
-                            AbstractCairoTest.assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
+                            assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
                             // and again
-                            AbstractCairoTest.assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
+                            assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
                             return;
                         } catch (TableReferenceOutOfDateException e) {
                             Misc.free(factory);
@@ -1460,7 +1505,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void printSqlResult3(CharSequence expected, CharSequence query, CharSequence expectedTimestamp, CharSequence ddl2, CharSequence expected2, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable, CharSequence expectedPlan) throws SqlException {
-        AbstractCairoTest.printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, expectedPlan);
+        printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, expectedPlan);
     }
 
     protected static void releaseInactive(CairoEngine engine) {
@@ -1541,12 +1586,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws SqlException {
-        AbstractCairoTest.assertTimestamp(expectedTimestamp, factory, executionContext);
-        AbstractCairoTest.assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        assertTimestamp(expectedTimestamp, factory, executionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
         // make sure we get the same outcome when we get factory to create new cursor
-        AbstractCairoTest.assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
-        AbstractCairoTest.assertVariableColumns(factory, executionContext);
+        assertVariableColumns(factory, executionContext);
     }
 
     protected void assertFactoryCursor5(
@@ -1572,10 +1617,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    AbstractCairoTest.ddl(ddl, sqlExecutionContext);
+                    ddl(ddl, sqlExecutionContext);
                 }
                 try {
-                    AbstractCairoTest.assertSqlFails(query);
+                    assertSqlFails(query);
                 } catch (SqlException | ImplicitCastException | CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
@@ -1618,7 +1663,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertQuery(String expected, String query, boolean expectSize) throws Exception {
-        AbstractCairoTest.assertQuery(expected, query, null, null, true, expectSize);
+        assertQuery(expected, query, null, null, true, expectSize);
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp) throws SqlException {
@@ -1713,7 +1758,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertQueryPlain(String expected, String query) throws SqlException {
         snapshotMemoryUsage();
-        try (RecordCursorFactory factory = AbstractCairoTest.select(query)) {
+        try (RecordCursorFactory factory = select(query)) {
             assertFactoryCursor5(expected, null, factory, true, sqlExecutionContext, true);
         }
     }
@@ -1768,7 +1813,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertSqlRunWithJit(CharSequence selectSql) throws Exception {
-        try (RecordCursorFactory factory = AbstractCairoTest.select(selectSql)) {
+        try (RecordCursorFactory factory = select(selectSql)) {
             Assert.assertTrue("JIT was not enabled for selectSql: " + selectSql, factory.usesCompiledFilter());
         }
     }
@@ -1841,7 +1886,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ) {
             TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
             for (int i = 0; i < insertIterations; i++) {
-                AbstractCairoTest.insert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
+                insert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
             }
         }
         return tableToken;

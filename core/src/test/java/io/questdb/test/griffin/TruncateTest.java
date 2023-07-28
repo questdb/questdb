@@ -798,7 +798,7 @@ public class TruncateTest extends AbstractCairoTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                 }
 
-                ddl("drop table y");
+                drop("drop table y");
                 ddl(
                         "create table y as ( " +
                                 " select " +

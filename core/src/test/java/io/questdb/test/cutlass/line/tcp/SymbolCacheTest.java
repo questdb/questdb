@@ -354,7 +354,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(constMem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
-            ddl("drop table x");
+            drop("drop table x");
         });
     }
 

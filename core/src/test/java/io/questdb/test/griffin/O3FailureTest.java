@@ -614,7 +614,7 @@ public class O3FailureTest extends AbstractO3Test {
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {
-                        TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')");
+                        TestUtils.insert(compiler, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -633,7 +633,7 @@ public class O3FailureTest extends AbstractO3Test {
 
                     // Insert ok after failure
                     o3Ts = Timestamps.toString(maxTimestamp - 3000);
-                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')");
+                    TestUtils.insert(compiler, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext, "select * from " + tableName + " limit -5,5",
@@ -955,7 +955,7 @@ public class O3FailureTest extends AbstractO3Test {
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {
-                        TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                        TestUtils.insert(compiler, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -974,7 +974,7 @@ public class O3FailureTest extends AbstractO3Test {
 
                     // Insert ok after failure
                     o3Ts = Timestamps.toString(maxTimestamp - 3000);
-                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                    TestUtils.insert(compiler, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext, "select * from " + tableName + " limit -5,5",
@@ -3470,8 +3470,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         TestUtils.insert(
                 compiler,
-                sqlExecutionContext,
-                "insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)"
+                "insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)", sqlExecutionContext
         );
 
         TestUtils.assertSql(
@@ -3485,8 +3484,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         TestUtils.insert(
                 compiler,
-                sqlExecutionContext,
-                "insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)"
+                "insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)", sqlExecutionContext
         );
 
         TestUtils.assertSql(

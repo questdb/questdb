@@ -1102,7 +1102,7 @@ public class InsertTest extends AbstractCairoTest {
             }
         }
 
-        ddl("drop table tab");
+        drop("drop table tab");
 
         if (commitInsert) {
             ddl("create table tab(seq long, ts timestamp)");

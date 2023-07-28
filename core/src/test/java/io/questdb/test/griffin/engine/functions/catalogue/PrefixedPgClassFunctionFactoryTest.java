@@ -164,7 +164,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
 
-                    ddl("drop table abc;");
+                    drop("drop table abc;");
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
@@ -347,7 +347,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                                     "2\tавтомобилей\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n"
                             , sink);
 
-                    ddl("drop table автомобилей;");
+                    drop("drop table автомобилей;");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);

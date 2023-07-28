@@ -1824,7 +1824,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true
         );
 
-        ddl("drop table tab");
+        drop("drop table tab");
 
         assertQuery13(
                 "min\tmax\n" +

@@ -282,7 +282,7 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
                     "name\n" + tableName + "\n", "select name from tables()"
             );
 
-            ddl("drop table " + tableName);
+            drop("drop table " + tableName);
             drainWalQueue();
 
             assertSql(

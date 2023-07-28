@@ -563,7 +563,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
                 engine.releaseInactive();
 
-                ddl("drop table up");
+                drop("drop table up");
 
                 ddl("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +

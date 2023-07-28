@@ -262,8 +262,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             long rowCount = 0;
             for (int i = 0; i < 2; i++) {
                 int rows = rnd.nextInt(200);
-                ddl("insert into " + tableName +
-                        " select x, timestamp_sequence('2022-02-24T0" + i + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
+                insert("insert into " + tableName +
+                        " select x, timestamp_sequence('2022-02-24T0" + i + "', 1000000*60) from long_sequence(" + rows + ")");
                 rowCount += rows;
 
             }
@@ -276,8 +276,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     walApplyJob.run(0);
                     engine.releaseInactive();
                     int rows = rnd.nextInt(200);
-                    ddl("insert into " + tableName +
-                            " select x, timestamp_sequence('2022-02-24T" + String.format("%02d", i + 2) + "', 1000000*60) from long_sequence(" + rows + ")", sqlExecutionContext);
+                    insert("insert into " + tableName +
+                            " select x, timestamp_sequence('2022-02-24T" + String.format("%02d", i + 2) + "', 1000000*60) from long_sequence(" + rows + ")");
                     rowCount += rows;
                 }
             }
@@ -364,7 +364,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             engine.reloadTableNames(convertedTables);
 
             compile("alter table " + tableName + " add col2 int");
-            compile("insert into " + tableName + "(ts, col1, col2) values('2022-02-24T01', 1, 2)");
+            insert("insert into " + tableName + "(ts, col1, col2) values('2022-02-24T01', 1, 2)");
             drainWalQueue();
 
             assertSql("ts\tcol1\tcol2\n" +
@@ -377,7 +377,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             engine.reloadTableNames(convertedTables);
 
             compile("alter table " + tableName + " drop column col2");
-            compile("alter table " + tableName + " add col3 int");
+            ddl("alter table " + tableName + " add col3 int");
             compile("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
 
             assertSql("ts\tcol1\tcol3\n" +
@@ -437,7 +437,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY";
 
             compile(createSql + " WAL");
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
             SharedRandom.RANDOM.get().reset();
             compile(createSql);
@@ -445,20 +445,20 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n", tableName);
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                compile("drop table " + tableName);
+                drop("drop table " + tableName);
                 SharedRandom.RANDOM.get().reset();
                 compile(createSql + " WAL");
                 drainWalQueue(walApplyJob);
                 assertSql("x\tsym\tsym2\tts\n" +
                         "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n", tableName);
 
-                compile("drop table " + tableName);
+                drop("drop table " + tableName);
                 SharedRandom.RANDOM.get().reset();
                 compile(createSql);
                 assertSql("x\tsym\tsym2\tts\n" +
                         "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n", tableName);
 
-                compile("drop table " + tableName);
+                drop("drop table " + tableName);
                 SharedRandom.RANDOM.get().reset();
                 compile(createSql + " WAL");
                 drainWalQueue(walApplyJob);
@@ -498,12 +498,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     WalWriter walWriter2 = engine.getWalWriter(tableToken);
                     WalWriter walWriter3 = engine.getWalWriter(tableToken)
             ) {
-                compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
+                insert("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
 
-                compile("drop table " + tableName);
+                drop("drop table " + tableName);
                 try {
-                    compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
-                    Assert.fail();
+                    assertSqlFails("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "able does not exist");
                 }
@@ -606,7 +605,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
 
             compile("alter table " + tableName + " drop column sym");
-            compile("insert into " + tableName + "(x, ts) values (2, '2022-02-24T23:00:01')");
+            insert("insert into " + tableName + "(x, ts) values (2, '2022-02-24T23:00:01')");
             drainWalQueue();
 
             assertSql("x\tsym2\tts\n" +
@@ -650,7 +649,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            compile("insert into " + tableName +
+            insert("insert into " + tableName +
                     " select x + 100, rnd_symbol('AB2', 'BC2', 'CD2') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
                     " rnd_symbol('DE2', null, 'EF2', 'FG2') sym2 " +
@@ -796,7 +795,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 TableToken sysTableName1 = engine.verifyTableName(tableName);
 
                 try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
-                    compile("drop table " + tableName);
+                    drop("drop table " + tableName);
                     drainWalQueue(walApplyJob);
                     checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
                 }
@@ -880,7 +879,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
             TableToken sysTableName1 = engine.verifyTableName(tableName);
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).toString());
             engine.reloadTableNames();
@@ -963,7 +962,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 }
 
                 TableToken table2directoryName = engine.verifyTableName(tableName + "2");
-                compile("drop table " + tableName + "2");
+                drop("drop table " + tableName + "2");
 
                 drainWalQueue(walApplyJob);
 
@@ -1261,7 +1260,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.contains(name, "2022-02-25") && i++ == 0) {
-                    TestUtils.unchecked(() -> compile("drop table " + newTableName));
+                    TestUtils.unchecked(() -> drop("drop table " + newTableName));
                 }
                 return fd;
             }
@@ -1277,7 +1276,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
-            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+            insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
             compile("rename table " + tableName + " to " + newTableName);
 
             TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
@@ -1367,7 +1366,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("rename table " + tableName + " to " + newTableName);
-            compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
+            insert("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
             TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
@@ -1422,8 +1421,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("rename table " + tableName + " to " + upperCaseName);
-            compile("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
-            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+            insert("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
+            insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
 
             TableToken newTableDirectoryName = engine.verifyTableName(upperCaseName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
@@ -1493,13 +1492,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL");
 
             // In order
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
 
             // Out of order
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T00', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T00', 'a2a2')");
 
             // In order
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
             
             node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
             runApplyOnce();
@@ -1678,14 +1677,14 @@ public class WalTableSqlTest extends AbstractCairoTest {
             TableToken sysTableName2 = engine.verifyTableName(tableName + "2");
 
             // Fully delete table2
-            compile("drop table " + tableName + "2");
+            drop("drop table " + tableName + "2");
             engine.releaseInactive();
             drainWalQueue();
             runWalPurgeJob();
             checkTableFilesExist(sysTableName2, "2022-02-24", "sym.d", false);
 
             // Mark table1 as deleted
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
             compile("create table " + tableName + " as (" +
                     "select x, " +
@@ -1736,7 +1735,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 TableToken sysTableName1 = engine.verifyTableName(tableName);
-                compile("drop table " + tableName);
+                drop("drop table " + tableName);
 
                 latch.set(true);
                 drainWalQueue(walApplyJob);

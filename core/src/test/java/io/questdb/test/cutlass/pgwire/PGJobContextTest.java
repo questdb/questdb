@@ -3952,7 +3952,7 @@ nodejs code:
 
 
                         ddl("create table spot1 as (select * from test_batch)");
-                        ddl("drop table test_batch");
+                        drop("drop table test_batch");
                         ddl("rename table spot1 to test_batch");
 
                         batchInsert.setLong(1, 0L);
@@ -5849,9 +5849,9 @@ nodejs code:
 
         for (String tsOption : tsOptions) {
             assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-                ddl("drop table if exists tab");
+                drop("drop table if exists tab");
                 ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
-                ddl("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ");
+                insert("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ");
                 drainWalQueue();
 
                 ResultProducer sameVal =
@@ -5959,13 +5959,17 @@ nodejs code:
     @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            ddl("create table table (" +
+            ddl(
+                    "create table table (" +
                     "id symbol, " +
                     "timestamp timestamp) " +
-                    "timestamp(timestamp) partition by day");
-            ddl("insert into table " +
+                    "timestamp(timestamp) partition by day"
+            );
+            insert(
+                    "insert into table " +
                     " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
-                    " from long_sequence(10000)");
+                    " from long_sequence(10000)"
+            );
 
             conn.setAutoCommit(false);
             String queryBase = "select * from table "

@@ -81,10 +81,10 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testShowTablesWithDrop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
             assertQuery8("table\nbalances\n", "show tables");
-            ddl("create table balances2(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            ddl("drop table balances", sqlExecutionContext);
+            ddl("create table balances2(cust_id int, ccy symbol, balance double)");
+            drop("drop table balances");
             assertQuery8("table\nbalances2\n", "show tables");
         });
     }
@@ -92,7 +92,7 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testShowTablesWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
             assertQuery8("table\nbalances\n", "select * from all_tables()");
         });
     }
@@ -100,7 +100,7 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
             assertQuery8("table\nbalances\n", "show tables");
         });
     }

@@ -602,7 +602,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             }
 
             engine.releaseInactive();
-            ddl("drop table tbl");
+            drop("drop table tbl");
 
             // Main assert here is that job runs without exceptions
             runPartitionPurgeJobs();

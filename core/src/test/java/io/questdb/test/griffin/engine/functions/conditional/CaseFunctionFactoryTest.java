@@ -1014,7 +1014,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                             "from tt"
             );
 
-            ddl("drop table tt");
+            drop("drop table tt");
         }
     }
 

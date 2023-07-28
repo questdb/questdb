@@ -312,7 +312,7 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, true);
 
-            ddl(
+            insert(
                     "insert into x select * from " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -334,7 +334,7 @@ public class JoinTest extends AbstractCairoTest {
                             " from long_sequence(10)" +
                             ") timestamp(timestamp)"
             );
-            ddl(
+            insert(
                     "insert into y select * from " +
                             "(select" +
                             " cast(x + 30 as int) i," +
@@ -3934,7 +3934,7 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, fullFatJoin);
 
-            ddl(
+            insert(
                     "insert into x select * from " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -3956,7 +3956,7 @@ public class JoinTest extends AbstractCairoTest {
                             " from long_sequence(10)" +
                             ") timestamp(timestamp)"
             );
-            ddl(
+            insert(
                     "insert into y select * from " +
                             "(select" +
                             " cast(x + 30 as int) i," +
@@ -4585,8 +4585,8 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null, false);
 
-            ddl("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
-            ddl("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+            insert("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
+            insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
             assertQuery(
                     expected +
@@ -4705,9 +4705,9 @@ public class JoinTest extends AbstractCairoTest {
                     fullFatJoin
             );
 
-            ddl("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
-            ddl("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
-            ddl("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
+            insert("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
+            insert("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
+            insert("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
             assertQueryFullFat(
                     expected +
@@ -4755,9 +4755,9 @@ public class JoinTest extends AbstractCairoTest {
                     fullFatJoin
             );
 
-            ddl("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
-            ddl("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
-            ddl("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
+            insert("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
+            insert("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
+            insert("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
             assertQueryFullFat(
                     expected +
@@ -4922,8 +4922,8 @@ public class JoinTest extends AbstractCairoTest {
             // master records should be filtered out because slave records missing
             assertQueryAndCache(expected, "select x.c, x.a, b from x left join y on y.m = x.c", null, false);
 
-            ddl("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
-            ddl("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+            insert("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
+            insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
             assertQueryFullFat(
                     expected +

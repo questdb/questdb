@@ -33,7 +33,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     public void testAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y (a int, b int)");
-            ddl("insert into y select x/4, x from long_sequence(10)");
+            insert("insert into y select x/4, x from long_sequence(10)");
             engine.releaseAllWriters();
 
             String query = "select b.a, row_number() OVER (PARTITION BY b.a ORDER BY b.b desc) as b " +

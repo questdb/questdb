@@ -330,7 +330,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testIn_null() throws Exception {
         ddl("create table x (u UUID)");
-        ddl("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
 
         expectException("select * from x where u in (cast (null as UUID))", 28, "NULL is not allowed in IN list");
         expectException("select * from x where u in (cast (null as String))", 28, "NULL is not allowed in IN list");

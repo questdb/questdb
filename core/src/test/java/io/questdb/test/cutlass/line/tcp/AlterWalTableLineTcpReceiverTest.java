@@ -619,7 +619,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             StringSink fields = new StringSink();
 
             for (int i = 1; i < 30; i++) {
-                if (columnsAdded.size() == 0 || rnd.nextPositiveInt() % 3 != 1) {
+                if (columnsAdded.isEmpty() || rnd.nextPositiveInt() % 3 != 1) {
                     // add column
                     boolean isSymbol = rnd.nextBoolean();
 

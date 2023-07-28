@@ -42,13 +42,13 @@ public final class TestUtilsTest extends AbstractCairoTest {
             compile("create table x (x long, ts timestamp) timestamp(ts) partition by day");
             compile("create table y (x long, ts timestamp) timestamp(ts) partition by day");
 
-            compile("insert into x values (1, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into x values (2, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into x values (3, '2022-02-24T00:00:02.000000Z')");
+            insert("insert into x values (1, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into x values (2, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into x values (3, '2022-02-24T00:00:02.000000Z')");
 
-            compile("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into y values (1, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into y values (3, '2022-02-24T00:00:02.000000Z')");
+            insert("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into y values (1, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into y values (3, '2022-02-24T00:00:02.000000Z')");
 
             HashMap<String, Integer> mapX = new HashMap<>();
             HashMap<String, Integer> mapY = new HashMap<>();
@@ -58,7 +58,7 @@ public final class TestUtilsTest extends AbstractCairoTest {
 
             Assert.assertEquals(mapX, mapY);
 
-            compile("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
 
             // now the maps should be different since we've added an extra record
 

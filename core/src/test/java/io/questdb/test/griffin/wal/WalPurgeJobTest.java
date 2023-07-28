@@ -61,9 +61,9 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     + "x long,"
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             compile("alter table " + tableName + " add column s1 string");
-            compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+            insert("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -125,7 +125,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 + "ts timestamp"
                 + ") timestamp(ts) partition by DAY WAL");
 
-        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
         assertWalExistence(true, tableName, 1);
 
         // A test FilesFacade that hides the "wal2" directory.
@@ -487,7 +487,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             Assert.assertTrue(pendingFilePath.createNewFile());
 
             // Drop the table and apply all outstanding operations.
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
             drainWalQueue();
             engine.releaseInactive();
             runWalPurgeJob();
@@ -538,7 +538,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
 
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
             drainWalQueue();
 
@@ -563,7 +563,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 + "ts timestamp"
                 + ") timestamp(ts) partition by DAY WAL");
 
-        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
         drainWalQueue();
 
@@ -599,7 +599,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 + "ts timestamp"
                 + ") timestamp(ts) partition by DAY WAL");
 
-        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
         try (WalWriter walWriter1 = getWalWriter(tableName)) {
             // Alter is committed.
@@ -635,7 +635,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     + "x long,"
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
             drainWalQueue();
             assertWalExistence(true, tableName, 1);
@@ -646,7 +646,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertWalLockEngagement(true, tableName, 1);
 
             compile("alter table " + tableName + " add column s1 string");
-            compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+            insert("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
             assertWalLockEngagement(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 1);
             assertSegmentLockExistence(true, tableName, 1, 1);
@@ -712,7 +712,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
 
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             drainWalQueue();
@@ -781,12 +781,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         assertMemoryLeak(testFF, () -> {
             final String tableName = testName.getMethodName();
-            compile("create table " + tableName + "("
+            compile(
+                    "create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
-                    + ") timestamp(ts) partition by DAY WAL");
+                    + ") timestamp(ts) partition by DAY WAL"
+            );
 
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             drainWalQueue();

@@ -347,7 +347,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                     cc.ofAlter(creepyAlter.build());
                     fut = cc.execute(commandReplySequence);
                 }
-                ddl("drop table product", sqlExecutionContext);
+                drop("drop table product");
 
                 // ALTER TABLE should be executed successfully on writer.close()
                 fut.await();

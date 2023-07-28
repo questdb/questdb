@@ -915,7 +915,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     }
 
     private void insert(String stmt) throws SqlException {
-        ddl(stmt, sqlExecutionContext);
+        AbstractCairoTest.insert(stmt);
         txn++;
     }
 }

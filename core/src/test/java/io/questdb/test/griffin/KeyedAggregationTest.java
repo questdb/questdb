@@ -1450,11 +1450,11 @@ public class KeyedAggregationTest extends AbstractCairoTest {
 
     private static void runCountTestWithColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
         ddl(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        ddl(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        insert(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
         ddl(compiler, "alter table x add column k int", sqlExecutionContext);
-        ddl(compiler, "insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
+        insert(compiler, "insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
         ddl(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
-        ddl(compiler, "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
+        insert(compiler, "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
                 " ((2+3*3600L*1000000)::timestamp,2, 8,8, 8.0, cast(8 as date), 8::timestamp)," +
                 " ((1+4*3600L*1000000)::timestamp,3, null,null, null, null, null)," +
                 " ((2+4*3600L*1000000)::timestamp,4, 10,10, 10.0, cast(10 as date), 10::timestamp) ", sqlExecutionContext);
@@ -1515,11 +1515,11 @@ public class KeyedAggregationTest extends AbstractCairoTest {
 
     private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
         ddl(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        ddl(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        insert(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
         ddl(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
-        ddl(compiler, "insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
+        insert(compiler, "insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
         ddl(compiler, "alter table x add column k int", sqlExecutionContext);
-        ddl(compiler, "insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
+        insert(compiler, "insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
 
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select k, " +
