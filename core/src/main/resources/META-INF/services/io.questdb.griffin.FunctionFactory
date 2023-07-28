@@ -749,6 +749,7 @@ io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
 # IPv4 operators
 io.questdb.griffin.engine.functions.math.IPv4PlusIntFunctionFactory
 io.questdb.griffin.engine.functions.math.IntPlusIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4MinusIntFunctionFactory
 
 # timezone conversion
 io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory
