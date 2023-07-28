@@ -456,7 +456,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
-        node1.getConfigurationOverrides().reset();
     }
 
     @After
