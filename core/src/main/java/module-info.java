@@ -770,6 +770,10 @@ open module io.questdb {
             BitwiseNotIntFunctionFactory,
             BitwiseXorIntFunctionFactory,
 
+            // ipv4 operators
+            io.questdb.griffin.engine.functions.math.IPv4PlusIntFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IntPlusIPv4FunctionFactory,
+
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory,
 
