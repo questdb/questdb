@@ -63,8 +63,8 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Before
     public void setUp() {
-        configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
         super.setUp();
+        configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
     }
 
     @Test

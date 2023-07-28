@@ -43,7 +43,6 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
             createTableWrite("my_table_wal", null, "HOUR");
             assertWalEnabled("my_table_wal", true);
 
-
             createTableWrite("my_table_wal_none", null, "NONE");
             assertWalEnabled("my_table_wal_none", false);
 

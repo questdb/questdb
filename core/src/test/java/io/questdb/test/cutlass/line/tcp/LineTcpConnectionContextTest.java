@@ -69,8 +69,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Before
     public void setUp() {
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
     }
 
     @Test

@@ -77,8 +77,8 @@ public class InsertTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        configOverrideDefaultTableWriteMode(walEnabled ? 1 : 0);
         super.setUp();
+        configOverrideDefaultTableWriteMode(walEnabled ? 1 : 0);
     }
 
     @After

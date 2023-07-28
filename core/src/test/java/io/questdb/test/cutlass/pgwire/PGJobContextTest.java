@@ -156,8 +156,8 @@ public class PGJobContextTest extends BasePGTest {
 
     @Before
     public void setUp() {
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
     }
 
     @After
@@ -9149,14 +9149,14 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             ddl("create table xyz (" +
-                            "a geohash(1b)," +
-                            "b geohash(2b)," +
-                            "c geohash(3b)," +
-                            "d geohash(1c)," +
-                            "e geohash(2c)," +
-                            "f geohash(4c)," +
-                            "g geohash(8c)" +
-                            ")"
+                    "a geohash(1b)," +
+                    "b geohash(2b)," +
+                    "c geohash(3b)," +
+                    "d geohash(1c)," +
+                    "e geohash(2c)," +
+                    "f geohash(4c)," +
+                    "g geohash(8c)" +
+                    ")"
             );
 
             try (
@@ -9450,8 +9450,8 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             ddl("create table xyz (" +
-                            "a binary" +
-                            ")"
+                    "a binary" +
+                    ")"
             );
             try (
                     final PGWireServer server = createPGServer(1);
@@ -10119,18 +10119,18 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             ddl("create table xyz (" +
-                            "a byte," +
-                            "b char," +
-                            "c short," +
-                            "d int," +
-                            "e long," +
-                            "f float," +
-                            "g double," +
-                            "h string," +
-                            "i symbol," +
-                            "j boolean," +
-                            "k long256" +
-                            ")"
+                    "a byte," +
+                    "b char," +
+                    "c short," +
+                    "d int," +
+                    "e long," +
+                    "f float," +
+                    "g double," +
+                    "h string," +
+                    "i symbol," +
+                    "j boolean," +
+                    "k long256" +
+                    ")"
             );
             try (
                     final PGWireServer server = createPGServer(2);
@@ -10306,8 +10306,8 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             ddl("create table xyz (" +
-                            "a binary" +
-                            ")"
+                    "a binary" +
+                    ")"
             );
             try (
                     final PGWireServer server = createPGServer(2);
