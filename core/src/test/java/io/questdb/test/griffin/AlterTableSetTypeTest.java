@@ -49,7 +49,7 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
             createNonPartitionedTable();
             expectException(
                     "alter table " + tableName + " set type wal",
-                    1111,
+                    12,
                     "Cannot convert non-partitioned table"
             );
         });
