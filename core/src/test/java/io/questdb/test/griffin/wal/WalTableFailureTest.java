@@ -687,7 +687,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             createStandardWalTable(tableName);
 
             drainWalQueue();
-            engine.notifyWalTxnCommitted(ignored, 1);
+            engine.notifyWalTxnCommitted(ignored);
 
             compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
