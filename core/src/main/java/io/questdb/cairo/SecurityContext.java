@@ -58,6 +58,8 @@ public interface SecurityContext {
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeAlterTableSetDedup(TableToken tableToken);
+
     void authorizeAlterTableSetType(TableToken tableToken);
 
     void authorizeAssignServiceAccount();
@@ -129,9 +131,5 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
-    void onColumnAdded(TableToken tableToken, CharSequence columnName);
-
-    void onColumnsAdded(TableToken tableToken, ObjList<CharSequence> columnNames);
-
-    void onTableCreated(TableToken tableToken);
+    String getPrincipal();
 }

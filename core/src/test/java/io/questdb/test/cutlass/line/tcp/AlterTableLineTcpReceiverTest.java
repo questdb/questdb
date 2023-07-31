@@ -418,12 +418,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             );
 
             String expected = "room\tpower\ttimestamp\twatts\n" +
-                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
-                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t22\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
                     "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
-                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n" +
-                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t22\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n";
             assertTable(expected);
         });
     }
@@ -519,10 +519,10 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             );
 
             String expected = "watts\tpower\ttimestamp\troom\n" +
-                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
-                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t6BB\n" +
+                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
                     "22\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t6BB\n" +
                     "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
                     "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
             assertTable(expected);

@@ -754,11 +754,6 @@ public class SqlOptimiser {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        // it is possible that filter references only top query via alias
-                        // we will need to strip these aliases before assigning filter
-                        if (index == 0) {
-                            traversalAlgo.traverse(node, literalRewritingVisitor.of(m.getAliasToColumnNameMap()));
-                        }
                         m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), node));
                     }
                 }
@@ -2068,7 +2063,7 @@ public class SqlOptimiser {
     }
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
-        if (column.type != LITERAL) {
+        if (column == null || column.type != LITERAL) {
             return false;
         }
 
@@ -2933,6 +2928,11 @@ public class SqlOptimiser {
             }
 
             propagateTopDownColumns0(jm, false, model, true);
+        }
+
+        final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            emitLiteralsTopDown(postJoinWhere, model);
         }
 
         // If this is group by model we need to add all non-selected keys, only if this is sub-query

@@ -691,7 +691,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             snapshotAgent.clear();
-            engine.releaseInactive();
+            engine.clear();
 
             snapshotInstanceId = restartedId;
             DatabaseSnapshotAgent.recoverSnapshot(engine);
