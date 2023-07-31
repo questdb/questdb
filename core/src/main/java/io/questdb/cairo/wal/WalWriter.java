@@ -263,7 +263,7 @@ public class WalWriter implements TableWriterAPI {
                     sync(commitMode);
                 }
                 final long seqTxn = getSequencerTxn();
-                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();

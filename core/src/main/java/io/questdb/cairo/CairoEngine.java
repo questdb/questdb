@@ -615,13 +615,13 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyWalTxnCommitted(TableToken tableToken, long txn) {
+    public void notifyWalTxnCommitted(TableToken tableToken) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                task.of(tableToken, txn);
+                task.of(tableToken);
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
@@ -629,13 +629,14 @@ public class CairoEngine implements Closeable, WriterSource {
                         .$(pubSeq.current()).$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
-                notifyWalTxnRepublisher();
+                notifyWalTxnRepublisher(tableToken);
                 return;
             }
         }
     }
 
-    public void notifyWalTxnRepublisher() {
+    public void notifyWalTxnRepublisher(TableToken tableToken) {
+        tableSequencerAPI.notifyCommitReadable(tableToken, -1);
         unpublishedWalTxnCount.incrementAndGet();
     }
 
@@ -691,6 +692,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void removeTableToken(TableToken tableToken) {
         tableNameRegistry.purgeToken(tableToken);
+        tableSequencerAPI.purgeTxnTracker(tableToken.getDirName());
         PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(
