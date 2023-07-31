@@ -129,7 +129,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         this.compiledQuery = new CompiledQueryImpl(engine);
         this.characterStore = new CharacterStore(
                 configuration.getSqlCharacterStoreCapacity(),
-                configuration.getSqlCharacterStoreSequencePoolCapacity());
+                configuration.getSqlCharacterStoreSequencePoolCapacity()
+        );
 
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
@@ -902,7 +903,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 }
             }
 
-            if (!Chars.equals(tok, ')')) {
+            if (tok == null || !Chars.equals(tok, ')')) {
                 throw SqlException.position(lexer.getPosition()).put("')' expected");
             }
 
@@ -1457,11 +1458,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         return rowCount;
     }
 
-    private long copyOrdered0(TableWriterAPI writer,
-                              RecordCursor cursor,
-                              RecordToRowCopier copier,
-                              int cursorTimestampIndex,
-                              SqlExecutionCircuitBreaker circuitBreaker) {
+    private long copyOrdered0(
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -1661,7 +1664,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
         ExpressionNode likeTableName = model.getLikeTableName();
         CharSequence likeTableNameToken = likeTableName.token;
-        TableToken tableToken = executionContext.getTableToken(likeTableNameToken);
+        TableToken tableToken = executionContext.getTableTokenIfExists(likeTableNameToken);
+        if (tableToken == null) {
+            throw SqlException.$(likeTableName.position, "table does not exist [table=").put(likeTableNameToken).put(']');
+        }
         try (TableReader rdr = executionContext.getReader(tableToken)) {
             model.setO3MaxLag(rdr.getO3MaxLag());
             model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
@@ -1745,7 +1751,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                             path,
                             createTableModel.isIgnoreIfExists(),
                             createTableModel,
-                            false);
+                            false
+                    );
                 } else {
                     tableToken = engine.createTableInVolume(
                             executionContext.getSecurityContext(),
@@ -1753,7 +1760,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                             path,
                             createTableModel.isIgnoreIfExists(),
                             createTableModel,
-                            false);
+                            false
+                    );
                 }
             } catch (EntryUnavailableException e) {
                 throw SqlException.$(name.position, "table already exists");
@@ -2041,7 +2049,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     if (columnCount != valueCount) {
                         throw SqlException.$(
                                         model.getEndOfRowTupleValuesPosition(tupleIndex),
-                                        "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
+                                        "row value count does not match column count [expected="
+                                ).put(columnCount).put(", actual=").put(values.size())
                                 .put(", tuple=").put(tupleIndex + 1).put(']');
                     }
                     valueFunctions = new ObjList<>(columnCount);
@@ -2287,7 +2296,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 if (columnNameListSize != model.getRowTupleValues(i).size()) {
                     throw SqlException.$(
                                     model.getEndOfRowTupleValuesPosition(i),
-                                    "row value count does not match column count [expected=").put(columnNameListSize)
+                                    "row value count does not match column count [expected="
+                            ).put(columnNameListSize)
                             .put(", actual=").put(model.getRowTupleValues(i).size())
                             .put(", tuple=").put(i + 1)
                             .put(']');
@@ -2465,7 +2475,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [").put(tok).put(']');
             }
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("expected ")
+        throw SqlException.position(lexer.getPosition()).put("expected ")
                 .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
                 .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
                 .put("'max_identifier_length', 'standard_conforming_strings', ")
@@ -2476,7 +2486,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isFromKeyword(tok)) {
-            throw SqlException.position(lexer.getPosition()).put("expected 'from'");
+            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'from'");
         }
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
@@ -3050,7 +3060,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                                         metadata.getColumnName(i),
                                         COLUMN_NAME_TXN_NONE,
                                         mapReader.getSymbolCapacity(),
-                                        mapReader.isCached());
+                                        mapReader.isCached()
+                                );
                                 symbolMapCount++;
                             }
                         }

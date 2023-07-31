@@ -87,9 +87,9 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
             final String query = "select touch(select * from x where k > '1970-01-18T00:00:00.000000Z')";
             ddl(DDL, sqlExecutionContext);
             try {
-                assertException(query);
+                TestUtils.printSql(engine, sqlExecutionContext, query, sink);
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
+                Assert.fail(ex.getMessage());
             }
         });
     }

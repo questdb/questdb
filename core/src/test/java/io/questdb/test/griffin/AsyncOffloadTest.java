@@ -177,7 +177,8 @@ public class AsyncOffloadTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool((() -> workerCount));
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("CREATE TABLE 'test1' " +
+                    compiler.compile(
+                            "CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
                                     "timestamp (timestamp) PARTITION BY HOUR",
                             sqlExecutionContext
@@ -186,7 +187,8 @@ public class AsyncOffloadTest extends AbstractCairoTest {
                     final int numOfRows = 2000;
                     for (int i = 0; i < numOfRows; i++) {
                         final int seconds = i % 60;
-                        final CompiledQuery cq = compiler.compile("INSERT INTO test1 (column1, timestamp) " +
+                        final CompiledQuery cq = compiler.compile(
+                                "INSERT INTO test1 (column1, timestamp) " +
                                         "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
                                         + (seconds < 10 ? "0" + seconds : String.valueOf(seconds)) + "Z')",
                                 sqlExecutionContext
@@ -510,13 +512,13 @@ public class AsyncOffloadTest extends AbstractCairoTest {
     private void testAsyncSubQueryWithFilter(String query) throws Exception {
         WorkerPool pool = new WorkerPool((() -> 4));
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    ddl("CREATE TABLE price (\n" +
+                    ddl(compiler, "CREATE TABLE price (\n" +
                             "  ts TIMESTAMP," +
                             "  type SYMBOL," +
                             "  value DOUBLE ) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
-                    insert("insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
-                    ddl("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
-                    ddl("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
+                    insert(compiler, "insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+                    ddl(compiler, "CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
+                    ddl(compiler, "insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
 
                     TestUtils.assertSql(
                             engine,
@@ -527,7 +529,8 @@ public class AsyncOffloadTest extends AbstractCairoTest {
                     );
                 },
                 configuration,
-                LOG);
+                LOG
+        );
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
@@ -536,13 +539,15 @@ public class AsyncOffloadTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("create table x ( " +
+                    compiler.compile(
+                            "create table x ( " +
                                     "v long, " +
                                     "s symbol capacity 4 cache " +
                                     ")",
                             sqlExecutionContext
                     );
-                    compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                    compiler.compile(
+                            "insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
 

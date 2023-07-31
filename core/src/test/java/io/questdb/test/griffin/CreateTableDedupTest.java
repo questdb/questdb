@@ -116,6 +116,20 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupSyntaxError() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                            " PARTITION BY DAY WAL"
+            );
+            assertFailure("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", null, 54, "')' expected");
+            assertFailure("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s", null, 55, "')' expected");
+        });
+    }
+
+    @Test
     @Ignore
     public void testDeduplicationEnabledIntAndSymbol() throws Exception {
         String tableName = testName.getMethodName();
