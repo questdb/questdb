@@ -36,7 +36,7 @@ public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInvalidKind() {
         try {
-            assertSqlFails("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
+            assertException("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid unit 'invalid'", e.getFlyweightMessage());
@@ -46,7 +46,7 @@ public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullKind() {
         try {
-            assertSqlFails("select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
+            assertException("select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());

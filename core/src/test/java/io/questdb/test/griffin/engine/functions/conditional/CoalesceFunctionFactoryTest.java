@@ -191,7 +191,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                     ")");
 
             try {
-                assertSqlFails("select coalesce(x, a)\n" +
+                assertException("select coalesce(x, a)\n" +
                         "from alex");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().contains("coalesce"));

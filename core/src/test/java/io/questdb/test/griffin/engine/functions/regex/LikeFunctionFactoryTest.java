@@ -337,7 +337,7 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                assertSqlFails("select * from x where name like rnd_str('foo','bar')");
+                assertException("select * from x where name like rnd_str('foo','bar')");
             } catch (SqlException e) {
                 Assert.assertEquals(32, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");

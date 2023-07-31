@@ -1077,7 +1077,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private void assertUpdateFailsBecausePartitionIsReadOnly(String updateStmt, String tableName, String partitionName) {
         try {
-            assertSqlFails(updateStmt);
+            assertException(updateStmt);
         } catch (CairoException e) {
             TestUtils.assertContains(
                     "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",

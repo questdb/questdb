@@ -809,7 +809,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
             try {
-                assertSqlFails("select sym, max(sum(x + min(x)) - avg(x)) from test");
+                assertException("select sym, max(sum(x + min(x)) - avg(x)) from test");
             } catch (SqlException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
             }

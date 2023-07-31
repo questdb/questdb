@@ -72,7 +72,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     try {
-                        assertSqlFails(sql);
+                        assertException(sql);
                     } catch (SqlException e) {
                         Assert.assertEquals(7, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "exactly one argument expected");

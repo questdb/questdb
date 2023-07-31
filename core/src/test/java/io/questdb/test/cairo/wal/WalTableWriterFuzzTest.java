@@ -415,7 +415,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                     WalWriterTest.removeColumn(walWriter, "b");
 
-                    assertSqlFails("UPDATE " + tableName + " SET b = a");
+                    assertException("UPDATE " + tableName + " SET b = a");
                 } catch (Exception e) {
                     assertTrue(e.getMessage().endsWith("Invalid column: b"));
                 }
@@ -578,7 +578,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                 update("UPDATE " + tableCopyName + " SET INT=12345678");
                 try {
-                    assertSqlFails("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT");
+                    assertException("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT");
                 } catch (Exception e) {
                     assertTrue(e.getMessage().endsWith("UPDATE statements with join are not supported yet for WAL tables"));
                 }
@@ -739,7 +739,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                expectException(
+                assertException(
                         "UPDATE " + tableName + " SET INT=systimestamp()",
                         43,
                         "inconvertible types: TIMESTAMP -> INT"
@@ -747,7 +747,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
                 assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
 
-                expectException(
+                assertException(
                         "UPDATE " + tableCopyName + " SET INT=systimestamp()",
                         48,
                         "inconvertible types: TIMESTAMP -> INT"

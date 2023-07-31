@@ -134,7 +134,7 @@ public class RenameTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                assertSqlFails(sql);
+                assertException(sql);
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "literal or constant expected");

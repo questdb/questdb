@@ -1478,7 +1478,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     private void assertTimestampTtFailedQuery0(String expectedError, String query) {
         try {
-            assertSqlFails(query);
+            assertException(query);
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
         }

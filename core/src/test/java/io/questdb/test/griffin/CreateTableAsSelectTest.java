@@ -59,7 +59,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     private void assertFailure() {
         try {
-            assertSqlFails("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);");
+            assertException("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table. See log for details.");
             Assert.assertEquals(13, e.getPosition());

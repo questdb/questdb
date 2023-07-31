@@ -41,7 +41,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testInvalidConstantOffset() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSqlFails("select to_timezone(0, '25:40')");
+                assertException("select to_timezone(0, '25:40')");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -53,7 +53,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testInvalidConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSqlFails("select to_timezone(0, 'UUU')");
+                assertException("select to_timezone(0, 'UUU')");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
@@ -65,7 +65,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testNullConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSqlFails("select to_timezone(0, null)");
+                assertException("select to_timezone(0, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
@@ -93,7 +93,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testVarNullTimezone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSqlFails("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)");
+                assertException("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)");
             } catch (SqlException e) {
                 Assert.assertEquals(69, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");

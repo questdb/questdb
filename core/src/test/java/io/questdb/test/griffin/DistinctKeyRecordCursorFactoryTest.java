@@ -68,7 +68,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             try {
-                assertSqlFails("select DISTINCT sym from tab order by 1 LIMIT 3", sqlExecutionContext);
+                assertException("select DISTINCT sym from tab order by 1 LIMIT 3", sqlExecutionContext);
             } catch (OutOfMemoryError e) {
                 // ignore
             }
@@ -129,7 +129,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
             try {
-                assertSqlFails("select DISTINCT sym from tab order by 1 LIMIT 3");
+                assertException("select DISTINCT sym from tab order by 1 LIMIT 3");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
             }

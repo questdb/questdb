@@ -499,7 +499,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 try {
                     addColumn(walWriter, "c", ColumnType.SHORT);
-                    assertSqlFails("Should not be able to add duplicate column");
+                    assertException("Should not be able to add duplicate column");
                 } catch (CairoException e) {
                     assertEquals("[-1] duplicate column name: c", e.getMessage());
                 }
@@ -595,7 +595,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 try {
                     engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1);
-                    assertSqlFails("Segment 2 should not exist");
+                    assertException("Segment 2 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
                             File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
@@ -717,7 +717,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 row.append();
                 // no commit intentional
                 addColumn(walWriter, "c", ColumnType.INT);
-                assertSqlFails("Exception expected");
+                assertException("Exception expected");
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
                 assertTrue(e.getMessage().endsWith("cannot alter table with uncommitted inserts [table=testAlterTableRejectedIfTransactionPending]"));
@@ -1256,7 +1256,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             try {
                 createTable(testName.getMethodName());
-                assertSqlFails("Exception expected");
+                assertException("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
             }
@@ -1283,7 +1283,7 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             try {
                 createTable(testName.getMethodName());
-                assertSqlFails("Exception expected");
+                assertException("Exception expected");
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
                 assertEquals("Test failure", e.getMessage());
@@ -1316,7 +1316,7 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             try {
                 createTable(testName.getMethodName());
-                assertSqlFails("Exception expected");
+                assertException("Exception expected");
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
                 assertTrue(e.getMessage().startsWith("[999] Cannot create sequencer directory:"));
@@ -1419,7 +1419,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
-                    assertSqlFails("Exception expected");
+                    assertException("Exception expected");
                 } catch (CairoException e) {
                     // this exception will be handled in ILP/PG/HTTP
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
@@ -1452,7 +1452,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
-                    assertSqlFails("Exception expected");
+                    assertException("Exception expected");
                 } catch (Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
                     assertTrue(e.getMessage().contains("could not open read-only"));
@@ -1485,7 +1485,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
-                    assertSqlFails("Exception expected");
+                    assertException("Exception expected");
                 } catch (Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
                     assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
@@ -1686,13 +1686,13 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals("WalReaderRecord [recordIndex=" + i + "]", testSink.toString());
                         try {
                             cursor.getRecordB();
-                            assertSqlFails("UnsupportedOperationException expected");
+                            assertException("UnsupportedOperationException expected");
                         } catch (UnsupportedOperationException e) {
                             // ignore, this is expected
                         }
                         try {
                             record.getUpdateRowId();
-                            assertSqlFails("UnsupportedOperationException expected");
+                            assertException("UnsupportedOperationException expected");
                         } catch (UnsupportedOperationException e) {
                             // ignore, this is expected
                         }
@@ -1930,7 +1930,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 try {
                     engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 0);
-                    assertSqlFails("Segment 1 should not exist");
+                    assertException("Segment 1 should not exist");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only [file=" + engine.getConfiguration().getRoot() +
                             File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
@@ -1958,7 +1958,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 try {
                     removeColumn(walWriter, "noColLikeThis");
-                    assertSqlFails("Should not be able to remove non existent column");
+                    assertException("Should not be able to remove non existent column");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exists [table=testRemovingNonExistentColumn, column=noColLikeThis]");
                 }
@@ -2052,12 +2052,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 row.putInt(0, 133);
                 try {
                     row.putSym(1, "anything");
-                    assertSqlFails("UnsupportedOperationException expected");
+                    assertException("UnsupportedOperationException expected");
                 } catch (UnsupportedOperationException ignore) {
                 }
                 try {
                     TestUtils.putUtf8(row, "Щось", 1, true);
-                    assertSqlFails("UnsupportedOperationException expected");
+                    assertException("UnsupportedOperationException expected");
                 } catch (UnsupportedOperationException ignore) {
                 }
 

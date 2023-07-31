@@ -70,7 +70,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts))"
             );
             try {
-                assertSqlFails("select a, string_agg(s, ',') from x");
+                assertException("select a, string_agg(s, ',') from x");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "value type is not supported: STRING");
             }

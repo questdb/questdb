@@ -90,7 +90,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
         try {
             call("foo", 3, -1).andAssert(null);
-            assertSqlFails("non-const negative len is not allowed");
+            assertException("non-const negative len is not allowed");
         } catch (CairoException e) {
             // negative substring length is not allowed
         }
@@ -102,7 +102,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
                     null,
                     true
             );
-            assertSqlFails("const negative len is not allowed");
+            assertException("const negative len is not allowed");
         } catch (SqlException e) {
             // negative substring length is not allowed
         }

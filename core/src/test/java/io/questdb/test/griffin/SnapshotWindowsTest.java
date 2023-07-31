@@ -73,7 +73,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             try {
-                assertSqlFails("snapshot prepare");
+                assertException("snapshot prepare");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
             }

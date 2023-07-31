@@ -125,7 +125,7 @@ public class PGSecurityTest extends BasePGTest {
                 compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
                 try {
                     executeWithPg("delete from src");
-                    assertSqlFails("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
+                    assertException("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
                 } catch (PSQLException e) {
                     // the parser does not support DELETE
                     assertContains(e.getMessage(), "unexpected token: from");
@@ -318,7 +318,7 @@ public class PGSecurityTest extends BasePGTest {
                         String query = "drop table src";
                         try (final Statement statement = roUserConnection.createStatement()) {
                             statement.execute(query);
-                            assertSqlFails("Query '" + query + "' must fail for the read-only user!");
+                            assertException("Query '" + query + "' must fail for the read-only user!");
                         } catch (PSQLException e) {
                             assertContains(e.getMessage(), "Write permission denied");
                         }
@@ -334,7 +334,7 @@ public class PGSecurityTest extends BasePGTest {
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
-            assertSqlFails("Query '" + query + "' must fail in the read-only mode!");
+            assertException("Query '" + query + "' must fail in the read-only mode!");
         } catch (PSQLException e) {
             assertContains(e.getMessage(), "Write permission denied");
         }

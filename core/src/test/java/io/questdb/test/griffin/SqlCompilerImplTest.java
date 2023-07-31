@@ -2863,7 +2863,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testDeallocateMissingStatementName() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSqlFails("DEALLOCATE");
+                assertException("DEALLOCATE");
             } catch (SqlException e) {
                 Assert.assertEquals(10, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "statement name expected");
@@ -2875,7 +2875,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testDeallocateMultipleStatementNames() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSqlFails("deallocate foo bar");
+                assertException("deallocate foo bar");
             } catch (SqlException e) {
                 Assert.assertEquals(15, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bar]");
@@ -2907,7 +2907,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testEmptyQuery() {
         try {
-            assertSqlFails("                        ");
+            assertException("                        ");
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "empty query");
@@ -3009,7 +3009,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
-                assertSqlFails("select * from x where str = #1234 '"); // random char at the end
+                assertException("select * from x where str = #1234 '"); // random char at the end
             } catch (SqlException ex) {
                 // Add error test assertion
                 Assert.assertEquals("[34] dangling expression", ex.getMessage());
@@ -3022,7 +3022,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
-                assertSqlFails("select * from x where str = #1234'"); // random char at the end
+                assertException("select * from x where str = #1234'"); // random char at the end
             } catch (SqlException ex) {
                 // Add error test assertion
                 Assert.assertEquals("[33] dangling expression", ex.getMessage());
@@ -3567,7 +3567,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
             try {
-                assertSqlFails("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+                assertException("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
             } catch (SqlException e) {
                 Assert.assertEquals(14, e.getPosition());
                 Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
@@ -4950,7 +4950,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastByteFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -4983,7 +4983,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastDoubleFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select * from (select rnd_double(2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5006,7 +5006,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastFloatFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select * from (select rnd_float(2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5033,7 +5033,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastIntFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5060,7 +5060,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastLongFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5086,7 +5086,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastShortFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select * from (select rnd_short(2,10) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5099,7 +5099,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastStringFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5112,7 +5112,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastSymbolFail(int castTo) {
         try {
-            assertSqlFails(
+            assertException(
                     "create table y as (" +
                             "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
                             "), cast(a as " + ColumnType.nameOf(castTo) + ")"
@@ -5166,7 +5166,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(ff,
                 () -> {
                     try {
-                        assertSqlFails(sql);
+                        assertException(sql);
                     } catch (SqlException e) {
                         Assert.assertEquals(13, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), message);
@@ -5177,7 +5177,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql, Class<?> exception) {
         try {
-            assertSqlFails(sql);
+            assertException(sql);
         } catch (Throwable e) {
             Assert.assertSame(exception, e.getClass());
             if (e instanceof FlyweightMessageContainer) {

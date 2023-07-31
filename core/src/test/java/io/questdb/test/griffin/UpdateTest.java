@@ -737,7 +737,7 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            expectException(
+            assertException(
                     "WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
                             "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
                             ")" +
@@ -770,42 +770,42 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // All combinations to update xint
-            expectException(
+            assertException(
                     "UPDATE up SET xint = xdouble",
                     21,
                     "inconvertible types: DOUBLE -> INT [from=, to=xint]"
             );
-            expectException(
+            assertException(
                     "UPDATE up SET xint = xlong",
                     21,
                     "inconvertible types: LONG -> INT [from=, to=xint]"
             );
-            expectException(
+            assertException(
                     "UPDATE up SET xshort = xlong",
                     23,
                     "inconvertible types: LONG -> SHORT [from=, to=xshort]"
             );
-            expectException(
+            assertException(
                     "UPDATE up SET xchar = xlong",
                     22,
                     "inconvertible types: LONG -> CHAR [from=, to=xchar]"
             );
-            expectException(
+            assertException(
                     "UPDATE up SET xbyte = xlong",
                     22,
                     "inconvertible types: LONG -> BYTE [from=, to=xbyte]"
             );
-            expectException(
+            assertException(
                     "UPDATE up SET xlong = xl256",
                     22,
                     "inconvertible types: LONG256 -> LONG [from=, to=xlong]"
             );
-            expectException(
+            assertException(
                     "UPDATE up SET xl256 = xlong",
                     22,
                     "inconvertible types: LONG -> LONG256 [from=, to=xl256]"
             );
-            expectException(
+            assertException(
                     "UPDATE up SET xchar = xlong",
                     22,
                     "inconvertible types: LONG -> CHAR [from=, to=xchar]"
@@ -1769,7 +1769,7 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            expectException(
+            assertException(
                     "UPDATE up SET ts = 1",
                     14,
                     "Designated timestamp column cannot be updated"
@@ -1885,7 +1885,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
                     "\t1970-01-01T00:00:04.000000Z\t5\n", "t2");
 
-            expectException(
+            assertException(
                     "UPDATE up SET symCol = 'VTJ' JOIN t2 ON up.x = t2.x",
                     29,
                     "FROM, WHERE or EOF expected"
@@ -2164,7 +2164,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
                     "\t1970-01-01T00:00:04.000000Z\t5\n", "t2");
 
-            expectException(
+            assertException(
                     "UPDATE up SET symCol = 'VTJ' FROM t2 CROSS JOIN up ON up.x = t2.x",
                     37,
                     "JOIN is not supported on UPDATE statement"
@@ -2188,7 +2188,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
                     "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
-            expectException(
+            assertException(
                     "UPDATE up SET symCol = 'ABC' LATEST ON ts PARTITION BY symCol",
                     29,
                     "FROM, WHERE or EOF expected"
@@ -2225,7 +2225,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
                     "\t1970-01-01T00:00:04.000000Z\t5\n", "t2");
 
-            expectException(
+            assertException(
                     "UPDATE up SET symCol = (select symCol2 from t2 where x = 4)",
                     24,
                     "query is not allowed here"
@@ -2335,7 +2335,7 @@ public class UpdateTest extends AbstractCairoTest {
                             " timestamp(ts) partition by DAY"
             );
 
-            expectException(
+            assertException(
                     "UPDATE up SET x = 1",
                     0,
                     "could not open read-write"

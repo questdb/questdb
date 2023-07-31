@@ -61,7 +61,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             );
 
             try {
-                assertSqlFails("Alter table dups dedup upsert keys(ts)", roExecutionContext);
+                assertException("Alter table dups dedup upsert keys(ts)", roExecutionContext);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }

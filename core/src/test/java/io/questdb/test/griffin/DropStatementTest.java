@@ -88,7 +88,7 @@ public class DropStatementTest extends AbstractCairoTest {
             ddl("CREATE TABLE \"large table\" (a int)");
 
             try (TableWriter ignored = getWriter("large table")) {
-                assertSqlFails("DROP TABLE \"large table\"");
+                assertException("DROP TABLE \"large table\"");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
             }
@@ -122,7 +122,7 @@ public class DropStatementTest extends AbstractCairoTest {
     public void testDropTableMissingFrom() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSqlFails("drop i_am_missing");
+                assertException("drop i_am_missing");
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
@@ -169,7 +169,7 @@ public class DropStatementTest extends AbstractCairoTest {
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("x.csv"));
 
             try {
-                assertSqlFails("DROP TABLE x.csv");
+                assertException("DROP TABLE x.csv");
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [.]");
@@ -192,7 +192,7 @@ public class DropStatementTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("\"" + tab0 + '"')) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    assertSqlFails("DROP ALL TABLES");
+                    assertException("DROP ALL TABLES");
                 }
             } catch (CairoException expected) {
                 TestUtils.assertContains(

@@ -36,7 +36,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testBadConstantUuidWithExplicitCast() throws Exception {
         ddl("create table x (u UUID)");
-        expectException(
+        assertException(
                 "insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))",
                 28,
                 "invalid UUID constant"
@@ -46,7 +46,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testBadUuidWithImplicitCast() throws Exception {
         ddl("create table x (u UUID)");
-        expectException(
+        assertException(
                 "insert into x values ('a0eebc11-110b-11f8-116d')",
                 0,
                 "inconvertible value: `a0eebc11-110b-11f8-116d` [STRING -> UUID]"
@@ -332,9 +332,9 @@ public class UuidTest extends AbstractCairoTest {
         ddl("create table x (u UUID)");
         insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
 
-        expectException("select * from x where u in (cast (null as UUID))", 28, "NULL is not allowed in IN list");
-        expectException("select * from x where u in (cast (null as String))", 28, "NULL is not allowed in IN list");
-        expectException("select * from x where u in (null)", 28, "NULL is not allowed in IN list");
+        assertException("select * from x where u in (cast (null as UUID))", 28, "NULL is not allowed in IN list");
+        assertException("select * from x where u in (cast (null as String))", 28, "NULL is not allowed in IN list");
+        assertException("select * from x where u in (null)", 28, "NULL is not allowed in IN list");
     }
 
     @Test
@@ -342,7 +342,7 @@ public class UuidTest extends AbstractCairoTest {
         ddl("create table x (u UUID)");
         insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
 
-        expectException("select * from x where u in (42)", 28, "STRING or UUID constant expected in IN list");
+        assertException("select * from x where u in (42)", 28, "STRING or UUID constant expected in IN list");
     }
 
     @Test
@@ -375,7 +375,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertFromFunctionReturningLong() throws Exception {
         ddl("create table x (u UUID)");
-        expectException("insert into x values (rnd_long())", 22, "inconvertible types");
+        assertException("insert into x values (rnd_long())", 22, "inconvertible types");
     }
 
     @Test

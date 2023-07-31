@@ -418,7 +418,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
         try {
-            assertSqlFails(sql);
+            assertException(sql);
         } catch (Exception e) {
             TestUtils.assertEquals(expectedMsg, e.getMessage());
         }

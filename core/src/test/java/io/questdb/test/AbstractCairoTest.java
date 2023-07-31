@@ -985,15 +985,15 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void assertSqlFails(CharSequence sql) throws SqlException {
-        assertSqlFails(sql, sqlExecutionContext);
+    protected static void assertException(CharSequence sql) throws SqlException {
+        assertException(sql, sqlExecutionContext);
     }
 
-    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext) throws SqlException {
-        assertSqlFails(sql, executionContext, false);
+    protected static void assertException(CharSequence sql, SqlExecutionContext executionContext) throws SqlException {
+        assertException(sql, executionContext, false);
     }
 
-    protected static void assertSqlFails(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws SqlException {
+    protected static void assertException(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
             CompiledQuery cq = compiler.compile(sql, executionContext);
@@ -1332,9 +1332,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void expectException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
+    protected static void assertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         try {
-            assertSqlFails(sql);
+            assertException(sql);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
@@ -1345,9 +1345,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void expectException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
+    protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
         try {
-            assertSqlFails(sql, sqlExecutionContext, fullFatJoins);
+            assertException(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
@@ -1622,7 +1622,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     ddl(ddl, sqlExecutionContext);
                 }
                 try {
-                    assertSqlFails(query);
+                    assertException(query);
                 } catch (SqlException | ImplicitCastException | CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());

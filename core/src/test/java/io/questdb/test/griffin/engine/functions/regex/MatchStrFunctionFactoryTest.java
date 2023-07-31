@@ -39,7 +39,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                assertSqlFails("select * from x where name ~ null");
+                assertException("select * from x where name ~ null");
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
@@ -52,7 +52,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                assertSqlFails("select * from x where name ~ 'XJ**'");
+                assertException("select * from x where name ~ 'XJ**'");
             } catch (SqlException e) {
                 Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
