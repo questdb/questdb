@@ -114,6 +114,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final CairoConfiguration configuration;
+    private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
@@ -170,7 +171,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
-    private final DdlListener ddlListener;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -248,8 +248,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
         final boolean sysTable = Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
-        this.ddlListener = (sysTable || configuration.getFactoryProvider() == null)
-                ? DdlListenerImpl.INSTANCE : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+        this.ddlListener = sysTable ? DdlListenerImpl.INSTANCE : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;

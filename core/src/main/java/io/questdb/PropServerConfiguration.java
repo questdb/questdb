@@ -1675,7 +1675,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getAttachPartitionSuffix() {
+        public @NotNull String getAttachPartitionSuffix() {
             return cairoAttachPartitionSuffix;
         }
 
@@ -1695,7 +1695,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getBackupTempDirName() {
+        public @NotNull CharSequence getBackupTempDirName() {
             return backupTempDirName;
         }
 
@@ -1710,12 +1710,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public BuildInformation getBuildInformation() {
+        public @NotNull BuildInformation getBuildInformation() {
             return buildInformation;
         }
 
         @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+        public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
 
@@ -1760,12 +1760,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getConfRoot() {
+        public @NotNull CharSequence getConfRoot() {
             return confRoot;
         }
 
         @Override
-        public LongSupplier getCopyIDSupplier() {
+        public @NotNull LongSupplier getCopyIDSupplier() {
             return copyIDSupplier;
         }
 
@@ -1810,17 +1810,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getDbDirectory() {
+        public @NotNull CharSequence getDbDirectory() {
             return dbDirectory;
         }
 
         @Override
-        public DateLocale getDefaultDateLocale() {
+        public @NotNull DateLocale getDefaultDateLocale() {
             return locale;
         }
 
         @Override
-        public CharSequence getDefaultMapType() {
+        public @NotNull CharSequence getDefaultMapType() {
             return defaultMapType;
         }
 
@@ -1845,7 +1845,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public FactoryProvider getFactoryProvider() {
+        public @NotNull FactoryProvider getFactoryProvider() {
             return factoryProvider;
         }
 
@@ -2080,7 +2080,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getRoot() {
+        public @NotNull String getRoot() {
             return root;
         }
 
@@ -2095,12 +2095,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getSnapshotInstanceId() {
+        public @NotNull CharSequence getSnapshotInstanceId() {
             return snapshotInstanceId;
         }
 
         @Override
-        public CharSequence getSnapshotRoot() {
+        public @NotNull CharSequence getSnapshotRoot() {
             return snapshotRoot;
         }
 
@@ -2375,7 +2375,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getSystemTableNamePrefix() {
+        public @NotNull CharSequence getSystemTableNamePrefix() {
             return systemTableNamePrefix;
         }
 
@@ -2389,12 +2389,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             return cairoTableRegistryCompactionThreshold;
         }
 
-        public TelemetryConfiguration getTelemetryConfiguration() {
+        public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
 
         @Override
-        public TextConfiguration getTextConfiguration() {
+        public @NotNull TextConfiguration getTextConfiguration() {
             return textConfiguration;
         }
 
@@ -2409,7 +2409,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public VolumeDefinitions getVolumeDefinitions() {
+        public @NotNull VolumeDefinitions getVolumeDefinitions() {
             return volumeDefinitions;
         }
 
