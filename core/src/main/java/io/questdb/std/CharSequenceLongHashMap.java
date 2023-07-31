@@ -126,10 +126,6 @@ public class CharSequenceLongHashMap extends AbstractCharSequenceHashSet {
         return index < 0 ? values[index1] : noEntryValue;
     }
 
-    public long valueQuick(int index) {
-        return get(list.getQuick(index));
-    }
-
     private void putAt0(int index, CharSequence key, long value) {
         keys[index] = key;
         values[index] = value;
