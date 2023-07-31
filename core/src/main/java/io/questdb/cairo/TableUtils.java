@@ -621,7 +621,9 @@ public final class TableUtils {
         return type;
     }
 
-    public static long getNullLong(int columnType, int longIndex) {
+    public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
+        // In theory, we can have a column type where `NULL` value will be different `LONG` values,
+        // then this should return different values on longIndex. At the moment there are no such types.
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:

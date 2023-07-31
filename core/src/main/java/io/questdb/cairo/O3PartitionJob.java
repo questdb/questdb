@@ -1162,12 +1162,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long timestampMergeIndexSize;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         if (mergeType == O3_BLOCK_MERGE) {
-            long tempIndexSize = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+            long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+            long tempIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             assert tempIndexSize > 0; // avoid SIGSEGV
 
             if (!tableWriter.isDeduplicationEnabled()) {
                 timestampMergeIndexSize = tempIndexSize;
-                assert timestampMergeIndexSize > 0; // avoid SIGSEGV
                 timestampMergeIndexAddr = createMergeIndex(
                         srcTimestampAddr,
                         sortedTimestampsAddr,
@@ -1201,10 +1201,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                     timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                     timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                    final long duplicateCount = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) - dedupRows;
-                    newPartitionSize -= duplicateCount;
-                    if (oldPartitionTimestamp == partitionTimestamp) {
-                        oldPartitionSize -= duplicateCount;
+                    final long duplicateCount = mergeRowCount - dedupRows;
+                    if (duplicateCount > 0) {
+                        LOG.info().$("dedup row reduction [table=").utf8(tableWriter.getTableToken().getTableName())
+                                .$(", partition").$ts(partitionTimestamp)
+                                .$(", old=").$(mergeDataHi - mergeDataLo + 1)
+                                .$(", new=").$(mergeOOOHi - mergeOOOLo + 1)
+                                .$(", dups=").$(duplicateCount).I$();
+
+                        newPartitionSize -= duplicateCount;
+                        if (oldPartitionTimestamp == partitionTimestamp) {
+                            // no partition split, decrease the old partition size too.
+                            oldPartitionSize -= duplicateCount;
+                        }
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();

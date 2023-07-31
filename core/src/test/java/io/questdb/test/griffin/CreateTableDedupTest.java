@@ -288,6 +288,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                     tw1.apply(dropColumnAlterBuilder.build(), true);
                     try {
                         tw2.apply(ao, true);
+                        Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "cannot use dropped column for deduplication [column=sym]");
                     }

@@ -616,7 +616,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
                 long end = start + partitionCount * Timestamps.DAY_MICROS;
                 transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
-                comaSeparatedUpsertCols = toComaSeparatedString(metadata, upsertKeyIndexes);
+                comaSeparatedUpsertCols = toCommaSeparatedString(metadata, upsertKeyIndexes);
             }
             String alterStatement = String.format(
                     "alter table %s dedup upsert keys(%s))",
@@ -636,7 +636,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 ObjList<CharSequence> upsertKeyNames = new ObjList<>();
                 try (TableWriter writer = getWriter(tableNameNoWal)) {
                     collectUpsertKeyNames(writer.getMetadata(), upsertKeyIndexes, upsertKeyNames);
-                    renamedUpsertKeys = toComaSeparatedString(writer.getMetadata(), upsertKeyIndexes);
+                    renamedUpsertKeys = toCommaSeparatedString(writer.getMetadata(), upsertKeyIndexes);
                 }
 
                 LOG.info().$("asserting no dups on keys: ").$(renamedUpsertKeys).$();
@@ -726,7 +726,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         operationList.setQuick(j, tmp);
     }
 
-    private String toComaSeparatedString(RecordMetadata metadata, IntList upsertKeys) {
+    private String toCommaSeparatedString(RecordMetadata metadata, IntList upsertKeys) {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
