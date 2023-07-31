@@ -24,7 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoEngineFactory;
 import io.questdb.std.FilesFacade;
 
 import java.util.Map;
@@ -35,8 +34,6 @@ public interface BootstrapConfiguration {
     Map<String, String> getEnv();
 
     FilesFacade getFilesFacade();
-
-    CairoEngineFactory getCairoEngineFactory();
 
     ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception;
 

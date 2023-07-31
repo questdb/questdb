@@ -37,7 +37,6 @@ public class CopyNoMangleTest extends AbstractCairoTest {
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractCairoTest.setUpStatic();
-
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();

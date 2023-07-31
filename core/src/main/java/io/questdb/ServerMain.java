@@ -69,17 +69,14 @@ public class ServerMain implements Closeable {
     }
 
     public ServerMain(final Bootstrap bootstrap) {
-        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner(), bootstrap.getCairoEngineFactory());
-    }
-
-    public ServerMain(final ServerConfiguration config, final Metrics metrics, final Log log, String banner, CairoEngineFactory cairoEngineFactory) {
-        this.config = config;
-        this.log = log;
-        this.banner = banner;
+        this.config = bootstrap.getConfiguration();
+        this.log = bootstrap.getLog();
+        this.banner = bootstrap.getBanner();
+        final Metrics metrics = bootstrap.getMetrics();
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit.register(cairoEngineFactory.createInstance(cairoConfig, metrics));
+        engine = freeOnExit.register(bootstrap.newCairoEngine());
 
         // obtain function factory cache
         FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();

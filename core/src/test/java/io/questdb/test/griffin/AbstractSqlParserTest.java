@@ -28,7 +28,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -44,8 +43,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class AbstractSqlParserTest extends AbstractCairoTest {
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
+    private static void assertSyntaxError0(
             String query,
             int position,
             String contains,
@@ -53,16 +51,10 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
     ) throws Exception {
         try {
             assertMemoryLeak(() -> {
-                try {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        CreateTableTestUtils.create(tableModels[i]);
-                    }
-                    compiler.compile(query, sqlExecutionContext);
-                    Assert.fail("Exception expected");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), contains);
-                    Assert.assertEquals("position", position, e.getPosition());
+                for (int i = 0, n = tableModels.length; i < n; i++) {
+                    CreateTableTestUtils.create(tableModels[i]);
                 }
+                assertException(query, position, contains);
             });
         } finally {
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -118,16 +110,6 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
-    private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-            RecordMetadata metadata = factory.getMetadata();
-            for (int idx = 0; idx < columns.length; idx++) {
-                TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
-            }
-        }
-    }
-
     private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -178,9 +160,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
     protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
         refreshTablesInBaseEngine();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            AbstractSqlParserTest.assertSyntaxError(compiler, query, position, contains, tableModels);
-        }
+        assertSyntaxError0(query, position, contains, tableModels);
     }
 
     protected static TableModel modelOf(String tableName) {
@@ -188,8 +168,11 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
     }
 
     protected void assertColumnNames(String query, String... columns) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertColumnNames(compiler, query, columns);
+        try (RecordCursorFactory factory = select(query)) {
+            RecordMetadata metadata = factory.getMetadata();
+            for (int idx = 0; idx < columns.length; idx++) {
+                TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
+            }
         }
     }
 
