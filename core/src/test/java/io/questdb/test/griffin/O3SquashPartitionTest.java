@@ -626,7 +626,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             // Another reader, should allow to squash partitions
             try (TableReader ignore = getReader("x")) {
-                insert("insert into x(ts) values('2020-02-06')", sqlExecutionContext);
+                insert("insert into x(ts) values('2020-02-06')");
                 assertSql("name\tminTimestamp\n" +
                         "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
                         "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +

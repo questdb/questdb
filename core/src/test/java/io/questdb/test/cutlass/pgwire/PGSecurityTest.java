@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -159,7 +160,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-                TestUtils.insert(compiler, "insert into src values (now(), 'foo')", sqlExecutionContext);
+                CairoEngine.insert(compiler, "insert into src values (now(), 'foo')", sqlExecutionContext);
                 assertQueryDisallowed("insert into src select now(), name from src");
             }
         });

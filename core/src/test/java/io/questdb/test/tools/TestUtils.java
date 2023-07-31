@@ -66,7 +66,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.griffin.CompiledQuery.*;
 
 public final class TestUtils {
 
@@ -1112,29 +1111,6 @@ public final class TestUtils {
 
     public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
         return engine.getWriter(tableToken, "test");
-    }
-
-    public static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cq = compiler.compile(insertSql, sqlExecutionContext);
-        switch (cq.getType()) {
-            case INSERT:
-            case INSERT_AS_SELECT:
-                final InsertOperation insertOperation = cq.getInsertOperation();
-                if (insertOperation != null) {
-                    // for insert as select the operation is null
-                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                        insertMethod.execute();
-                        insertMethod.commit();
-                    }
-                }
-                break;
-            case SELECT:
-                Assert.fail("use select()");
-            case DROP:
-                Assert.fail("use drop()");
-            default:
-                Assert.fail("use ddl()");
-        }
     }
 
     public static String insertFromSelectPopulateTableStmt(

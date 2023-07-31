@@ -30,9 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
-import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
@@ -61,6 +59,8 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
     public static final String BUSY_READER = "busyReader";
@@ -161,6 +161,50 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
         this.sqlCompilerPool = new SqlCompilerPool(this);
+    }
+
+    public static void ddl(SqlCompiler compiler, CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        switch (cc.getType()) {
+            default:
+                try (OperationFuture future = cc.execute(null)) {
+                    future.await();
+                }
+                break;
+            case INSERT:
+                throw SqlException.$(0, "use insert()");
+            case DROP:
+                throw SqlException.$(0, "use drop()");
+            case SELECT:
+                throw SqlException.$(0, "use select()");
+        }
+    }
+
+    public static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(insertSql, sqlExecutionContext);
+        switch (cq.getType()) {
+            case INSERT:
+            case INSERT_AS_SELECT:
+                final InsertOperation insertOperation = cq.getInsertOperation();
+                if (insertOperation != null) {
+                    // for insert as select the operation is null
+                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                        insertMethod.execute();
+                        insertMethod.commit();
+                    }
+                }
+                break;
+            case SELECT:
+                throw SqlException.$(0, "use select()");
+            case DROP:
+                throw SqlException.$(0, "use drop()");
+            default:
+                throw SqlException.$(0, "use ddl()");
+        }
+    }
+
+    public static RecordCursorFactory select(SqlCompiler compiler, CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
@@ -289,6 +333,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
         onTableCreated(securityContext, tableToken);
         return tableToken;
+    }
+
+    public void ddl(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            ddl(compiler, query, executionContext);
+        }
     }
 
     public void drop(Path path, TableToken tableToken) {
@@ -583,6 +633,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     }
 
+    public void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            insert(compiler, insertSql, sqlExecutionContext);
+        }
+    }
+
     public boolean isTableDropped(TableToken tableToken) {
         return tableNameRegistry.isTableDropped(tableToken);
     }
@@ -826,6 +882,12 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void resetNameRegistryMemory() {
         tableNameRegistry.resetMemory();
+    }
+
+    public RecordCursorFactory select(CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            return select(compiler, selectSql, sqlExecutionContext);
+        }
     }
 
     @TestOnly

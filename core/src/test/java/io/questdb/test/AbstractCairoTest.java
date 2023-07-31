@@ -285,7 +285,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    public static void assertVariableColumns(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+    public static void assertVariableColumns(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(executionContext)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
@@ -321,9 +321,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     }
                 }
             }
-        } catch (SqlException e) {
-            // todo: why are we hiding exception?
-            e.printStackTrace();
         }
         assertFactoryMemoryUsage();
     }
@@ -359,9 +356,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            insert(compiler, insertSql, sqlExecutionContext);
-        }
+        engine.insert(insertSql, sqlExecutionContext);
     }
 
     public static void printFactoryMemoryUsageDiff() {
@@ -629,6 +624,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, clonedSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                         } finally {
                             doneLatch.countDown();
@@ -642,6 +638,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, originalSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                         } finally {
                             doneLatch.countDown();
@@ -690,7 +687,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean expectSize
     ) throws SqlException {
         snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+        try (final RecordCursorFactory factory = CairoEngine.select(compiler, query, sqlExecutionContext)) {
             assertFactoryCursor(
                     expected,
                     expectedTimestamp,
@@ -755,7 +752,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, sqlExecutionContext);
     }
 
-    protected static void assertCursorRawRecords(Record[] expected, RecordCursorFactory factory, boolean expectSize) {
+    protected static void assertCursorRawRecords(Record[] expected, RecordCursorFactory factory, boolean expectSize) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             if (expected == null) {
                 Assert.assertFalse(cursor.hasNext());
@@ -837,8 +834,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
             Assert.assertTrue((expectSize && rowsCount != -1) || (!expectSize && rowsCount == -1));
             Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
-        } catch (SqlException e) {
-            e.printStackTrace();
         }
         assertFactoryMemoryUsage();
     }
@@ -1271,9 +1266,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void ddl(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ddl(compiler, query, executionContext);
-        }
+        engine.ddl(query, executionContext);
     }
 
     protected static void ddl(CharSequence query) throws SqlException {
@@ -1284,21 +1277,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ddl(compiler, query, sqlExecutionContext);
     }
 
-    protected static void ddl(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, executionContext);
-        switch (cc.getType()) {
-            default:
-                try (OperationFuture future = cc.execute(null)) {
-                    future.await();
-                }
-                break;
-            case INSERT:
-                Assert.fail("use insert()");
-            case DROP:
-                Assert.fail("use drop()");
-            case SELECT:
-                Assert.fail("use select()");
-        }
+    protected static void ddl(SqlCompiler compiler, CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CairoEngine.ddl(compiler, query, sqlExecutionContext);
     }
 
     protected static void ddl(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
@@ -1421,7 +1401,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        TestUtils.insert(compiler, insertSql, sqlExecutionContext);
+        CairoEngine.insert(compiler, insertSql, sqlExecutionContext);
     }
 
     protected static QuestDBTestNode newNode(int nodeId) {
@@ -1570,13 +1550,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static RecordCursorFactory select(CharSequence selectSql) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return select(compiler, selectSql, sqlExecutionContext);
-        }
-    }
-
-    private static RecordCursorFactory select(SqlCompiler compiler, CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
+        return engine.select(selectSql, sqlExecutionContext);
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
