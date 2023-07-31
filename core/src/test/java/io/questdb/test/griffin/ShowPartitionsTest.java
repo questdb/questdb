@@ -460,8 +460,6 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         createTable(tableName, sqlExecutionContext);
         deleteFile(tableName, "2023-04", "timestamp.d");
 
-        engine.releaseInactive();
-
         final String finallyExpected = replaceSizeToMatchOS(
                 "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                         "0\tMONTH\t2023-01\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
@@ -472,6 +470,8 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                         "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
                 tableName
         );
+
+        engine.releaseInactive();
 
         assertQuery(
                 finallyExpected,
