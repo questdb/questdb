@@ -1343,6 +1343,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
                     null,
                     false,
+                    sqlExecutionContext,
                     true
             );
         }
@@ -2406,7 +2407,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             ddl("create table a ( i1 int)");
             ddl("create table b ( i2 int)");
 
-            assertQuery("", "select * from a, b where a.i1 = b.i2", null, null);
+            assertSql("", "select * from a, b where a.i1 = b.i2");
 
             assertPlan("select * from a , b where a.i1 = b.i2",
                     "SelectedRecord\n" +

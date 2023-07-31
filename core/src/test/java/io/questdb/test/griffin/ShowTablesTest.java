@@ -24,10 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class ShowTablesTest extends AbstractCairoTest {
@@ -35,13 +32,16 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testShowColumnsWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery8(
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertQuery(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                             "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
                             "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
                             "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
-                    "select * from table_columns('balances')"
+                    "select * from table_columns('balances')",
+                    null,
+                    null,
+                    false
             );
         });
     }
@@ -49,26 +49,29 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testShowColumnsWithMissingTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances2");
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("table does not exist"));
-            }
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertException(
+                    "show columns from balances2",
+                    18,
+                    "table does not exist"
+            );
         });
     }
 
     @Test
     public void testShowColumnsWithSimpleTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery8(
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertQuery(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                             "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
                             "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
                             "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
-                    "show columns from balances");
+                    "show columns from balances",
+                    null,
+                    null,
+                    false
+            );
         });
     }
 
@@ -82,10 +85,10 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithDrop() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            assertQuery8("table\nbalances\n", "show tables");
+            assertSql("table\nbalances\n", "show tables");
             ddl("create table balances2(cust_id int, ccy symbol, balance double)");
             drop("drop table balances");
-            assertQuery8("table\nbalances2\n", "show tables");
+            assertSql("table\nbalances2\n", "show tables");
         });
     }
 
@@ -93,7 +96,7 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithFunction() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            assertQuery8("table\nbalances\n", "select * from all_tables()");
+            assertSql("table\nbalances\n", "select * from all_tables()");
         });
     }
 
@@ -101,7 +104,7 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            assertQuery8("table\nbalances\n", "show tables");
+            assertSql("table\nbalances\n", "show tables");
         });
     }
 
@@ -109,7 +112,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTimeZone() throws Exception {
         assertMemoryLeak(() -> assertQuery12(
                 "TimeZone\nUTC\n",
-                "show time zone", null, false, sqlExecutionContext, true));
+                "show time zone", null, false, sqlExecutionContext, true
+        ));
     }
 
     @Test
@@ -118,51 +122,46 @@ public class ShowTablesTest extends AbstractCairoTest {
                 "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', " +
                         "'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', " +
                         "'max_identifier_length', 'standard_conforming_strings', " +
-                        "'search_path', 'datestyle', or 'time zone'"));
+                        "'search_path', 'datestyle', or 'time zone'"
+        ));
     }
 
     @Test
     public void testSqlSyntax1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(
-                        ex.getFlyweightMessage(),
-                        "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', " +
-                                "'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', " +
-                                "'max_identifier_length', 'standard_conforming_strings', " +
-                                "'search_path', 'datestyle', or 'time zone'"
-                );
-            }
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertException(
+                    "show",
+                    4,
+                    "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', " +
+                            "'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', " +
+                            "'max_identifier_length', 'standard_conforming_strings', " +
+                            "'search_path', 'datestyle', or 'time zone'"
+            );
         });
     }
 
     @Test
     public void testSqlSyntax2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns balances");
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("expected 'from'"));
-            }
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertException(
+                    "show columns balances",
+                    13,
+                    "expected 'from'"
+            );
         });
     }
 
     @Test
     public void testSqlSyntax3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances where");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [where]");
-            }
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertException(
+                    "show columns from balances where",
+                    27,
+                    "unexpected token [where]"
+            );
         });
     }
 }

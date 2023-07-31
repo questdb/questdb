@@ -216,41 +216,45 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithNoIndex() throws Exception {
         ddl("create table old(s1 symbol)");
         ddl("create table new as (select * from old)");
-        assertQuery("s1\n", "select * from new", null, null);
+        assertSql("s1\n", "select * from new");
     }
 
     @Test
     public void testCreateTableAsSelectWithOneCast() throws Exception {
         ddl("create table old(s1 symbol,s2 symbol, s3 symbol)");
-        assertQuery("s1\ts2\ts3\n", "select * from new", "create table new as (select * from old), cast(s1 as string)", null);
+        ddl("create table new as (select * from old), cast(s1 as string)");
+        assertSql("s1\ts2\ts3\n", "select * from new");
     }
 
     @Test
     public void testCreateTableAsSelectWithOneIndex() throws Exception {
         ddl("create table old(s1 symbol,s2 symbol, s3 symbol)");
-        assertQuery("s1\ts2\ts3\n", "select * from new", "create table new as (select * from old), index(s1)", null);
-
+        ddl("create table new as (select * from old), index(s1)");
+        assertSql("s1\ts2\ts3\n", "select * from new");
         assertColumnsIndexed("new", "s1");
     }
 
     @Test
     public void testCreateTableFromLikeTableWithIndex() throws Exception {
         ddl("create table tab (s symbol), index(s)");
-        assertQuery("s\n", "select * from x", "create table x (like tab)", null);
+        ddl("create table x (like tab)");
+        assertSql("s\n", "select * from x");
         assertColumnsIndexed("x", "s");
     }
 
     @Test
     public void testCreateTableFromLikeTableWithMultipleIndices() throws Exception {
         ddl("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
-        assertQuery("s1\ts2\ts3\n", "select * from x", "create table x(like tab)", null);
+        ddl("create table x(like tab)");
+        assertSql("s1\ts2\ts3\n", "select * from x");
         assertColumnsIndexed("x", "s1", "s2", "s3");
     }
 
     @Test
     public void testCreateTableFromLikeTableWithNoIndex() throws Exception {
         ddl("create table y (s1 symbol)");
-        assertQuery("s1\n", "select * from tab", "create table tab (like y)", null);
+        ddl("create table tab (like y)");
+        assertSql("s1\n", "select * from tab");
     }
 
     @Test
@@ -260,7 +264,8 @@ public class CreateTableTest extends AbstractCairoTest {
                 "a INT," +
                 "t timestamp) timestamp(t) partition by MONTH"
         );
-        assertQuery("a\tt\n", "select * from tab", "create table tab (like x)", "t");
+        ddl("create table tab (like x)");
+        assertSql("a\tt\n", "select * from tab");
         assertPartitionAndTimestamp();
     }
 
@@ -350,13 +355,15 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableIfNotExistsExistingLikeAndDestinationTable() throws Exception {
         ddl("create table x (s1 symbol)");
         ddl("create table y (s2 symbol)");
-        assertQuery("s1\n", "select * from x", "create table if not exists x (like y)", null);
+        ddl("create table if not exists x (like y)");
+        assertSql("s1\n", "select * from x");
     }
 
     @Test
     public void testCreateTableIfNotExistsExistingLikeTable() throws Exception {
         ddl("create table y (s2 symbol)");
-        assertQuery("s2\n", "select * from x", "create table if not exists x (like y)", null);
+        ddl("create table if not exists x (like y)");
+        assertSql("s2\n", "select * from x");
     }
 
     @Test
@@ -390,11 +397,11 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableLikeTableNotPresent() throws Exception {
         String likeTableName = "y";
-        try {
-            assertQuery("s1\n", "select * from x", "create table x (like " + likeTableName + ")", null);
-        } catch (SqlException se) {
-            TestUtils.assertContains(se.getFlyweightMessage(), "table does not exist [table=" + likeTableName + "]");
-        }
+        assertException(
+                "create table x (like " + likeTableName + ")",
+                21,
+                "table does not exist [table=" + likeTableName + "]"
+        );
     }
 
     @Test
@@ -549,21 +556,22 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableWithIndex() throws Exception {
-        assertQuery("s\n", "select * from tab", "create table tab (s symbol), index(s)", null);
-
+        ddl("create table tab (s symbol), index(s)");
+        assertSql("s\n", "select * from tab");
         assertColumnsIndexed("tab", "s");
     }
 
     @Test
     public void testCreateTableWithMultipleIndexes() throws Exception {
-        assertQuery("s1\ts2\ts3\n", "select * from tab", "create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)", null);
-
+        ddl("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
+        assertSql("s1\ts2\ts3\n", "select * from tab");
         assertColumnsIndexed("tab", "s1", "s2", "s3");
     }
 
     @Test
     public void testCreateTableWithNoIndex() throws Exception {
-        assertQuery("s\n", "select * from tab", "create table tab (s symbol) ", null);
+        ddl("create table tab (s symbol) ");
+        assertSql("s\n", "select * from tab");
     }
 
     @Test

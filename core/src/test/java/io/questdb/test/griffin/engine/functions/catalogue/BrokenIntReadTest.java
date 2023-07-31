@@ -186,16 +186,12 @@ public class BrokenIntReadTest extends AbstractCairoTest {
         ff = new BrokenIntRead(i);
         assertMemoryLeak(ff, () -> {
             createTables(ff);
-            printSqlResult3(
+            printSqlResult(
                     expected,
                     "pg_catalog.pg_attrdef order by 1",
                     null,
-                    null,
-                    null,
                     true,
-                    false,
-                    false,
-                    null
+                    false
             );
         });
     }

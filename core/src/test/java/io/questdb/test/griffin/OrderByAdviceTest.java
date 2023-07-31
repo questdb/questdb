@@ -24,10 +24,8 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -47,18 +45,20 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithOrderByAnotherColumn() throws Exception {
-        try {
-            assertQuery("b\n1\n2\n0\n",
-                    "select distinct b from x order by a desc;",
-                    "create table x as (" +
-                            "select" +
-                            " x a," +
-                            " x % 3 b" +
-                            " from long_sequence(9)" +
-                            ")", null);
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "ORDER BY expressions must appear in select list.");
-        }
+        ddl(
+                "create table x as (" +
+                "select" +
+                " x a," +
+                " x % 3 b" +
+                " from long_sequence(9)" +
+                ")"
+        );
+
+        assertException(
+                "select distinct b from x order by a desc;",
+                34,
+                "ORDER BY expressions must appear in select list."
+        );
     }
 
     @Test

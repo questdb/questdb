@@ -510,22 +510,21 @@ public class AsyncOffloadTest extends AbstractCairoTest {
     private void testAsyncSubQueryWithFilter(String query) throws Exception {
         WorkerPool pool = new WorkerPool((() -> 4));
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("CREATE TABLE price (\n" +
+                    ddl("CREATE TABLE price (\n" +
                             "  ts TIMESTAMP," +
                             "  type SYMBOL," +
                             "  value DOUBLE ) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
-                    compiler.compile("insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
-                    compiler.compile("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
-                    compiler.compile("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
+                    insert("insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+                    ddl("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
+                    ddl("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
 
-                    assertQuery6(
-                            compiler,
-                            "count\n20000\n",
-                            query,
-                            null,
+                    TestUtils.assertSql(
+                            engine,
                             sqlExecutionContext,
-                            false,
-                            true);
+                            query,
+                            sink,
+                            "count\n20000\n"
+                    );
                 },
                 configuration,
                 LOG);

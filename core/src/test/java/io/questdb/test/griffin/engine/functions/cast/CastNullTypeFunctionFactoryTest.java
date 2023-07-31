@@ -33,23 +33,21 @@ import org.junit.Test;
 public class CastNullTypeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCastNullToNonCastFriendlyTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as CURSOR)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: CURSOR", expected.getMessage());
-        }
+    public void testCastNullToNonCastFriendlyTypeShouldFail() throws Exception {
+        assertException(
+                "cast(null as CURSOR)",
+                13,
+                "invalid constant: CURSOR"
+        );
     }
 
     @Test
-    public void testCastNullToNonexistentTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as NON_EXISTING_TYPE)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: NON_EXISTING_TYPE", expected.getMessage());
-        }
+    public void testCastNullToNonexistentTypeShouldFail() throws Exception {
+        assertException(
+                "cast(null as NON_EXISTING_TYPE)",
+                13,
+                "invalid constant: NON_EXISTING_TYPE"
+        );
     }
 
     @Test

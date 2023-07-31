@@ -56,7 +56,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
-        assertQuery("k1\ta\tk\n" +
+        assertQuery(
+                "k1\ta\tk\n" +
                         "1970-01-01T00:00:00.000000Z\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.010000Z\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
                         "1970-01-01T00:00:00.020000Z\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
@@ -76,7 +77,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
-        assertQuery("col_k\ta\tk\tcol_k1\n" +
+        assertQuery(
+                "col_k\ta\tk\tcol_k1\n" +
                         "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\t1970-01-01T00:00:00.010000Z\n" +
                         "1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t1970-01-01T00:00:00.020000Z\n",
@@ -96,7 +98,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery2() throws Exception {
-        assertQuery("col_k\ta\tk\ta1\tk1\n" +
+        assertQuery(
+                "col_k\ta\tk\ta1\tk1\n" +
                         "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\n" +
                         "1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\n",
@@ -127,7 +130,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -147,7 +151,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testAvgDoubleColumnPartitionByNone() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -167,7 +172,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testAvgDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -187,7 +193,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testAvgDoubleEmptyColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -231,7 +238,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = select("select x, $1 from long_sequence(2)")) {
-                assertCursor("x\t$1\n" +
+                assertCursor(
+                        "x\t$1\n" +
                                 "1\t10\n" +
                                 "2\t10\n",
                         factory,
@@ -250,7 +258,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = select("select x, :y from long_sequence(2)")) {
-                assertCursor("x\t:y\n" +
+                assertCursor(
+                        "x\t:y\n" +
                                 "1\t10\n" +
                                 "2\t10\n",
                         factory,
@@ -269,7 +278,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = select("select x, $1 from long_sequence(2)")) {
-                assertCursor("x\t$1\n" +
+                assertCursor(
+                        "x\t$1\n" +
                                 "1\t10\n" +
                                 "2\t10\n",
                         factory,
@@ -288,7 +298,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = select("select x from long_sequence(100) where x = $1")) {
-                assertCursor("x\n" +
+                assertCursor(
+                        "x\n" +
                                 "10\n",
                         factory,
                         true,
@@ -353,7 +364,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCastAndAliasedColumnAfterWildcard() throws Exception {
-        assertQuery("a\tk\tklong\n" +
+        assertQuery(
+                "a\tk\tklong\n" +
                         "80.43224099968394\t1970-01-01T00:00:00.000000Z\t0\n" +
                         "8.486964232560668\t1970-01-01T00:00:00.010000Z\t10000\n" +
                         "8.43832076262595\t1970-01-01T00:00:00.020000Z\t20000\n",
@@ -373,7 +385,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCastAndAliasedColumnFollowedByWildcard() throws Exception {
-        assertQuery("klong\ta\tk\n" +
+        assertQuery(
+                "klong\ta\tk\n" +
                         "0\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                         "10000\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
                         "20000\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
@@ -393,7 +406,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCastAndAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
-        assertQuery("klong1\tklong2\ta\tk\ta1\tk1\n" +
+        assertQuery(
+                "klong1\tklong2\ta\tk\ta1\tk1\n" +
                         "0\t0\t4689592037643856\t1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\n" +
                         "10000\t10000\t4729996258992366\t1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\n" +
                         "20000\t20000\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\n",
@@ -413,7 +427,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCastAndAliasedColumnRepeatedTwiceFollowedByWildcard() throws Exception {
-        assertQuery("klong\tkdate\ta\tk\n" +
+        assertQuery(
+                "klong\tkdate\ta\tk\n" +
                         "0\t1970-01-01T00:00:00.000Z\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                         "10000\t1970-01-01T00:00:00.010Z\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
                         "20000\t1970-01-01T00:00:00.020Z\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
@@ -691,7 +706,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "81.0161274171258\tCC\t1970-01-21T20:00:00.000000Z\n" +
                         "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
                 "(x where b in ('BB','CC')) where a > 0 latest on k partition by b",
@@ -711,7 +727,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
-        assertQuery("b\tk\n" +
+        assertQuery(
+                "b\tk\n" +
                         "CC\t1970-01-21T20:00:00.000000Z\n" +
                         "BB\t1970-01-22T23:46:40.000000Z\n",
                 "(select b, max(k) k from x where b in ('BB','CC') sample by 1T) latest on k partition by b",
@@ -744,7 +761,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "5.0\n" +
                 "10.0\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct round(val*10, 0) v from prices",
                 "create table prices as " +
                         "(" +
@@ -773,7 +791,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "7.0\n" +
                 "12.0\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct 2+round(val*10,0) v from prices",
                 "create table prices as " +
                         "(" +
@@ -794,7 +813,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "B\n" +
                 "C\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct pair from prices order by pair",
                 "create table prices as " +
                         "(" +
@@ -818,7 +838,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "A\n" +
                 "B\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct pair from prices where pair in ('A','B')",
                 "create table prices as " +
                         "(" +
@@ -853,7 +874,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", null, true, true);
+                        ") timestamp(k) partition by DAY", null, true, true
+        );
     }
 
     @Test
@@ -863,7 +885,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final String expected = "a\tb\tk\n" +
                 "21.583224269349387\tYSBE\t1970-01-07T22:40:00.000000Z\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select * from (x timestamp(k)) where k IN '1970-01-07'",
                 "create table x as " +
                         "(" +
@@ -885,7 +908,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
                             "select * from pos where hash = 'ewef'",
                             "time",
@@ -901,7 +925,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
                             "select * from pos where 'ewef' = hash",
                             "time",
@@ -954,7 +979,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "63.59144993891355\tDSWU\t1970-01-21T20:00:00.000000Z\n" +
                 "50.65228336156442\tLNVT\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select * from x where test_match()",
                 "create table x as " +
                         "(" +
@@ -965,7 +991,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
-                "k");
+                "k"
+        );
 
         // these values are assured to be correct for the scenario
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -981,7 +1008,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     }
                 }
         };
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "(select sum(a) from x) where 1=1",
                 "create table x as " +
                         "(" +
@@ -1004,7 +1032,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "93.4460485739401\tPEHN\t1970-01-02T03:46:40.000000Z\n" +
                 "88.2822836669774\t\t1970-01-17T04:53:20.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where cast(b as symbol) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10)) and test_match()",
                 "create table x as " +
                         "(" +
@@ -1024,7 +1053,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n"
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -1058,7 +1088,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnConstantFalse() throws Exception {
-        assertQuery((CharSequence) null,
+        assertQuery(
+                (CharSequence) null,
                 "select * from x o where 10 < 8",
                 "create table x as " +
                         "(" +
@@ -1085,7 +1116,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testFilterOnIndexAndExpression() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery("contactId\n" +
+        assertQuery(
+                "contactId\n" +
                         "KOJSOLDYRO\n" +
                         "SKEDJ\n",
                 "SELECT\n" +
@@ -1130,7 +1162,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testFilterOnInterval() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n",
@@ -1143,7 +1176,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 1000000000) k" +
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
-                "k");
+                "k"
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -1151,7 +1185,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testFilterOnIntervalAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n",
                 "select * from x o where k IN '1970-01-01T03:36:40;45m' and a > 50 and test_match()",
@@ -1164,7 +1199,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k)",
-                "k");
+                "k"
+        );
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
@@ -1196,7 +1232,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "92.050039469858\t\n" +
                 "45.6344569609078\t\n" +
                 "40.455469747939254\t\n";
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b = null",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b from long_sequence(20)), index(b)",
                 null,
@@ -1211,7 +1248,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "58.912164838797885\t\n" +
                         "44.80468966861358\t\n" +
                         "89.40917126581896\t\n" +
-                        "3.993124821273464\t\n");
+                        "3.993124821273464\t\n"
+        );
     }
 
     @Test
@@ -1233,7 +1271,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
                 "create table x as " +
                         "(" +
@@ -1253,7 +1292,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n"
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -1264,7 +1304,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "HYRX\t1970-01-07T22:40:00.000000Z\t97.71103146051203\n" +
                 "HYRX\t1970-01-11T10:00:00.000000Z\t12.026122412833129\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select b, k, a from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and b = 'HYRX'",
                 "create table x as " +
                         "(" +
@@ -1284,12 +1325,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "HYRX\t1971-01-01T00:00:00.000000Z\t56.594291398612405\n");
+                        "HYRX\t1971-01-01T00:00:00.000000Z\t56.594291398612405\n"
+        );
     }
 
     @Test
     public void testFilterOnSubQueryIndexedDeferred() throws Exception {
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b in (select rnd_symbol('ABC') a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -1313,7 +1356,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "25.53319339703062\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "89.40917126581896\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "28.799739396819312\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "68.06873134626417\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "68.06873134626417\tABC\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
@@ -1331,7 +1375,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()" +
                         "and a < 80",
                 "create table x as " +
@@ -1354,7 +1399,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 expected + "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "72.30015763133606\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "12.105630273556178\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "11.585982949541474\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "11.585982949541474\tABC\t1971-01-01T00:00:00.000000Z\n"
+        );
 
         // these value are also ok because ddl2 is present, there is another round of check for that
         // this ensures that "init" on filter is invoked
@@ -1367,7 +1413,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         final String expected = "a\tb\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match() and 1 = 2",
                 "create table x as " +
                         "(" +
@@ -1390,7 +1437,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnSubQueryIndexedStrColumn() throws Exception {
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b in (select 'ABC' a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -1410,7 +1458,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
@@ -1432,7 +1481,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in ('RXGZ', 'HYRX', null, 'QZT')",
                 "create table x as " +
                         "(" +
@@ -1491,7 +1541,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n";
 
-        assertQuery11(expected1,
+        assertQuery11(
+                expected1,
                 "select * from x o where o.b in ('HYRX','PEHN', null, 'ABCD')",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
@@ -1511,14 +1562,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "76.9238189433781\tABCD\t\n" +
                         "49.42890511958454\tHYRX\t\n" +
                         "65.51335839796312\tABCD\t\n" +
-                        "28.20020716674768\tABCD\t\n");
+                        "28.20020716674768\tABCD\t\n"
+        );
     }
 
     @Test
     public void testFilterOnValuesAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery11("a\tb\tk\n" +
+        assertQuery11(
+                "a\tb\tk\n" +
                         "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
                         "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
@@ -1550,14 +1603,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
                         "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
-                        "44.80468966861358\t\t\n");
+                        "44.80468966861358\t\t\n"
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testFilterOnValuesAndInterval() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n",
@@ -1570,12 +1625,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 1000000000) k" +
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
-                "k");
+                "k"
+        );
     }
 
     @Test
     public void testFilterOnValuesDeferred() throws Exception {
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x o where o.b in ('ABCD', 'XYZ')",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
@@ -1590,7 +1647,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "81.64182592467493\tABCD\t\n" +
                         "76.9238189433781\tABCD\t\n" +
                         "65.51335839796312\tABCD\t\n" +
-                        "28.20020716674768\tABCD\t\n");
+                        "28.20020716674768\tABCD\t\n"
+        );
     }
 
     @Test
@@ -1600,7 +1658,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "52.98405941762054\tHYRX\n" +
                 "40.455469747939254\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b = 'HYRX'",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -1610,7 +1669,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 expected +
                         "75.88175403454873\tHYRX\n" +
-                        "57.78947915182423\tHYRX\n");
+                        "57.78947915182423\tHYRX\n"
+        );
     }
 
     @Test
@@ -1620,7 +1680,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final String expected = "a\tb\n" +
                 "52.98405941762054\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b = 'HYRX' and a > 41 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -1630,14 +1691,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 expected +
                         "75.88175403454873\tHYRX\n" +
-                        "57.78947915182423\tHYRX\n");
+                        "57.78947915182423\tHYRX\n"
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testFilterSingleNonExistingSymbol() throws Exception {
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b = 'ABC'",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -1647,13 +1710,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
-                        "57.78947915182423\tABC\n");
+                        "57.78947915182423\tABC\n"
+        );
     }
 
     @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b = 'ABC' and a > 30 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -1663,7 +1728,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
-                        "57.78947915182423\tABC\n");
+                        "57.78947915182423\tABC\n"
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -1686,7 +1752,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -1706,7 +1773,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
@@ -1728,7 +1796,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', 'ABC', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -1748,7 +1817,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
@@ -1770,7 +1840,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -1790,7 +1861,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
@@ -1902,7 +1974,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterWrongType() throws Exception {
-        assertFailure("select * from x where b - a",
+        assertFailure(
+                "select * from x where b - a",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1918,7 +1991,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testGreaterNoOpFilter() throws Exception {
-        assertQuery("c0\n",
+        assertQuery(
+                "c0\n",
                 "select t7.c0 from t7 where t7.c0 > t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
                 null,
@@ -1929,7 +2003,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testGreaterOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
+        assertQuery(
+                "c0\n" +
                         "42\n",
                 "select t7.c0 from t7 where t7.c0 >= t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
@@ -1952,7 +2027,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "nts\tmin\n" +
                         "nts\t2020-01-01T00:00:00.000010Z\n",
                 false,
-                true);
+                true
+        );
     }
 
     @Test
@@ -1990,7 +2066,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastStrToDouble() throws Exception {
-        assertQuery("column\tprice\n" +
+        assertQuery(
+                "column\tprice\n" +
                         "80.43224099968394\t0.8043224099968393\n" +
                         "28.45577791213847\t0.2845577791213847\n" +
                         "93.4460485739401\t0.9344604857394011\n" +
@@ -2212,7 +2289,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAll() throws Exception {
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
@@ -2248,7 +2326,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllBool() throws Exception {
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
                         "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n",
                 "select * from x latest on k partition by b",
@@ -2287,7 +2366,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from x where 6 < 10 latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -2324,7 +2404,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from x where a > 40 latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -2361,7 +2442,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from x latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -2399,7 +2481,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from x where 5 > 2 latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -2435,7 +2518,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from (select a,k,b from x latest on k partition by b) where a > 40",
                 "create table x as " +
                         "(" +
@@ -2477,7 +2561,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select a,k,b from x where a > 40 latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -2516,7 +2601,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from x where c = 'SXUX' latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -2548,7 +2634,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByAllIndexedFilterColumnDereference() throws Exception {
         final String expected = "b\tk\n" +
                 "RXGZ\t1970-01-12T13:46:40.000000Z\n";
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select b,k from x where b = 'RXGZ' and k < '1970-01-22' latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -2619,7 +2706,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(1);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
@@ -2637,7 +2725,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -2655,7 +2744,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -2673,7 +2763,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
@@ -2691,7 +2782,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(8);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
@@ -2710,7 +2802,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(#f9, #z3, #vepe7h) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -2739,7 +2832,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     "), index(s) timestamp (ts) partition by DAY"
                     );
                     try {
-                        assertQuery("time\tuuid\thash\n",
+                        assertQuery(
+                                "time\tuuid\thash\n",
                                 "select * from x where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg) latest on ts partition by s",
                                 "ts",
                                 true,
@@ -2758,7 +2852,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("time\tuuid\thash\n" +
+                        assertQuery(
+                                "time\tuuid\thash\n" +
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -2780,7 +2875,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("time\tuuid\thash\n" +
+                        assertQuery(
+                                "time\tuuid\thash\n" +
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -2923,7 +3019,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashBitsTable();
-                    assertQuery("i\ts\tts\tbits3\tbits7\tbits9\n" +
+                    assertQuery(
+                            "i\ts\tts\tbits3\tbits7\tbits9\n" +
                                     "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
                                     "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
                             "select * from x where bits7 within(#wt/5) latest on ts partition by s",//(##11100)",
@@ -2941,7 +3038,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createRndGeoHashBitsTable();
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from x where bits3 within(##111111) latest on ts partition by s",
                                 "ts",
                                 true,
@@ -2960,7 +3058,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -3050,7 +3149,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where 'hash' within(#f9) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -3069,7 +3169,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where uuid within(#f9) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -3088,7 +3189,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within() latest on time partition by uuid",
                                 "time",
                                 true,
@@ -3107,7 +3209,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(#f9, #z3, null) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -3126,7 +3229,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -3145,7 +3249,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(cast('f91t' as geohash(4c)), #z3, null) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -3216,7 +3321,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select a,k,b from x latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -3261,7 +3367,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1970-01-12T13:46:40.000000Z\t48.820511018586934\n" +
                 "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
                 "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select k,a from x latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -3342,7 +3449,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllMixed() throws Exception {
-        assertQuery13("b\tk\ta\n" +
+        assertQuery13(
+                "b\tk\ta\n" +
                         "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
                         "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
                         "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
@@ -3440,7 +3548,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from x where a > 40 latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -3501,7 +3610,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByDeprecated() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "28.45577791213847\tHNR\t1970-01-02T03:46:40.000000Z\n" +
                         "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n",
                 "select * from x latest by b",
@@ -3527,12 +3637,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "11.427984775756228\tHNR\t1971-01-01T00:00:00.000000Z\n",
                 true,
                 false,
-                true);
+                true
+        );
     }
 
     @Test
     public void testLatestByDeprecatedFiltered() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
                 "select * from x latest by b where b = 'HNR'",
                 "create table x as " +
@@ -3556,12 +3668,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
                 true,
                 false,
-                true);
+                true
+        );
     }
 
     @Test
     public void testLatestByFailsOnNonDesignatedTimestamp() throws Exception {
-        assertFailure("tab latest on ts partition by id",
+        assertFailure(
+                "tab latest on ts partition by id",
                 "create table tab(" +
                         "    id symbol, " +
                         "    name symbol, " +
@@ -3569,7 +3683,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    ts timestamp" +
                         ")",
                 14,
-                "latest by over a table requires designated TIMESTAMP");
+                "latest by over a table requires designated TIMESTAMP"
+        );
     }
 
     @Test
@@ -3637,12 +3752,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
-                    compiler.compile("create table x as " +
+                    compiler.compile(
+                            "create table x as " +
                                     "(" +
                                     "select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 100000000000) k from" +
                                     " long_sequence(200)" +
                                     ") timestamp(k) partition by DAY",
-                            sqlExecutionContext);
+                            sqlExecutionContext
+                    );
 
                     refreshTablesInBaseEngine();
                     try (RecordCursorFactory factory = compiler.compile("select * from x where b = 'PEHN' and a < 22 latest on k partition by b", sqlExecutionContext).getRecordCursorFactory()) {
@@ -3718,7 +3835,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByKeyValue() throws Exception {
         // no index
-        assertQuery11("a\tb\tk\n" +
+        assertQuery11(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
                 "select * from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
@@ -3739,13 +3857,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
     public void testLatestByKeyValueColumnDereference() throws Exception {
         // no index
-        assertQuery11("k\ta\tb\n" +
+        assertQuery11(
+                "k\ta\tb\n" +
                         "1970-01-03T07:33:20.000000Z\t23.90529010846525\tRXGZ\n",
                 "select k,a,b from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
@@ -3766,13 +3886,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "k\ta\tb\n" +
-                        "1971-01-01T00:00:00.000000Z\t56.594291398612405\tRXGZ\n");
+                        "1971-01-01T00:00:00.000000Z\t56.594291398612405\tRXGZ\n"
+        );
     }
 
     @Test
     public void testLatestByKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11("a\tb\tk\n" +
+        assertQuery11(
+                "a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -3792,7 +3914,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
+                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n"
+        );
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -3801,7 +3924,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByKeyValueFilteredEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery("a\tb\tk\n",
+        assertQuery(
+                "a\tb\tk\n",
                 "select * from x where b = 'PEHN' and a < 22 and 1 = 2 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -3822,7 +3946,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKeyValueIndexed() throws Exception {
-        assertQuery11("a\tb\tk\n" +
+        assertQuery11(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
                 "select * from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
@@ -3842,13 +3967,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
     public void testLatestByKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11("a\tb\tk\n" +
+        assertQuery11(
+                "a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -3868,14 +3995,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
+                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n"
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testLatestByKeyValueInterval() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n",
                 "select * from x where b = 'PEHN' and k IN '1970-01-06T18:53:20;11d' latest on k partition by b",
                 "create table x as " +
@@ -3887,13 +4016,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
-                "k");
+                "k"
+        );
     }
 
     @Test
     public void testLatestByKeyValues() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
                 "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
@@ -3926,7 +4057,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByKeyValuesFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -3961,7 +4093,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKeyValuesIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
                 "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
@@ -3993,7 +4126,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
                 "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b",
@@ -4027,7 +4161,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValue() throws Exception {
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -4047,13 +4182,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "72.30015763133606\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "72.30015763133606\tXYZ\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
     public void testLatestByMissingKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -4073,7 +4210,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n"
+        );
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4081,7 +4219,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValueIndexed() throws Exception {
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -4101,12 +4240,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "81.64182592467493\tXYZ\t1971-01-05T15:06:40.000000Z\n");
+                        "81.64182592467493\tXYZ\t1971-01-05T15:06:40.000000Z\n"
+        );
     }
 
     @Test
     public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select b,k,a from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -4126,13 +4267,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(t)",
                 "b\tk\ta\n" +
-                        "XYZ\t1971-01-05T15:06:40.000000Z\t81.64182592467493\n");
+                        "XYZ\t1971-01-05T15:06:40.000000Z\t81.64182592467493\n"
+        );
     }
 
     @Test
     public void testLatestByMissingKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(null,
+        assertQuery11(
+                null,
                 "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -4152,7 +4295,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n"
+        );
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -4160,7 +4304,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMissingKeyValues() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
                 "select * from x where b in ('XYZ','HYRX') latest on k partition by b",
                 "create table x as " +
@@ -4191,7 +4336,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMissingKeyValuesFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
                 "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -4224,7 +4370,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValuesIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
                 "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b",
                 "create table x as " +
@@ -4255,7 +4402,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
                 "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -4368,7 +4516,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMultipleColumns() throws Exception {
-        assertQuery13("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n",
+        assertQuery13(
+                "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n",
                 "select * from balances latest on timestamp partition by cust_id, balance_ccy",
                 "create table balances (\n" +
                         "\tcust_id int, \n" +
@@ -4419,7 +4568,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 41,
-                "Invalid column");
+                "Invalid column"
+        );
     }
 
     @Test
@@ -4636,7 +4786,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQuery() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4670,7 +4821,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryDeferred() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4706,7 +4858,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySubQueryDeferredFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4745,7 +4898,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryDeferredIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4780,7 +4934,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryDeferredIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4820,7 +4975,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySubQueryFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4857,7 +5013,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4891,7 +5048,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
@@ -4940,12 +5098,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 35,
-                "unsupported column type");
+                "unsupported column type"
+        );
     }
 
     @Test
     public void testLatestBySubQueryIndexedStrColumn() throws Exception {
-        assertQuery13("a\tb\tk\n" +
+        assertQuery13(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
                 "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b",
                 "create table x as " +
@@ -5042,7 +5202,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByTimestampInclusion() throws Exception {
-        assertQuery("ts\tmarket_type\tavg\n" +
+        assertQuery(
+                "ts\tmarket_type\tavg\n" +
                         "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
                         "1970-01-01T00:00:09.999996Z\tbbb\t0.344021345830156\n",
                 "select ts, market_type, avg(bid_price) FROM market_updates LATEST ON ts PARTITION BY market_type SAMPLE BY 1s",
@@ -5076,14 +5237,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "comprehensive latest on ts partition by " + nameType[0],
                     null,
                     40,
-                    String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail));
+                    String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail)
+            );
         }
     }
 
     @Test
     public void testLatestByValue() throws Exception {
         // no index
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
                 "select * from x where b = 'HNR' latest on k partition by b",
                 "create table x as " +
@@ -5107,7 +5270,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
                 true,
                 false,
-                true);
+                true
+        );
     }
 
     @Test
@@ -5204,7 +5368,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLessNoOpFilter() throws Exception {
-        assertQuery("c0\n",
+        assertQuery(
+                "c0\n",
                 "select t7.c0 from t7 where t7.c0 < t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
                 null,
@@ -5215,7 +5380,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLessOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
+        assertQuery(
+                "c0\n" +
                         "42\n",
                 "select t7.c0 from t7 where t7.c0 <= t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
@@ -5231,7 +5397,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             ddl("create table x as (select x from long_sequence(10))");
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = select("x limit -9223372036854775807-1, -1")) {
-                assertCursor("x\n" +
+                assertCursor(
+                        "x\n" +
                                 "1\n" +
                                 "2\n" +
                                 "3\n" +
@@ -5252,7 +5419,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLongCursor() throws Exception {
-        assertQuery("x\n" +
+        assertQuery(
+                "x\n" +
                         "1\n" +
                         "2\n" +
                         "3\n" +
@@ -5273,7 +5441,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         // test another record count
 
-        assertQuery("x\n" +
+        assertQuery(
+                "x\n" +
                         "1\n" +
                         "2\n" +
                         "3\n" +
@@ -5303,7 +5472,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         // test 0 record count
 
-        assertQuery("x\n",
+        assertQuery(
+                "x\n",
                 "select * from long_sequence(0)",
                 null,
                 null,
@@ -5311,7 +5481,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery("x\n",
+        assertQuery(
+                "x\n",
                 "select * from long_sequence(-2)",
                 null,
                 null,
@@ -5324,7 +5495,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testMaxDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -5344,7 +5516,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testMaxDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -5364,7 +5537,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testMinDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -5384,7 +5558,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testMinDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -5473,7 +5648,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by b,a,x.a",
                 "create table x as " +
@@ -5494,7 +5670,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test
@@ -5524,7 +5701,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
                 "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x order by a,b,c,d,e,f,g,i,j,k,l,n",
                 "create table x as " +
                         "(" +
@@ -5586,7 +5764,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByFull() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t19.202208853547866\t1970-01-03T00:00:00.000000Z\n" +
                         "\t32.5403220015421\t1970-01-03T18:00:00.000000Z\n" +
                         "BHF\t87.99634725391621\t1970-01-03T06:00:00.000000Z\n" +
@@ -5654,12 +5833,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "XPE\t20.447441837877754\t1970-01-03T00:00:00.000000Z\n" +
                         "YCT\t57.78947915182423\t1970-01-03T18:00:00.000000Z\n" +
                         "ZOU\t65.90341607692226\t1970-01-03T15:00:00.000000Z\n",
-                true);
+                true
+        );
     }
 
     @Test
     public void testOrderByFullSymbol() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t144.98448717090477\t1970-01-03T00:00:00.000000Z\n" +
                         "\t87.99634725391621\t1970-01-03T03:00:00.000000Z\n" +
                         "\t146.37943613686184\t1970-01-03T06:00:00.000000Z\n" +
@@ -5713,12 +5894,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "SDOT\t12.02416087573498\t1970-01-04T06:00:00.000000Z\n" +
                         "SDOT\t65.51335839796312\t1970-01-04T09:00:00.000000Z\n" +
                         "VTJW\t40.22810626779558\t1970-01-03T09:00:00.000000Z\n",
-                true);
+                true
+        );
     }
 
     @Test
     public void testOrderByFullTimestampLead() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t19.202208853547866\t1970-01-03T00:00:00.000000Z\n" +
                         "CPS\t80.43224099968394\t1970-01-03T00:00:00.000000Z\n" +
                         "XPE\t20.447441837877754\t1970-01-03T00:00:00.000000Z\n" +
@@ -5786,7 +5969,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "NVT\t95.40069089049732\t1970-01-04T06:00:00.000000Z\n" +
                         "WUG\t58.912164838797885\t1970-01-04T06:00:00.000000Z\n" +
                         "XIO\t14.830552335848957\t1970-01-04T09:00:00.000000Z\n",
-                true);
+                true
+        );
     }
 
     @Test
@@ -5836,7 +6020,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n" +
                 "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select * from x " +
                         " order by b, a",
                 "create table x as " +
@@ -5886,7 +6071,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x order by c",
                 "create table x as " +
                         "(" +
@@ -5942,7 +6128,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "4\t3\n" +
                 "5\t1\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a, count(*) from x order by 2 desc, 1 asc",
                 "create table x as (" +
                         "select" +
@@ -5966,7 +6153,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "4\t3\n" +
                 "5\t1\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a col_1, count(*) col_cnt from x order by 2 desc, 1 asc",
                 "create table x as (" +
                         "select" +
@@ -5996,7 +6184,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1569490116\t1573662097\t-1151815083\n" +
                 "806715481\t1545253512\t-1942998303\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a col_1, b col_2, a+b col_sum from x order by 3 desc, 2, 1 desc",
                 "create table x as (" +
                         "select" +
@@ -6026,7 +6215,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1569490116\t1573662097\t-1151815083\n" +
                 "806715481\t1545253512\t-1942998303\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a, b, a+b from x order by 3 desc, 2, 1 desc",
                 "create table x as (" +
                         "select" +
@@ -6060,7 +6250,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery11(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by k",
                 "create table x as " +
@@ -6111,7 +6302,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
                 "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x order by k,a",
                 "create table x as " +
                         "(" +
@@ -6183,7 +6375,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x order by c,n desc",
                 "create table x as " +
                         "(" +
@@ -6260,7 +6453,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testOrderChar() throws Exception {
-        assertQuery13("a\n" +
+        assertQuery13(
+                "a\n" +
                         "C\n" +
                         "E\n" +
                         "G\n" +
@@ -6351,7 +6545,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x where k IN '1970-01' order by b asc",
                 "create table x as " +
                         "(" +
@@ -6422,7 +6617,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x where k IN '1970-01' order by b desc",
                 "create table x as " +
                         "(" +
@@ -6493,7 +6689,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x where k IN '1970-01' order by b, k desc",
                 "create table x as " +
                         "(" +
@@ -6562,7 +6759,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "x where k IN '1970-01' order by b desc, k",
                 "create table x as " +
                         "(" +
@@ -6628,7 +6826,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillLinearEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
                 "create table x as " +
                         "(" +
@@ -6647,7 +6846,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillNoneEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) order by k,b",
                 "create table x as " +
                         "(" +
@@ -6665,7 +6865,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillNullEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) order by k,b",
                 "create table x as " +
                         "(" +
@@ -6683,7 +6884,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillPrevEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) order by k,b",
                 "create table x as " +
                         "(" +
@@ -6701,7 +6903,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillValueEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) order by k,b",
                 "create table x as " +
                         "(" +
@@ -6719,7 +6922,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSelectColumns() throws Exception {
-        assertQuery("a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
+        assertQuery(
+                "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
                         "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.9205\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
@@ -6775,7 +6979,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSelectColumnsSansTimestamp() throws Exception {
-        assertQuery("a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\n" +
+        assertQuery(
+                "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\n" +
                         "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.9205\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\n" +
@@ -6837,7 +7042,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "8\n" +
                 "9\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select distinct a from x order by a",
                 "create table x as " +
                         "(" +
@@ -6916,7 +7122,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "YYQE\n" +
                 "ZSXU\n";
 
-        assertQuery13(expected,
+        assertQuery13(
+                expected,
                 "select distinct a from x order by a",
                 "create table x as " +
                         "(" +
@@ -6976,7 +7183,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "from  tab t1 " +
                         "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id)",
                 "create table tab as (select x as id from long_sequence(3))",
-                null, false, false);
+                null, false, false
+        );
     }
 
     @Test
@@ -6987,7 +7195,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select distinct t1.id " +
                         "from  tab t1, tab t2",
                 "create table tab as (select x as id from long_sequence(2))",
-                null, false, false);
+                null, false, false
+        );
     }
 
     @Ignore("result order is currently dependent on stability of sorting method")
@@ -7195,7 +7404,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSumDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -7215,7 +7425,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSumDoubleColumnPartitionByNone() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -7279,7 +7490,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSumDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -7297,7 +7509,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolStrB() throws Exception {
-        assertQuery13("a\nC\nC\nB\nA\nA\n",
+        assertQuery13(
+                "a\nC\nC\nB\nA\nA\n",
                 "select cast(a as string) a from x order by 1 desc",
                 "create table x as (select rnd_symbol('A','B','C') a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
                 null,
@@ -7471,7 +7684,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testVectorAggregateOnSparsePartitions() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -7489,7 +7703,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
-        assertQuery("avg\tsum\n" +
+        assertQuery(
+                "avg\tsum\n" +
                         "0.49811606109211604\t17.932178199316176\n",
                 "select avg(c),sum(c) from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
@@ -7512,7 +7727,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         }).start();
 
         try {
-            assertQuery("avg\tsum\n" +
+            assertQuery(
+                    "avg\tsum\n" +
                             "0.5003504\t834470.437288\n",
                     "select round(avg(c), 7) avg, round(sum(c), 6) sum from x",
                     "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
@@ -7528,7 +7744,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testVectorSumDoubleAndIntWithNulls() throws Exception {
-        assertQuery("sum\tsum1\n" +
+        assertQuery(
+                "sum\tsum1\n" +
                         "41676799\t416969.81549\n",
                 "select sum(a),round(sum(b),5) sum1 from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(1000035L))",
@@ -7540,7 +7757,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testVirtualColumns() throws Exception {
-        assertQuery("a\ta1\tb\tc\tcolumn\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
+        assertQuery(
+                "a\ta1\tb\tc\tcolumn\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
                         "10\t1253890363\tfalse\tXYS\t0.7704700589519898\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.9619284627798701\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
@@ -7596,7 +7814,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testVirtualColumnsSansTimestamp() throws Exception {
-        assertQuery("a\ta1\tb\tc\tcolumn\n" +
+        assertQuery(
+                "a\ta1\tb\tc\tcolumn\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\n" +
                         "10\t1253890363\tfalse\tXYS\t0.7704700589519898\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.9619284627798701\n" +
@@ -7675,20 +7894,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "WITHIN clause requires LATEST BY using only indexed symbol columns"
         );
 
-        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
+        assertFailure(
+                "select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
                 null,
                 28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
 
-        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
+        assertFailure(
+                "select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
                 null,
                 28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
 
-        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
+        assertFailure(
+                "select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
                 null,
                 28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
     }
 
     @Test
@@ -7706,7 +7931,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, #zz as geo, x::timestamp ts " +
                         " from long_sequence(20) " +
-                        "), index(sym) timestamp(ts) ", "ts", true, true);
+                        "), index(sym) timestamp(ts) ", "ts", true, true
+        );
     }
 
     @Test
@@ -7790,13 +8016,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     private void expectSqlResult(CharSequence expected, CharSequence query) throws SqlException {
-        printSqlResult3(expected, query, "ts",
-                null,
-                null,
-                true,
-                true,
-                false,
-                null);
+        printSqlResult(expected, query, "ts", true, true);
     }
 
     private void testBindVariableInIndexedLookup(boolean indexed) throws Exception {
@@ -7909,7 +8129,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             bindVariableService.clear();
             try (RecordCursorFactory factory = select("xy where v " + keyword + " $1")) {
                 bindVariableService.setStr(0, "MBE%");
-                assertCursor("v\n" +
+                assertCursor(
+                        "v\n" +
                                 "MBEZGHW\n",
                         factory,
                         true,
@@ -7917,7 +8138,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setStr(0, "Z%");
-                assertCursor("v\n" +
+                assertCursor(
+                        "v\n" +
                                 "ZSQLDGLOG\n" +
                                 "ZLUOG\n" +
                                 "ZLCBDMIG\n" +
@@ -7929,7 +8151,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         false
                 );
 
-                assertCursor("v\n" +
+                assertCursor(
+                        "v\n" +
                                 "ZSQLDGLOG\n" +
                                 "ZLUOG\n" +
                                 "ZLCBDMIG\n" +
@@ -7943,7 +8166,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
 
                 bindVariableService.setStr(0, null);
-                assertCursor("v\n",
+                assertCursor(
+                        "v\n",
                         factory,
                         true,
                         false
@@ -8211,21 +8435,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by boolean");
+                    "tab latest on ts partition by boolean"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by short");
+                    "tab latest on ts partition by short"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by int");
+                    "tab latest on ts partition by int"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8233,7 +8460,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by long");
+                    "tab latest on ts partition by long"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8241,7 +8469,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by long256");
+                    "tab latest on ts partition by long256"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8251,7 +8480,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by char");
+                    "tab latest on ts partition by char"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8259,14 +8489,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by string");
+                    "tab latest on ts partition by string"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t3614738589890112276\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by symbol");
+                    "tab latest on ts partition by symbol"
+            );
         });
     }
 }

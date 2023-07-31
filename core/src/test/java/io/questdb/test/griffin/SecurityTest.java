@@ -991,12 +991,13 @@ public class SecurityTest extends AbstractCairoTest {
                     true
             );
             try {
-                assertQuery6(
+                assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, count() from tb1 order by sym1",
                         null,
-                        readOnlyExecutionContext, true,
+                        true,
+                        readOnlyExecutionContext,
                         true
                 );
                 Assert.fail();
@@ -1079,13 +1080,14 @@ public class SecurityTest extends AbstractCairoTest {
                                boolean supportsRandomAccess,
                                SqlExecutionContext sqlExecutionContext) throws SqlException {
         memoryRestrictedEngine.reloadTableNames();
-        assertQuery6(
+        assertQuery(
                 compiler,
                 expected,
                 query,
                 expectedTimestamp,
-                sqlExecutionContext,
                 supportsRandomAccess,
-                false);
+                sqlExecutionContext,
+                false
+        );
     }
 }

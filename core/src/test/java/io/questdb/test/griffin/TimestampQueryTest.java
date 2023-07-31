@@ -1500,7 +1500,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult3(expected, query, "ts", null, null, true, true, false, null);
+        printSqlResult(expected, query, "ts", true, true);
         return (int) expectedCount;
     }
 }

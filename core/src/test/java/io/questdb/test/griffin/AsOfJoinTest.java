@@ -377,7 +377,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
                         "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
                         "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n";
-                assertQuery(compiler, expected, query, "ts", false, true);
+                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -609,6 +609,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         query,
                         "timestamp",
                         false,
+                        sqlExecutionContext,
                         true
                 );
             }
@@ -735,7 +736,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "AAPL\tLSE\t2002-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
                         "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000Z\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\n" +
                         "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n";
-                assertQuery(compiler, expected, query, "ts", false, true);
+                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -817,7 +818,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "C\t2020-06-04T11:33:20.000000Z\t\t\n" +
                         "A\t2020-09-28T05:20:00.000000Z\t2020-02-09T17:46:39.999999Z\tA\n" +
                         "B\t2021-01-21T23:06:40.000000Z\t2020-06-04T11:33:19.999999Z\tB\n";
-                assertQuery(compiler, expected, query, "ts", false, true);
+                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -1071,7 +1072,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\n";
-                assertQuery(compiler, expected, query, "ts", false, true);
+                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -1128,7 +1129,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
-                assertQuery(compiler, expected, query, "ts", false, true);
+                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -1189,7 +1190,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "Whatever\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
                         "Whatever\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
 
-                assertQuery(compiler, expected, query, "t0ts", false, true);
+                assertQuery(compiler, expected, query, "t0ts", false, sqlExecutionContext, true);
             }
         });
     }
