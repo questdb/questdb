@@ -1462,9 +1462,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         snapshotMemoryUsage();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-            if (configuration.getWalEnabledDefault()) {
-                drainWalQueue();
-            }
             RecordCursorFactory factory = cc.getRecordCursorFactory();
             if (expectedPlan != null) {
                 planSink.clear();

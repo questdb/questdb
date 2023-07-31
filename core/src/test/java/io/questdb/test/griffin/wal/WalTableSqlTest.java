@@ -66,12 +66,14 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void test2InsertsAtSameTime() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
-                    "x long," +
-                    "sym symbol," +
-                    "ts timestamp," +
-                    "sym2 symbol" +
-                    ") timestamp(ts) partition by DAY WAL");
+            ddl(
+                    "create table " + tableName + " (" +
+                            "x long," +
+                            "sym symbol," +
+                            "ts timestamp," +
+                            "sym2 symbol" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
@@ -96,10 +98,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd')");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
+            assertSql(
+                    "x\tsym\tts\tsym2\n" +
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
-                    "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n", tableName);
+                    "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n",
+                    tableName
+            );
         });
     }
 
@@ -107,13 +112,15 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testAddColumnWalRollsWalSegment() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl(
+                    "create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "str string," +
                     "ts timestamp," +
                     "sym2 symbol" +
-                    ") timestamp(ts) partition by DAY WAL");
+                    ") timestamp(ts) partition by DAY WAL"
+            );
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
@@ -127,7 +134,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     insertMethod.commit();
 
                     insertMethod.execute();
-                    compile("alter table " + tableName + " add column new_column int");
+                    ddl("alter table " + tableName + " add column new_column int");
                     insertMethod.commit();
                 }
             }
@@ -147,7 +154,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testAddFixedSizeColumnBeforeInsertCommit() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "ts timestamp," +
@@ -182,7 +189,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testAddMultipleWalColumnsBeforeCommit() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "ts timestamp," +
@@ -198,8 +205,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 ) {
 
                     insertMethod.execute();
-                    compile("alter table " + tableName + " add column jjj int");
-                    compile("alter table " + tableName + " add column col_str string");
+                    ddl("alter table " + tableName + " add column jjj int");
+                    ddl("alter table " + tableName + " add column col_str string");
                     insertMethod.commit();
                 }
             }
@@ -218,7 +225,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testAddWalColumnAfterCommit() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "ts timestamp," +
@@ -234,7 +241,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 ) {
                     insertMethod.execute();
                     insertMethod.commit();
-                    compile("alter table " + tableName + " add column jjj int");
+                    ddl("alter table " + tableName + " add column jjj int");
                 }
             }
 
@@ -253,7 +260,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             Rnd rnd = TestUtils.generateRandom(LOG);
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "ts timestamp" +
                     ") timestamp(ts) partition by HOUR WAL WITH maxUncommittedRows=" + rnd.nextInt(20));
@@ -291,7 +298,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testConvertToFromWalWithLagSet() throws Exception {
         String tableName = testName.getMethodName();
-        compile("create table " + tableName + " as (" +
+        ddl("create table " + tableName + " as (" +
                 "select x, " +
                 " timestamp_sequence('2022-02-24', 1000000L) ts " +
                 " from long_sequence(1)" +
@@ -350,35 +357,38 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testConvertToWalAfterAlter() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            ddl(
+                    "create table " + tableName + " as (" +
+                            "select x, " +
+                            " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                            " from long_sequence(1)" +
+                            ") timestamp(ts) partition by DAY BYPASS WAL"
             );
-            compile("alter table " + tableName + " add col1 int");
-            compile("alter table " + tableName + " set type wal", sqlExecutionContext);
+            ddl("alter table " + tableName + " add col1 int");
+            ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
             engine.releaseInactive();
             ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
             engine.reloadTableNames(convertedTables);
 
-            compile("alter table " + tableName + " add col2 int");
-            compile("insert into " + tableName + "(ts, col1, col2) values('2022-02-24T01', 1, 2)");
+            ddl("alter table " + tableName + " add col2 int");
+            insert("insert into " + tableName + "(ts, col1, col2) values('2022-02-24T01', 1, 2)");
             drainWalQueue();
 
-            assertSql("select ts, col1, col2 from " + tableName, "ts\tcol1\tcol2\n" +
-                    "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
-                    "2022-02-24T01:00:00.000000Z\t1\t2\n");
+            assertSql(
+                    "select ts, col1, col2 from " + tableName, "ts\tcol1\tcol2\n" +
+                            "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
+                            "2022-02-24T01:00:00.000000Z\t1\t2\n"
+            );
 
-            compile("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
+            ddl("alter table " + tableName + " set type bypass wal");
             engine.releaseInactive();
             convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
             engine.reloadTableNames(convertedTables);
 
-            compile("alter table " + tableName + " drop column col2");
-            compile("alter table " + tableName + " add col3 int");
-            compile("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
+            ddl("alter table " + tableName + " drop column col2");
+            ddl("alter table " + tableName + " add col3 int");
+            insert("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
 
             assertSql("select ts, col1, col3 from " + tableName, "ts\tcol1\tcol3\n" +
                     "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
@@ -391,18 +401,19 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL"
+            ddl(
+                    "create table " + tableName + " as (" +
+                            "select x, " +
+                            " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                            " from long_sequence(1)" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
             TableToken sysTableName1 = engine.verifyTableName(tableName);
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(1)" +
@@ -436,31 +447,31 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY";
 
-            compile(createSql + " WAL");
+            ddl(createSql + " WAL");
             drop("drop table " + tableName);
 
             SharedRandom.RANDOM.get().reset();
-            compile(createSql);
+            ddl(createSql);
             assertSql("x\tsym\tsym2\tts\n" +
                     "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n", tableName);
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 drop("drop table " + tableName);
                 SharedRandom.RANDOM.get().reset();
-                compile(createSql + " WAL");
+                ddl(createSql + " WAL");
                 drainWalQueue(walApplyJob);
                 assertSql("x\tsym\tsym2\tts\n" +
                         "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n", tableName);
 
                 drop("drop table " + tableName);
                 SharedRandom.RANDOM.get().reset();
-                compile(createSql);
+                ddl(createSql);
                 assertSql("x\tsym\tsym2\tts\n" +
                         "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n", tableName);
 
                 drop("drop table " + tableName);
                 SharedRandom.RANDOM.get().reset();
-                compile(createSql + " WAL");
+                ddl(createSql + " WAL");
                 drainWalQueue(walApplyJob);
                 assertSql("x\tsym\tsym2\tts\n" +
                         "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n", tableName);
@@ -484,7 +495,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testCreateDropWalReuseCreate() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName() + "Â";
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -542,7 +553,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue(walWriter3.isDistressed());
 
-                compile("create table " + tableName + " as (" +
+                ddl("create table " + tableName + " as (" +
                         "select x, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts " +
                         " from long_sequence(1)" +
@@ -568,16 +579,20 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testCreateWalAndInsertFromSql() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName() + "_लаблअца";
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
+            ddl(
+                    "create table " + tableName + " as (" +
+                            "select x, " +
+                            " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                            " from long_sequence(5)" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
 
-            insert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-24T01', 'asd')");
+            insert(
+                    "insert into " + tableName +
+                            " values (101, 'dfd', '2022-02-24T01', 'asd')"
+            );
 
             drainWalQueue();
 
@@ -595,7 +610,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testCreateWalDropColumnInsert() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -604,7 +619,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            compile("alter table " + tableName + " drop column sym");
+            ddl("alter table " + tableName + " drop column sym");
             insert("insert into " + tableName + "(x, ts) values (2, '2022-02-24T23:00:01')");
             drainWalQueue();
 
@@ -618,7 +633,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testCreateWalTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -641,7 +656,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testCreateWalTableAsSelectAndInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -684,7 +699,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             String newTableName = testName.getMethodName() + "_new";
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
@@ -692,9 +707,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            compile("alter table " + tableName + " drop partition list '2022-02-24'");
+            ddl("alter table " + tableName + " drop partition list '2022-02-24'");
             TableToken table2directoryName = engine.verifyTableName(tableName);
-            compile("rename table " + tableName + " to " + newTableName);
+            ddl("rename table " + tableName + " to " + newTableName);
 
             TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
@@ -712,7 +727,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             String tableNameNonWal = testName.getMethodName() + "_non_wal";
 
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -721,7 +736,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            compile("create table " + tableNameNonWal + " as (" +
+            ddl("create table " + tableNameNonWal + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -741,7 +756,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     tableNameNonWal + "\n", "select relname from pg_class() order by relname");
 
 
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
             assertSql("table\n" +
                     tableNameNonWal + "\n", "all_tables() order by table");
@@ -769,7 +784,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             assertSql("relname\npg_class\n" +
                     tableNameNonWal + "\n", "select relname from pg_class() order by relname");
 
-            compile("drop table " + tableNameNonWal);
+            drop("drop table " + tableNameNonWal);
 
             assertSql("table\n", "all_tables() order by table");
             assertSql("name\n", "select name from tables() order by name");
@@ -781,7 +796,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testDropRetriedWhenReaderOpen() throws Exception {
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -816,7 +831,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testDropTableAndConvertAnother() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -825,7 +840,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
             TableToken sysTableName1 = engine.verifyTableName(tableName);
 
-            compile("create table " + tableName + "2 as (" +
+            ddl("create table " + tableName + "2 as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -835,7 +850,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             TableToken sysTableName2 = engine.verifyTableName(tableName + "2");
 
             ddl("alter table " + tableName + "2 set type wal", sqlExecutionContext);
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
             engine.releaseInactive();
 
             final ObjList<TableToken> convertedTables = new ObjList<>();
@@ -871,7 +886,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -913,7 +928,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -921,7 +936,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
             TableToken sysTableName1 = engine.verifyTableName(tableName);
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).slash$().toString());
             engine.reloadTableNames();
@@ -939,14 +954,14 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testDropTxnNotificationQueueOverflow() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + "1 as (" +
+            ddl("create table " + tableName + "1 as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            compile("create table " + tableName + "2 as (" +
+            ddl("create table " + tableName + "2 as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -958,7 +973,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 drainWalQueue(walApplyJob);
 
                 for (int i = 0; i < walTxnNotificationQueueCapacity; i++) {
-                    compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
+                    insert("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
                 }
 
                 TableToken table2directoryName = engine.verifyTableName(tableName + "2");
@@ -978,13 +993,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
-                    TestUtils.unchecked(() -> compile("drop table " + tableName));
+                    TestUtils.unchecked(() -> drop("drop table " + tableName));
                 }
                 return super.openRO(name);
             }
         };
         assertMemoryLeak(ff, () -> {
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -1013,7 +1028,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testDroppedTableSequencerRecreated() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -1026,7 +1041,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             TableToken sysTableName1 = engine.verifyTableName(tableName);
             engine.getTableSequencerAPI().releaseInactive();
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
             if (Os.type == Os.WINDOWS) {
                 // Release WAL writers
@@ -1043,14 +1058,14 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testDroppedTableTriggersWalCheckJob() throws Exception {
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
 
             engine.reloadTableNames();
 
@@ -1067,12 +1082,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testEmptyTruncate() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "A INT," +
                     "ts TIMESTAMP)" +
                     " timestamp(ts) partition by DAY WAL");
 
-            compile("truncate table " + tableName);
+            ddl("truncate table " + tableName);
 
             drainWalQueue();
 
@@ -1085,7 +1100,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testInsertManyThenDrop() throws Exception {
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -1095,7 +1110,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
             TableToken sysTableName = engine.verifyTableName(tableName);
 
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
             drainWalQueue();
 
             refreshTablesInBaseEngine();
@@ -1111,7 +1126,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testNoLagUsedWhenDataIsInOrder() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "str string," +
@@ -1120,11 +1135,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL");
 
             // In order
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T00', 'a2a2')");
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T03', 'a2a2')");
-            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T00', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T03', 'a2a2')");
+            insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
             node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
@@ -1175,7 +1190,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
 
-            compile("create table temp as (" +
+            ddl("create table temp as (" +
                     "select " +
                     " cast(case when x % 2 = 0 then null else 'abc' end as symbol) sym, " +
                     " x," +
@@ -1183,7 +1198,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " from long_sequence(5)" +
                     ")");
 
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select * from temp), index(sym) timestamp(ts) partition by DAY WAL");
 
 
@@ -1211,7 +1226,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testRemoveColumnWalRollsWalSegment() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "str string," +
@@ -1231,7 +1246,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     insertMethod.commit();
 
                     insertMethod.execute();
-                    compile("alter table " + tableName + " drop column sym");
+                    ddl("alter table " + tableName + " drop column sym");
                     insertMethod.commit();
                 }
             }
@@ -1267,7 +1282,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
@@ -1277,7 +1292,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
             insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
-            compile("rename table " + tableName + " to " + newTableName);
+            ddl("rename table " + tableName + " to " + newTableName);
 
             TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
@@ -1299,7 +1314,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             String newTableName = testName.getMethodName() + "_new中";
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1310,8 +1325,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
-            compile("rename table " + tableName + " to " + newTableName);
-            compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
+            ddl("rename table " + tableName + " to " + newTableName);
+            insert("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
             TableToken newTabledirectoryName = engine.verifyTableName(newTableName);
             Assert.assertNotEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
@@ -1354,7 +1369,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             String newTableName = testName.getMethodName() + "_new中";
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1365,7 +1380,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
-            compile("rename table " + tableName + " to " + newTableName);
+            ddl("rename table " + tableName + " to " + newTableName);
             insert("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
             TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
@@ -1411,7 +1426,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         String newTableName = testName.getMethodName() + "_new";
 
         assertMemoryLeak(ff, () -> {
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
@@ -1420,7 +1435,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
-            compile("rename table " + tableName + " to " + upperCaseName);
+            ddl("rename table " + tableName + " to " + upperCaseName);
             insert("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
             insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
 
@@ -1435,7 +1450,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + upperCaseName);
 
-            compile("rename table " + upperCaseName + " to " + newTableName);
+            ddl("rename table " + upperCaseName + " to " + newTableName);
 
             assertSql("x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
@@ -1449,7 +1464,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testRogueTableWriterBlocksApplyJob() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -1483,7 +1498,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testSavedDataInTxnFile() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "str string," +
@@ -1499,7 +1514,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             // In order
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
-            
+
             node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
             runApplyOnce();
 
@@ -1531,7 +1546,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testVarSizeColumnBeforeInsertCommit() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "ts timestamp," +
@@ -1547,7 +1562,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 ) {
 
                     insertMethod.execute();
-                    compile("alter table " + tableName + " add column sss string");
+                    ddl("alter table " + tableName + " add column sss string");
                     insertMethod.commit();
                 }
             }
@@ -1561,7 +1576,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         });
     }
-    
+
     @Test
     public void testWhenApplyJobTerminatesEarlierLagCommitted() throws Exception {
         AtomicBoolean isTerminating = new AtomicBoolean();
@@ -1580,7 +1595,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName() + "_लаблअца";
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24T02', 1000000L) ts, " +
@@ -1658,7 +1673,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1666,7 +1681,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            compile("create table " + tableName + "2 as (" +
+            ddl("create table " + tableName + "2 as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1686,7 +1701,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             // Mark table1 as deleted
             drop("drop table " + tableName);
 
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1722,7 +1737,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -1751,13 +1766,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
                 checkWalFilesRemoved(sysTableName1);
 
-                try {
-                    compile(tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(0, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
-                }
+                assertException(tableName, 0, "does not exist");
             }
         });
     }
