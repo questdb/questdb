@@ -31,13 +31,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_boolean() as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_boolean() as boolean) from long_sequence(10)", "a\n" +
                         "false\n" +
                         "false\n" +
                         "false\n" +
@@ -47,21 +41,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testBooleanToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_boolean() as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_boolean() as byte) from long_sequence(10)", "a\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
@@ -71,21 +56,12 @@ public class CastTest extends AbstractCairoTest {
                         "1\n" +
                         "1\n" +
                         "1\n" +
-                        "1\n",
-                true,
-                true
-        );
+                        "1\n", true, true, false);
     }
 
     @Test
     public void testBooleanToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_boolean() as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_boolean() as char) from long_sequence(10)", "a\n" +
                         "F\n" +
                         "F\n" +
                         "F\n" +
@@ -95,21 +71,12 @@ public class CastTest extends AbstractCairoTest {
                         "T\n" +
                         "T\n" +
                         "T\n" +
-                        "T\n",
-                true,
-                true
-        );
+                        "T\n", true, true, false);
     }
 
     @Test
     public void testBooleanToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_boolean() as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_boolean() as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
@@ -119,21 +86,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.001Z\n" +
                         "1970-01-01T00:00:00.001Z\n" +
                         "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.001Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.001Z\n", true, true, false);
     }
 
     @Test
     public void testBooleanToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_boolean() as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_boolean() as double) from long_sequence(10)", "a\n" +
                         "0.0\n" +
                         "0.0\n" +
                         "0.0\n" +
@@ -143,10 +101,7 @@ public class CastTest extends AbstractCairoTest {
                         "1.0\n" +
                         "1.0\n" +
                         "1.0\n" +
-                        "1.0\n",
-                true,
-                true
-        );
+                        "1.0\n", true, true, false);
     }
 
     @Test
@@ -172,13 +127,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_boolean() as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_boolean() as float) from long_sequence(10)", "a\n" +
                         "0.0000\n" +
                         "0.0000\n" +
                         "0.0000\n" +
@@ -188,10 +137,7 @@ public class CastTest extends AbstractCairoTest {
                         "1.0000\n" +
                         "1.0000\n" +
                         "1.0000\n" +
-                        "1.0000\n",
-                true,
-                true
-        );
+                        "1.0000\n", true, true, false);
     }
 
     @Test
@@ -217,13 +163,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_boolean() as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_boolean() as int) from long_sequence(10)", "a\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
@@ -233,10 +173,7 @@ public class CastTest extends AbstractCairoTest {
                         "1\n" +
                         "1\n" +
                         "1\n" +
-                        "1\n",
-                true,
-                true
-        );
+                        "1\n", true, true, false);
     }
 
     @Test
@@ -271,13 +208,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_boolean() as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_boolean() as long) from long_sequence(10)", "a\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
@@ -287,21 +218,12 @@ public class CastTest extends AbstractCairoTest {
                         "1\n" +
                         "1\n" +
                         "1\n" +
-                        "1\n",
-                true,
-                true
-        );
+                        "1\n", true, true, false);
     }
 
     @Test
     public void testBooleanToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_boolean() as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_boolean() as long256) from long_sequence(10)", "a\n" +
                         "0x00\n" +
                         "0x00\n" +
                         "0x00\n" +
@@ -311,10 +233,7 @@ public class CastTest extends AbstractCairoTest {
                         "0x01\n" +
                         "0x01\n" +
                         "0x01\n" +
-                        "0x01\n",
-                true,
-                true
-        );
+                        "0x01\n", true, true, false);
     }
 
     @Test
@@ -351,13 +270,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_boolean() as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_boolean() as short) from long_sequence(10)", "a\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
@@ -367,21 +280,12 @@ public class CastTest extends AbstractCairoTest {
                         "1\n" +
                         "1\n" +
                         "1\n" +
-                        "1\n",
-                true,
-                true
-        );
+                        "1\n", true, true, false);
     }
 
     @Test
     public void testBooleanToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_boolean() as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_boolean() as string) from long_sequence(10)", "a\n" +
                         "false\n" +
                         "false\n" +
                         "false\n" +
@@ -391,21 +295,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testBooleanToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(34=34 as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(34=34 as string) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -415,10 +310,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
@@ -455,13 +347,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_boolean() as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_boolean() as symbol) from long_sequence(10)", "a\n" +
                         "false\n" +
                         "false\n" +
                         "false\n" +
@@ -471,21 +357,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testBooleanToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(14=14 as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(14=14 as symbol) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -495,10 +372,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
@@ -535,13 +409,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_boolean() as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_boolean() as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
@@ -551,21 +419,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.000001Z\n", true, true, false);
     }
 
     @Test
     public void testByteToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_byte() as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_byte() as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -575,10 +434,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
 
         assertQuery(
                 "cast\nfalse\n",
@@ -600,13 +456,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testByteToBooleanConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(cast(1 as byte) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(cast(1 as byte) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -616,21 +466,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testByteToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_byte() as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_byte() as byte) from long_sequence(10)", "a\n" +
                         "76\n" +
                         "102\n" +
                         "27\n" +
@@ -640,21 +481,12 @@ public class CastTest extends AbstractCairoTest {
                         "122\n" +
                         "83\n" +
                         "90\n" +
-                        "76\n",
-                true,
-                true
-        );
+                        "76\n", true, true, false);
     }
 
     @Test
     public void testByteToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_byte() as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_byte() as char) from long_sequence(10)", "a\n" +
                         "L\n" +
                         "f\n" +
                         "\u001B\n" +
@@ -664,21 +496,12 @@ public class CastTest extends AbstractCairoTest {
                         "z\n" +
                         "S\n" +
                         "Z\n" +
-                        "L\n",
-                true,
-                true
-        );
+                        "L\n", true, true, false);
     }
 
     @Test
     public void testByteToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_byte() as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_byte() as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.076Z\n" +
                         "1970-01-01T00:00:00.102Z\n" +
                         "1970-01-01T00:00:00.027Z\n" +
@@ -688,21 +511,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.122Z\n" +
                         "1970-01-01T00:00:00.083Z\n" +
                         "1970-01-01T00:00:00.090Z\n" +
-                        "1970-01-01T00:00:00.076Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.076Z\n", true, true, false);
     }
 
     @Test
     public void testByteToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_byte() as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_byte() as double) from long_sequence(10)", "a\n" +
                         "76.0\n" +
                         "102.0\n" +
                         "27.0\n" +
@@ -712,21 +526,12 @@ public class CastTest extends AbstractCairoTest {
                         "122.0\n" +
                         "83.0\n" +
                         "90.0\n" +
-                        "76.0\n",
-                true,
-                true
-        );
+                        "76.0\n", true, true, false);
     }
 
     @Test
     public void testByteToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_byte() as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_byte() as float) from long_sequence(10)", "a\n" +
                         "76.0000\n" +
                         "102.0000\n" +
                         "27.0000\n" +
@@ -736,21 +541,12 @@ public class CastTest extends AbstractCairoTest {
                         "122.0000\n" +
                         "83.0000\n" +
                         "90.0000\n" +
-                        "76.0000\n",
-                true,
-                true
-        );
+                        "76.0000\n", true, true, false);
     }
 
     @Test
     public void testByteToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_byte() as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_byte() as int) from long_sequence(10)", "a\n" +
                         "76\n" +
                         "102\n" +
                         "27\n" +
@@ -760,21 +556,12 @@ public class CastTest extends AbstractCairoTest {
                         "122\n" +
                         "83\n" +
                         "90\n" +
-                        "76\n",
-                true,
-                true
-        );
+                        "76\n", true, true, false);
     }
 
     @Test
     public void testByteToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_byte() as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_byte() as long) from long_sequence(10)", "a\n" +
                         "76\n" +
                         "102\n" +
                         "27\n" +
@@ -784,21 +571,12 @@ public class CastTest extends AbstractCairoTest {
                         "122\n" +
                         "83\n" +
                         "90\n" +
-                        "76\n",
-                true,
-                true
-        );
+                        "76\n", true, true, false);
     }
 
     @Test
     public void testByteToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_byte() as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_byte() as long256) from long_sequence(10)", "a\n" +
                         "0x4c\n" +
                         "0x66\n" +
                         "0x1b\n" +
@@ -808,10 +586,7 @@ public class CastTest extends AbstractCairoTest {
                         "0x7a\n" +
                         "0x53\n" +
                         "0x5a\n" +
-                        "0x4c\n",
-                true,
-                true
-        );
+                        "0x4c\n", true, true, false);
     }
 
     @Test
@@ -848,13 +623,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testByteToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_byte() as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_byte() as short) from long_sequence(10)", "a\n" +
                         "76\n" +
                         "102\n" +
                         "27\n" +
@@ -864,21 +633,12 @@ public class CastTest extends AbstractCairoTest {
                         "122\n" +
                         "83\n" +
                         "90\n" +
-                        "76\n",
-                true,
-                true
-        );
+                        "76\n", true, true, false);
     }
 
     @Test
     public void testByteToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_byte() as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_byte() as string) from long_sequence(10)", "a\n" +
                         "76\n" +
                         "102\n" +
                         "27\n" +
@@ -888,21 +648,12 @@ public class CastTest extends AbstractCairoTest {
                         "122\n" +
                         "83\n" +
                         "90\n" +
-                        "76\n",
-                true,
-                true
-        );
+                        "76\n", true, true, false);
     }
 
     @Test
     public void testByteToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(cast(34 as byte) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(cast(34 as byte) as string) from long_sequence(10)", "a\n" +
                         "34\n" +
                         "34\n" +
                         "34\n" +
@@ -912,10 +663,7 @@ public class CastTest extends AbstractCairoTest {
                         "34\n" +
                         "34\n" +
                         "34\n" +
-                        "34\n",
-                true,
-                true
-        );
+                        "34\n", true, true, false);
     }
 
     @Test
@@ -952,13 +700,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testByteToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_byte() as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_byte() as symbol) from long_sequence(10)", "a\n" +
                         "76\n" +
                         "102\n" +
                         "27\n" +
@@ -968,21 +710,12 @@ public class CastTest extends AbstractCairoTest {
                         "122\n" +
                         "83\n" +
                         "90\n" +
-                        "76\n",
-                true,
-                true
-        );
+                        "76\n", true, true, false);
     }
 
     @Test
     public void testByteToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(cast(14 as byte) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(cast(14 as byte) as symbol) from long_sequence(10)", "a\n" +
                         "14\n" +
                         "14\n" +
                         "14\n" +
@@ -992,10 +725,7 @@ public class CastTest extends AbstractCairoTest {
                         "14\n" +
                         "14\n" +
                         "14\n" +
-                        "14\n",
-                true,
-                true
-        );
+                        "14\n", true, true, false);
     }
 
     @Test
@@ -1032,13 +762,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testByteToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_byte() as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_byte() as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.000076Z\n" +
                         "1970-01-01T00:00:00.000102Z\n" +
                         "1970-01-01T00:00:00.000027Z\n" +
@@ -1048,21 +772,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000122Z\n" +
                         "1970-01-01T00:00:00.000083Z\n" +
                         "1970-01-01T00:00:00.000090Z\n" +
-                        "1970-01-01T00:00:00.000076Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.000076Z\n", true, true, false);
     }
 
     @Test
     public void testCharToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast('f' as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast('f' as boolean) from long_sequence(10)", "a\n" +
                         "false\n" +
                         "false\n" +
                         "false\n" +
@@ -1072,21 +787,12 @@ public class CastTest extends AbstractCairoTest {
                         "false\n" +
                         "false\n" +
                         "false\n" +
-                        "false\n",
-                true,
-                true
-        );
+                        "false\n", true, true, false);
     }
 
     @Test
     public void testCharToBooleanTrue() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(cast(116 as char) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(cast(116 as char) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -1096,21 +802,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testCharToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as byte) from long_sequence(10)", "a\n" +
                         "5\n" +
                         "0\n" +
                         "0\n" +
@@ -1120,21 +817,12 @@ public class CastTest extends AbstractCairoTest {
                         "6\n" +
                         "0\n" +
                         "0\n" +
-                        "9\n",
-                true,
-                true
-        );
+                        "9\n", true, true, false);
     }
 
     @Test
     public void testCharToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_char() as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_char() as char) from long_sequence(10)", "a\n" +
                         "V\n" +
                         "T\n" +
                         "J\n" +
@@ -1144,21 +832,12 @@ public class CastTest extends AbstractCairoTest {
                         "S\n" +
                         "W\n" +
                         "H\n" +
-                        "Y\n",
-                true,
-                true
-        );
+                        "Y\n", true, true, false);
     }
 
     @Test
     public void testCharToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.005Z\n" +
                         "\n" +
                         "\n" +
@@ -1168,21 +847,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.006Z\n" +
                         "\n" +
                         "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.009Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.009Z\n", true, true, false);
     }
 
     @Test
     public void testCharToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as double) from long_sequence(10)", "a\n" +
                         "5.0\n" +
                         "NaN\n" +
                         "NaN\n" +
@@ -1192,21 +862,12 @@ public class CastTest extends AbstractCairoTest {
                         "6.0\n" +
                         "NaN\n" +
                         "0.0\n" +
-                        "9.0\n",
-                true,
-                true
-        );
+                        "9.0\n", true, true, false);
     }
 
     @Test
     public void testCharToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as float) from long_sequence(10)", "a\n" +
                         "5.0000\n" +
                         "NaN\n" +
                         "NaN\n" +
@@ -1216,21 +877,12 @@ public class CastTest extends AbstractCairoTest {
                         "6.0000\n" +
                         "NaN\n" +
                         "0.0000\n" +
-                        "9.0000\n",
-                true,
-                true
-        );
+                        "9.0000\n", true, true, false);
     }
 
     @Test
     public void testCharToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as int) from long_sequence(10)", "a\n" +
                         "5\n" +
                         "NaN\n" +
                         "NaN\n" +
@@ -1240,21 +892,12 @@ public class CastTest extends AbstractCairoTest {
                         "6\n" +
                         "NaN\n" +
                         "0\n" +
-                        "9\n",
-                true,
-                true
-        );
+                        "9\n", true, true, false);
     }
 
     @Test
     public void testCharToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as long) from long_sequence(10)", "a\n" +
                         "5\n" +
                         "NaN\n" +
                         "NaN\n" +
@@ -1264,21 +907,12 @@ public class CastTest extends AbstractCairoTest {
                         "6\n" +
                         "NaN\n" +
                         "0\n" +
-                        "9\n",
-                true,
-                true
-        );
+                        "9\n", true, true, false);
     }
 
     @Test
     public void testCharToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_char() as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_char() as long256) from long_sequence(10)", "a\n" +
                         "0x56\n" +
                         "0x54\n" +
                         "0x4a\n" +
@@ -1288,10 +922,7 @@ public class CastTest extends AbstractCairoTest {
                         "0x53\n" +
                         "0x57\n" +
                         "0x48\n" +
-                        "0x59\n",
-                true,
-                true
-        );
+                        "0x59\n", true, true, false);
     }
 
     @Test
@@ -1328,13 +959,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testCharToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as short) from long_sequence(10)", "a\n" +
                         "5\n" +
                         "0\n" +
                         "0\n" +
@@ -1344,21 +969,12 @@ public class CastTest extends AbstractCairoTest {
                         "6\n" +
                         "0\n" +
                         "0\n" +
-                        "9\n",
-                true,
-                true
-        );
+                        "9\n", true, true, false);
     }
 
     @Test
     public void testCharToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_char() as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_char() as string) from long_sequence(10)", "a\n" +
                         "V\n" +
                         "T\n" +
                         "J\n" +
@@ -1368,21 +984,12 @@ public class CastTest extends AbstractCairoTest {
                         "S\n" +
                         "W\n" +
                         "H\n" +
-                        "Y\n",
-                true,
-                true
-        );
+                        "Y\n", true, true, false);
     }
 
     @Test
     public void testCharToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast('A' as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast('A' as string) from long_sequence(10)", "a\n" +
                         "A\n" +
                         "A\n" +
                         "A\n" +
@@ -1392,10 +999,7 @@ public class CastTest extends AbstractCairoTest {
                         "A\n" +
                         "A\n" +
                         "A\n" +
-                        "A\n",
-                true,
-                true
-        );
+                        "A\n", true, true, false);
     }
 
     @Test
@@ -1432,13 +1036,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testCharToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_char() as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_char() as symbol) from long_sequence(10)", "a\n" +
                         "V\n" +
                         "T\n" +
                         "J\n" +
@@ -1448,21 +1046,12 @@ public class CastTest extends AbstractCairoTest {
                         "S\n" +
                         "W\n" +
                         "H\n" +
-                        "Y\n",
-                true,
-                true
-        );
+                        "Y\n", true, true, false);
     }
 
     @Test
     public void testCharToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast('X' as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast('X' as symbol) from long_sequence(10)", "a\n" +
                         "X\n" +
                         "X\n" +
                         "X\n" +
@@ -1472,10 +1061,7 @@ public class CastTest extends AbstractCairoTest {
                         "X\n" +
                         "X\n" +
                         "X\n" +
-                        "X\n",
-                true,
-                true
-        );
+                        "X\n", true, true, false);
     }
 
     @Test
@@ -1512,13 +1098,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testCharToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.000005Z\n" +
                         "\n" +
                         "\n" +
@@ -1528,21 +1108,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000006Z\n" +
                         "\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000009Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.000009Z\n", true, true, false);
     }
 
     @Test
     public void testDateToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_date() as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_date() as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -1552,21 +1123,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testDateToBooleanConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(cast(1 as date) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(cast(1 as date) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -1576,21 +1138,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testDateToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_date(96,100, 2) as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_date(96,100, 2) as byte) from long_sequence(10)", "a\n" +
                         "97\n" +
                         "0\n" +
                         "100\n" +
@@ -1600,21 +1153,12 @@ public class CastTest extends AbstractCairoTest {
                         "97\n" +
                         "98\n" +
                         "0\n" +
-                        "96\n",
-                true,
-                true
-        );
+                        "96\n", true, true, false);
     }
 
     @Test
     public void testDateToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_date(34,66,2) as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_date(34,66,2) as char) from long_sequence(10)", "a\n" +
                         "7\n" +
                         "\n" +
                         "9\n" +
@@ -1624,21 +1168,12 @@ public class CastTest extends AbstractCairoTest {
                         "+\n" +
                         "4\n" +
                         "\n" +
-                        "-\n",
-                true,
-                true
-        );
+                        "-\n", true, true, false);
     }
 
     @Test
     public void testDateToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_date(1000000,10000000,2) as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_date(1000000,10000000,2) as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T01:30:37.285Z\n" +
                         "\n" +
                         "1970-01-01T01:39:20.648Z\n" +
@@ -1648,21 +1183,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T01:32:15.804Z\n" +
                         "1970-01-01T02:38:18.131Z\n" +
                         "\n" +
-                        "1970-01-01T00:42:01.595Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:42:01.595Z\n", true, true, false);
     }
 
     @Test
     public void testDateToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_date(1,150,2) as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_date(1,150,2) as double) from long_sequence(10)", "a\n" +
                         "67.0\n" +
                         "NaN\n" +
                         "30.0\n" +
@@ -1672,21 +1198,12 @@ public class CastTest extends AbstractCairoTest {
                         "127.0\n" +
                         "58.0\n" +
                         "NaN\n" +
-                        "111.0\n",
-                true,
-                true
-        );
+                        "111.0\n", true, true, false);
     }
 
     @Test
     public void testDateToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_date(1,150,2) as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_date(1,150,2) as float) from long_sequence(10)", "a\n" +
                         "67.0000\n" +
                         "NaN\n" +
                         "30.0000\n" +
@@ -1696,21 +1213,12 @@ public class CastTest extends AbstractCairoTest {
                         "127.0000\n" +
                         "58.0000\n" +
                         "NaN\n" +
-                        "111.0000\n",
-                true,
-                true
-        );
+                        "111.0000\n", true, true, false);
     }
 
     @Test
     public void testDateToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_date(1000000L, 1000000000L, 2) as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_date(1000000L, 1000000000L, 2) as int) from long_sequence(10)", "a\n" +
                         "985257636\n" +
                         "NaN\n" +
                         "968130026\n" +
@@ -1720,21 +1228,12 @@ public class CastTest extends AbstractCairoTest {
                         "215755333\n" +
                         "720037886\n" +
                         "NaN\n" +
-                        "129724714\n",
-                true,
-                true
-        );
+                        "129724714\n", true, true, false);
     }
 
     @Test
     public void testDateToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_date(1,15000000,2) as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_date(1,15000000,2) as long) from long_sequence(10)", "a\n" +
                         "13992367\n" +
                         "NaN\n" +
                         "7587030\n" +
@@ -1744,10 +1243,7 @@ public class CastTest extends AbstractCairoTest {
                         "5112277\n" +
                         "5361808\n" +
                         "NaN\n" +
-                        "8600061\n",
-                true,
-                true
-        );
+                        "8600061\n", true, true, false);
     }
 
     @Test
@@ -1784,13 +1280,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDateToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_date(23,56,2) as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_date(23,56,2) as short) from long_sequence(10)", "a\n" +
                         "31\n" +
                         "0\n" +
                         "54\n" +
@@ -1800,21 +1290,12 @@ public class CastTest extends AbstractCairoTest {
                         "33\n" +
                         "24\n" +
                         "0\n" +
-                        "51\n",
-                true,
-                true
-        );
+                        "51\n", true, true, false);
     }
 
     @Test
     public void testDateToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_date(34,66,100) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_date(34,66,100) as string) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.055Z\n" +
                         "1970-01-01T00:00:00.048Z\n" +
                         "1970-01-01T00:00:00.055Z\n" +
@@ -1824,21 +1305,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.034Z\n" +
                         "1970-01-01T00:00:00.058Z\n" +
                         "1970-01-01T00:00:00.045Z\n" +
-                        "1970-01-01T00:00:00.061Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.061Z\n", true, true, false);
     }
 
     @Test
     public void testDateToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(cast(334l as date) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(cast(334l as date) as string) from long_sequence(10)", "a\n" +
                         "334\n" +
                         "334\n" +
                         "334\n" +
@@ -1848,10 +1320,7 @@ public class CastTest extends AbstractCairoTest {
                         "334\n" +
                         "334\n" +
                         "334\n" +
-                        "334\n",
-                true,
-                true
-        );
+                        "334\n", true, true, false);
     }
 
     @Test
@@ -1888,13 +1357,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDateToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_date(1,150,2) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_date(1,150,2) as symbol) from long_sequence(10)", "a\n" +
                         "67\n" +
                         "\n" +
                         "30\n" +
@@ -1904,21 +1367,12 @@ public class CastTest extends AbstractCairoTest {
                         "127\n" +
                         "58\n" +
                         "\n" +
-                        "111\n",
-                true,
-                true
-        );
+                        "111\n", true, true, false);
     }
 
     @Test
     public void testDateToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(cast(601l as date) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(cast(601l as date) as symbol) from long_sequence(10)", "a\n" +
                         "601\n" +
                         "601\n" +
                         "601\n" +
@@ -1928,10 +1382,7 @@ public class CastTest extends AbstractCairoTest {
                         "601\n" +
                         "601\n" +
                         "601\n" +
-                        "601\n",
-                true,
-                true
-        );
+                        "601\n", true, true, false);
     }
 
     @Test
@@ -1968,13 +1419,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDateToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_date(1000,150000,1) as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_date(1000,150000,1) as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:01:38.083000Z\n" +
                         "\n" +
                         "1970-01-01T00:00:06.240000Z\n" +
@@ -1984,10 +1429,7 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:01:23.737000Z\n" +
                         "1970-01-01T00:02:23.935000Z\n" +
                         "\n" +
-                        "1970-01-01T00:01:15.474000Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:01:15.474000Z\n", true, true, false);
     }
 
     @Test
@@ -2012,13 +1454,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_double(4)*10 as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_double(4)*10 as byte) from long_sequence(10)", "a\n" +
                         "8\n" +
                         "0\n" +
                         "0\n" +
@@ -2028,21 +1464,12 @@ public class CastTest extends AbstractCairoTest {
                         "3\n" +
                         "7\n" +
                         "4\n" +
-                        "0\n",
-                true,
-                true
-        );
+                        "0\n", true, true, false);
     }
 
     @Test
     public void testDoubleToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(33 + (rnd_double() * 100) % 25 as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(33 + (rnd_double() * 100) % 25 as char) from long_sequence(10)", "a\n" +
                         "1\n" +
                         "7\n" +
                         ")\n" +
@@ -2052,21 +1479,12 @@ public class CastTest extends AbstractCairoTest {
                         "*\n" +
                         "8\n" +
                         "7\n" +
-                        "!\n",
-                true,
-                true
-        );
+                        "!\n", true, true, false);
     }
 
     @Test
     public void testDoubleToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_double(2)*10000 as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_double(2)*10000 as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:08.043Z\n" +
                         "1970-01-01T00:00:00.848Z\n" +
                         "1970-01-01T00:00:00.843Z\n" +
@@ -2076,21 +1494,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:03.491Z\n" +
                         "1970-01-01T00:00:07.611Z\n" +
                         "1970-01-01T00:00:04.217Z\n" +
-                        "\n",
-                true,
-                true
-        );
+                        "\n", true, true, false);
     }
 
     @Test
     public void testDoubleToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_double(2) as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_double(2) as double) from long_sequence(10)", "a\n" +
                         "0.8043224099968393\n" +
                         "0.08486964232560668\n" +
                         "0.0843832076262595\n" +
@@ -2100,21 +1509,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.3491070363730514\n" +
                         "0.7611029514995744\n" +
                         "0.4217768841969397\n" +
-                        "NaN\n",
-                true,
-                true
-        );
+                        "NaN\n", true, true, false);
     }
 
     @Test
     public void testDoubleToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_double(2) as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_double(2) as float) from long_sequence(10)", "a\n" +
                         "0.8043\n" +
                         "0.0849\n" +
                         "0.0844\n" +
@@ -2124,21 +1524,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.3491\n" +
                         "0.7611\n" +
                         "0.4218\n" +
-                        "NaN\n",
-                true,
-                true
-        );
+                        "NaN\n", true, true, false);
     }
 
     @Test
     public void testDoubleToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_double()*100 as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_double()*100 as int) from long_sequence(10)", "a\n" +
                         "66\n" +
                         "22\n" +
                         "8\n" +
@@ -2148,21 +1539,12 @@ public class CastTest extends AbstractCairoTest {
                         "84\n" +
                         "98\n" +
                         "22\n" +
-                        "50\n",
-                true,
-                true
-        );
+                        "50\n", true, true, false);
     }
 
     @Test
     public void testDoubleToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_double(2)*1000 as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_double(2)*1000 as long) from long_sequence(10)", "a\n" +
                         "804\n" +
                         "84\n" +
                         "84\n" +
@@ -2172,21 +1554,12 @@ public class CastTest extends AbstractCairoTest {
                         "349\n" +
                         "761\n" +
                         "421\n" +
-                        "NaN\n",
-                true,
-                true
-        );
+                        "NaN\n", true, true, false);
     }
 
     @Test
     public void testDoubleToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_double(2)*1000000 as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_double(2)*1000000 as long256) from long_sequence(10)", "a\n" +
                         "0x0c45e2\n" +
                         "0x014b85\n" +
                         "0x01499f\n" +
@@ -2196,10 +1569,7 @@ public class CastTest extends AbstractCairoTest {
                         "0x0553b3\n" +
                         "0x0b9d0e\n" +
                         "0x066f90\n" +
-                        "\n",
-                true,
-                true
-        );
+                        "\n", true, true, false);
     }
 
     @Test
@@ -2236,13 +1606,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_double(5)*10 as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_double(5)*10 as short) from long_sequence(10)", "a\n" +
                         "8\n" +
                         "0\n" +
                         "0\n" +
@@ -2252,21 +1616,12 @@ public class CastTest extends AbstractCairoTest {
                         "3\n" +
                         "7\n" +
                         "4\n" +
-                        "0\n",
-                true,
-                true
-        );
+                        "0\n", true, true, false);
     }
 
     @Test
     public void testDoubleToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_double() as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_double() as string) from long_sequence(10)", "a\n" +
                         "0.6607777894187332\n" +
                         "0.2246301342497259\n" +
                         "0.08486964232560668\n" +
@@ -2276,21 +1631,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.8423410920883345\n" +
                         "0.9856290845874263\n" +
                         "0.22452340856088226\n" +
-                        "0.5093827001617407\n",
-                true,
-                true
-        );
+                        "0.5093827001617407\n", true, true, false);
     }
 
     @Test
     public void testDoubleToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(1.34 as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(1.34 as string) from long_sequence(10)", "a\n" +
                         "1.34\n" +
                         "1.34\n" +
                         "1.34\n" +
@@ -2300,10 +1646,7 @@ public class CastTest extends AbstractCairoTest {
                         "1.34\n" +
                         "1.34\n" +
                         "1.34\n" +
-                        "1.34\n",
-                true,
-                true
-        );
+                        "1.34\n", true, true, false);
     }
 
     @Test
@@ -2340,13 +1683,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_double(2) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_double(2) as symbol) from long_sequence(10)", "a\n" +
                         "0.8043224099968393\n" +
                         "0.08486964232560668\n" +
                         "0.0843832076262595\n" +
@@ -2356,21 +1693,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.3491070363730514\n" +
                         "0.7611029514995744\n" +
                         "0.4217768841969397\n" +
-                        "\n",
-                true,
-                true
-        );
+                        "\n", true, true, false);
     }
 
     @Test
     public void testDoubleToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(1.5 as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(1.5 as symbol) from long_sequence(10)", "a\n" +
                         "1.5\n" +
                         "1.5\n" +
                         "1.5\n" +
@@ -2380,10 +1708,7 @@ public class CastTest extends AbstractCairoTest {
                         "1.5\n" +
                         "1.5\n" +
                         "1.5\n" +
-                        "1.5\n",
-                true,
-                true
-        );
+                        "1.5\n", true, true, false);
     }
 
     @Test
@@ -2420,13 +1745,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_double(2)*100000000 as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_double(2)*100000000 as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:01:20.432240Z\n" +
                         "1970-01-01T00:00:08.486964Z\n" +
                         "1970-01-01T00:00:08.438320Z\n" +
@@ -2436,10 +1755,7 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:34.910703Z\n" +
                         "1970-01-01T00:01:16.110295Z\n" +
                         "1970-01-01T00:00:42.177688Z\n" +
-                        "\n",
-                true,
-                true
-        );
+                        "\n", true, true, false);
     }
 
     @Test
@@ -2464,13 +1780,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_float()*100 as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_float()*100 as byte) from long_sequence(10)", "a\n" +
                         "66\n" +
                         "80\n" +
                         "22\n" +
@@ -2480,21 +1790,12 @@ public class CastTest extends AbstractCairoTest {
                         "29\n" +
                         "8\n" +
                         "20\n" +
-                        "93\n",
-                true,
-                true
-        );
+                        "93\n", true, true, false);
     }
 
     @Test
     public void testFloatToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(33 + (rnd_float() * 100) % 25 as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(33 + (rnd_float() * 100) % 25 as char) from long_sequence(10)", "a\n" +
                         "1\n" +
                         "&\n" +
                         "7\n" +
@@ -2504,21 +1805,12 @@ public class CastTest extends AbstractCairoTest {
                         "%\n" +
                         ")\n" +
                         "5\n" +
-                        "3\n",
-                true,
-                true
-        );
+                        "3\n", true, true, false);
     }
 
     @Test
     public void testFloatToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_float(2)*1000000 as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_float(2)*1000000 as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:13:24.322Z\n" +
                         "\n" +
                         "1970-01-01T00:01:24.869Z\n" +
@@ -2528,21 +1820,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:02:11.233Z\n" +
                         "1970-01-01T00:13:10.567Z\n" +
                         "\n" +
-                        "1970-01-01T00:03:44.523Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:03:44.523Z\n", true, true, false);
     }
 
     @Test
     public void testFloatToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_float(2) as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_float(2) as double) from long_sequence(10)", "a\n" +
                         "0.804322361946106\n" +
                         "NaN\n" +
                         "0.0848696231842041\n" +
@@ -2552,21 +1835,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.1312335729598999\n" +
                         "0.7905675172805786\n" +
                         "NaN\n" +
-                        "0.2245233654975891\n",
-                true,
-                true
-        );
+                        "0.2245233654975891\n", true, true, false);
     }
 
     @Test
     public void testFloatToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_float(2) as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_float(2) as float) from long_sequence(10)", "a\n" +
                         "0.8043\n" +
                         "NaN\n" +
                         "0.0849\n" +
@@ -2576,21 +1850,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.1312\n" +
                         "0.7906\n" +
                         "NaN\n" +
-                        "0.2245\n",
-                true,
-                true
-        );
+                        "0.2245\n", true, true, false);
     }
 
     @Test
     public void testFloatToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_float(2)*10000 as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_float(2)*10000 as int) from long_sequence(10)", "a\n" +
                         "8043\n" +
                         "NaN\n" +
                         "848\n" +
@@ -2600,10 +1865,7 @@ public class CastTest extends AbstractCairoTest {
                         "1312\n" +
                         "7905\n" +
                         "NaN\n" +
-                        "2245\n",
-                true,
-                true
-        );
+                        "2245\n", true, true, false);
     }
 
     @Test
@@ -2612,13 +1874,7 @@ public class CastTest extends AbstractCairoTest {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
-        assertQuery13(
-                "fl\ta\n",
-                "tab",
-                "create table tab (fl DOUBLE, a LONG)",
-                null,
-                "insert into tab select fl, cast(fl*10000000000l as long) from rndfloat",
-                "fl\ta\n" +
+        assertQuery("fl\ta\n", "tab", "create table tab (fl DOUBLE, a LONG)", null, "insert into tab select fl, cast(fl*10000000000l as long) from rndfloat", "fl\ta\n" +
                         "0.804322361946106\t8043223619\n" +
                         "NaN\tNaN\n" +
                         "0.0848696231842041\t848696231\n" +
@@ -2628,21 +1884,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.1312335729598999\t1312335729\n" +
                         "0.7905675172805786\t7905675172\n" +
                         "NaN\tNaN\n" +
-                        "0.2245233654975891\t2245233654\n",
-                true,
-                true
-        );
+                        "0.2245233654975891\t2245233654\n", true, true, false);
     }
 
     @Test
     public void testFloatToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_float(2)*1000000 as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_float(2)*1000000 as long256) from long_sequence(10)", "a\n" +
                         "0x0c45e2\n" +
                         "\n" +
                         "0x014b85\n" +
@@ -2652,10 +1899,7 @@ public class CastTest extends AbstractCairoTest {
                         "0x0200a1\n" +
                         "0x0c1027\n" +
                         "\n" +
-                        "0x036d0b\n",
-                true,
-                true
-        );
+                        "0x036d0b\n", true, true, false);
     }
 
     @Test
@@ -2692,13 +1936,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_float()*1000 as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_float()*1000 as short) from long_sequence(10)", "a\n" +
                         "660\n" +
                         "804\n" +
                         "224\n" +
@@ -2708,21 +1946,12 @@ public class CastTest extends AbstractCairoTest {
                         "299\n" +
                         "84\n" +
                         "204\n" +
-                        "934\n",
-                true,
-                true
-        );
+                        "934\n", true, true, false);
     }
 
     @Test
     public void testFloatToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_float() as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_float() as string) from long_sequence(10)", "a\n" +
                         "0.6608\n" +
                         "0.8043\n" +
                         "0.2246\n" +
@@ -2732,21 +1961,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.2992\n" +
                         "0.0844\n" +
                         "0.2045\n" +
-                        "0.9345\n",
-                true,
-                true
-        );
+                        "0.9345\n", true, true, false);
     }
 
     @Test
     public void testFloatToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(cast(1.34 as float) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(cast(1.34 as float) as string) from long_sequence(10)", "a\n" +
                         "1.3400\n" +
                         "1.3400\n" +
                         "1.3400\n" +
@@ -2756,10 +1976,7 @@ public class CastTest extends AbstractCairoTest {
                         "1.3400\n" +
                         "1.3400\n" +
                         "1.3400\n" +
-                        "1.3400\n",
-                true,
-                true
-        );
+                        "1.3400\n", true, true, false);
     }
 
     @Test
@@ -2796,13 +2013,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_float(2) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_float(2) as symbol) from long_sequence(10)", "a\n" +
                         "0.8043\n" +
                         "\n" +
                         "0.0849\n" +
@@ -2812,21 +2023,12 @@ public class CastTest extends AbstractCairoTest {
                         "0.1312\n" +
                         "0.7906\n" +
                         "\n" +
-                        "0.2245\n",
-                true,
-                true
-        );
+                        "0.2245\n", true, true, false);
     }
 
     @Test
     public void testFloatToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(cast(1.5 as float) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(cast(1.5 as float) as symbol) from long_sequence(10)", "a\n" +
                         "1.5000\n" +
                         "1.5000\n" +
                         "1.5000\n" +
@@ -2836,10 +2038,7 @@ public class CastTest extends AbstractCairoTest {
                         "1.5000\n" +
                         "1.5000\n" +
                         "1.5000\n" +
-                        "1.5000\n",
-                true,
-                true
-        );
+                        "1.5000\n", true, true, false);
     }
 
     @Test
@@ -2876,13 +2075,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToTimestampViaDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_float(2)*100000000 as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_float(2)*100000000 as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:01:20.432240Z\n" +
                         "\n" +
                         "1970-01-01T00:00:08.486962Z\n" +
@@ -2892,20 +2085,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:13.123357Z\n" +
                         "1970-01-01T00:01:19.056752Z\n" +
                         "\n" +
-                        "1970-01-01T00:00:22.452336Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:22.452336Z\n", true, true, false);
     }
 
     @Test
     public void testInfinity() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast('Infinity' as double) = cast('Infinity' as double)," +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast('Infinity' as double) = cast('Infinity' as double)," +
                         "cast('Infinity' as float) = cast('Infinity' as double)," +
                         "cast('Infinity' as float) = cast('Infinity' as float)," +
                         "cast('-Infinity' as double) = cast('-Infinity' as double)," +
@@ -2913,8 +2098,7 @@ public class CastTest extends AbstractCairoTest {
                         "cast('-Infinity' as float) = cast('-Infinity' as float)," +
                         "cast('Infinity' as double) != cast('-Infinity' as double)," +
                         "cast('Infinity' as float) > 1 " +
-                        "from long_sequence(8)",
-                "a\n" +
+                        "from long_sequence(8)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -2922,25 +2106,13 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testInfinityNonConstant() throws Exception {
-        assertQuery13(
-                "column\n",
-                "select a = b from tab ",
-                "create table tab (a double, b float)",
-                null,
-                "insert into tab values (cast('Infinity' as double), cast('Infinity' as float))",
-                "column\n" +
-                        "true\n",
-                true,
-                true
-        );
+        assertQuery("column\n", "select a = b from tab ", "create table tab (a double, b float)", null, "insert into tab values (cast('Infinity' as double), cast('Infinity' as float))", "column\n" +
+                        "true\n", true, true, false);
     }
 
     @Test
@@ -2957,13 +2129,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testIntToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_int(0,66,100) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_int(0,66,100) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -2973,21 +2139,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testIntToBooleanConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(1 as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(1 as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -2997,21 +2154,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testIntToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_int(2,100, 10) as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_int(2,100, 10) as byte) from long_sequence(10)", "a\n" +
                         "41\n" +
                         "28\n" +
                         "0\n" +
@@ -3021,21 +2169,12 @@ public class CastTest extends AbstractCairoTest {
                         "72\n" +
                         "24\n" +
                         "53\n" +
-                        "50\n",
-                true,
-                true
-        );
+                        "50\n", true, true, false);
     }
 
     @Test
     public void testIntToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_int(34,66,100) as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_int(34,66,100) as char) from long_sequence(10)", "a\n" +
                         "(\n" +
                         "<\n" +
                         "9\n" +
@@ -3045,21 +2184,12 @@ public class CastTest extends AbstractCairoTest {
                         "&\n" +
                         "8\n" +
                         "4\n" +
-                        "1\n",
-                true,
-                true
-        );
+                        "1\n", true, true, false);
     }
 
     @Test
     public void testIntToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_int(1,150,100) as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_int(1,150,100) as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.019Z\n" +
                         "1970-01-01T00:00:00.072Z\n" +
                         "1970-01-01T00:00:00.090Z\n" +
@@ -3069,21 +2199,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.065Z\n" +
                         "1970-01-01T00:00:00.032Z\n" +
                         "1970-01-01T00:00:00.067Z\n" +
-                        "1970-01-01T00:00:00.106Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.106Z\n", true, true, false);
     }
 
     @Test
     public void testIntToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_int(1,150,100) as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_int(1,150,100) as double) from long_sequence(10)", "a\n" +
                         "19.0\n" +
                         "72.0\n" +
                         "90.0\n" +
@@ -3093,21 +2214,12 @@ public class CastTest extends AbstractCairoTest {
                         "65.0\n" +
                         "32.0\n" +
                         "67.0\n" +
-                        "106.0\n",
-                true,
-                true
-        );
+                        "106.0\n", true, true, false);
     }
 
     @Test
     public void testIntToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_int(1,150,100) as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_int(1,150,100) as float) from long_sequence(10)", "a\n" +
                         "19.0000\n" +
                         "72.0000\n" +
                         "90.0000\n" +
@@ -3117,21 +2229,12 @@ public class CastTest extends AbstractCairoTest {
                         "65.0000\n" +
                         "32.0000\n" +
                         "67.0000\n" +
-                        "106.0000\n",
-                true,
-                true
-        );
+                        "106.0000\n", true, true, false);
     }
 
     @Test
     public void testIntToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_int(34,66,100) as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_int(34,66,100) as int) from long_sequence(10)", "a\n" +
                         "40\n" +
                         "60\n" +
                         "57\n" +
@@ -3141,21 +2244,12 @@ public class CastTest extends AbstractCairoTest {
                         "38\n" +
                         "56\n" +
                         "52\n" +
-                        "49\n",
-                true,
-                true
-        );
+                        "49\n", true, true, false);
     }
 
     @Test
     public void testIntToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_int(1,150,100) as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_int(1,150,100) as long) from long_sequence(10)", "a\n" +
                         "19\n" +
                         "72\n" +
                         "90\n" +
@@ -3165,21 +2259,12 @@ public class CastTest extends AbstractCairoTest {
                         "65\n" +
                         "32\n" +
                         "67\n" +
-                        "106\n",
-                true,
-                true
-        );
+                        "106\n", true, true, false);
     }
 
     @Test
     public void testIntToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_int(34,66,100) as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_int(34,66,100) as long256) from long_sequence(10)", "a\n" +
                         "0x28\n" +
                         "0x3c\n" +
                         "0x39\n" +
@@ -3189,10 +2274,7 @@ public class CastTest extends AbstractCairoTest {
                         "0x26\n" +
                         "0x38\n" +
                         "0x34\n" +
-                        "0x31\n",
-                true,
-                true
-        );
+                        "0x31\n", true, true, false);
     }
 
     @Test
@@ -3229,13 +2311,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testIntToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_int(23,56,100) as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_int(23,56,100) as short) from long_sequence(10)", "a\n" +
                         "37\n" +
                         "48\n" +
                         "30\n" +
@@ -3245,21 +2321,12 @@ public class CastTest extends AbstractCairoTest {
                         "53\n" +
                         "54\n" +
                         "23\n" +
-                        "34\n",
-                true,
-                true
-        );
+                        "34\n", true, true, false);
     }
 
     @Test
     public void testIntToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_int(34,66,100) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_int(34,66,100) as string) from long_sequence(10)", "a\n" +
                         "40\n" +
                         "60\n" +
                         "57\n" +
@@ -3269,21 +2336,12 @@ public class CastTest extends AbstractCairoTest {
                         "38\n" +
                         "56\n" +
                         "52\n" +
-                        "49\n",
-                true,
-                true
-        );
+                        "49\n", true, true, false);
     }
 
     @Test
     public void testIntToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(334 as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(334 as string) from long_sequence(10)", "a\n" +
                         "334\n" +
                         "334\n" +
                         "334\n" +
@@ -3293,10 +2351,7 @@ public class CastTest extends AbstractCairoTest {
                         "334\n" +
                         "334\n" +
                         "334\n" +
-                        "334\n",
-                true,
-                true
-        );
+                        "334\n", true, true, false);
     }
 
     @Test
@@ -3333,13 +2388,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testIntToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_int(1,150,100) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_int(1,150,100) as symbol) from long_sequence(10)", "a\n" +
                         "19\n" +
                         "72\n" +
                         "90\n" +
@@ -3349,21 +2398,12 @@ public class CastTest extends AbstractCairoTest {
                         "65\n" +
                         "32\n" +
                         "67\n" +
-                        "106\n",
-                true,
-                true
-        );
+                        "106\n", true, true, false);
     }
 
     @Test
     public void testIntToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(601 as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(601 as symbol) from long_sequence(10)", "a\n" +
                         "601\n" +
                         "601\n" +
                         "601\n" +
@@ -3373,10 +2413,7 @@ public class CastTest extends AbstractCairoTest {
                         "601\n" +
                         "601\n" +
                         "601\n" +
-                        "601\n",
-                true,
-                true
-        );
+                        "601\n", true, true, false);
     }
 
     @Test
@@ -3413,13 +2450,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testIntToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_int(1,150,100) as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_int(1,150,100) as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.000019Z\n" +
                         "1970-01-01T00:00:00.000072Z\n" +
                         "1970-01-01T00:00:00.000090Z\n" +
@@ -3429,21 +2460,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000065Z\n" +
                         "1970-01-01T00:00:00.000032Z\n" +
                         "1970-01-01T00:00:00.000067Z\n" +
-                        "1970-01-01T00:00:00.000106Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.000106Z\n", true, true, false);
     }
 
     @Test
     public void testLong256ToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_long256() as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_long256() as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -3453,10 +2475,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
         assertQuery(
                 "cast\nfalse\n",
                 "select cast(cast(0 as long) as boolean)",
@@ -3477,13 +2496,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testLong256ToBooleanConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(cast(1 as long256) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(cast(1 as long256) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -3493,21 +2506,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testLong256ToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_long256() as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_long256() as int) from long_sequence(10)", "a\n" +
                         "-1148479920\n" +
                         "73575701\n" +
                         "1868723706\n" +
@@ -3517,21 +2521,12 @@ public class CastTest extends AbstractCairoTest {
                         "1125579207\n" +
                         "-85170055\n" +
                         "-1101822104\n" +
-                        "-1125169127\n",
-                true,
-                true
-        );
+                        "-1125169127\n", true, true, false);
     }
 
     @Test
     public void testLong256ToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_long256() as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_long256() as long) from long_sequence(10)", "a\n" +
                         "4689592037643856\n" +
                         "8260188555232587029\n" +
                         "-2653407051020864006\n" +
@@ -3541,21 +2536,12 @@ public class CastTest extends AbstractCairoTest {
                         "-3985256597569472057\n" +
                         "-8671107786057422727\n" +
                         "-4485747798769957016\n" +
-                        "375856366519011353\n",
-                true,
-                true
-        );
+                        "375856366519011353\n", true, true, false);
     }
 
     @Test
     public void testLongToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_long(0,66,100) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_long(0,66,100) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -3565,21 +2551,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testLongToBooleanConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(1l as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(1l as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -3589,21 +2566,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testLongToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_long(96,100, 10) as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_long(96,100, 10) as byte) from long_sequence(10)", "a\n" +
                         "97\n" +
                         "96\n" +
                         "0\n" +
@@ -3613,21 +2581,12 @@ public class CastTest extends AbstractCairoTest {
                         "100\n" +
                         "100\n" +
                         "96\n" +
-                        "97\n",
-                true,
-                true
-        );
+                        "97\n", true, true, false);
     }
 
     @Test
     public void testLongToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_long(34,66,100) as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_long(34,66,100) as char) from long_sequence(10)", "a\n" +
                         "7\n" +
                         "0\n" +
                         "7\n" +
@@ -3637,21 +2596,12 @@ public class CastTest extends AbstractCairoTest {
                         "\"\n" +
                         ":\n" +
                         "-\n" +
-                        "=\n",
-                true,
-                true
-        );
+                        "=\n", true, true, false);
     }
 
     @Test
     public void testLongToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_long(1,150,100) as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_long(1,150,100) as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.067Z\n" +
                         "1970-01-01T00:00:00.126Z\n" +
                         "1970-01-01T00:00:00.124Z\n" +
@@ -3661,21 +2611,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.085Z\n" +
                         "1970-01-01T00:00:00.040Z\n" +
                         "1970-01-01T00:00:00.111Z\n" +
-                        "1970-01-01T00:00:00.112Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.112Z\n", true, true, false);
     }
 
     @Test
     public void testLongToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_long(1,150,100) as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_long(1,150,100) as double) from long_sequence(10)", "a\n" +
                         "67.0\n" +
                         "126.0\n" +
                         "124.0\n" +
@@ -3685,21 +2626,12 @@ public class CastTest extends AbstractCairoTest {
                         "85.0\n" +
                         "40.0\n" +
                         "111.0\n" +
-                        "112.0\n",
-                true,
-                true
-        );
+                        "112.0\n", true, true, false);
     }
 
     @Test
     public void testLongToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_long(1,150,100) as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_long(1,150,100) as float) from long_sequence(10)", "a\n" +
                         "67.0000\n" +
                         "126.0000\n" +
                         "124.0000\n" +
@@ -3709,21 +2641,12 @@ public class CastTest extends AbstractCairoTest {
                         "85.0000\n" +
                         "40.0000\n" +
                         "111.0000\n" +
-                        "112.0000\n",
-                true,
-                true
-        );
+                        "112.0000\n", true, true, false);
     }
 
     @Test
     public void testLongToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_long(34,66,100) as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_long(34,66,100) as int) from long_sequence(10)", "a\n" +
                         "55\n" +
                         "48\n" +
                         "55\n" +
@@ -3733,21 +2656,12 @@ public class CastTest extends AbstractCairoTest {
                         "34\n" +
                         "58\n" +
                         "45\n" +
-                        "61\n",
-                true,
-                true
-        );
+                        "61\n", true, true, false);
     }
 
     @Test
     public void testLongToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_long(1,150,100) as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_long(1,150,100) as long) from long_sequence(10)", "a\n" +
                         "67\n" +
                         "126\n" +
                         "124\n" +
@@ -3757,21 +2671,12 @@ public class CastTest extends AbstractCairoTest {
                         "85\n" +
                         "40\n" +
                         "111\n" +
-                        "112\n",
-                true,
-                true
-        );
+                        "112\n", true, true, false);
     }
 
     @Test
     public void testLongToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_long(34,66,100) as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_long(34,66,100) as long256) from long_sequence(10)", "a\n" +
                         "0x37\n" +
                         "0x30\n" +
                         "0x37\n" +
@@ -3781,10 +2686,7 @@ public class CastTest extends AbstractCairoTest {
                         "0x22\n" +
                         "0x3a\n" +
                         "0x2d\n" +
-                        "0x3d\n",
-                true,
-                true
-        );
+                        "0x3d\n", true, true, false);
     }
 
     @Test
@@ -3821,13 +2723,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testLongToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_long(23,56,100) as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_long(23,56,100) as short) from long_sequence(10)", "a\n" +
                         "31\n" +
                         "26\n" +
                         "38\n" +
@@ -3837,21 +2733,12 @@ public class CastTest extends AbstractCairoTest {
                         "53\n" +
                         "46\n" +
                         "51\n" +
-                        "46\n",
-                true,
-                true
-        );
+                        "46\n", true, true, false);
     }
 
     @Test
     public void testLongToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_long(34,66,100) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_long(34,66,100) as string) from long_sequence(10)", "a\n" +
                         "55\n" +
                         "48\n" +
                         "55\n" +
@@ -3861,21 +2748,12 @@ public class CastTest extends AbstractCairoTest {
                         "34\n" +
                         "58\n" +
                         "45\n" +
-                        "61\n",
-                true,
-                true
-        );
+                        "61\n", true, true, false);
     }
 
     @Test
     public void testLongToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(334l as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(334l as string) from long_sequence(10)", "a\n" +
                         "334\n" +
                         "334\n" +
                         "334\n" +
@@ -3885,10 +2763,7 @@ public class CastTest extends AbstractCairoTest {
                         "334\n" +
                         "334\n" +
                         "334\n" +
-                        "334\n",
-                true,
-                true
-        );
+                        "334\n", true, true, false);
     }
 
     @Test
@@ -3925,13 +2800,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testLongToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_long(1,150,100) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_long(1,150,100) as symbol) from long_sequence(10)", "a\n" +
                         "67\n" +
                         "126\n" +
                         "124\n" +
@@ -3941,21 +2810,12 @@ public class CastTest extends AbstractCairoTest {
                         "85\n" +
                         "40\n" +
                         "111\n" +
-                        "112\n",
-                true,
-                true
-        );
+                        "112\n", true, true, false);
     }
 
     @Test
     public void testLongToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(601l as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(601l as symbol) from long_sequence(10)", "a\n" +
                         "601\n" +
                         "601\n" +
                         "601\n" +
@@ -3965,10 +2825,7 @@ public class CastTest extends AbstractCairoTest {
                         "601\n" +
                         "601\n" +
                         "601\n" +
-                        "601\n",
-                true,
-                true
-        );
+                        "601\n", true, true, false);
     }
 
     @Test
@@ -4005,13 +2862,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testLongToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_long(1,150,100) as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_long(1,150,100) as timestamp) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.000067Z\n" +
                         "1970-01-01T00:00:00.000126Z\n" +
                         "1970-01-01T00:00:00.000124Z\n" +
@@ -4021,21 +2872,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000085Z\n" +
                         "1970-01-01T00:00:00.000040Z\n" +
                         "1970-01-01T00:00:00.000111Z\n" +
-                        "1970-01-01T00:00:00.000112Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.000112Z\n", true, true, false);
     }
 
     @Test
     public void testNullToBinary() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a binary)",
-                null,
-                "insert into tab select cast(null as binary) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a binary)", null, "insert into tab select cast(null as binary) from long_sequence(10)", "a\n" +
                         "\n" +
                         "\n" +
                         "\n" +
@@ -4045,21 +2887,12 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "\n",
-                true,
-                true
-        );
+                        "\n", true, true, false);
     }
 
     @Test
     public void testShortToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_short() as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_short() as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -4069,10 +2902,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
 
         assertQuery(
                 "cast\nfalse\n",
@@ -4094,13 +2924,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testShortToBooleanTrue() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(cast(1 as short) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(cast(1 as short) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -4110,21 +2934,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testShortToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_short() as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_short() as byte) from long_sequence(10)", "a\n" +
                         "80\n" +
                         "-18\n" +
                         "65\n" +
@@ -4134,21 +2949,12 @@ public class CastTest extends AbstractCairoTest {
                         "-118\n" +
                         "23\n" +
                         "-6\n" +
-                        "-40\n",
-                true,
-                true
-        );
+                        "-40\n", true, true, false);
     }
 
     @Test
     public void testShortToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_short(34,66) as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_short(34,66) as char) from long_sequence(10)", "a\n" +
                         "?\n" +
                         "A\n" +
                         "&\n" +
@@ -4158,21 +2964,12 @@ public class CastTest extends AbstractCairoTest {
                         ".\n" +
                         "=\n" +
                         ")\n" +
-                        "<\n",
-                true,
-                true
-        );
+                        "<\n", true, true, false);
     }
 
     @Test
     public void testShortToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_short() as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_short() as date) from long_sequence(10)", "a\n" +
                         "1969-12-31T23:59:32.944Z\n" +
                         "1970-01-01T00:00:24.814Z\n" +
                         "1969-12-31T23:59:48.545Z\n" +
@@ -4182,21 +2979,12 @@ public class CastTest extends AbstractCairoTest {
                         "1969-12-31T23:59:58.602Z\n" +
                         "1970-01-01T00:00:21.015Z\n" +
                         "1970-01-01T00:00:30.202Z\n" +
-                        "1969-12-31T23:59:40.504Z\n",
-                true,
-                true
-        );
+                        "1969-12-31T23:59:40.504Z\n", true, true, false);
     }
 
     @Test
     public void testShortToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_short() as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_short() as double) from long_sequence(10)", "a\n" +
                         "-27056.0\n" +
                         "24814.0\n" +
                         "-11455.0\n" +
@@ -4206,21 +2994,12 @@ public class CastTest extends AbstractCairoTest {
                         "-1398.0\n" +
                         "21015.0\n" +
                         "30202.0\n" +
-                        "-19496.0\n",
-                true,
-                true
-        );
+                        "-19496.0\n", true, true, false);
     }
 
     @Test
     public void testShortToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_short() as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_short() as float) from long_sequence(10)", "a\n" +
                         "-27056.0000\n" +
                         "24814.0000\n" +
                         "-11455.0000\n" +
@@ -4230,21 +3009,12 @@ public class CastTest extends AbstractCairoTest {
                         "-1398.0000\n" +
                         "21015.0000\n" +
                         "30202.0000\n" +
-                        "-19496.0000\n",
-                true,
-                true
-        );
+                        "-19496.0000\n", true, true, false);
     }
 
     @Test
     public void testShortToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_short() as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_short() as int) from long_sequence(10)", "a\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
@@ -4254,21 +3024,12 @@ public class CastTest extends AbstractCairoTest {
                         "-1398\n" +
                         "21015\n" +
                         "30202\n" +
-                        "-19496\n",
-                true,
-                true
-        );
+                        "-19496\n", true, true, false);
     }
 
     @Test
     public void testShortToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_short() as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_short() as long) from long_sequence(10)", "a\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
@@ -4278,21 +3039,12 @@ public class CastTest extends AbstractCairoTest {
                         "-1398\n" +
                         "21015\n" +
                         "30202\n" +
-                        "-19496\n",
-                true,
-                true
-        );
+                        "-19496\n", true, true, false);
     }
 
     @Test
     public void testShortToLong256() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long256)",
-                null,
-                "insert into tab select cast(rnd_short() as long256) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long256)", null, "insert into tab select cast(rnd_short() as long256) from long_sequence(10)", "a\n" +
                         "0xffffffffffff9650\n" +
                         "0x60ee\n" +
                         "0xffffffffffffd341\n" +
@@ -4302,10 +3054,7 @@ public class CastTest extends AbstractCairoTest {
                         "0xfffffffffffffa8a\n" +
                         "0x5217\n" +
                         "0x75fa\n" +
-                        "0xffffffffffffb3d8\n",
-                true,
-                true
-        );
+                        "0xffffffffffffb3d8\n", true, true, false);
     }
 
     @Test
@@ -4342,13 +3091,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testShortToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_short() as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_short() as short) from long_sequence(10)", "a\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
@@ -4358,21 +3101,12 @@ public class CastTest extends AbstractCairoTest {
                         "-1398\n" +
                         "21015\n" +
                         "30202\n" +
-                        "-19496\n",
-                true,
-                true
-        );
+                        "-19496\n", true, true, false);
     }
 
     @Test
     public void testShortToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_short() as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_short() as string) from long_sequence(10)", "a\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
@@ -4382,21 +3116,12 @@ public class CastTest extends AbstractCairoTest {
                         "-1398\n" +
                         "21015\n" +
                         "30202\n" +
-                        "-19496\n",
-                true,
-                true
-        );
+                        "-19496\n", true, true, false);
     }
 
     @Test
     public void testShortToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(cast(10 as short) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(cast(10 as short) as string) from long_sequence(10)", "a\n" +
                         "10\n" +
                         "10\n" +
                         "10\n" +
@@ -4406,10 +3131,7 @@ public class CastTest extends AbstractCairoTest {
                         "10\n" +
                         "10\n" +
                         "10\n" +
-                        "10\n",
-                true,
-                true
-        );
+                        "10\n", true, true, false);
     }
 
     @Test
@@ -4446,13 +3168,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testShortToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_short() as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_short() as symbol) from long_sequence(10)", "a\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
@@ -4462,21 +3178,12 @@ public class CastTest extends AbstractCairoTest {
                         "-1398\n" +
                         "21015\n" +
                         "30202\n" +
-                        "-19496\n",
-                true,
-                true
-        );
+                        "-19496\n", true, true, false);
     }
 
     @Test
     public void testShortToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(cast(99 as short) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(cast(99 as short) as symbol) from long_sequence(10)", "a\n" +
                         "99\n" +
                         "99\n" +
                         "99\n" +
@@ -4486,10 +3193,7 @@ public class CastTest extends AbstractCairoTest {
                         "99\n" +
                         "99\n" +
                         "99\n" +
-                        "99\n",
-                true,
-                true
-        );
+                        "99\n", true, true, false);
     }
 
     @Test
@@ -4526,13 +3230,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testShortToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_short() as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_short() as timestamp) from long_sequence(10)", "a\n" +
                         "1969-12-31T23:59:59.972944Z\n" +
                         "1970-01-01T00:00:00.024814Z\n" +
                         "1969-12-31T23:59:59.988545Z\n" +
@@ -4542,21 +3240,12 @@ public class CastTest extends AbstractCairoTest {
                         "1969-12-31T23:59:59.998602Z\n" +
                         "1970-01-01T00:00:00.021015Z\n" +
                         "1970-01-01T00:00:00.030202Z\n" +
-                        "1969-12-31T23:59:59.980504Z\n",
-                true,
-                true
-        );
+                        "1969-12-31T23:59:59.980504Z\n", true, true, false);
     }
 
     @Test
     public void testStrConstZeroToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast('' as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast('' as char) from long_sequence(10)", "a\n" +
                         "\n" +
                         "\n" +
                         "\n" +
@@ -4566,10 +3255,7 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "\n",
-                true,
-                true
-        );
+                        "\n", true, true, false);
     }
 
     @Test
@@ -4598,13 +3284,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testStrToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_str('23','56','100', null) as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_str('23','56','100', null) as byte) from long_sequence(10)", "a\n" +
                         "23\n" +
                         "100\n" +
                         "56\n" +
@@ -4614,21 +3294,12 @@ public class CastTest extends AbstractCairoTest {
                         "100\n" +
                         "0\n" +
                         "100\n" +
-                        "23\n",
-                true,
-                true
-        );
+                        "23\n", true, true, false);
     }
 
     @Test
     public void testStrToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_str('A', 'BC', 'K', null) as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_str('A', 'BC', 'K', null) as char) from long_sequence(10)", "a\n" +
                         "A\n" +
                         "K\n" +
                         "B\n" +
@@ -4638,21 +3309,12 @@ public class CastTest extends AbstractCairoTest {
                         "K\n" +
                         "\n" +
                         "K\n" +
-                        "A\n",
-                true,
-                true
-        );
+                        "A\n", true, true, false);
     }
 
     @Test
     public void testStrToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_str('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.123Z', 'ABC', null) as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_str('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.123Z', 'ABC', null) as date) from long_sequence(10)", "a\n" +
                         "2019-03-11T10:20:33.123Z\n" +
                         "\n" +
                         "2019-03-24T14:20:33.123Z\n" +
@@ -4662,21 +3324,12 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "2019-03-11T10:20:33.123Z\n",
-                true,
-                true
-        );
+                        "2019-03-11T10:20:33.123Z\n", true, true, false);
     }
 
     @Test
     public void testStrToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_str('1234.556', '988.223', 'abc', null) as double) from long_sequence(15)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_str('1234.556', '988.223', 'abc', null) as double) from long_sequence(15)", "a\n" +
                         "1234.556\n" +
                         "NaN\n" +
                         "988.223\n" +
@@ -4691,36 +3344,18 @@ public class CastTest extends AbstractCairoTest {
                         "1234.556\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "988.223\n",
-                true,
-                true
-        );
+                        "988.223\n", true, true, false);
     }
 
     @Test
     public void testStrToDouble_doubleParserTakingSlowPath() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select cast(a as double) as a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab values ('4.9E-324')",
-                "a\n" +
-                        "4.9E-324\n",
-                true,
-                true
-        );
+        assertQuery("a\n", "select cast(a as double) as a from tab", "create table tab (a string)", null, "insert into tab values ('4.9E-324')", "a\n" +
+                        "4.9E-324\n", true, true, false);
     }
 
     @Test
     public void testStrToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_str('9.23', '4.15', 'xyz', null) as float) from long_sequence(15)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_str('9.23', '4.15', 'xyz', null) as float) from long_sequence(15)", "a\n" +
                         "9.2300\n" +
                         "NaN\n" +
                         "4.1500\n" +
@@ -4735,21 +3370,12 @@ public class CastTest extends AbstractCairoTest {
                         "9.2300\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "4.1500\n",
-                true,
-                true
-        );
+                        "4.1500\n", true, true, false);
     }
 
     @Test
     public void testStrToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_str('90092', '2203', null) as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_str('90092', '2203', null) as int) from long_sequence(10)", "a\n" +
                         "90092\n" +
                         "90092\n" +
                         "2203\n" +
@@ -4759,21 +3385,12 @@ public class CastTest extends AbstractCairoTest {
                         "NaN\n" +
                         "2203\n" +
                         "90092\n" +
-                        "2203\n",
-                true,
-                true
-        );
+                        "2203\n", true, true, false);
     }
 
     @Test
     public void testStrToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_str('2334l', '99002', null) as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_str('2334l', '99002', null) as long) from long_sequence(10)", "a\n" +
                         "2334\n" +
                         "2334\n" +
                         "99002\n" +
@@ -4783,10 +3400,7 @@ public class CastTest extends AbstractCairoTest {
                         "NaN\n" +
                         "99002\n" +
                         "2334\n" +
-                        "99002\n",
-                true,
-                true
-        );
+                        "99002\n", true, true, false);
     }
 
     @Test
@@ -4823,13 +3437,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testStrToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_str('23','56','100', null, 'y') as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_str('23','56','100', null, 'y') as short) from long_sequence(10)", "a\n" +
                         "23\n" +
                         "0\n" +
                         "0\n" +
@@ -4839,10 +3447,7 @@ public class CastTest extends AbstractCairoTest {
                         "100\n" +
                         "56\n" +
                         "56\n" +
-                        "0\n",
-                true,
-                true
-        );
+                        "0\n", true, true, false);
     }
 
     @Test
@@ -4943,13 +3548,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testStrToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_str('2019-03-11T10:20:33.123897Z', '2019-03-24T14:20:33.123551Z', 'ABC', null) as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_str('2019-03-11T10:20:33.123897Z', '2019-03-24T14:20:33.123551Z', 'ABC', null) as timestamp) from long_sequence(10)", "a\n" +
                         "2019-03-11T10:20:33.123897Z\n" +
                         "\n" +
                         "2019-03-24T14:20:33.123551Z\n" +
@@ -4959,10 +3558,7 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "2019-03-11T10:20:33.123897Z\n",
-                true,
-                true
-        );
+                        "2019-03-11T10:20:33.123897Z\n", true, true, false);
     }
 
     @Test
@@ -4984,13 +3580,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolNocacheToLong256Sort() throws Exception {
-        assertQuery13(
-                "x\n",
-                "select cast(a as long256) x from tt order by x",
-                "create table tt (a symbol nocache)",
-                null,
-                "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880') a from long_sequence(20)",
-                "x\n" +
+        assertQuery("x\n", "select cast(a as long256) x from tt order by x", "create table tt (a symbol nocache)", null, "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880') a from long_sequence(20)", "x\n" +
                         "\n" +
                         "\n" +
                         "\n" +
@@ -5010,21 +3600,12 @@ public class CastTest extends AbstractCairoTest {
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
-                        "0x8802ff90\n",
-                true,
-                true
-        );
+                        "0x8802ff90\n", true, true, false);
     }
 
     @Test
     public void testSymbolNocacheToStrSort() throws Exception {
-        assertQuery13(
-                "x\n",
-                "select cast(a as string) x from tt order by x",
-                "create table tt (a symbol nocache)",
-                null,
-                "insert into tt select rnd_symbol('1','200','221', null) from long_sequence(20)",
-                "x\n" +
+        assertQuery("x\n", "select cast(a as string) x from tt order by x", "create table tt (a symbol nocache)", null, "insert into tt select rnd_symbol('1','200','221', null) from long_sequence(20)", "x\n" +
                         "\n" +
                         "\n" +
                         "\n" +
@@ -5044,21 +3625,12 @@ public class CastTest extends AbstractCairoTest {
                         "221\n" +
                         "221\n" +
                         "221\n" +
-                        "221\n",
-                true,
-                true
-        );
+                        "221\n", true, true, false);
     }
 
     @Test
     public void testSymbolToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_symbol('23','56','100', null) as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_symbol('23','56','100', null) as byte) from long_sequence(10)", "a\n" +
                         "23\n" +
                         "100\n" +
                         "56\n" +
@@ -5068,21 +3640,12 @@ public class CastTest extends AbstractCairoTest {
                         "100\n" +
                         "0\n" +
                         "100\n" +
-                        "23\n",
-                true,
-                true
-        );
+                        "23\n", true, true, false);
     }
 
     @Test
     public void testSymbolToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_symbol('A', 'BC', 'K', null) as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_symbol('A', 'BC', 'K', null) as char) from long_sequence(10)", "a\n" +
                         "A\n" +
                         "K\n" +
                         "B\n" +
@@ -5092,21 +3655,12 @@ public class CastTest extends AbstractCairoTest {
                         "K\n" +
                         "\n" +
                         "K\n" +
-                        "A\n",
-                true,
-                true
-        );
+                        "A\n", true, true, false);
     }
 
     @Test
     public void testSymbolToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_symbol('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.123Z', 'ABC', null) as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_symbol('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.123Z', 'ABC', null) as date) from long_sequence(10)", "a\n" +
                         "2019-03-11T10:20:33.123Z\n" +
                         "\n" +
                         "2019-03-24T14:20:33.123Z\n" +
@@ -5116,21 +3670,12 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "2019-03-11T10:20:33.123Z\n",
-                true,
-                true
-        );
+                        "2019-03-11T10:20:33.123Z\n", true, true, false);
     }
 
     @Test
     public void testSymbolToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_symbol('1234.556', '988.223', 'abc', null) as double) from long_sequence(15)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_symbol('1234.556', '988.223', 'abc', null) as double) from long_sequence(15)", "a\n" +
                         "1234.556\n" +
                         "NaN\n" +
                         "988.223\n" +
@@ -5145,21 +3690,12 @@ public class CastTest extends AbstractCairoTest {
                         "1234.556\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "988.223\n",
-                true,
-                true
-        );
+                        "988.223\n", true, true, false);
     }
 
     @Test
     public void testSymbolToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_symbol('9.23', '4.15', 'xyz', null) as float) from long_sequence(15)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_symbol('9.23', '4.15', 'xyz', null) as float) from long_sequence(15)", "a\n" +
                         "9.2300\n" +
                         "NaN\n" +
                         "4.1500\n" +
@@ -5174,21 +3710,12 @@ public class CastTest extends AbstractCairoTest {
                         "9.2300\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "4.1500\n",
-                true,
-                true
-        );
+                        "4.1500\n", true, true, false);
     }
 
     @Test
     public void testSymbolToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_symbol('100', '200', 'abc', null) as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_symbol('100', '200', 'abc', null) as int) from long_sequence(10)", "a\n" +
                         "100\n" +
                         "NaN\n" +
                         "200\n" +
@@ -5198,21 +3725,12 @@ public class CastTest extends AbstractCairoTest {
                         "NaN\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "100\n",
-                true,
-                true
-        );
+                        "100\n", true, true, false);
     }
 
     @Test
     public void testSymbolToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(rnd_symbol('100', '200', 'abc', null) as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(rnd_symbol('100', '200', 'abc', null) as long) from long_sequence(10)", "a\n" +
                         "100\n" +
                         "NaN\n" +
                         "200\n" +
@@ -5222,10 +3740,7 @@ public class CastTest extends AbstractCairoTest {
                         "NaN\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "100\n",
-                true,
-                true
-        );
+                        "100\n", true, true, false);
     }
 
     @Test
@@ -5262,13 +3777,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_symbol('23','56','100', null, 'y') as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_symbol('23','56','100', null, 'y') as short) from long_sequence(10)", "a\n" +
                         "23\n" +
                         "0\n" +
                         "0\n" +
@@ -5278,21 +3787,12 @@ public class CastTest extends AbstractCairoTest {
                         "100\n" +
                         "56\n" +
                         "56\n" +
-                        "0\n",
-                true,
-                true
-        );
+                        "0\n", true, true, false);
     }
 
     @Test
     public void testSymbolToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_symbol('abc', '135', null, 'xxp') as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_symbol('abc', '135', null, 'xxp') as string) from long_sequence(10)", "a\n" +
                         "abc\n" +
                         "\n" +
                         "135\n" +
@@ -5302,21 +3802,12 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "xxp\n" +
                         "\n" +
-                        "abc\n",
-                true,
-                true
-        );
+                        "abc\n", true, true, false);
     }
 
     @Test
     public void testSymbolToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(cast('334' as symbol) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(cast('334' as symbol) as string) from long_sequence(10)", "a\n" +
                         "334\n" +
                         "334\n" +
                         "334\n" +
@@ -5326,10 +3817,7 @@ public class CastTest extends AbstractCairoTest {
                         "334\n" +
                         "334\n" +
                         "334\n" +
-                        "334\n",
-                true,
-                true
-        );
+                        "334\n", true, true, false);
     }
 
     @Test
@@ -5366,13 +3854,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_symbol('23','56','100', null, 'y') as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_symbol('23','56','100', null, 'y') as symbol) from long_sequence(10)", "a\n" +
                         "23\n" +
                         "\n" +
                         "\n" +
@@ -5382,21 +3864,12 @@ public class CastTest extends AbstractCairoTest {
                         "100\n" +
                         "56\n" +
                         "56\n" +
-                        "\n",
-                true,
-                true
-        );
+                        "\n", true, true, false);
     }
 
     @Test
     public void testSymbolToTimestamp() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a timestamp)",
-                null,
-                "insert into tab select cast(rnd_symbol('2019-03-11T10:20:33.123897Z', '2019-03-24T14:20:33.123551Z', 'ABC', null) as timestamp) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a timestamp)", null, "insert into tab select cast(rnd_symbol('2019-03-11T10:20:33.123897Z', '2019-03-24T14:20:33.123551Z', 'ABC', null) as timestamp) from long_sequence(10)", "a\n" +
                         "2019-03-11T10:20:33.123897Z\n" +
                         "\n" +
                         "2019-03-24T14:20:33.123551Z\n" +
@@ -5406,21 +3879,12 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "2019-03-11T10:20:33.123897Z\n",
-                true,
-                true
-        );
+                        "2019-03-11T10:20:33.123897Z\n", true, true, false);
     }
 
     @Test
     public void testTimestampToBoolean() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(rnd_timestamp(10000000000L, 100000000000L, 2) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_timestamp(10000000000L, 100000000000L, 2) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -5430,10 +3894,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
 
         assertQuery(
                 "cast\nfalse\n",
@@ -5455,13 +3916,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampToBooleanConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast(cast(1 as timestamp) as boolean) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(cast(1 as timestamp) as boolean) from long_sequence(10)", "a\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -5471,21 +3926,12 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n",
-                true,
-                true
-        );
+                        "true\n", true, true, false);
     }
 
     @Test
     public void testTimestampToByte() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a byte)",
-                null,
-                "insert into tab select cast(rnd_timestamp(96,100, 2) as byte) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a byte)", null, "insert into tab select cast(rnd_timestamp(96,100, 2) as byte) from long_sequence(10)", "a\n" +
                         "97\n" +
                         "0\n" +
                         "100\n" +
@@ -5495,21 +3941,12 @@ public class CastTest extends AbstractCairoTest {
                         "97\n" +
                         "98\n" +
                         "0\n" +
-                        "96\n",
-                true,
-                true
-        );
+                        "96\n", true, true, false);
     }
 
     @Test
     public void testTimestampToChar() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast(rnd_timestamp(34,66,2) as char) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a char)", null, "insert into tab select cast(rnd_timestamp(34,66,2) as char) from long_sequence(10)", "a\n" +
                         "7\n" +
                         "\n" +
                         "9\n" +
@@ -5519,21 +3956,12 @@ public class CastTest extends AbstractCairoTest {
                         "+\n" +
                         "4\n" +
                         "\n" +
-                        "-\n",
-                true,
-                true
-        );
+                        "-\n", true, true, false);
     }
 
     @Test
     public void testTimestampToDate() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a date)",
-                null,
-                "insert into tab select cast(rnd_timestamp(1000000,10000000,2) as date) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a date)", null, "insert into tab select cast(rnd_timestamp(1000000,10000000,2) as date) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:05.437Z\n" +
                         "\n" +
                         "1970-01-01T00:00:05.960Z\n" +
@@ -5543,21 +3971,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:05.535Z\n" +
                         "1970-01-01T00:00:09.498Z\n" +
                         "\n" +
-                        "1970-01-01T00:00:02.521Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:02.521Z\n", true, true, false);
     }
 
     @Test
     public void testTimestampToDouble() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a double)",
-                null,
-                "insert into tab select cast(rnd_timestamp(1,150,2) as double) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a double)", null, "insert into tab select cast(rnd_timestamp(1,150,2) as double) from long_sequence(10)", "a\n" +
                         "67.0\n" +
                         "NaN\n" +
                         "30.0\n" +
@@ -5567,21 +3986,12 @@ public class CastTest extends AbstractCairoTest {
                         "127.0\n" +
                         "58.0\n" +
                         "NaN\n" +
-                        "111.0\n",
-                true,
-                true
-        );
+                        "111.0\n", true, true, false);
     }
 
     @Test
     public void testTimestampToFloat() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a float)",
-                null,
-                "insert into tab select cast(rnd_timestamp(1,150,2) as float) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a float)", null, "insert into tab select cast(rnd_timestamp(1,150,2) as float) from long_sequence(10)", "a\n" +
                         "67.0000\n" +
                         "NaN\n" +
                         "30.0000\n" +
@@ -5591,21 +4001,12 @@ public class CastTest extends AbstractCairoTest {
                         "127.0000\n" +
                         "58.0000\n" +
                         "NaN\n" +
-                        "111.0000\n",
-                true,
-                true
-        );
+                        "111.0000\n", true, true, false);
     }
 
     @Test
     public void testTimestampToInt() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a int)",
-                null,
-                "insert into tab select cast(rnd_timestamp(1000000L, 1000000000L, 2) as int) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a int)", null, "insert into tab select cast(rnd_timestamp(1000000L, 1000000000L, 2) as int) from long_sequence(10)", "a\n" +
                         "985257636\n" +
                         "NaN\n" +
                         "968130026\n" +
@@ -5615,21 +4016,12 @@ public class CastTest extends AbstractCairoTest {
                         "215755333\n" +
                         "720037886\n" +
                         "NaN\n" +
-                        "129724714\n",
-                true,
-                true
-        );
+                        "129724714\n", true, true, false);
     }
 
     @Test
     public void testTimestampToLong() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
-                null,
-                "insert into tab select cast(cast(rnd_long(1,15000000,100) as timestamp) as long) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a long)", null, "insert into tab select cast(cast(rnd_long(1,15000000,100) as timestamp) as long) from long_sequence(10)", "a\n" +
                         "13992367\n" +
                         "4501476\n" +
                         "2660374\n" +
@@ -5639,10 +4031,7 @@ public class CastTest extends AbstractCairoTest {
                         "6977935\n" +
                         "9100840\n" +
                         "8600061\n" +
-                        "478012\n",
-                true,
-                true
-        );
+                        "478012\n", true, true, false);
     }
 
     @Test
@@ -5679,13 +4068,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampToShort() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a short)",
-                null,
-                "insert into tab select cast(rnd_timestamp(23,56,2) as short) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a short)", null, "insert into tab select cast(rnd_timestamp(23,56,2) as short) from long_sequence(10)", "a\n" +
                         "31\n" +
                         "0\n" +
                         "54\n" +
@@ -5695,21 +4078,12 @@ public class CastTest extends AbstractCairoTest {
                         "33\n" +
                         "24\n" +
                         "0\n" +
-                        "51\n",
-                true,
-                true
-        );
+                        "51\n", true, true, false);
     }
 
     @Test
     public void testTimestampToStr() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(rnd_timestamp(34,66,100) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_timestamp(34,66,100) as string) from long_sequence(10)", "a\n" +
                         "1970-01-01T00:00:00.000055Z\n" +
                         "1970-01-01T00:00:00.000048Z\n" +
                         "1970-01-01T00:00:00.000055Z\n" +
@@ -5719,21 +4093,12 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000034Z\n" +
                         "1970-01-01T00:00:00.000058Z\n" +
                         "1970-01-01T00:00:00.000045Z\n" +
-                        "1970-01-01T00:00:00.000061Z\n",
-                true,
-                true
-        );
+                        "1970-01-01T00:00:00.000061Z\n", true, true, false);
     }
 
     @Test
     public void testTimestampToStrConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast(cast(334l as timestamp) as string) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(cast(334l as timestamp) as string) from long_sequence(10)", "a\n" +
                         "334\n" +
                         "334\n" +
                         "334\n" +
@@ -5743,10 +4108,7 @@ public class CastTest extends AbstractCairoTest {
                         "334\n" +
                         "334\n" +
                         "334\n" +
-                        "334\n",
-                true,
-                true
-        );
+                        "334\n", true, true, false);
     }
 
     @Test
@@ -5783,13 +4145,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampToSymbol() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(rnd_timestamp(1,150,2) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_timestamp(1,150,2) as symbol) from long_sequence(10)", "a\n" +
                         "67\n" +
                         "\n" +
                         "30\n" +
@@ -5799,21 +4155,12 @@ public class CastTest extends AbstractCairoTest {
                         "127\n" +
                         "58\n" +
                         "\n" +
-                        "111\n",
-                true,
-                true
-        );
+                        "111\n", true, true, false);
     }
 
     @Test
     public void testTimestampToSymbolConst() throws Exception {
-        assertQuery13(
-                "a\n",
-                "select a from tab",
-                "create table tab (a symbol)",
-                null,
-                "insert into tab select cast(cast(601l as timestamp) as symbol) from long_sequence(10)",
-                "a\n" +
+        assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(cast(601l as timestamp) as symbol) from long_sequence(10)", "a\n" +
                         "601\n" +
                         "601\n" +
                         "601\n" +
@@ -5823,10 +4170,7 @@ public class CastTest extends AbstractCairoTest {
                         "601\n" +
                         "601\n" +
                         "601\n" +
-                        "601\n",
-                true,
-                true
-        );
+                        "601\n", true, true, false);
     }
 
     @Test

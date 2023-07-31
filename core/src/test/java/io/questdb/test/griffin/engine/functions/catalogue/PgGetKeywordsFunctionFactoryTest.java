@@ -37,7 +37,7 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery12(sink.toString(), "pg_get_keywords;", null, false, sqlExecutionContext, true);
+        assertQuery(sink.toString(), "pg_get_keywords;", null, false, true);
     }
 
     @Test
@@ -47,6 +47,6 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery12(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, true);
+        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, true);
     }
 }

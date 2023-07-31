@@ -31,16 +31,7 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "sum\n\n",
-                "select sum(f) from tab",
-                "create table tab as (select cast(null as long256) f from long_sequence(33))",
-                null,
-                "insert into tab select cast(123L as long256) from long_sequence(1)",
-                "sum\n0x7b\n",
-                false,
-                true
-        );
+        assertQuery("sum\n\n", "select sum(f) from tab", "create table tab as (select cast(null as long256) f from long_sequence(33))", null, "insert into tab select cast(123L as long256) from long_sequence(1)", "sum\n0x7b\n", false, true, false);
     }
 
     @Test

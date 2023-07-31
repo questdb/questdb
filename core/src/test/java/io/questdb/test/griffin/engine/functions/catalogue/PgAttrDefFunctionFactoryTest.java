@@ -43,20 +43,11 @@ public class PgAttrDefFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgAttrDefFuncWith2Tables() throws Exception {
-        assertQuery13(
-                "adrelid\tadnum\tadbin\n" +
-                        "1\t1\t\n",
-                "pg_catalog.pg_attrdef order by 1, 2;",
-                "create table x(a int)",
-                null,
-                "create table y(a double, b string)",
-                "adrelid\tadnum\tadbin\n" +
+        assertQuery("adrelid\tadnum\tadbin\n" +
+                        "1\t1\t\n", "pg_catalog.pg_attrdef order by 1, 2;", "create table x(a int)", null, "create table y(a double, b string)", "adrelid\tadnum\tadbin\n" +
                         "1\t1\t\n" +
                         "2\t1\t\n" +
-                        "2\t2\t\n",
-                true,
-                false
-        );
+                        "2\t2\t\n", true, false, false);
     }
 
     @Test

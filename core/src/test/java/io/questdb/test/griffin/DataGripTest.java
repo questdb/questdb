@@ -34,7 +34,7 @@ public class DataGripTest extends AbstractCairoTest {
 
     @Test
     public void testGetCurrentDatabase() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
                         "1\tquestdb\t\tfalse\ttrue\tpublic\n",
                 "select N.oid::bigint as id,\n" +
@@ -48,14 +48,13 @@ public class DataGripTest extends AbstractCairoTest {
                         "order by case when datname = pg_catalog.current_database() then -1::bigint else N.oid::bigint end;\n",
                 null,
                 true,
-                sqlExecutionContext,
-                false
+                sqlExecutionContext
         );
     }
 
     @Test
     public void testGetDatabaseOwner() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "id\tstate_number\tname\tdescription\towner\n" +
                         "2200\t0\tpublic\t\tpublic\n" +
                         "11\t0\tpg_catalog\t\tpublic\n",
@@ -70,14 +69,13 @@ public class DataGripTest extends AbstractCairoTest {
                         "order by case when nspname = current_schema then -1::bigint else N.oid::bigint end",
                 null,
                 true,
-                sqlExecutionContext,
-                false
+                sqlExecutionContext
         );
     }
 
     @Test
     public void testGetDatabases() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
                         "1\tquestdb\t\tfalse\ttrue\tpublic\n",
                 "select N.oid::bigint as id,\n" +
@@ -90,8 +88,7 @@ public class DataGripTest extends AbstractCairoTest {
                         "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid",
                 null,
                 false,
-                sqlExecutionContext,
-                false
+                sqlExecutionContext
         );
     }
 
@@ -122,21 +119,21 @@ public class DataGripTest extends AbstractCairoTest {
 
     @Test
     public void testShowDateStyles() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "DateStyle\n" +
                         "ISO,YMD\n",
                 "show datestyle",
                 null,
                 false,
-                sqlExecutionContext,
                 true
+
         );
     }
 
     @Test
     @Ignore
     public void testStartUpUnknownDBMS() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "",
                 "SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM," +
                         "   ct.relname AS TABLE_NAME," +
@@ -176,8 +173,7 @@ public class DataGripTest extends AbstractCairoTest {
                         " ORDER BY NON_UNIQUE, TYPE, INDEX_NAME, ORDINAL_POSITION",
                 null,
                 true,
-                sqlExecutionContext,
-                false
+                sqlExecutionContext
         );
     }
 

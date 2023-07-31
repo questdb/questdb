@@ -850,7 +850,7 @@ public class InsertTest extends AbstractCairoTest {
                 "A\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
                 "BB\t339631474\t1970-01-03T00:54:00.000000Z\n";
 
-        assertQuery13(
+        assertQuery(
                 "sym\tid\tts\n",
                 "x",
                 "create table x (\n" +
@@ -865,7 +865,8 @@ public class InsertTest extends AbstractCairoTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true,
-                true
+                true,
+                false
         );
     }
 
@@ -1039,7 +1040,7 @@ public class InsertTest extends AbstractCairoTest {
         if (walEnabled) {
             drainWalQueue();
         }
-        assertQuery13(
+        assertQuery(
                 "seq\tts\n",
                 "tab",
                 "create table tab(seq long, ts timestamp) timestamp(ts);",
@@ -1047,7 +1048,8 @@ public class InsertTest extends AbstractCairoTest {
                 "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)",
                 expected,
                 true,
-                true
+                true,
+                false
         );
     }
 

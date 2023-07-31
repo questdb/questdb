@@ -65,25 +65,16 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
     public void testNotEquals1SymbolsWithConstantFilter() throws Exception {
         final String expected = "k\tj\tprice\tts\n";
 
-        assertQuery13(
-                "k\tj\tprice\tts\n",
-                "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1",
-                "create table x (\n" +
+        assertQuery("k\tj\tprice\tts\n", "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1", "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY", "ts", "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_symbol('D', 'E', 'F') sym2, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "        from long_sequence(10)) timestamp (ts)",
-                expected,
-                false,
-                true
-        );
+                        "        from long_sequence(10)) timestamp (ts)", expected, false, true, false);
     }
 
     @Test
@@ -206,7 +197,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
                 "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
-        assertQuery11(
+        assertQuery(
                 "k\tprice\tts\n",
                 "select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'",
                 "create table x (\n" +
@@ -219,7 +210,8 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
-                expected
+                expected,
+                true
         );
         // insert query values:
         //

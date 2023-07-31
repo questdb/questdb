@@ -149,7 +149,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "ibm\t1970-01-06T19:31:50.000000Z\n" +
                     "msft\t1970-01-06T19:37:20.000000Z\n" +
                     "ibm\t1970-01-06T19:42:50.000000Z\n";
-            assertQuery13(
+            assertQuery(
                     expected,
                     "select distinct sym, ts from x",
                     "create table x as (" +
@@ -164,6 +164,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
                     expected,
                     true,
+                    false,
                     false
             );
         });
@@ -183,7 +184,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "ibm\t1970-01-06T19:04:20.000000Z\n" +
                     "msft\t1970-01-06T18:58:50.000000Z\n" +
                     "msft\t1970-01-06T18:53:20.000000Z\n";
-            assertQuery13(
+            assertQuery(
                     expected,
                     "select distinct sym, ts from (x order by ts desc)",
                     "create table x as (" +
@@ -198,6 +199,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
                     expected,
                     true,
+                    false,
                     false
             );
         });

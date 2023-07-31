@@ -92,17 +92,8 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSkipNull() throws Exception {
-        assertQuery13(
-                "string_agg\n" +
-                        "\n",
-                "select string_agg(s, ',') from x",
-                "create table x as (select * from (select cast(null as string) s from long_sequence(5)))",
-                null,
-                "insert into x select 'abc' from long_sequence(1)",
-                "string_agg\n" +
-                        "abc\n",
-                false,
-                true
-        );
+        assertQuery("string_agg\n" +
+                        "\n", "select string_agg(s, ',') from x", "create table x as (select * from (select cast(null as string) s from long_sequence(5)))", null, "insert into x select 'abc' from long_sequence(1)", "string_agg\n" +
+                        "abc\n", false, true, false);
     }
 }

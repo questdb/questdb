@@ -1016,7 +1016,7 @@ public class LatestByTest extends AbstractCairoTest {
             }
         };
 
-        assertQuery13("x\ts\tts\n" +
+        assertQuery("x\ts\tts\n" +
                         "44\tb\t1970-01-02T19:00:00.000000Z\n" +
                         "48\ta\t1970-01-02T23:00:00.000000Z\n",
                 "t " +
@@ -1036,7 +1036,9 @@ public class LatestByTest extends AbstractCairoTest {
                         "1000\tc\t1970-01-02T20:00:00.000000Z\n" +
                         "48\ta\t1970-01-02T23:00:00.000000Z\n",
                 true,
-                true);
+                true,
+                false
+        );
     }
 
     @Test

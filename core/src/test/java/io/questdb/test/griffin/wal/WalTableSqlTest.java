@@ -376,9 +376,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "select ts, col1, col2 from " + tableName, "ts\tcol1\tcol2\n" +
+                    "ts\tcol1\tcol2\n" +
                             "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
-                            "2022-02-24T01:00:00.000000Z\t1\t2\n"
+                            "2022-02-24T01:00:00.000000Z\t1\t2\n",
+                    "select ts, col1, col2 from " + tableName
             );
 
             ddl("alter table " + tableName + " set type bypass wal");
@@ -390,10 +391,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " add col3 int");
             insert("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
 
-            assertSql("select ts, col1, col3 from " + tableName, "ts\tcol1\tcol3\n" +
+            assertSql("ts\tcol1\tcol3\n" +
                     "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
                     "2022-02-24T01:00:00.000000Z\t1\tNaN\n" +
-                    "2022-02-24T01:00:00.000000Z\t3\t4\n");
+                    "2022-02-24T01:00:00.000000Z\t3\t4\n",
+                    "select ts, col1, col3 from " + tableName
+            );
         });
     }
 

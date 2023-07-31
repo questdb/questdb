@@ -1907,14 +1907,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectCharToGeoHash() throws Exception {
-        assertQuery13(
-                "geohash\n",
-                "select geohash from geohash",
-                "create table geohash (geohash geohash(1c))",
-                null,
-                "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                "geohash\n" +
+        assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c))", null, "insert into geohash " +
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
                         "q\n" +
                         "q\n" +
                         "u\n" +
@@ -1924,10 +1918,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "e\n" +
                         "u\n" +
                         "q\n" +
-                        "u\n",
-                true,
-                true
-        );
+                        "u\n", true, true, false);
     }
 
     @Test
@@ -1954,14 +1945,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectCharToNarrowGeoByte() throws Exception {
-        assertQuery13(
-                "geohash\n",
-                "select geohash from geohash",
-                "create table geohash (geohash geohash(4b))",
-                null,
-                "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                "geohash\n" +
+        assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(4b))", null, "insert into geohash " +
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
                         "1011\n" +
                         "1011\n" +
                         "1101\n" +
@@ -1971,10 +1956,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "0110\n" +
                         "1101\n" +
                         "1011\n" +
-                        "1101\n",
-                true,
-                true
-        );
+                        "1101\n", true, true, false);
     }
 
     @Test
@@ -2081,14 +2063,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectGeoHashByteSizedStorage5() throws Exception {
-        assertMemoryLeak(() -> assertQuery13(
-                "geohash\n",
-                "select geohash from geohash",
-                "create table geohash (geohash geohash(1c))",
-                null,
-                "insert into geohash " +
-                        "select rnd_str('q','u','e') from long_sequence(10)",
-                "geohash\n" +
+        assertMemoryLeak(() -> assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c))", null, "insert into geohash " +
+                        "select rnd_str('q','u','e') from long_sequence(10)", "geohash\n" +
                         "q\n" +
                         "q\n" +
                         "u\n" +
@@ -2098,10 +2074,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "e\n" +
                         "u\n" +
                         "q\n" +
-                        "u\n",
-                true,
-                true
-        ));
+                        "u\n", true, true, false));
     }
 
     @Test
@@ -2322,27 +2295,18 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectInVolumeFail() throws Exception {
         try {
-            assertQuery13(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c)) in volume 'niza'",
-                    null,
-                    "insert into geohash " +
-                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                    "geohash\n" +
-                            "q\n" +
-                            "q\n" +
-                            "u\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "u\n" +
-                            "q\n" +
-                            "u\n",
-                    true,
-                    true
-            );
+            assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume 'niza'", null, "insert into geohash " +
+                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n", true, true, false);
             Assert.fail();
         } catch (SqlException e) {
             if (Os.isWindows()) {
@@ -2386,26 +2350,18 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         };
         try {
             configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
-            assertQuery13(
-                    "geohash\n",
-                    "select geohash from " + tableName,
-                    "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'",
-                    null,
-                    "insert into " + tableName +
-                            " select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                    "geohash\n" +
-                            "q\n" +
-                            "q\n" +
-                            "u\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "u\n" +
-                            "q\n" +
-                            "u\n",
-                    true,
-                    true);
+            assertQuery("geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
+                                " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n", true, true, false);
             Assert.fail();
         } catch (SqlException e) {
             if (Os.isWindows()) {
@@ -2430,26 +2386,18 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         try {
             configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             Assert.assertTrue(volume.delete());
-            assertQuery13(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'",
-                    null,
-                    "insert into geohash " +
-                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                    "geohash\n" +
-                            "q\n" +
-                            "q\n" +
-                            "u\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "u\n" +
-                            "q\n" +
-                            "u\n",
-                    true,
-                    true);
+            assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
+                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n", true, true, false);
             Assert.fail();
         } catch (SqlException | CairoException e) {
             if (Os.isWindows()) {

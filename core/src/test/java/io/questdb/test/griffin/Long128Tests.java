@@ -251,7 +251,7 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testLong128ValueNotSet() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "ts\tcount\n" +
                         "\t10\n" +
                         "00000000-0000-0004-0000-000000000002\t1\n" +
@@ -287,7 +287,8 @@ public class Long128Tests extends AbstractCairoTest {
                         "00000000-0000-0024-0000-000000000012\t1\n" +
                         "00000000-0000-0028-0000-000000000014\t1\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
@@ -403,7 +404,7 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testWhereEquals() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "uuid\tts1\ti\n" +
                         "00000000-0000-0009-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n",
                 "testWhereEquals where uuid = to_long128(-9, 9)",

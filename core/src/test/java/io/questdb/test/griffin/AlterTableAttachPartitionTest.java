@@ -575,7 +575,6 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                                 "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\n" +
                                 "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\n",
                         dst.getName(),
-                        null,
                         "ts",
                         true,
                         true
@@ -629,7 +628,6 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                                 "2022-08-01T08:43:38.090909Z\t1\t1\n" +
                                 "2022-08-01T17:27:16.181818Z\t2\t2\n",
                         dst.getName(),
-                        null,
                         "ts",
                         true,
                         true

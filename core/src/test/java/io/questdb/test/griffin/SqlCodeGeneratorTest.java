@@ -1032,7 +1032,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "93.4460485739401\tPEHN\t1970-01-02T03:46:40.000000Z\n" +
                 "88.2822836669774\t\t1970-01-17T04:53:20.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where cast(b as symbol) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10)) and test_match()",
                 "create table x as " +
@@ -1053,7 +1053,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n"
+                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -1232,7 +1233,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "92.050039469858\t\n" +
                 "45.6344569609078\t\n" +
                 "40.455469747939254\t\n";
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b = null",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b from long_sequence(20)), index(b)",
@@ -1248,7 +1249,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "58.912164838797885\t\n" +
                         "44.80468966861358\t\n" +
                         "89.40917126581896\t\n" +
-                        "3.993124821273464\t\n"
+                        "3.993124821273464\t\n",
+                true
         );
     }
 
@@ -1271,7 +1273,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
                 "create table x as " +
@@ -1292,7 +1294,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -1304,7 +1307,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "HYRX\t1970-01-07T22:40:00.000000Z\t97.71103146051203\n" +
                 "HYRX\t1970-01-11T10:00:00.000000Z\t12.026122412833129\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select b, k, a from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and b = 'HYRX'",
                 "create table x as " +
@@ -1325,13 +1328,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "HYRX\t1971-01-01T00:00:00.000000Z\t56.594291398612405\n"
+                        "HYRX\t1971-01-01T00:00:00.000000Z\t56.594291398612405\n",
+                true
         );
     }
 
     @Test
     public void testFilterOnSubQueryIndexedDeferred() throws Exception {
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b in (select rnd_symbol('ABC') a from long_sequence(10))",
                 "create table x as " +
@@ -1356,7 +1360,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "25.53319339703062\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "89.40917126581896\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "28.799739396819312\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "68.06873134626417\tABC\t1971-01-01T00:00:00.000000Z\n"
+                        "68.06873134626417\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -1375,7 +1380,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()" +
                         "and a < 80",
@@ -1399,7 +1404,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 expected + "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "72.30015763133606\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "12.105630273556178\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "11.585982949541474\tABC\t1971-01-01T00:00:00.000000Z\n"
+                        "11.585982949541474\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
 
         // these value are also ok because ddl2 is present, there is another round of check for that
@@ -1437,7 +1443,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnSubQueryIndexedStrColumn() throws Exception {
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b in (select 'ABC' a from long_sequence(10))",
                 "create table x as " +
@@ -1458,7 +1464,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -1481,7 +1488,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in ('RXGZ', 'HYRX', null, 'QZT')",
                 "create table x as " +
@@ -1516,7 +1523,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                         "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tQZT\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tQZT\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -1541,7 +1549,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected1,
                 "select * from x o where o.b in ('HYRX','PEHN', null, 'ABCD')",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
@@ -1562,7 +1570,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "76.9238189433781\tABCD\t\n" +
                         "49.42890511958454\tHYRX\t\n" +
                         "65.51335839796312\tABCD\t\n" +
-                        "28.20020716674768\tABCD\t\n"
+                        "28.20020716674768\tABCD\t\n",
+                true
         );
     }
 
@@ -1570,7 +1579,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testFilterOnValuesAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery11(
+        assertQuery(
                 "a\tb\tk\n" +
                         "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
                         "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
@@ -1603,7 +1612,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
                         "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
-                        "44.80468966861358\t\t\n"
+                        "44.80468966861358\t\t\n",
+                true
         );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -1631,7 +1641,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnValuesDeferred() throws Exception {
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x o where o.b in ('ABCD', 'XYZ')",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
@@ -1647,7 +1657,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "81.64182592467493\tABCD\t\n" +
                         "76.9238189433781\tABCD\t\n" +
                         "65.51335839796312\tABCD\t\n" +
-                        "28.20020716674768\tABCD\t\n"
+                        "28.20020716674768\tABCD\t\n",
+                true
         );
     }
 
@@ -1658,7 +1669,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "52.98405941762054\tHYRX\n" +
                 "40.455469747939254\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b = 'HYRX'",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
@@ -1669,7 +1680,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 expected +
                         "75.88175403454873\tHYRX\n" +
-                        "57.78947915182423\tHYRX\n"
+                        "57.78947915182423\tHYRX\n",
+                true
         );
     }
 
@@ -1680,7 +1692,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final String expected = "a\tb\n" +
                 "52.98405941762054\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b = 'HYRX' and a > 41 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
@@ -1691,7 +1703,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 expected +
                         "75.88175403454873\tHYRX\n" +
-                        "57.78947915182423\tHYRX\n"
+                        "57.78947915182423\tHYRX\n",
+                true
         );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -1699,7 +1712,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterSingleNonExistingSymbol() throws Exception {
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b = 'ABC'",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
@@ -1710,14 +1723,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
-                        "57.78947915182423\tABC\n"
+                        "57.78947915182423\tABC\n",
+                true
         );
     }
 
     @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b = 'ABC' and a > 30 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
@@ -1728,7 +1742,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(2)",
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
-                        "57.78947915182423\tABC\n"
+                        "57.78947915182423\tABC\n",
+                true
         );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -1752,7 +1767,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
@@ -1773,7 +1788,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -1796,7 +1812,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', 'ABC', null) a from long_sequence(10))",
                 "create table x as " +
@@ -1817,7 +1833,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -1840,7 +1857,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
@@ -1861,7 +1878,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -1879,41 +1897,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // 2022-03-30 10:00:00.0
         // 2022-03-31 10:00:00.0
         currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
-        assertQuery13(
-                "min\tmax\n" +
-                        "\t\n",
-                "SELECT min(ts), max(ts)\n" +
+        assertQuery("min\tmax\n" +
+                        "\t\n", "SELECT min(ts), max(ts)\n" +
                         "FROM tab\n" +
-                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())",
-                "CREATE TABLE tab AS (\n" +
+                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())", "CREATE TABLE tab AS (\n" +
                         "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
                         "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                null,
-                null,
-                false,
-                true
-        );
+                        ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
 
         drop("drop table tab");
 
-        assertQuery13(
-                "min\tmax\n" +
-                        "\t\n",
-                "SELECT min(ts), max(ts)\n" +
+        assertQuery("min\tmax\n" +
+                        "\t\n", "SELECT min(ts), max(ts)\n" +
                         " FROM tab\n" +
-                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())",
-                "CREATE TABLE tab AS (\n" +
+                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())", "CREATE TABLE tab AS (\n" +
                         "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
                         "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                null,
-                null,
-                false,
-                true
-        );
+                        ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
     }
 
     @Test
@@ -2016,19 +2016,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByConstantMatchingColumnName() throws Exception {
-        assertQuery13(
-                "nts\tmin\nnts\t\n",
-                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
+        assertQuery("nts\tmin\nnts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
                         "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                        "from long_sequence(2L)",
-                "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z\n",
-                false,
-                true
-        );
+                        "from long_sequence(2L)", "nts\tmin\n" +
+                        "nts\t2020-01-01T00:00:00.000010Z\n", false, true, false);
     }
 
     @Test
@@ -2289,49 +2280,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAll() throws Exception {
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest on k partition by b",
-                "create table x as " +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'VTJW'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
+                        ") timestamp (t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllBool() throws Exception {
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                        "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest on k partition by b",
-                "create table x as " +
+                        "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
                         "(" +
                         "select * from" +
                         "(" +
@@ -2341,21 +2320,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20) " +
                         ")" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " false," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
+                        ") timestamp (t)", "a\tb\tk\n" +
                         "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                        "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2366,10 +2339,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(
-                expected,
-                "select * from x where 6 < 10 latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select * from x where 6 < 10 latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -2377,24 +2347,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'VTJW'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
+                        ") timestamp (t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2404,10 +2368,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(
-                expected,
-                "select * from x where a > 40 latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select * from x where a > 40 latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -2415,23 +2376,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'VTJW'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
+                        ") timestamp (t)", "a\tb\tk\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2442,10 +2397,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(
-                expected,
-                "select * from x latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select * from x latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -2453,24 +2405,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'VTJW'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
+                        ") timestamp (t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2481,34 +2427,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(
-                expected,
-                "select * from x where 5 > 2 latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select * from x where 5 > 2 latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'VTJW'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
+                        ") timestamp (t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2518,10 +2455,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(
-                expected,
-                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
-                "create table x as " +
+        assertQuery(expected, "select * from (select a,k,b from x latest on k partition by b) where a > 40", "create table x as " +
                         "(" +
                         "select" +
                         " timestamp_sequence(0, 100000000000) k," +
@@ -2531,9 +2465,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b" +
                         " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " to_timestamp('2019', 'yyyy') t," +
                         " rnd_double(0)*100," +
@@ -2542,15 +2474,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " 46.578761277152225," +
                         " 'VTJW'" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
+                        ") timestamp (t)", "a\tk\tb\n" +
                         "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                         "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                         "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                false
-        );
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, false, false);
     }
 
     @Test
@@ -2561,10 +2489,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(
-                expected,
-                "select a,k,b from x where a > 40 latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select a,k,b from x where a > 40 latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " timestamp_sequence(0, 100000000000) k," +
@@ -2574,9 +2499,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b" +
                         " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " to_timestamp('2019', 'yyyy') t," +
                         " rnd_double(0)*100," +
@@ -2585,26 +2508,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " 46.578761277152225," +
                         " 'VTJW'" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
+                        ") timestamp (t)", "a\tk\tb\n" +
                         "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
                         "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                         "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                         "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                true
-        );
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
-        assertQuery13(
-                expected,
-                "select * from x where c = 'SXUX' latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select * from x where c = 'SXUX' latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -2612,22 +2528,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_symbol(5,4,4,1) c," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'VTJW'," +
                         " 'SXUX'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tc\tk\n" +
+                        ") timestamp (t)", "a\tb\tc\tk\n" +
                         "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
-                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -3321,10 +3231,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(
-                expected,
-                "select a,k,b from x latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select a,k,b from x latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " timestamp_sequence(0, 100000000000) k," +
@@ -3335,9 +3242,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_symbol(5,4,4,1) b" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " to_timestamp('2019', 'yyyy') t," +
                         " rnd_double(0)*100," +
@@ -3346,17 +3251,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_double(0)*100," +
                         " 'VTJW'" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
+                        ") timestamp (t)", "a\tk\tb\n" +
                         "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
                         "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
                         "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                         "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                         "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                true
-        );
+                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
     }
 
     @Test
@@ -3367,10 +3268,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1970-01-12T13:46:40.000000Z\t48.820511018586934\n" +
                 "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
                 "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
-        assertQuery13(
-                expected,
-                "select k,a from x latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select k,a from x latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -3378,24 +3276,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'VTJW'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "k\ta\n" +
+                        ") timestamp (t)", "k\ta\n" +
                         "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
                         "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
                         "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
                         "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
-                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n",
-                true,
-                true
-        );
+                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n", true, true, false);
     }
 
     @Test
@@ -3449,16 +3341,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllMixed() throws Exception {
-        assertQuery13(
-                "b\tk\ta\n" +
+        assertQuery("b\tk\ta\n" +
                         "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
                         "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
                         "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
                         "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
                         "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
-                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n",
-                "select b,k,a from x latest on k partition by b",
-                "create table x as " +
+                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n", "select b,k,a from x latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " timestamp_sequence(0, 100000000000) k," +
@@ -3468,9 +3357,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b" +
                         " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " to_timestamp('2019', 'yyyy') t," +
                         " rnd_double(0)*100," +
@@ -3479,17 +3366,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_double(0)*100," +
                         " 'VTJW'" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "b\tk\ta\n" +
+                        ") timestamp (t)", "b\tk\ta\n" +
                         "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
                         "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
                         "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
                         "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
                         "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
-                        "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n",
-                true,
-                true
-        );
+                        "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n", true, true, false);
     }
 
     @Test
@@ -3548,10 +3431,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(
-                expected,
-                "select * from x where a > 40 latest on k partition by b",
-                "create table x as " +
+        assertQuery(expected, "select * from x where a > 40 latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -3559,20 +3439,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         " select" +
                         " rnd_double(0)*100," +
                         " 'CCKS'," +
                         " to_timestamp('2019', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp (t)",
-                expected +
-                        "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        ") timestamp (t)", expected +
+                        "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -3835,7 +3709,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByKeyValue() throws Exception {
         // no index
-        assertQuery11(
+        assertQuery(
                 "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
                 "select * from x where b = 'RXGZ' latest on k partition by b",
@@ -3857,14 +3731,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
     @Test
     public void testLatestByKeyValueColumnDereference() throws Exception {
         // no index
-        assertQuery11(
+        assertQuery(
                 "k\ta\tb\n" +
                         "1970-01-03T07:33:20.000000Z\t23.90529010846525\tRXGZ\n",
                 "select k,a,b from x where b = 'RXGZ' latest on k partition by b",
@@ -3886,14 +3761,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "k\ta\tb\n" +
-                        "1971-01-01T00:00:00.000000Z\t56.594291398612405\tRXGZ\n"
+                        "1971-01-01T00:00:00.000000Z\t56.594291398612405\tRXGZ\n",
+                true
         );
     }
 
     @Test
     public void testLatestByKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(
+        assertQuery(
                 "a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
@@ -3914,7 +3790,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n"
+                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
 
         // this is good
@@ -3946,7 +3823,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKeyValueIndexed() throws Exception {
-        assertQuery11(
+        assertQuery(
                 "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
                 "select * from x where b = 'RXGZ' latest on k partition by b",
@@ -3967,14 +3844,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
     @Test
     public void testLatestByKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(
+        assertQuery(
                 "a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
@@ -3995,7 +3873,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n"
+                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4023,12 +3902,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByKeyValues() throws Exception {
         // no index
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
-                "create table x as " +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4036,34 +3912,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByKeyValuesFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match() latest on k partition by b",
-                "create table x as " +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match() latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4071,34 +3938,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(5)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testLatestByKeyValuesIndexed() throws Exception {
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
-                "create table x as " +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4106,32 +3964,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b",
-                "create table x as " +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4139,21 +3988,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4161,7 +4004,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValue() throws Exception {
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
@@ -4182,14 +4025,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "72.30015763133606\tXYZ\t1971-01-01T00:00:00.000000Z\n"
+                        "72.30015763133606\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
     @Test
     public void testLatestByMissingKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -4210,7 +4054,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
 
         // this is good
@@ -4219,7 +4064,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValueIndexed() throws Exception {
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
@@ -4240,13 +4085,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "81.64182592467493\tXYZ\t1971-01-05T15:06:40.000000Z\n"
+                        "81.64182592467493\tXYZ\t1971-01-05T15:06:40.000000Z\n",
+                true
         );
     }
 
     @Test
     public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
-        assertQuery11(
+        assertQuery(
                 null,
                 "select b,k,a from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
@@ -4267,14 +4113,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(t)",
                 "b\tk\ta\n" +
-                        "XYZ\t1971-01-05T15:06:40.000000Z\t81.64182592467493\n"
+                        "XYZ\t1971-01-05T15:06:40.000000Z\t81.64182592467493\n",
+                true
         );
     }
 
     @Test
     public void testLatestByMissingKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(
+        assertQuery(
                 null,
                 "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -4295,7 +4142,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4304,11 +4152,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMissingKeyValues() throws Exception {
         // no index
-        assertQuery13(
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('XYZ','HYRX') latest on k partition by b",
-                "create table x as " +
+        assertQuery("a\tb\tk\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ','HYRX') latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4316,31 +4161,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'XYZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByMissingKeyValuesFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13(
-                "a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
-                "create table x as " +
+        assertQuery("a\tb\tk\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4348,21 +4184,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'XYZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4370,11 +4200,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValuesIndexed() throws Exception {
-        assertQuery13(
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b",
-                "create table x as " +
+        assertQuery("a\tb\tk\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4382,31 +4209,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'XYZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13(
-                "a\tb\tk\n" +
-                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
-                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
-                "create table x as " +
+        assertQuery("a\tb\tk\n" +
+                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4414,21 +4232,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 10000000000) k" +
                         " from" +
                         " long_sequence(300)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " 88.1," +
                         " 'XYZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
-                        "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4516,18 +4328,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMultipleColumns() throws Exception {
-        assertQuery13(
-                "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n",
-                "select * from balances latest on timestamp partition by cust_id, balance_ccy",
-                "create table balances (\n" +
+        assertQuery("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n", "select * from balances latest on timestamp partition by cust_id, balance_ccy", "create table balances (\n" +
                         "\tcust_id int, \n" +
                         "\tbalance_ccy symbol, \n" +
                         "\tbalance double, \n" +
                         "\tstatus byte, \n" +
                         "\ttimestamp timestamp\n" +
-                        ") timestamp(timestamp)",
-                "timestamp",
-                "insert into balances select * from (" +
+                        ") timestamp(timestamp)", "timestamp", "insert into balances select * from (" +
                         " select" +
                         " abs(rnd_int()) % 4," +
                         " rnd_str('USD', 'GBP', 'EUR')," +
@@ -4535,8 +4342,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_byte(0,1)," +
                         " cast(0 as timestamp) timestamp" +
                         " from long_sequence(150)" +
-                        ") timestamp (timestamp)",
-                "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
+                        ") timestamp (timestamp)", "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
                         "3\tUSD\t0.8796413468565342\t0\t1970-01-01T00:00:00.000000Z\n" +
                         "3\tEUR\t0.011099265671968506\t0\t1970-01-01T00:00:00.000000Z\n" +
                         "1\tEUR\t0.10747511833573742\t1\t1970-01-01T00:00:00.000000Z\n" +
@@ -4548,10 +4354,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z\n" +
                         "2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z\n" +
                         "0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -4786,13 +4589,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQuery() throws Exception {
         // no index
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4800,34 +4600,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferred() throws Exception {
         // no index
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4835,38 +4626,29 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'UCLA'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferredFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
                         " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
+                        " latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4874,23 +4656,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " 33.46," +
                         " 'UCLA'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4898,13 +4674,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryDeferredIndexed() throws Exception {
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4912,37 +4685,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'UCLA'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferredIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
                         " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
+                        " latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4950,23 +4714,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " 33.46," +
                         " 'UCLA'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -4975,15 +4733,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySubQueryFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
+                        " latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4991,35 +4746,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " 33.46," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testLatestBySubQueryIndexed() throws Exception {
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -5027,36 +4773,27 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13(
-                "a\tb\tk\n" +
+        assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
+                        " latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -5064,22 +4801,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "),index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " 33.46," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -5104,11 +4835,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryIndexedStrColumn() throws Exception {
-        assertQuery13(
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
-                "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b",
-                "create table x as " +
+        assertQuery("a\tb\tk\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n", "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -5116,20 +4844,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
+                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+                        ") timestamp(t)", "a\tb\tk\n" +
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -5648,7 +5370,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by b,a,x.a",
@@ -5670,7 +5392,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -5701,10 +5424,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
                 "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n";
 
-        assertQuery13(
-                expected,
-                "x order by a,b,c,d,e,f,g,i,j,k,l,n",
-                "create table x as " +
+        assertQuery(expected, "x order by a,b,c,d,e,f,g,i,j,k,l,n", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() a," +
@@ -5722,17 +5442,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x(a,d,c,k) select * from (" +
+                        ") timestamp(k) partition by NONE", null, "insert into x(a,d,c,k) select * from (" +
                         "select" +
                         " 1194691157," +
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
+                        ") timestamp(t)", "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
                         "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
                         "-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
                         "-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
@@ -5756,10 +5473,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
                         "1194691157\tfalse\tRXGZ\t88.69397617459538\tNaN\t0\t\t\tNaN\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
                         "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n",
-                true,
-                true
-        );
+                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n", true, true, false);
     }
 
     @Test
@@ -6020,11 +5734,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n" +
                 "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
 
-        assertQuery13(
-                expected,
-                "select * from x " +
-                        " order by b, a",
-                "create table x as " +
+        assertQuery(expected, "select * from x " +
+                        " order by b, a", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_long256() a," +
@@ -6032,19 +5743,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                null,
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by DAY", null, "insert into x select * from (" +
                         "select" +
                         " rnd_long256()," +
                         " 'W'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                expected2,
-                true,
-                true
-        );
+                        ") timestamp(t)", expected2, true, true, false);
     }
 
     @Test
@@ -6071,10 +5776,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
-        assertQuery13(
-                expected,
-                "x order by c",
-                "create table x as " +
+        assertQuery(expected, "x order by c", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() a," +
@@ -6083,17 +5785,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
                         "select" +
                         " rnd_int()," +
                         " 'J'," +
                         " to_timestamp('1971', 'yyyy') t," +
                         " 'APPC'" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tc\tk\tn\n" +
+                        ") timestamp(t)", "a\tc\tk\tn\n" +
                         "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
                         "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
                         "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
@@ -6114,10 +5813,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
                         "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
                         "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n",
-                true,
-                true
-        );
+                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
     }
 
     @Test
@@ -6250,7 +5946,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(
+        assertQuery(
                 expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by k",
@@ -6274,7 +5970,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 expected +
                         "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n" +
                         "88.2822836669774\tRXGZ\t1971-01-01T00:00:00.000000Z\n" +
-                        "72.30015763133606\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+                        "72.30015763133606\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -6302,10 +5999,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
                 "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n";
 
-        assertQuery13(
-                expected,
-                "x order by k,a",
-                "create table x as " +
+        assertQuery(expected, "x order by k,a", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() a," +
@@ -6314,17 +6008,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " 852921272," +
                         " 'J'," +
                         " cast(1000000 as timestamp) t," +
                         " 'APPC'" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tc\tk\tn\n" +
+                        ") timestamp(t)", "a\tc\tk\tn\n" +
                         "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
                         "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
                         "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
@@ -6345,10 +6036,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
                         "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
                         "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n",
-                true,
-                true
-        );
+                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n", true, true, false);
     }
 
     @Test
@@ -6375,10 +6063,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
-        assertQuery13(
-                expected,
-                "x order by c,n desc",
-                "create table x as " +
+        assertQuery(expected, "x order by c,n desc", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() a," +
@@ -6387,17 +6072,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
                         "select" +
                         " rnd_int()," +
                         " 'J'," +
                         " to_timestamp('1971', 'yyyy') t," +
                         " 'ZZCC'" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tc\tk\tn\n" +
+                        ") timestamp(t)", "a\tc\tk\tn\n" +
                         "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
                         "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
                         "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
@@ -6418,10 +6100,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
                         "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
                         "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n",
-                true,
-                true
-        );
+                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
     }
 
     @Test
@@ -6453,8 +6132,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testOrderChar() throws Exception {
-        assertQuery13(
-                "a\n" +
+        assertQuery("a\n" +
                         "C\n" +
                         "E\n" +
                         "G\n" +
@@ -6474,23 +6152,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "X\n" +
                         "X\n" +
                         "Y\n" +
-                        "Z\n",
-                "select * from x order by a",
-                "create table x as " +
+                        "Z\n", "select * from x order by a", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_char() a" +
                         " from" +
                         " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
+                        ")", null, "insert into x select * from (" +
                         "select" +
                         " rnd_char()" +
                         " from" +
                         " long_sequence(5)" +
-                        ")",
-                "a\n" +
+                        ")", "a\n" +
                         "C\n" +
                         "E\n" +
                         "G\n" +
@@ -6515,10 +6188,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "X\n" +
                         "X\n" +
                         "Y\n" +
-                        "Z\n",
-                true,
-                true
-        );
+                        "Z\n", true, true, false);
     }
 
     @Test
@@ -6545,10 +6215,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n";
 
-        assertQuery13(
-                expected,
-                "x where k IN '1970-01' order by b asc",
-                "create table x as " +
+        assertQuery(expected, "x where k IN '1970-01' order by b asc", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -6556,16 +6223,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH",
-                null,
-                "insert into x select * from (" +
+                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'ABC'," +
                         " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
                         "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
                         "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
@@ -6586,11 +6250,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n",
-                true,
-                true
-
-        );
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6617,10 +6277,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery13(
-                expected,
-                "x where k IN '1970-01' order by b desc",
-                "create table x as " +
+        assertQuery(expected, "x where k IN '1970-01' order by b desc", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -6628,16 +6285,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH",
-                null,
-                "insert into x select * from (" +
+                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'ABC'," +
                         " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
                         "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
@@ -6658,11 +6312,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
                         "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                         "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                true,
-                true
-
-        );
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6689,26 +6339,20 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
 
-        assertQuery13(
-                expected,
-                "x where k IN '1970-01' order by b, k desc",
-                "create table x as " +
+        assertQuery(expected, "x where k IN '1970-01' order by b, k desc", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH",
-                null,
-                "insert into x select * from (" +
+                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'ABC'," +
                         " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
                         "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                         "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
@@ -6729,10 +6373,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n",
-                true,
-                true
-        );
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6759,10 +6400,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery13(
-                expected,
-                "x where k IN '1970-01' order by b desc, k",
-                "create table x as " +
+        assertQuery(expected, "x where k IN '1970-01' order by b desc, k", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -6770,16 +6408,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by DAY",
-                null,
-                "insert into x select * from (" +
+                        "),index(b) timestamp(k) partition by DAY", null, "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
                         " 'ABC'," +
                         " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
                         " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
+                        ") timestamp(t)", "a\tb\tk\n" +
                         "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
                         "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
@@ -6800,10 +6435,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
                         "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                         "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                true,
-                true
-        );
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -7042,26 +6674,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "8\n" +
                 "9\n";
 
-        assertQuery13(
-                expected,
-                "select distinct a from x order by a",
-                "create table x as " +
+        assertQuery(expected, "select distinct a from x order by a", "create table x as " +
                         "(" +
                         "select" +
                         " abs(rnd_int())%10 a" +
                         " from" +
                         " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
+                        ")", null, "insert into x select * from (" +
                         "select" +
                         " abs(rnd_int())%10 a" +
                         " from long_sequence(1000000)" +
-                        ") ",
-                expected,
-                true,
-                true
-        );
+                        ") ", expected, true, true, false);
     }
 
     @Test
@@ -7122,26 +6745,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "YYQE\n" +
                 "ZSXU\n";
 
-        assertQuery13(
-                expected,
-                "select distinct a from x order by a",
-                "create table x as " +
+        assertQuery(expected, "select distinct a from x order by a", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol(20,4,6,2) a" +
                         " from" +
                         " long_sequence(10000)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
+                        ")", null, "insert into x select * from (" +
                         "select" +
                         " rnd_symbol(10,3,5,0) a" +
                         " from long_sequence(1000000)" +
-                        ") ",
-                expected2,
-                true,
-                true
-        );
+                        ") ", expected2, true, true, false);
     }
 
     @Test
@@ -7509,16 +7123,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolStrB() throws Exception {
-        assertQuery13(
-                "a\nC\nC\nB\nA\nA\n",
-                "select cast(a as string) a from x order by 1 desc",
-                "create table x as (select rnd_symbol('A','B','C') a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
-                null,
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("a\nC\nC\nB\nA\nA\n", "select cast(a as string) a from x order by 1 desc", "create table x as (select rnd_symbol('A','B','C') a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", null, null, null, true, true, false);
     }
 
     @Test

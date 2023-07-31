@@ -85,18 +85,9 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMaxIntOrNull() throws Exception {
-        assertQuery13(
-                "a\tmin\n" +
-                        "1\tNaN\n",
-                "select a, min(f) from tab",
-                "create table tab as (select cast(1 as int) a, cast(null as int) f from long_sequence(33))",
-                null,
-                "insert into tab select 1, 2147483647 from long_sequence(1)",
-                "a\tmin\n" +
-                        "1\t2147483647\n",
-                true,
-                true
-        );
+        assertQuery("a\tmin\n" +
+                        "1\tNaN\n", "select a, min(f) from tab", "create table tab as (select cast(1 as int) a, cast(null as int) f from long_sequence(33))", null, "insert into tab select 1, 2147483647 from long_sequence(1)", "a\tmin\n" +
+                        "1\t2147483647\n", true, true, false);
     }
 
     @Test
@@ -124,7 +115,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tmin\tk\n" +
+        assertQuery("b\tmin\tk\n" +
                         "\t-1792928964\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-2002373666\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -148,9 +139,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t-2062507031\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-1377625589\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t-1228519003\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t-302875424\t1970-01-03T09:00:00.000000Z\n",
-                "select b, min(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "HYRX\t-302875424\t1970-01-03T09:00:00.000000Z\n", "select b, min(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() a," +
@@ -158,17 +147,14 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tmin\tk\n" +
+                        ") timestamp(k)", "b\tmin\tk\n" +
                         "\t-1792928964\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-2002373666\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -289,10 +275,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t-1937672257\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
 
     @Test

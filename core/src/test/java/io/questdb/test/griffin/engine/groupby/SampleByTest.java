@@ -165,14 +165,12 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByAllTypes() throws Exception {
-        assertQuery13("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
                         "\t680.7651\t771.0922622028395\t15020424080\t333\t197423\t-5259855777509188759\n" +
                         "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
                         "PEHN\t104.2904\t100.8772613783025\t3354324129\t18\t17565\t-4882690809235649274\n" +
-                        "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n",
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x",
-                "create table x as " +
+                        "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n", "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -185,9 +183,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -199,8 +195,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                        ") timestamp(k)", "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
                         "\t779.3558\t869.932373151714\t16932485166\t363\t215247\t3597805051091659961\n" +
                         "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
@@ -209,10 +204,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "ZGHW\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n" +
                         "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
-                        "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true,
-                true
-        );
+                        "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n", true, true, false);
     }
 
     @Test
@@ -307,7 +299,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByAllTypesAndTimestampSameLevel() throws Exception {
-        assertQuery13("k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+        assertQuery("k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "1970-01-03T00:00:00.000000Z\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\n" +
                         "1970-01-03T01:00:00.000000Z\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\n" +
                         "1970-01-03T02:00:00.000000Z\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\n" +
@@ -327,9 +319,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "1970-01-03T16:00:00.000000Z\t48.9274\t82.31249461985348\t805434743\t31\t18600\t6187389706549636253\n" +
                         "1970-01-03T17:00:00.000000Z\t58.9340\t56.99444693578853\t1311366306\t9\t27078\t8755128364143858197\n" +
                         "1970-01-03T18:00:00.000000Z\t65.4048\t86.7718184863495\t593242882\t6\t23251\t5292387498953709416\n" +
-                        "1970-01-03T19:00:00.000000Z\t85.9313\t33.74707565497281\t2105201404\t34\t14733\t8994301462266164776\n",
-                "(select k, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x) timestamp(k)",
-                "create table x as " +
+                        "1970-01-03T19:00:00.000000Z\t85.9313\t33.74707565497281\t2105201404\t34\t14733\t8994301462266164776\n", "(select k, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x) timestamp(k)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -342,9 +332,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -356,8 +344,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                        ") timestamp(k)", "k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "1970-01-03T00:00:00.000000Z\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\n" +
                         "1970-01-03T01:00:00.000000Z\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\n" +
                         "1970-01-03T02:00:00.000000Z\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\n" +
@@ -382,89 +369,68 @@ public class SampleByTest extends AbstractCairoTest {
                         "1970-01-04T06:00:00.000000Z\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n" +
                         "1970-01-04T07:00:00.000000Z\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "1970-01-04T08:00:00.000000Z\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
-                        "1970-01-04T09:00:00.000000Z\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true,
-                true
-        );
+                        "1970-01-04T09:00:00.000000Z\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n", true, true, false);
     }
 
     @Test
     public void testGroupByCount() throws Exception {
-        assertQuery13("c\tcount\n" +
+        assertQuery("c\tcount\n" +
                         "\t5\n" +
                         "UU\t4\n" +
                         "XY\t6\n" +
-                        "ZP\t5\n",
-                "select c, count() from x order by c",
-                "create table x as " +
+                        "ZP\t5\n", "select c, count() from x order by c", "create table x as " +
                         "(" +
                         "select" +
                         " x," +
                         " rnd_symbol('XY','ZP', null, 'UU') c" +
                         " from" +
                         " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
+                        ")", null, "insert into x select * from (" +
                         "select" +
                         " x," +
                         " rnd_symbol('KK', 'PL') c" +
                         " from" +
                         " long_sequence(5)" +
-                        ")",
-                "c\tcount\n" +
+                        ")", "c\tcount\n" +
                         "\t5\n" +
                         "KK\t1\n" +
                         "PL\t4\n" +
                         "UU\t4\n" +
                         "XY\t6\n" +
-                        "ZP\t5\n",
-                true,
-                true
-        );
+                        "ZP\t5\n", true, true, false);
     }
 
     @Test
     public void testGroupByCountFromSubQuery() throws Exception {
-        assertQuery13("c\tcount\n" +
+        assertQuery("c\tcount\n" +
                         "UU\t1\n" +
                         "XY\t1\n" +
                         "ZP\t1\n" +
-                        "\t1\n",
-                "select c, count() from (x latest on ts partition by c)",
-                "create table x as " +
+                        "\t1\n", "select c, count() from (x latest on ts partition by c)", "create table x as " +
                         "(" +
                         "select" +
                         " cast(x as timestamp) ts," +
                         " rnd_symbol('XY','ZP', null, 'UU') c" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(ts)",
-                null,
-                "insert into x select * from (" +
+                        ") timestamp(ts)", null, "insert into x select * from (" +
                         "select" +
                         " cast(x+20 as timestamp) ts," +
                         " rnd_symbol('KK', 'PL') c" +
                         " from" +
                         " long_sequence(5)" +
-                        ")",
-                "c\tcount\n" +
+                        ")", "c\tcount\n" +
                         "UU\t1\n" +
                         "XY\t1\n" +
                         "ZP\t1\n" +
                         "\t1\n" +
                         "KK\t1\n" +
-                        "PL\t1\n",
-                true,
-                true
-        );
+                        "PL\t1\n", true, true, false);
     }
 
     @Test
     public void testGroupByEmpty() throws Exception {
-        assertQuery13("c\tsum_t\n",
-                "select c, sum_t(d) from x",
-                "create table x as " +
+        assertQuery("c\tsum_t\n", "select c, sum_t(d) from x", "create table x as " +
                         "(" +
                         "select" +
                         " x," +
@@ -472,22 +438,16 @@ public class SampleByTest extends AbstractCairoTest {
                         " rnd_symbol('XY','ZP', null, 'UU') c" +
                         " from" +
                         " long_sequence(0)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
+                        ")", null, "insert into x select * from (" +
                         "select" +
                         " x," +
                         " rnd_double(0) d," +
                         " rnd_symbol('KK', 'PL') c" +
                         " from" +
                         " long_sequence(5)" +
-                        ")",
-                "c\tsum_t\n" +
+                        ")", "c\tsum_t\n" +
                         "PL\t1.088880189118224\n" +
-                        "KK\t2.614956708935964\n",
-                true,
-                true
-        );
+                        "KK\t2.614956708935964\n", true, true, false);
     }
 
     @Test
@@ -547,13 +507,11 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByFreesFunctions() throws Exception {
-        assertQuery13("c\tsum_t\n" +
+        assertQuery("c\tsum_t\n" +
                         "UU\t4.192763851971972\n" +
                         "XY\t5.326379743132296\n" +
                         "\t1.8586710189229834\n" +
-                        "ZP\t0.7836635625207334\n",
-                "select c, sum_t(d) from x",
-                "create table x as " +
+                        "ZP\t0.7836635625207334\n", "select c, sum_t(d) from x", "create table x as " +
                         "(" +
                         "select" +
                         " x," +
@@ -561,26 +519,20 @@ public class SampleByTest extends AbstractCairoTest {
                         " rnd_symbol('XY','ZP', null, 'UU') c" +
                         " from" +
                         " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
+                        ")", null, "insert into x select * from (" +
                         "select" +
                         " x," +
                         " rnd_double(0) d," +
                         " rnd_symbol('KK', 'PL') c" +
                         " from" +
                         " long_sequence(5)" +
-                        ")",
-                "c\tsum_t\n" +
+                        ")", "c\tsum_t\n" +
                         "UU\t4.192763851971972\n" +
                         "XY\t5.326379743132296\n" +
                         "\t1.8586710189229834\n" +
                         "ZP\t0.7836635625207334\n" +
                         "KK\t1.6435699091508287\n" +
-                        "PL\t1.1627169669458202\n",
-                true,
-                true
-        );
+                        "PL\t1.1627169669458202\n", true, true, false);
     }
 
     @Test
@@ -3594,7 +3546,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleCountFillLinear() throws Exception {
-        assertQuery13("b\tcount\tk\n" +
+        assertQuery("b\tcount\tk\n" +
                         "\t15\t1970-01-03T02:00:00.000000Z\n" +
                         "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
                         "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
@@ -3618,10 +3570,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "VTJW\t3\t1970-01-03T11:00:00.000000Z\n" +
                         "PEHN\t3\t1970-01-03T11:00:00.000000Z\n" +
                         "HYRX\t2\t1970-01-03T11:00:00.000000Z\n" +
-                        "CPSW\t11\t1970-01-03T11:00:00.000000Z\n",
-
-                "select b, count(), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "CPSW\t11\t1970-01-03T11:00:00.000000Z\n", "select b, count(), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -3629,17 +3578,14 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(cast('1970-01-03T02:00:00.000000Z' as timestamp), 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(CAST('1970-01-03T13:10:00.000000Z' as timestamp), 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tcount\tk\n" +
+                        ") timestamp(k)", "b\tcount\tk\n" +
                         "\t15\t1970-01-03T02:00:00.000000Z\n" +
                         "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
                         "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
@@ -3694,15 +3640,12 @@ public class SampleByTest extends AbstractCairoTest {
                         "RXGZ\t2\t1970-01-03T14:00:00.000000Z\n" +
                         "PEHN\t4\t1970-01-03T14:00:00.000000Z\n" +
                         "HYRX\t1\t1970-01-03T14:00:00.000000Z\n" +
-                        "CPSW\t14\t1970-01-03T14:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "CPSW\t14\t1970-01-03T14:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleCountFillLinearFromSubQuery() throws Exception {
-        assertQuery13("b\tcount\tk\n" +
+        assertQuery("b\tcount\tk\n" +
                         "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
                         "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
                         "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
@@ -3714,10 +3657,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "\t1\t1970-01-03T08:24:00.000000Z\n" +
                         "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
                         "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n",
-
-                "select b, count(), k from (x latest on k partition by b) sample by 3h fill(linear)",
-                "create table x as " +
+                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n", "select b, count(), k from (x latest on k partition by b) sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -3725,17 +3665,14 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tcount\tk\n" +
+                        ") timestamp(k)", "b\tcount\tk\n" +
                         "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
                         "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
                         "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
@@ -3845,15 +3782,12 @@ public class SampleByTest extends AbstractCairoTest {
                         "NPIW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
                         "CGFN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
                         "ZNFK\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n",
-                true,
-                true
-        );
+                        "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleFillAllTypesLinear() throws Exception {
-        assertQuery13("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "HYRX\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
                         "\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\t1970-01-03T00:00:00.000000Z\n" +
@@ -3888,10 +3822,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "HYRX\t20.0601\t-55.29228476141894\t2014704521\t-14\t39883\t4681614353531994112\t1970-01-03T18:00:00.000000Z\n" +
                         "CPSW\t237.6748\t-177.6425335632278\t10752783335\t-99\t-95908\t-3297450808260941824\t1970-01-03T18:00:00.000000Z\n" +
                         "PEHN\t-211.7607\t391.8589271788717\t-1995917427\t9\t-15423\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n",
-
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n", "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -3904,9 +3835,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -3918,8 +3847,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+                        ") timestamp(k)", "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "HYRX\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
                         "\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\t1970-01-03T00:00:00.000000Z\n" +
@@ -4027,18 +3955,13 @@ public class SampleByTest extends AbstractCairoTest {
                         "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleFillAllTypesLinearNoData() throws Exception {
         // sum_t tests memory leak
-        assertQuery13("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n",
-                "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)",
-                "create table x as " +
+        assertQuery("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n", "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -4051,9 +3974,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(0)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -4065,22 +3986,18 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
+                        ") timestamp(k)", "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
                         "\t25.168644428253174\t96.69784438858017\t1715501826\t97\t28323\t-3537127814486931722\t1970-01-04T05:00:00.000000Z\n" +
                         "DEYY\t96.87422943115234\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T05:00:00.000000Z\n" +
                         "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T05:00:00.000000Z\n" +
                         "SXUX\t26.922100067138672\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000Z\n" +
                         "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
-                        "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        assertQuery13("b\tsum\tk\n" +
+        assertQuery("b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -4115,10 +4032,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
                         "RXGZ\tNaN\t1970-01-03T18:00:00.000000Z\n" +
                         "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n",
-
-                "select b, sum(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n", "select b, sum(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -4126,17 +4040,14 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum\tk\n" +
+                        ") timestamp(k)", "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -4220,10 +4131,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "RXGZ\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "PEHN\t-163.67975914069712\t1970-01-04T09:00:00.000000Z\n" +
                         "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n", true, true, false);
     }
 
     @Test

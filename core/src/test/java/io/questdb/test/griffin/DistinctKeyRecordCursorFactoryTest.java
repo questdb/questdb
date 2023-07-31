@@ -162,7 +162,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctSymbolsIndexed() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -192,13 +192,14 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
                         "2020-02-09\n" +
                         "2020-02-10\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testDistinctSymbolsIndexedWithUpdates() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -218,13 +219,14 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
                         "2020-01-05\n" +
                         "2020-01-06\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testDistinctSymbolsNonIndexed() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -240,7 +242,8 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
                         "2020-02-02\n" +
                         "2020-02-03\n",
                 true,
-                true
+                true,
+                false
         );
     }
 

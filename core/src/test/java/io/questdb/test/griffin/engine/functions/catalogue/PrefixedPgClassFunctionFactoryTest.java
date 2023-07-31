@@ -41,7 +41,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
     public void testJoinReorderNoStackOverflow() throws Exception {
         // LEFT JOIN is outer, therefore it does not reduce one of other tables to 0 rows, hence we
         // expect row duplication
-        assertQuery9(
+        assertQuery(
                 "nspname\toid\txmin\tnspowner\toid1\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin1\tobjoid\tclassoid\tobjsubid\tdescription\n" +
                         "pg_catalog\t11\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
                         "public\t2200\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
@@ -58,7 +58,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testKafkaJdbcTableQuery() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n" +
                         "null\tpublic\talpha\tTABLE\t\t\t\t\t\t\n",
                 "SELECT \n" +
@@ -198,7 +198,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgClassOneTable() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                         "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
                         "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
@@ -211,21 +211,12 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgClassTwoTables() throws Exception {
-        assertQuery13(
-                "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+        assertQuery("oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                         "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
-                "pg_catalog.pg_class order by 1",
-                "create table x(a int)",
-                null,
-                "create table y(a int)",
-                "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", "pg_catalog.pg_class order by 1", "create table x(a int)", null, "create table y(a int)", "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                         "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
                         "2\ty\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
-                true,
-                false
-        );
+                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", true, false, false);
     }
 
     @Test
@@ -242,26 +233,24 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testShowMaxIdentifierLength() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "max_identifier_length\n" +
                         "63\n",
                 "show max_identifier_length",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }
 
     @Test
     public void testShowTransactionIsolationLevel() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "transaction_isolation\n" +
                         "read committed\n",
                 "show transaction isolation level",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }
@@ -288,13 +277,12 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testShowTransactionIsolationUnderscore() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "transaction_isolation\n" +
                         "read committed\n",
                 "show transaction_isolation",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }
@@ -371,11 +359,11 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharCast() throws SqlException {
-        assertQuery12("anon_1\n" +
+        assertQuery(
+                "anon_1\n" +
                         "test plain returns\n", "SELECT CAST('test plain returns' AS VARCHAR(60)) AS anon_1",
                 null,
                 true,
-                sqlExecutionContext,
                 true
         );
     }

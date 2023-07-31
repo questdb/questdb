@@ -110,9 +110,9 @@ public class ShowTablesTest extends AbstractCairoTest {
 
     @Test
     public void testShowTimeZone() throws Exception {
-        assertMemoryLeak(() -> assertQuery12(
+        assertMemoryLeak(() -> assertQuery(
                 "TimeZone\nUTC\n",
-                "show time zone", null, false, sqlExecutionContext, true
+                "show time zone", null, false, true
         ));
     }
 

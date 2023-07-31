@@ -302,15 +302,13 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testAggregationWithSampleFill1() throws Exception {
 
-        assertQuery13("s\tlat\tlon\tk\n" +
+        assertQuery("s\tlat\tlon\tk\n" +
                         "VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z\n" +
                         "VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z\n" +
                         "VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z\n" +
                         "VTJW\t-2.0\t-3.0\t1970-01-03T02:06:40.000000Z\n" +
                         "VTJW\t-1.0\t-2.0\t1970-01-03T02:38:20.000000Z\n" +
-                        "VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z\n",
-                "tab",
-                "create table tab as " +
+                        "VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z\n", "tab", "create table tab as " +
                         "(" +
                         "select" +
                         " rnd_symbol(1,4,4,0) s," +
@@ -319,9 +317,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         " timestamp_sequence(174700000000, 1900000000) k" +
                         " from" +
                         " long_sequence(6)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into tab select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into tab select * from (" +
                         "select" +
                         " rnd_symbol(2,4,4,0) s," +
                         " (-40.0 + (1*x)) lat," +
@@ -329,8 +325,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         " timestamp_sequence(227200000000, 1900000000) k" +
                         " from" +
                         " long_sequence(3)" +
-                        ") timestamp(k)",
-                "s\tlat\tlon\tk\n" +
+                        ") timestamp(k)", "s\tlat\tlon\tk\n" +
                         "VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z\n" +
                         "VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z\n" +
                         "VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z\n" +
@@ -339,8 +334,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         "VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z\n" +
                         "RXGZ\t-39.0\t6.0\t1970-01-03T15:06:40.000000Z\n" +
                         "RXGZ\t-38.0\t7.0\t1970-01-03T15:38:20.000000Z\n" +
-                        "RXGZ\t-37.0\t8.0\t1970-01-03T16:10:00.000000Z\n",
-                true, true);
+                        "RXGZ\t-37.0\t8.0\t1970-01-03T16:10:00.000000Z\n", true, true, false);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
                         "VTJW\t297.5825998454617\t1970-01-03T00:31:40.000000Z\n" +

@@ -86,7 +86,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tlast\tk\n" +
+        assertQuery("b\tlast\tk\n" +
                         "\t2968650253814730084\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-7723703968879725602\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t7039584373105579285\t1970-01-03T00:00:00.000000Z\n" +
@@ -110,9 +110,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t5552835357100545895\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-8371487291073160693\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t2486874217850272768\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t6959985021334530048\t1970-01-03T09:00:00.000000Z\n",
-                "select b, last(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "HYRX\t6959985021334530048\t1970-01-03T09:00:00.000000Z\n", "select b, last(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_long() a," +
@@ -120,17 +118,14 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_long() a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tlast\tk\n" +
+                        ") timestamp(k)", "b\tlast\tk\n" +
                         "\t2968650253814730084\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-7723703968879725602\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t7039584373105579285\t1970-01-03T00:00:00.000000Z\n" +
@@ -251,10 +246,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t-1947416294145578496\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t9223372036854775807\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t9223372036854775807\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
 
     @Test

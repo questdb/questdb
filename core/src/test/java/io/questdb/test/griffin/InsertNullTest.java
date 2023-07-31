@@ -67,7 +67,7 @@ public class InsertNullTest extends AbstractCairoTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x",
                         String.format("create table x (value %s)", type[0]),
@@ -75,7 +75,8 @@ public class InsertNullTest extends AbstractCairoTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, true),
                         true,
-                        true
+                        true,
+                        false
                 );
             } finally {
                 tearDown();
@@ -87,7 +88,7 @@ public class InsertNullTest extends AbstractCairoTest {
     public void testInsertNullFromSelectOnDesignatedColumnMustFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQuery13(
+                assertQuery(
                         "sym\ty\n",
                         "xx",
                         "create table xx (sym symbol, y timestamp) timestamp(y)",
@@ -95,6 +96,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         "insert into xx select 'AA', null from long_sequence(1)",
                         "y\n",
                         true,
+                        false,
                         false
                 );
                 Assert.fail();
@@ -108,7 +110,7 @@ public class InsertNullTest extends AbstractCairoTest {
     public void testInsertNullFromValuesOnDesignatedColumnMustFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQuery13(
+                assertQuery(
                         "sym\ty\n",
                         "xx",
                         "create table xx (sym symbol, y timestamp) timestamp(y)",
@@ -116,6 +118,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         "insert into xx values('AA', null)",
                         "y\n",
                         true,
+                        false,
                         false
                 );
                 Assert.fail();
@@ -133,7 +136,7 @@ public class InsertNullTest extends AbstractCairoTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value = null",
                         String.format("create table x (value %s)", type[0]),
@@ -141,7 +144,8 @@ public class InsertNullTest extends AbstractCairoTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        type[0].equals("long256")
+                        type[0].equals("long256"),
+                        false
                 );
             } finally {
                 tearDown();
@@ -157,7 +161,7 @@ public class InsertNullTest extends AbstractCairoTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value is not null",
                         String.format("create table x (value %s)", type[0]),
@@ -165,7 +169,8 @@ public class InsertNullTest extends AbstractCairoTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
-                        isNotNullable(type[0])
+                        isNotNullable(type[0]),
+                        false
                 );
             } finally {
                 tearDown();
@@ -181,7 +186,7 @@ public class InsertNullTest extends AbstractCairoTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value is null",
                         String.format("create table x (value %s)", type[0]),
@@ -189,7 +194,8 @@ public class InsertNullTest extends AbstractCairoTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        type[0].equals("long256")
+                        type[0].equals("long256"),
+                        false
                 );
             } finally {
                 tearDown();
@@ -205,7 +211,7 @@ public class InsertNullTest extends AbstractCairoTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value != null",
                         String.format("create table x (value %s)", type[0]),
@@ -213,7 +219,8 @@ public class InsertNullTest extends AbstractCairoTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
-                        isNotNullable(type[0])
+                        isNotNullable(type[0]),
+                        false
                 );
             } finally {
                 tearDown();
