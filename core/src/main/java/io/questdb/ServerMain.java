@@ -217,7 +217,7 @@ public class ServerMain implements Closeable {
             CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(
                     configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new StaticChallengeResponseMatcher(authDb)
+                    () -> new StaticChallengeResponseMatcher(authDb)
             );
         } else {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;

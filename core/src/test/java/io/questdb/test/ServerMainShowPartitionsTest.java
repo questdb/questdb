@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
@@ -203,6 +204,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 if (System.currentTimeMillis() - time > 5000) {
                     throw e;
                 }
+                Os.sleep(5);
             }
         }
     }

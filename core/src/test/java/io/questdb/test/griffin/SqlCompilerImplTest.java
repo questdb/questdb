@@ -4166,6 +4166,34 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEqualityJoinCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
+            compile("insert into tab values (0, 0), (1, 1)");
+
+            assertQuery("count\n" +
+                            "1\n",
+                    "SELECT " +
+                            "  count(*) " +
+                            "FROM " +
+                            "  tab as T1 " +
+                            "  JOIN tab as T2 ON T1.created < T2.created " +
+                            "  JOIN tab as T3 ON T2.created = T3.created",
+                    null, false, true);
+
+            assertQuery("count\n" +
+                            "1\n",
+                    "SELECT " +
+                            "  count(*) " +
+                            "FROM " +
+                            "  tab as T1 " +
+                            "  JOIN tab as T2 ON T1.created < T2.created " +
+                            "  JOIN tab as T3 ON T2.value = T3.value",
+                    null, false, true);
+        });
+    }
+
+    @Test
     public void testOrderByDouble() throws Exception {
         assertQuery("d\n" +
                         "NaN\n" +

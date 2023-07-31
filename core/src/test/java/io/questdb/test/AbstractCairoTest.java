@@ -1282,7 +1282,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
         //noinspection StatementWithEmptyBody
-        while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+        while (walApplyJob.run(0)) ;
+        if (checkWalTransactionsJob.run(0)) {
+            while (walApplyJob.run(0)) ;
         }
     }
 

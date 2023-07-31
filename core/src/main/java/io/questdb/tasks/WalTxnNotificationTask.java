@@ -28,18 +28,12 @@ import io.questdb.cairo.TableToken;
 
 public class WalTxnNotificationTask {
     private TableToken tableToken;
-    private long txn;
 
     public TableToken getTableToken() {
         return tableToken;
     }
 
-    public long getTxn() {
-        return txn;
-    }
-
-    public void of(TableToken tableToken, long txn) {
+    public void of(TableToken tableToken) {
         this.tableToken = tableToken;
-        this.txn = txn;
     }
 }

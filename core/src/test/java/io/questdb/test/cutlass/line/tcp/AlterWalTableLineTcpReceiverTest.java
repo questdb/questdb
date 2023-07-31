@@ -55,6 +55,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+
 public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(AlterWalTableLineTcpReceiverTest.class);
 
@@ -76,7 +78,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug ADD COLUMN label2 INT",
-                    false, 1);
+                    1, "plug", 1);
             Assert.assertNull(exception);
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
@@ -196,7 +198,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "plug,room=1C watts=11i " + day1 + "\n";
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'",
-                    false, 1);
+                    1, "plug", 2);
             Assert.assertNull(exception);
             drainWalQueue();
 
@@ -224,7 +226,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "plug,room=6C watts=\"333\" " + day3 + "\n";
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'",
-                    false, 1);
+                    1, "plug", 2);
             Assert.assertNull(exception);
 
             drainWalQueue();
@@ -245,7 +247,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug RENAME COLUMN label TO label2",
-                    false, 1);
+                    1, "plug", 1);
             Assert.assertNull(exception);
 
             lineData = "plug,room=6A watts=\"4\",label=0i 2631819999001\n" +
@@ -276,7 +278,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug RENAME COLUMN label TO label2",
-                    false, 1);
+                    1, "plug", 1);
             Assert.assertNull(exception);
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
@@ -310,7 +312,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             for (int i = 0; i < 10; i++) {
                 SqlException exception = sendWithAlterStatement(lineData,
                         "ALTER TABLE plug add column col" + i + " int",
-                        false, 1);
+                        1, "plug", 1);
                 Assert.assertNull(exception);
             }
             drainWalQueue();
@@ -340,17 +342,17 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug SET PARAM o3MaxLag = 20s;",
-                    false, 1);
+                    1, "plug", 1);
             Assert.assertNull(exception);
 
             exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug SET PARAM maxUncommittedRows = 1;",
-                    false, 1);
+                    1, "plug", 3);
             Assert.assertNull(exception);
 
             SqlException exception3 = sendWithAlterStatement(lineData,
                     "alter table plug alter column label nocache;",
-                    false, 1);
+                    1, "plug", 5);
             Assert.assertNull(exception3);
 
             drainWalQueue();
@@ -474,7 +476,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
             SqlException ex = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug ALTER COLUMN label ADD INDEX",
-                    false, 1);
+                    1, "plug", 1);
             Assert.assertNull(ex);
 
             drainWalQueue();
@@ -542,7 +544,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             SqlException exception = sendWithAlterStatement(
                     lineData,
                     "ALTER TABLE plug DROP COLUMN room",
-                    true, 1
+                    1, "plug", 1
             );
             Assert.assertNull(exception);
             drainWalQueue();
@@ -572,7 +574,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             lineData = sb.toString();
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug DROP COLUMN room",
-                    false, 3);
+                    3, "plug", 1);
             Assert.assertNull(exception);
 
             // The outcome of this test is non-deterministic, i.e. watts column may or may not
@@ -699,7 +701,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             lineData = sb.toString();
             SqlException exception = sendWithAlterStatement(lineData,
                     "ALTER TABLE plug RENAME COLUMN room TO old_room",
-                    true, 1);
+                    1, "plug", 1);
             Assert.assertNull(exception);
             drainWalQueue();
 
@@ -768,7 +770,13 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }
     }
 
-    private SqlException sendWithAlterStatement(String lineData, String alterTableCommand, boolean sendAlterConcurrently, int alterAttempts) {
+    private SqlException sendWithAlterStatement(
+            String lineData,
+            String alterTableCommand,
+            int alterAttempts,
+            CharSequence tableName,
+            long waitForTxn
+    ) {
         sqlException = null;
         int countDownCount = 3;
         SOCountDownLatch releaseAllLatch = new SOCountDownLatch(countDownCount);
@@ -789,24 +797,22 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             }
         });
 
-        final long walPublisherCurrent = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
         for (int at = 0; at < alterAttempts; at++) {
             new Thread(() -> {
                 OperationFuture alterOperationFuture = null;
                 try {
                     LOG.info().$("Busy waiting for txn notification event").$();
-                    if (sendAlterConcurrently) {
-                        if (alterAttempts == 1) {
-                            // Wait for a writer to be obtained from the pool by an ILP I/O thread.
-                            getFirstLatch.await(10 * Timestamps.SECOND_MILLIS);
-                        }
-                    } else {
-                        // Wait for the next txn notification which would mean an INSERT.
-                        Sequence txnPubSequence = engine.getMessageBus().getWalTxnNotificationPubSequence();
-                        while (txnPubSequence.current() == walPublisherCurrent) {
-                            Os.pause();
-                        }
+                    // Wait for the next txn notification which would mean an INSERT.
+                    int status = engine.getTableStatus(tableName);
+                    while (status != TABLE_EXISTS) {
+                        Os.pause();
+                        status = engine.getTableStatus(tableName);
                     }
+                    TableToken alterToken = engine.verifyTableName(tableName);
+                    while (engine.getTableSequencerAPI().lastTxn(alterToken) < waitForTxn) {
+                        Os.pause();
+                    }
+
                     alterOperationFuture = executeAlterSql(alterTableCommand);
                     alterOperationFuture.await(10 * Timestamps.SECOND_MILLIS);
                 } catch (Throwable e) {
