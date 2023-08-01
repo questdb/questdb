@@ -263,7 +263,7 @@ public class WalWriter implements TableWriterAPI {
                     sync(commitMode);
                 }
                 final long seqTxn = getSequencerTxn();
-                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
@@ -1477,6 +1477,27 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void disableDeduplication() {
+            structureVersion++;
+        }
+
+        @Override
+        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            for (int i = 0, n = columnsIndexes.size(); i < n; i++) {
+                int columnIndex = (int) columnsIndexes.get(i);
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType < 0) {
+                    throw CairoException.nonCritical().put("cannot use dropped column for deduplication [column=").put(metadata.getColumnName(columnIndex)).put(']');
+                }
+                if (ColumnType.isVariableLength(columnType)) {
+                    throw CairoException.nonCritical().put("cannot use variable length column for deduplication [column=").put(metadata.getColumnName(columnIndex))
+                            .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                }
+            }
+            structureVersion++;
+        }
+
+        @Override
         public TableRecordMetadata getMetadata() {
             return metadata;
         }
@@ -1603,6 +1624,16 @@ public class WalWriter implements TableWriterAPI {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
             }
+        }
+
+        @Override
+        public void disableDeduplication() {
+            metadata.disableDeduplicate();
+        }
+
+        @Override
+        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            metadata.enableDeduplicationWithUpsertKeys(columnsIndexes);
         }
 
         @Override

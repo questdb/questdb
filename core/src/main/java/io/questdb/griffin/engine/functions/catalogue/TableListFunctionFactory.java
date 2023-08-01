@@ -41,6 +41,7 @@ import io.questdb.tasks.TelemetryTask;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
+    private static final int DEDUP_NAME_COLUMN;
     private static final int DESIGNATED_TIMESTAMP_COLUMN;
     private static final int DIRECTORY_NAME_COLUMN;
     private static final int ID_COLUMN;
@@ -50,6 +51,7 @@ public class TableListFunctionFactory implements FunctionFactory {
     private static final int NAME_COLUMN;
     private static final int O3MAXLAG_COLUMN;
     private static final int PARTITION_BY_COLUMN;
+    private static final int WAL_ENABLED_COLUMN;
 
     @Override
     public String getSignature() {
@@ -172,8 +174,14 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public boolean getBool(int col) {
-                    // the oonly boolean columns
-                    return tableReaderMetadata.isWalEnabled();
+                    if (col == WAL_ENABLED_COLUMN) {
+                        return tableReaderMetadata.isWalEnabled();
+                    }
+                    if (col == DEDUP_NAME_COLUMN) {
+                        int timestampIndex = tableReaderMetadata.getTimestampIndex();
+                        return timestampIndex > 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
+                    }
+                    return false;
                 }
 
                 @Override
@@ -266,7 +274,9 @@ public class TableListFunctionFactory implements FunctionFactory {
         PARTITION_BY_COLUMN = 3;
         MAX_UNCOMMITTED_ROWS_COLUMN = 4;
         O3MAXLAG_COLUMN = 5;
+        WAL_ENABLED_COLUMN = 6;
         DIRECTORY_NAME_COLUMN = 7;
+        DEDUP_NAME_COLUMN = 8;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
         metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
@@ -276,6 +286,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

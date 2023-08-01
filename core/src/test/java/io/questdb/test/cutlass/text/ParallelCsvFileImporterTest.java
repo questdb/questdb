@@ -2664,22 +2664,22 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\n",
                 "select * from alltypes", "tstmp", true, sqlExecutionContext, true);
 
-        assertQuery12("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                "bo\tBOOLEAN\tfalse\t256\tfalse\t0\tfalse\n" +
-                "by\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                "sh\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                "ch\tCHAR\tfalse\t256\tfalse\t0\tfalse\n" +
-                "in_\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                "lo\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                "dat\tDATE\tfalse\t256\tfalse\t0\tfalse\n" +
-                "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\ttrue\n" +
-                "ft\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\n" +
-                "db\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\n" +
-                "str\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
-                "sym\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
-                "l256\tLONG256\tfalse\t256\tfalse\t0\tfalse\n" +
-                "ge\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
-                "uid\tUUID\tfalse\t256\tfalse\t0\tfalse\n", "show columns from alltypes", null, false, sqlExecutionContext, false);
+        assertQuery12("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                "bo\tBOOLEAN\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "by\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "sh\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "ch\tCHAR\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "in_\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "lo\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "dat\tDATE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\ttrue\tfalse\n" +
+                "ft\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "db\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "str\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "sym\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "l256\tLONG256\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "ge\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                "uid\tUUID\tfalse\t256\tfalse\t0\tfalse\tfalse\n", "show columns from alltypes", null, false, sqlExecutionContext, false);
     }
 
     private void importAndCleanupTable(

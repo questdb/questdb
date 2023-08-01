@@ -54,15 +54,17 @@ public class TableSequencerImpl implements TableSequencer {
     private final Path path;
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
+    private final SeqTxnTracker seqTxnTracker;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
     private boolean distressed;
     private TableToken tableToken;
 
-    TableSequencerImpl(CairoEngine engine, TableToken tableToken) {
+    TableSequencerImpl(CairoEngine engine, TableToken tableToken, SeqTxnTracker txnTracker) {
         this.engine = engine;
         this.tableToken = tableToken;
+        this.seqTxnTracker = txnTracker;
 
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -110,7 +112,7 @@ public class TableSequencerImpl implements TableSequencer {
         final long timestamp = microClock.getTicks();
         final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, timestamp);
         metadata.dropTable();
-        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+        notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
 
@@ -242,7 +244,7 @@ public class TableSequencerImpl implements TableSequencer {
                 txn = tableTransactionLog.endMetadataChangeEntry();
 
                 if (!metadata.isSuspended()) {
-                    engine.notifyWalTxnCommitted(tableToken, txn);
+                    notifyTxnCommitted(txn);
                     if (!tableToken.equals(oldTableToken)) {
                         engine.getWalListener().tableRenamed(tableToken, txn, timestamp, oldTableToken);
                     } else {
@@ -285,7 +287,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(tableToken, txn);
+            notifyTxnCommitted(txn);
             engine.getWalListener().dataTxnCommitted(tableToken, txn, timestamp, walId, segmentId, segmentTxn);
         }
         return txn;
@@ -343,7 +345,8 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void resumeTable() {
         metadata.resumeTable();
-        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+        notifyTxnCommitted(Long.MAX_VALUE);
+        seqTxnTracker.setUnsuspended();
     }
 
     @TestOnly
@@ -390,6 +393,12 @@ public class TableSequencerImpl implements TableSequencer {
 
     private long nextTxn(int walId, int segmentId, int segmentTxn, long timestamp) {
         return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, timestamp);
+    }
+
+    private void notifyTxnCommitted(long txn) {
+        if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
+            engine.notifyWalTxnCommitted(tableToken);
+        }
     }
 
     void create(int tableId, TableStructure tableStruct) {

@@ -823,9 +823,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected static void printSqlResult(Supplier<? extends CharSequence> expectedSupplier, CharSequence query, CharSequence expectedTimestamp, CharSequence ddl2, CharSequence expected2, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable, CharSequence expectedPlan) throws SqlException {
         snapshotMemoryUsage();
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        if (configuration.getWalEnabledDefault()) {
-            drainWalQueue();
-        }
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
             planSink.clear();
