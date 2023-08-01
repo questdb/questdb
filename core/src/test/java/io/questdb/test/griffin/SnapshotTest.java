@@ -30,7 +30,9 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
@@ -159,8 +161,11 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.recoverSnapshot();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql("select count() from " + tableName, "count\n" +
-                    partitionCount + "\n");
+            assertSql(
+                    "count\n" +
+                            partitionCount + "\n",
+                    "select count() from " + tableName
+            );
         });
     }
 
@@ -537,7 +542,7 @@ public class SnapshotTest extends AbstractCairoTest {
             assertException(
                     "snapshot prepare",
                     0,
-                    "[0] Waiting for SNAPSHOT COMPLETE to be called"
+                    "Waiting for SNAPSHOT COMPLETE to be called"
             );
             ddl("snapshot complete");
         });
@@ -562,10 +567,10 @@ public class SnapshotTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             ddl(
                     "create table " + tableName + " as (" +
-                    "select x, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL"
+                            "select x, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                            " from long_sequence(5)" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             assertWalExistence(true, tableName, 1);
@@ -575,12 +580,15 @@ public class SnapshotTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql(tableName, "x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n");
+            assertSql(
+                    "x\tts\n" +
+                            "1\t2022-02-24T00:00:00.000000Z\n" +
+                            "2\t2022-02-24T00:00:01.000000Z\n" +
+                            "3\t2022-02-24T00:00:02.000000Z\n" +
+                            "4\t2022-02-24T00:00:03.000000Z\n" +
+                            "5\t2022-02-24T00:00:04.000000Z\n",
+                    tableName
+            );
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
             final WalPurgeJob job = new WalPurgeJob(engine);
@@ -646,14 +654,17 @@ public class SnapshotTest extends AbstractCairoTest {
             drainWalQueue();
 
             // all updates above should be applied to table
-            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\n" +
+            assertSql(
+                    "x\tsym\tts\tsym2\tiii\tjjj\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
                     "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n");
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n",
+                    tableName
+            );
 
 
             ddl("alter table " + tableName + " add column kkk int");
@@ -677,7 +688,8 @@ public class SnapshotTest extends AbstractCairoTest {
             // apply updates from WAL
             drainWalQueue();
 
-            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
+            assertSql(
+                    "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
                     "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
@@ -685,7 +697,9 @@ public class SnapshotTest extends AbstractCairoTest {
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
                     "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
-                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n");
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n",
+                    tableName
+            );
 
             // check for updates to the restored table
             ddl("alter table " + tableName + " add column lll int");
@@ -695,7 +709,8 @@ public class SnapshotTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
+            assertSql(
+                    "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
                     "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
@@ -705,7 +720,9 @@ public class SnapshotTest extends AbstractCairoTest {
                     "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
                     "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
                     "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
-                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
+                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n",
+                    tableName
+            );
 
             // WalWriter.applyMetadataChangeLog should be triggered
             try (WalWriter walWriter1 = getWalWriter(tableName)) {
@@ -739,7 +756,8 @@ public class SnapshotTest extends AbstractCairoTest {
                 }
             }
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
+            assertSql(
+                    "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
                     "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
@@ -751,7 +769,9 @@ public class SnapshotTest extends AbstractCairoTest {
                     "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
                     "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
                     "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
-                    "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n");
+                    "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n",
+                    tableName
+            );
         });
     }
 
@@ -775,11 +795,11 @@ public class SnapshotTest extends AbstractCairoTest {
 
             insert(
                     "insert into " + nonPartitionedTable +
-                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)"
+                            " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)"
             );
             insert(
                     "insert into " + partitionedTable +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)"
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)"
             );
 
             // Release all readers and writers, but keep the snapshot dir around.
@@ -789,10 +809,17 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
             int expectedCount = expectRecovery ? 20 : 40;
-            assertSql("select count() from " + nonPartitionedTable, "count\n" +
-                    expectedCount + "\n");
-            assertSql("select count() from " + partitionedTable, "count\n" +
-                    expectedCount + "\n");
+            assertSql(
+                    "count\n" +
+                            expectedCount + "\n",
+                    "select count() from " + nonPartitionedTable
+            );
+
+            assertSql(
+                    "count\n" +
+                            expectedCount + "\n",
+                    "select count() from " + partitionedTable
+            );
 
             // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
             path.trimTo(rootLen).slash$();
@@ -837,13 +864,13 @@ public class SnapshotTest extends AbstractCairoTest {
 
                 insert(
                         "insert into " + tableName +
-                        " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))"
+                                " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))"
                 );
                 if (generateColTops) {
                     ddl("alter table " + tableName + " add column c int");
                 }
                 if (dropColumns) {
-                   ddl("alter table " + tableName + " drop column a");
+                    ddl("alter table " + tableName + " drop column a");
                 }
 
                 ddl("snapshot prepare");
