@@ -553,6 +553,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         compile("alter table " + tableName1 + " add column long_top long");
         compile("alter table " + tableName1 + " add column str_top long");
         compile("alter table " + tableName1 + " add column sym_top symbol index");
+        compile("alter table " + tableName1 + " add column ip4 ipv4");
 
         return engine.verifyTableName(tableName1);
     }
