@@ -111,10 +111,6 @@ public class TableUpdateDetails implements Closeable {
         this.tableNameUtf8 = tableNameUtf8;
     }
 
-    CairoEngine getEngine() {
-        return engine;
-    }
-
     public void addReference(int workerId) {
         if (!isWal()) {
             networkIOOwnerCount++;

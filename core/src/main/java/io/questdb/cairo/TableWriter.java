@@ -40,7 +40,10 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -385,7 +388,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addColumn(@NotNull CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         addColumn(
                 columnName,
                 columnType,
@@ -393,7 +396,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
                 0,
-                false
+                false,
+                false,
+                securityContext
         );
     }
 
@@ -429,7 +434,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isDedupKey,
-            SqlExecutionContext executionContext
+            SecurityContext securityContext
     ) {
         addColumn(
                 columnName,
@@ -440,7 +445,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
-                executionContext
+                securityContext
         );
     }
 
@@ -483,7 +488,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
-            SqlExecutionContext executionContext
+            SecurityContext securityContext
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -574,8 +579,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
         }
 
-        if (executionContext != null) {
-            ddlListener.onColumnAdded(executionContext.getSecurityContext(), tableToken, columnName);
+        if (securityContext != null) {
+            ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
     }
 
