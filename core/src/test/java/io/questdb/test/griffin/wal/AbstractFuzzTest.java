@@ -144,7 +144,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 rnd,
                 start,
                 end,
-                fuzzRowCount,
+                Math.max(1, fuzzRowCount),
                 transactionCount,
                 isO3,
                 cancelRowsProb,

@@ -32,11 +32,6 @@
 #include <time.h>
 #endif
 
-#ifdef __APPLE__
-#define __JLONG_REINTERPRET_CAST__(type, var)  (type)var
-#else
-#define __JLONG_REINTERPRET_CAST__(type, var)  reinterpret_cast<type>(var)
-#endif
 
 typedef struct {
     uint64_t c8[256];
@@ -89,15 +84,14 @@ inline void radix_shuffle_ab(uint64_t *counts, const uint64_t *srcA, const uint6
     for (uint64_t x = 0; x < sizeA; x++) {
         const auto digit = (srcA[x] >> sh) & 0xffu;
         dest[counts[digit]].ts = srcA[x];
-        dest[counts[digit]].i = x;
+        dest[counts[digit]].i = x | (1ull << 63);
         counts[digit]++;
         MM_PREFETCH_T2(srcA + x + 64);
     }
 
     for (uint64_t x = 0; x < sizeB; x++) {
         const auto digit = (srcB[x] >> sh) & 0xffu;
-        dest[counts[digit]].ts = srcB[x].ts;
-        dest[counts[digit]].i = x | (1ull << 63);
+        dest[counts[digit]] = srcB[x];
         counts[digit]++;
         MM_PREFETCH_T2(srcB + x + 64);
     }
@@ -424,115 +418,6 @@ typedef struct {
     int64_t size;
 } java_index_entry_t;
 
-int64_t merge_dedup_long_index(
-        const uint64_t *src,
-        const int64_t src_lo,
-        const int64_t src_hi_incl,
-        const index_t *index,
-        const int64_t index_lo,
-        const int64_t index_hi_incl,
-        index_t *index_dest
-) {
-    // src* points to the timestamps column in the table
-    // index* points to the O3 data to be merged into the table
-    // Both memory buffers are sorted in ASC order of the timestamps
-    int64_t src_pos = src_lo;
-    int64_t index_pos = index_lo;
-    index_t *dest = index_dest;
-
-    // Simple 2 way merge
-    // index* rows replace the column data, e.g. new incoming data
-    // overwrite existing data when records match
-    while (src_pos <= src_hi_incl && index_pos <= index_hi_incl) {
-        if (src[src_pos] < index[index_pos].ts) {
-            dest[0].ts = src[src_pos];
-            // Take column data.
-            // Set first bit to 1 for merge routines to take column data.
-            dest[0].i = src_pos | (1ull << 63);
-            dest++;
-            src_pos++;
-        } else if (src[src_pos] > index[index_pos].ts) {
-            // Take o3 data.
-            // Set first bit to 1 for merge routines to take column data.
-            dest[0] = index[index_pos];
-            dest++;
-            index_pos++;
-        } else {
-            // index_ts == src_ts
-            const uint64_t conflict_ts = src[src_pos];
-            while (index_pos <= index_hi_incl && index[index_pos].ts == conflict_ts) {
-                index_pos++;
-            }
-
-            // replace all records with same timestamp with last version from index
-            while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
-                dest[0] = index[index_pos - 1];
-                dest++;
-                src_pos++;
-            }
-        }
-    }
-
-    // This is tail something left either in src data or index.
-
-    // Copy remaining records from index
-    while (index_pos <= index_hi_incl) {
-        dest[0] = index[index_pos];
-        dest++;
-        index_pos++;
-    }
-
-    // Copy remaining records from column
-    while (src_pos <= src_hi_incl) {
-        dest[0].ts = src[src_pos];
-        // Set first bit to 1 for merge routines to take column data.
-        dest[0].i = src_pos | (1ull << 63);
-        dest++;
-        src_pos++;
-    }
-    return dest - index_dest;
-}
-
-inline int64_t dedup_sorted_timestamp_index(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
-    if (count > 0) {
-        int64_t copyTo = 0;
-        uint64_t lastTimestamp = pIndexIn[0].ts;
-        for (int64_t i = 1; i < count; i++) {
-            if (pIndexIn[i].ts > lastTimestamp) {
-                pIndexOut[copyTo] = pIndexIn[i - 1];
-                copyTo++;
-                lastTimestamp = pIndexIn[i].ts;
-            } else if (pIndexIn[i].ts < lastTimestamp) {
-                return -i - 1;
-            }
-        }
-        pIndexOut[copyTo] = pIndexIn[count - 1];
-        return copyTo + 1;
-    }
-    return 0;
-}
-
-inline int64_t dedup_sorted_timestamp_index_rebase(const index_t *pIndexIn, int64_t count, index_t *pIndexOut) {
-    if (count > 0) {
-        int64_t copyTo = 0;
-        uint64_t lastTimestamp = pIndexIn[0].ts;
-        for (int64_t i = 1; i < count; i++) {
-            if (pIndexIn[i].ts > lastTimestamp) {
-                pIndexOut[copyTo].ts = pIndexIn[i - 1].ts;
-                pIndexOut[copyTo].i = (i - 1) | (1ull << 63);
-                copyTo++;
-                lastTimestamp = pIndexIn[i].ts;
-            } else if (pIndexIn[i].ts < lastTimestamp) {
-                return -i - 1;
-            }
-        }
-        pIndexOut[copyTo].ts = pIndexIn[count - 1].ts;
-        pIndexOut[copyTo].i = (count - 1) | (1ull << 63);
-        return copyTo + 1;
-    }
-    return 0;
-}
-
 void k_way_merge_long_index(
         index_entry_t *indexes,
         const uint32_t entries_count,
@@ -854,58 +739,6 @@ Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
             (int64_t) jIndexCount,
             reinterpret_cast<index_t *>(pIndexDest)
     );
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
-        JAVA_STATIC,
-        jlong pSrc,
-        jlong srcLo,
-        jlong srcHiInclusive,
-        jlong pIndex,
-        jlong indexLo,
-        jlong indexHiInclusive,
-        jlong pDestIndex) {
-    int64_t merge_count = merge_dedup_long_index(
-            reinterpret_cast<uint64_t *> (pSrc),
-            __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, srcHiInclusive),
-            reinterpret_cast<index_t *> (pIndex),
-            __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
-            __JLONG_REINTERPRET_CAST__(int64_t, indexHiInclusive),
-            reinterpret_cast<index_t *> (pDestIndex)
-    );
-    return merge_count;
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
-        JAVA_STATIC,
-        jlong pIndexIn,
-        jlong count,
-        jlong pIndexOut
-) {
-    int64_t merge_count = dedup_sorted_timestamp_index(
-            reinterpret_cast<const index_t *> (pIndexIn),
-            __JLONG_REINTERPRET_CAST__(int64_t, count),
-            reinterpret_cast<index_t *> (pIndexOut)
-    );
-    return merge_count;
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_dedupSortedTimestampIndexRebase(
-        JAVA_STATIC,
-        jlong pIndexIn,
-        jlong count,
-        jlong pIndexOut
-) {
-    int64_t merge_count = dedup_sorted_timestamp_index_rebase(
-            reinterpret_cast<const index_t *> (pIndexIn),
-            __JLONG_REINTERPRET_CAST__(int64_t, count),
-            reinterpret_cast<index_t *> (pIndexOut)
-    );
-    return merge_count;
 }
 
 DECLARE_DISPATCHER(re_shuffle_int32) ;

@@ -30,10 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -96,9 +93,17 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         switchTo(path, pathLen);
     }
 
+    public void disableDeduplication() {
+        structureVersion.incrementAndGet();
+    }
+
     public void dropTable() {
         this.structureVersion.set(DROP_TABLE_STRUCTURE_VERSION);
         syncToMetaFile();
+    }
+
+    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        structureVersion.incrementAndGet();
     }
 
     @Override
