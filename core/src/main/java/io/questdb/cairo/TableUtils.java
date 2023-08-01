@@ -651,6 +651,8 @@ public final class TableUtils {
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
                 return GeoHashes.NULL;
+            case ColumnType.IPv4:
+                return Numbers.IPv4_NULL;
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
