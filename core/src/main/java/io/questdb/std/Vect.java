@@ -70,19 +70,32 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
-    public static native long dedupSortedTimestampIndex(long inIndexAddr, long count, long outIndexAddr);
+    public static native long dedupSortedTimestampIndex(
+            long inIndexAddr,
+            long count,
+            long outIndexAddr,
+            long indexAddrTemp,
+            int dedupColumnCount,
+            long dedupColumnData
+    );
 
-    public static long dedupSortedTimestampIndexChecked(long inIndexAddr, long count, long outIndexAddr) {
-        long dedupCount = dedupSortedTimestampIndex(inIndexAddr, count, outIndexAddr);
-        assert dedupCount >= 0 : "unsorted data passed to deduplication";
-        return dedupCount;
-    }
-
-    public static native long dedupSortedTimestampIndexRebase(long inIndexAddr, long count, long outIndexAddr);
-
-    public static long dedupSortedTimestampIndexRebaseChecked(long inIndexAddr, long count, long outIndexAddr) {
-        long dedupCount = dedupSortedTimestampIndexRebase(inIndexAddr, count, outIndexAddr);
-        assert dedupCount >= 0 : "unsorted data passed to deduplication";
+    public static long dedupSortedTimestampIndexIntKeysChecked(
+            long inIndexAddr,
+            long count,
+            long outIndexAddr,
+            long indexAddrTemp,
+            int dedupColumnCount,
+            long dedupColumnData
+    ) {
+        long dedupCount = dedupSortedTimestampIndex(
+                inIndexAddr,
+                count,
+                outIndexAddr,
+                indexAddrTemp,
+                dedupColumnCount,
+                dedupColumnData
+        );
+        assert dedupCount != -1 : "unsorted data passed to deduplication";
         return dedupCount;
     }
 
@@ -161,6 +174,18 @@ public final class Vect {
             long indexLo,
             long indexHiInclusive,
             long pDestIndex
+    );
+
+    public static native long mergeDedupTimestampWithLongIndexIntKeys(
+            long srcTimestampAddr,
+            long mergeDataLo,
+            long mergeDataHi,
+            long sortedTimestampsAddr,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            long tempIndexAddr,
+            int dedupKeyCount,
+            long dedupColBuffs
     );
 
     public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {

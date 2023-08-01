@@ -34,10 +34,10 @@ public class ShowTablesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             assertQuery(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
-                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
-                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
+                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
                     "select * from table_columns('balances')",
                     null,
                     null,
@@ -63,10 +63,10 @@ public class ShowTablesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             assertQuery(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
-                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
-                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
+                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
                     "show columns from balances",
                     null,
                     null,

@@ -2698,22 +2698,22 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         );
 
         assertQuery(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                        "bo\tBOOLEAN\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "by\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "sh\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "ch\tCHAR\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "in_\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "lo\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "dat\tDATE\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\ttrue\n" +
-                        "ft\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "db\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "str\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "sym\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "l256\tLONG256\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "ge\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
-                        "uid\tUUID\tfalse\t256\tfalse\t0\tfalse\n",
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                        "bo\tBOOLEAN\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "by\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "sh\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "ch\tCHAR\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "in_\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "lo\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "dat\tDATE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\ttrue\tfalse\n" +
+                        "ft\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "db\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "str\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "sym\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "l256\tLONG256\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "ge\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "uid\tUUID\tfalse\t256\tfalse\t0\tfalse\tfalse\n",
                 "show columns from alltypes",
                 null,
                 false,

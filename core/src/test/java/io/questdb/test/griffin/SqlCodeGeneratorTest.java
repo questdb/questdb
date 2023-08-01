@@ -7276,10 +7276,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             sqlExecutionContext,
                             "show columns from 'привет от штиблет'",
                             sink,
-                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                                    "f0\tSTRING\tfalse\t0\tfalse\t0\tfalse\n" +
-                                    "штиблет\tSTRING\tfalse\t0\tfalse\t0\tfalse\n" +
-                                    "f2\tSTRING\tfalse\t0\tfalse\t0\tfalse\n"
+                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                    "f0\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "штиблет\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                    "f2\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n"
                     );
                 }
         );

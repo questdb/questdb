@@ -144,7 +144,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd,
                 start,
                 end,
-                fuzzRowCount,
+                Math.max(1, fuzzRowCount),
                 transactionCount,
                 isO3,
                 cancelRowsProb,

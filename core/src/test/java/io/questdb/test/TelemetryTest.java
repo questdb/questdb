@@ -98,12 +98,12 @@ public class TelemetryTest extends AbstractCairoTest {
                 im.commit();
                 im.close();
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
-                String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
-                        "id	LONG256	false	0	false	0	false\n" +
-                        "enabled	BOOLEAN	false	0	false	0	false\n" +
-                        "version	SYMBOL	false	256	true	128	false\n" +
-                        "os	SYMBOL	false	256	true	128	false\n" +
-                        "package	SYMBOL	false	256	true	128	false\n";
+                String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated	upsertKey\n" +
+                        "id	LONG256	false	0	false	0	false	false\n" +
+                        "enabled	BOOLEAN	false	0	false	0	false	false\n" +
+                        "version	SYMBOL	false	256	true	128	false	false\n" +
+                        "os	SYMBOL	false	256	true	128	false	false\n" +
+                        "package	SYMBOL	false	256	true	128	false	false\n";
                 TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 expectedSql = "id\tversion\n" +
                         "0x01\t\n" +

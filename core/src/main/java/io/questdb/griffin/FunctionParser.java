@@ -613,7 +613,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     final short argTypeTag = ColumnType.tagOf(argType);
                     final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
 
-                    if (sigArgTypeTag == argTypeTag || (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
+                    if (sigArgTypeTag == argTypeTag ||
+                            (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
+                                    sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though    
+                                    arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.     
+                                    arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working     
+                            (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
                                 match = MATCH_EXACT_MATCH;
@@ -636,6 +641,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // output of a cast() function is always the 2nd argument in a function signature
                     if (k != 1 || !Chars.equals("cast", node.token)) {
                         int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
+
+                        if (argTypeTag == ColumnType.STRING &&
+                                sigArgTypeTag == ColumnType.CHAR) {
+                            if (arg.isConstant()) {
+                                // string longer than 1 char can't be cast to char implicitly
+                                if (arg.getStrLen(null) > 1) {
+                                    overloadDistance = ColumnType.NO_OVERLOAD;
+                                }
+                            } else {
+                                // prefer CHAR -> STRING to STRING -> CHAR conversion
+                                overloadDistance = 2 * overloadDistance;
+                            }
+                        }
+
                         sigArgTypeSum += overloadDistance;
                         // Overload with cast to higher precision
                         overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
