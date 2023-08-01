@@ -3089,6 +3089,43 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testImplicitStringAndCharConversions() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+
+            try (PreparedStatement stmt = connection.prepareStatement("select ? > 'a'")) {
+                stmt.setString(1, "ab");
+                ResultSet resultSet = stmt.executeQuery();
+
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "true\n", sink, resultSet);
+
+                stmt.setString(1, "a");
+                resultSet = stmt.executeQuery();
+
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "false\n", sink, resultSet);
+
+                stmt.setString(1, "");
+                resultSet = stmt.executeQuery();
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "false\n", sink, resultSet);
+
+
+                stmt.setString(1, null);
+                resultSet = stmt.executeQuery();
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "false\n", sink, resultSet);
+            }
+        });
+    }
+
+    @Test
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (
