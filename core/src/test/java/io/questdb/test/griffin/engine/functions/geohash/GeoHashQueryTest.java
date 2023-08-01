@@ -110,8 +110,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             try {
                 ddl("alter table pos add hash geohash(1)");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "invalid GEOHASH size, must be number followed by 'C' or 'B' character"
+                );
                 Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
             }
         });
@@ -150,8 +152,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             try {
                 assertException("alter table pos add hash geohash(11)");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits"
+                );
                 Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
             }
         });
@@ -164,8 +168,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             try {
                 assertException("alter table pos add hash geohash(11c 1)");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "invalid GEOHASH type literal, expected ')' found='1'");
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "invalid GEOHASH type literal, expected ')' found='1'"
+                );
                 Assert.assertEquals("alter table pos add hash geohash(11c ".length(), e.getPosition());
             }
         });
@@ -178,8 +184,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             try {
                 assertException("alter table pos add hash geohash(11c");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "invalid GEOHASH type literal, expected ')'");
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "invalid GEOHASH type literal, expected ')'"
+                );
                 Assert.assertEquals("alter table pos add hash geohash(11c".length(), e.getPosition());
             }
         });
@@ -192,9 +200,12 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 String tableName = "pos" + l;
                 ddl(String.format("create table %s(x long)", tableName));
                 ddl(String.format("alter table %s add hash geohash(%sc)", tableName, l));
-                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                        "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
-                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\tfalse\n", l), "show columns from " + tableName);
+                assertSql(
+                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                                String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\tfalse\tfalse\n", l),
+                        "show columns from " + tableName
+                );
             }
         });
     }
@@ -314,8 +325,8 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertSql("cast\n" +
                 "questd\n" +
                 "questd\n", "select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)\n" +
-                        "UNION ALL\n" +
-                        "select cast('questdb' as geohash(6c)) from long_sequence(1)"
+                "UNION ALL\n" +
+                "select cast('questdb' as geohash(6c)) from long_sequence(1)"
         ));
     }
 
@@ -371,8 +382,8 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "1234\tq\t8\t1234\tq\t1\n" +
                     "ques\t1\t9\tques\t3\t2\n" +
                     "ques\t1\t10\tques\t3\t2\n", "with g1 as (select distinct * from t1)," +
-                            "g2 as (select distinct * from t2)" +
-                            "select * from g1 join g2 on g1.geo4 = g2.geo4"
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 join g2 on g1.geo4 = g2.geo4"
             );
         });
     }
@@ -404,8 +415,8 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
                     "ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
                     "ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n", "with g1 as (select distinct * from t1)," +
-                            "g2 as (select distinct * from t2)" +
-                            "select * from g1 lt join g2 on g1.geo4 = g2.geo4"
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 lt join g2 on g1.geo4 = g2.geo4"
             );
         });
     }
@@ -543,10 +554,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 "jr1nj0dv\n" +
                 "29tdrk0h\n" +
                 "9su67p3e\n", "select make_geohash(lon,lat,40) as h8c\n" +
-                        "from ( select \n" +
-                        "(rnd_double()*180.0 - 90.0) as lat,\n" +
-                        "(rnd_double()*360.0 - 180.0) as lon\n" +
-                        "from long_sequence(3))"
+                "from ( select \n" +
+                "(rnd_double()*180.0 - 90.0) as lat,\n" +
+                "(rnd_double()*360.0 - 180.0) as lon\n" +
+                "from long_sequence(3))"
         ));
     }
 
@@ -556,10 +567,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 "\n" +
                 "u9tdrk0h\n" +
                 "\n", "select make_geohash(lon, lat,40) as h8c\n" +
-                        "from ( select \n" +
-                        "(rnd_double()*180.0) as lat,\n" +
-                        "(rnd_double()*360.0) as lon\n" +
-                        "from long_sequence(3))"
+                "from ( select \n" +
+                "(rnd_double()*180.0) as lat,\n" +
+                "(rnd_double()*360.0) as lon\n" +
+                "from long_sequence(3))"
         ));
     }
 

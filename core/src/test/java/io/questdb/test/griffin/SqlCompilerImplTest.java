@@ -111,39 +111,47 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertFailure(30, booleanError,
                 "select * from a " +
-                        "join b on a.i - b.i");
+                        "join b on a.i - b.i"
+        );
 
         assertFailure(35, booleanError,
                 "select * from a " +
-                        "left join b on a.i - b.i");
+                        "left join b on a.i - b.i"
+        );
 
         assertFailure(46, booleanError,
                 "select * from a " +
-                        "join b on a.ts = b.ts and a.i - b.i");
+                        "join b on a.ts = b.ts and a.i - b.i"
+        );
 
         assertFailure(51, booleanError,
                 "select * from a " +
-                        "left join b on a.ts = b.ts and a.i - b.i");
+                        "left join b on a.ts = b.ts and a.i - b.i"
+        );
 
         for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
             assertFailure(37, "unsupported " + join.trim() + " join expression",
                     "select * " +
                             "from a " +
-                            "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join));
+                            "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join)
+            );
         }
 
         String unexpectedError = "unexpected argument for function: and. expected args: (BOOLEAN,BOOLEAN). actual args: (INT,INT)";
         assertFailure(44, unexpectedError,
                 "select * from a " +
-                        "join b on a.i + b.i and a.i - b.i");
+                        "join b on a.i + b.i and a.i - b.i"
+        );
 
         assertFailure(49, unexpectedError,
                 "select * from a " +
-                        "left join b on a.i + b.i and a.i - b.i");
+                        "left join b on a.i + b.i and a.i - b.i"
+        );
 
         assertFailure(60, unexpectedError,
                 "select * from a " +
-                        "join b on a.ts = b.ts and a.i - b.i and b.i - a.i");
+                        "join b on a.ts = b.ts and a.i - b.i and b.i - a.i"
+        );
     }
 
     @Test
@@ -163,7 +171,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastByteDate() throws SqlException {
-        assertCastByte("a\n" +
+        assertCastByte(
+                "a\n" +
                         "1970-01-01T00:00:00.119Z\n" +
                         "1970-01-01T00:00:00.052Z\n" +
                         "1970-01-01T00:00:00.091Z\n" +
@@ -184,12 +193,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.040Z\n" +
                         "1970-01-01T00:00:00.116Z\n" +
                         "1970-01-01T00:00:00.117Z\n",
-                ColumnType.DATE);
+                ColumnType.DATE
+        );
     }
 
     @Test
     public void testCastByteDouble() throws SqlException {
-        assertCastByte("a\n" +
+        assertCastByte(
+                "a\n" +
                         "119.0\n" +
                         "52.0\n" +
                         "91.0\n" +
@@ -210,12 +221,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "40.0\n" +
                         "116.0\n" +
                         "117.0\n",
-                ColumnType.DOUBLE);
+                ColumnType.DOUBLE
+        );
     }
 
     @Test
     public void testCastByteFloat() throws SqlException {
-        assertCastByte("a\n" +
+        assertCastByte(
+                "a\n" +
                         "119.0000\n" +
                         "52.0000\n" +
                         "91.0000\n" +
@@ -236,12 +249,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "40.0000\n" +
                         "116.0000\n" +
                         "117.0000\n",
-                ColumnType.FLOAT);
+                ColumnType.FLOAT
+        );
     }
 
     @Test
     public void testCastByteInt() throws SqlException {
-        assertCastByte("a\n" +
+        assertCastByte(
+                "a\n" +
                         "119\n" +
                         "52\n" +
                         "91\n" +
@@ -262,12 +277,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "40\n" +
                         "116\n" +
                         "117\n",
-                ColumnType.INT);
+                ColumnType.INT
+        );
     }
 
     @Test
     public void testCastByteLong() throws SqlException {
-        assertCastByte("a\n" +
+        assertCastByte(
+                "a\n" +
                         "119\n" +
                         "52\n" +
                         "91\n" +
@@ -288,12 +305,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "40\n" +
                         "116\n" +
                         "117\n",
-                ColumnType.LONG);
+                ColumnType.LONG
+        );
     }
 
     @Test
     public void testCastByteShort() throws SqlException {
-        assertCastByte("a\n" +
+        assertCastByte(
+                "a\n" +
                         "119\n" +
                         "52\n" +
                         "91\n" +
@@ -314,12 +333,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "40\n" +
                         "116\n" +
                         "117\n",
-                ColumnType.SHORT);
+                ColumnType.SHORT
+        );
     }
 
     @Test
     public void testCastByteTimestamp() throws SqlException {
-        assertCastByte("a\n" +
+        assertCastByte(
+                "a\n" +
                         "1970-01-01T00:00:00.000119Z\n" +
                         "1970-01-01T00:00:00.000052Z\n" +
                         "1970-01-01T00:00:00.000091Z\n" +
@@ -340,7 +361,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000040Z\n" +
                         "1970-01-01T00:00:00.000116Z\n" +
                         "1970-01-01T00:00:00.000117Z\n",
-                ColumnType.TIMESTAMP);
+                ColumnType.TIMESTAMP
+        );
     }
 
     @Test
@@ -351,7 +373,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from (select cast(rnd_byte() as date) a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.BYTE) + ")";
 
-        assertCast("a\n" +
+        assertCast(
+                "a\n" +
                         "76\n" +
                         "102\n" +
                         "27\n" +
@@ -379,7 +402,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastDateDouble() throws SqlException {
-        assertCastDate("a\n" +
+        assertCastDate(
+                "a\n" +
                         "1.426297242379E12\n" +
                         "-9.223372036854776E18\n" +
                         "1.446081058169E12\n" +
@@ -400,12 +424,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1.434999533562E12\n" +
                         "1.423736755529E12\n" +
                         "1.426566352765E12\n",
-                ColumnType.DOUBLE);
+                ColumnType.DOUBLE
+        );
     }
 
     @Test
     public void testCastDateFloat() throws SqlException {
-        assertCastDate("a\n" +
+        assertCastDate(
+                "a\n" +
                         "1.42629719E12\n" +
                         "-9.223372E18\n" +
                         "1.44608107E12\n" +
@@ -426,7 +452,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1.43499959E12\n" +
                         "1.4237367E12\n" +
                         "1.42656641E12\n",
-                ColumnType.FLOAT);
+                ColumnType.FLOAT
+        );
     }
 
     @Test
@@ -437,7 +464,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from (select cast(rnd_int() as date) a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
 
-        assertCast("a\n" +
+        assertCast(
+                "a\n" +
                         "-1148479920\n" +
                         "315515118\n" +
                         "1548800833\n" +
@@ -465,7 +493,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastDateLong() throws SqlException {
-        assertCastDate("a\n" +
+        assertCastDate(
+                "a\n" +
                         "1426297242379\n" +
                         "NaN\n" +
                         "1446081058169\n" +
@@ -486,7 +515,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1434999533562\n" +
                         "1423736755529\n" +
                         "1426566352765\n",
-                ColumnType.LONG);
+                ColumnType.LONG
+        );
     }
 
     @Test
@@ -554,7 +584,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastDoubleByte() throws SqlException {
-        assertCastDouble("a\n" +
+        assertCastDouble(
+                "a\n" +
                         "80\n" +
                         "8\n" +
                         "8\n" +
@@ -575,12 +606,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "97\n" +
                         "24\n" +
                         "63\n",
-                ColumnType.BYTE);
+                ColumnType.BYTE
+        );
     }
 
     @Test
     public void testCastDoubleDate() throws SqlException {
-        assertCastDouble("a\n" +
+        assertCastDouble(
+                "a\n" +
                         "1970-01-01T00:00:00.080Z\n" +
                         "1970-01-01T00:00:00.008Z\n" +
                         "1970-01-01T00:00:00.008Z\n" +
@@ -601,12 +634,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.097Z\n" +
                         "1970-01-01T00:00:00.024Z\n" +
                         "1970-01-01T00:00:00.063Z\n",
-                ColumnType.DATE);
+                ColumnType.DATE
+        );
     }
 
     @Test
     public void testCastDoubleFloat() throws SqlException {
-        assertCastDouble("a\n" +
+        assertCastDouble(
+                "a\n" +
                         "80.4322\n" +
                         "8.4870\n" +
                         "8.4383\n" +
@@ -627,12 +662,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "97.7110\n" +
                         "24.8088\n" +
                         "63.8161\n",
-                ColumnType.FLOAT);
+                ColumnType.FLOAT
+        );
     }
 
     @Test
     public void testCastDoubleInt() throws SqlException {
-        assertCastDouble("a\n" +
+        assertCastDouble(
+                "a\n" +
                         "80\n" +
                         "8\n" +
                         "8\n" +
@@ -653,12 +690,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "97\n" +
                         "24\n" +
                         "63\n",
-                ColumnType.INT);
+                ColumnType.INT
+        );
     }
 
     @Test
     public void testCastDoubleLong() throws SqlException {
-        assertCastDouble("a\n" +
+        assertCastDouble(
+                "a\n" +
                         "80\n" +
                         "8\n" +
                         "8\n" +
@@ -685,7 +724,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastDoubleShort() throws SqlException {
-        assertCastDouble("a\n" +
+        assertCastDouble(
+                "a\n" +
                         "80\n" +
                         "8\n" +
                         "8\n" +
@@ -706,12 +746,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "97\n" +
                         "24\n" +
                         "63\n",
-                ColumnType.SHORT);
+                ColumnType.SHORT
+        );
     }
 
     @Test
     public void testCastDoubleTimestamp() throws SqlException {
-        assertCastDouble("a\n" +
+        assertCastDouble(
+                "a\n" +
                         "1970-01-01T00:00:00.000080Z\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
@@ -732,12 +774,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000097Z\n" +
                         "1970-01-01T00:00:00.000024Z\n" +
                         "1970-01-01T00:00:00.000063Z\n",
-                ColumnType.TIMESTAMP);
+                ColumnType.TIMESTAMP
+        );
     }
 
     @Test
     public void testCastFloatByte() throws SqlException {
-        assertCastFloat("a\n" +
+        assertCastFloat(
+                "a\n" +
                         "80\n" +
                         "0\n" +
                         "8\n" +
@@ -758,12 +802,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "72\n" +
                         "62\n" +
                         "66\n",
-                ColumnType.BYTE);
+                ColumnType.BYTE
+        );
     }
 
     @Test
     public void testCastFloatDate() throws SqlException {
-        assertCastFloat("a\n" +
+        assertCastFloat(
+                "a\n" +
                         "1970-01-01T00:00:00.080Z\n" +
                         "\n" +
                         "1970-01-01T00:00:00.008Z\n" +
@@ -784,12 +830,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.072Z\n" +
                         "1970-01-01T00:00:00.062Z\n" +
                         "1970-01-01T00:00:00.066Z\n",
-                ColumnType.DATE);
+                ColumnType.DATE
+        );
     }
 
     @Test
     public void testCastFloatDouble() throws SqlException {
-        assertCastFloat("a\n" +
+        assertCastFloat(
+                "a\n" +
                         "80.43223571777344\n" +
                         "NaN\n" +
                         "8.48696231842041\n" +
@@ -810,12 +858,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "72.61135864257812\n" +
                         "62.76953887939453\n" +
                         "66.93836975097656\n",
-                ColumnType.DOUBLE);
+                ColumnType.DOUBLE
+        );
     }
 
     @Test
     public void testCastFloatInt() throws SqlException {
-        assertCastFloat("a\n" +
+        assertCastFloat(
+                "a\n" +
                         "80\n" +
                         "NaN\n" +
                         "8\n" +
@@ -836,12 +886,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "72\n" +
                         "62\n" +
                         "66\n",
-                ColumnType.INT);
+                ColumnType.INT
+        );
     }
 
     @Test
     public void testCastFloatLong() throws SqlException {
-        assertCastFloat("a\n" +
+        assertCastFloat(
+                "a\n" +
                         "80\n" +
                         "NaN\n" +
                         "8\n" +
@@ -862,12 +914,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "72\n" +
                         "62\n" +
                         "66\n",
-                ColumnType.LONG);
+                ColumnType.LONG
+        );
     }
 
     @Test
     public void testCastFloatShort() throws SqlException {
-        assertCastFloat("a\n" +
+        assertCastFloat(
+                "a\n" +
                         "80\n" +
                         "0\n" +
                         "8\n" +
@@ -888,12 +942,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "72\n" +
                         "62\n" +
                         "66\n",
-                ColumnType.SHORT);
+                ColumnType.SHORT
+        );
     }
 
     @Test
     public void testCastFloatTimestamp() throws SqlException {
-        assertCastFloat("a\n" +
+        assertCastFloat(
+                "a\n" +
                         "1970-01-01T00:00:00.000080Z\n" +
                         "\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
@@ -914,7 +970,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000072Z\n" +
                         "1970-01-01T00:00:00.000062Z\n" +
                         "1970-01-01T00:00:00.000066Z\n",
-                ColumnType.TIMESTAMP);
+                ColumnType.TIMESTAMP
+        );
     }
 
     @Test
@@ -944,7 +1001,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastIntDate() throws SqlException {
-        assertCastInt("a\n" +
+        assertCastInt(
+                "a\n" +
                         "1970-01-01T00:00:00.001Z\n" +
                         "1969-12-07T03:28:36.352Z\n" +
                         "1970-01-01T00:00:00.022Z\n" +
@@ -965,12 +1023,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.006Z\n" +
                         "1970-01-01T00:00:00.019Z\n" +
                         "1970-01-01T00:00:00.007Z\n",
-                ColumnType.DATE);
+                ColumnType.DATE
+        );
     }
 
     @Test
     public void testCastIntDouble() throws SqlException {
-        assertCastInt("a\n" +
+        assertCastInt(
+                "a\n" +
                         "1.0\n" +
                         "-2.147483648E9\n" +
                         "22.0\n" +
@@ -991,12 +1051,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "6.0\n" +
                         "19.0\n" +
                         "7.0\n",
-                ColumnType.DOUBLE);
+                ColumnType.DOUBLE
+        );
     }
 
     @Test
     public void testCastIntFloat() throws SqlException {
-        assertCastInt("a\n" +
+        assertCastInt(
+                "a\n" +
                         "1.0000\n" +
                         "-2.14748365E9\n" +
                         "22.0000\n" +
@@ -1017,7 +1079,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "6.0000\n" +
                         "19.0000\n" +
                         "7.0000\n",
-                ColumnType.FLOAT);
+                ColumnType.FLOAT
+        );
     }
 
     @Test
@@ -1068,7 +1131,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "13\n" +
                         "17\n" +
                         "25\n",
-                ColumnType.SHORT, 0);
+                ColumnType.SHORT, 0
+        );
     }
 
     @Test
@@ -1120,12 +1184,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "3\n" +
                         "8\n" +
                         "12\n",
-                ColumnType.BYTE, 0);
+                ColumnType.BYTE, 0
+        );
     }
 
     @Test
     public void testCastLongDate() throws SqlException {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "1970-01-01T00:00:00.022Z\n" +
                         "\n" +
                         "1970-01-01T00:00:00.017Z\n" +
@@ -1146,12 +1212,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.016Z\n" +
                         "1970-01-01T00:00:00.010Z\n" +
                         "1970-01-01T00:00:00.006Z\n",
-                ColumnType.DATE);
+                ColumnType.DATE
+        );
     }
 
     @Test
     public void testCastLongDouble() throws SqlException {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "22.0\n" +
                         "-9.223372036854776E18\n" +
                         "17.0\n" +
@@ -1172,12 +1240,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "16.0\n" +
                         "10.0\n" +
                         "6.0\n",
-                ColumnType.DOUBLE);
+                ColumnType.DOUBLE
+        );
     }
 
     @Test
     public void testCastLongFloat() throws SqlException {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "22.0000\n" +
                         "-9.223372E18\n" +
                         "17.0000\n" +
@@ -1198,7 +1268,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "16.0000\n" +
                         "10.0000\n" +
                         "6.0000\n",
-                ColumnType.FLOAT);
+                ColumnType.FLOAT
+        );
     }
 
     @Test
@@ -1224,7 +1295,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "3\n" +
                         "8\n" +
                         "12\n",
-                ColumnType.INT, 0);
+                ColumnType.INT, 0
+        );
     }
 
     @Test
@@ -1250,12 +1322,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "3\n" +
                         "8\n" +
                         "12\n",
-                ColumnType.SHORT, 0);
+                ColumnType.SHORT, 0
+        );
     }
 
     @Test
     public void testCastLongTimestamp() throws SqlException {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "1970-01-01T00:00:00.000022Z\n" +
                         "\n" +
                         "1970-01-01T00:00:00.000017Z\n" +
@@ -1276,7 +1350,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000016Z\n" +
                         "1970-01-01T00:00:00.000010Z\n" +
                         "1970-01-01T00:00:00.000006Z\n",
-                ColumnType.TIMESTAMP);
+                ColumnType.TIMESTAMP
+        );
     }
 
     @Test
@@ -1351,12 +1426,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "17\n" +
                         "-69\n" +
                         "-14\n",
-                ColumnType.BYTE, -128, 127);
+                ColumnType.BYTE, -128, 127
+        );
     }
 
     @Test
     public void testCastShortDate() throws SqlException {
-        assertCastShort("a\n" +
+        assertCastShort(
+                "a\n" +
                         "1970-01-01T00:00:01.430Z\n" +
                         "1970-01-01T00:00:01.238Z\n" +
                         "1970-01-01T00:00:01.204Z\n" +
@@ -1377,12 +1454,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:01.414Z\n" +
                         "1970-01-01T00:00:01.588Z\n" +
                         "1970-01-01T00:00:01.371Z\n",
-                ColumnType.DATE);
+                ColumnType.DATE
+        );
     }
 
     @Test
     public void testCastShortDouble() throws SqlException {
-        assertCastShort("a\n" +
+        assertCastShort(
+                "a\n" +
                         "1430.0\n" +
                         "1238.0\n" +
                         "1204.0\n" +
@@ -1403,12 +1482,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1414.0\n" +
                         "1588.0\n" +
                         "1371.0\n",
-                ColumnType.DOUBLE);
+                ColumnType.DOUBLE
+        );
     }
 
     @Test
     public void testCastShortFloat() throws SqlException {
-        assertCastShort("a\n" +
+        assertCastShort(
+                "a\n" +
                         "1430.0000\n" +
                         "1238.0000\n" +
                         "1204.0000\n" +
@@ -1429,12 +1510,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1414.0000\n" +
                         "1588.0000\n" +
                         "1371.0000\n",
-                ColumnType.FLOAT);
+                ColumnType.FLOAT
+        );
     }
 
     @Test
     public void testCastShortInt() throws SqlException {
-        assertCastShort("a\n" +
+        assertCastShort(
+                "a\n" +
                         "1430\n" +
                         "1238\n" +
                         "1204\n" +
@@ -1455,12 +1538,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1414\n" +
                         "1588\n" +
                         "1371\n",
-                ColumnType.INT);
+                ColumnType.INT
+        );
     }
 
     @Test
     public void testCastShortLong() throws SqlException {
-        assertCastShort("a\n" +
+        assertCastShort(
+                "a\n" +
                         "1430\n" +
                         "1238\n" +
                         "1204\n" +
@@ -1481,12 +1566,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1414\n" +
                         "1588\n" +
                         "1371\n",
-                ColumnType.LONG);
+                ColumnType.LONG
+        );
     }
 
     @Test
     public void testCastShortTimestamp() throws SqlException {
-        assertCastShort("a\n" +
+        assertCastShort(
+                "a\n" +
                         "1970-01-01T00:00:00.001430Z\n" +
                         "1970-01-01T00:00:00.001238Z\n" +
                         "1970-01-01T00:00:00.001204Z\n" +
@@ -1507,7 +1594,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.001414Z\n" +
                         "1970-01-01T00:00:00.001588Z\n" +
                         "1970-01-01T00:00:00.001371Z\n",
-                ColumnType.TIMESTAMP);
+                ColumnType.TIMESTAMP
+        );
     }
 
     @Test
@@ -1547,7 +1635,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastTimestampDate() throws SqlException {
-        assertCastTimestamp("a\n" +
+        assertCastTimestamp(
+                "a\n" +
                         "47956-10-13T01:43:12.217Z\n" +
                         "\n" +
                         "47830-07-03T01:52:05.101Z\n" +
@@ -1568,12 +1657,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "47620-04-14T19:43:29.561Z\n" +
                         "47725-11-11T00:22:36.062Z\n" +
                         "47867-11-08T16:30:43.643Z\n",
-                ColumnType.DATE);
+                ColumnType.DATE
+        );
     }
 
     @Test
     public void testCastTimestampDouble() throws SqlException {
-        assertCastTimestamp("a\n" +
+        assertCastTimestamp(
+                "a\n" +
                         "1.451202658992217E15\n" +
                         "-9.223372036854776E18\n" +
                         "1.447217632325101E15\n" +
@@ -1594,12 +1685,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1.440583904609561E15\n" +
                         "1.443915505356062E15\n" +
                         "1.448396353843643E15\n",
-                ColumnType.DOUBLE);
+                ColumnType.DOUBLE
+        );
     }
 
     @Test
     public void testCastTimestampFloat() throws SqlException {
-        assertCastTimestamp("a\n" +
+        assertCastTimestamp(
+                "a\n" +
                         "1.45120261E15\n" +
                         "-9.223372E18\n" +
                         "1.44721768E15\n" +
@@ -1620,7 +1713,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1.44058384E15\n" +
                         "1.44391553E15\n" +
                         "1.44839638E15\n",
-                ColumnType.FLOAT);
+                ColumnType.FLOAT
+        );
     }
 
     @Test
@@ -1631,7 +1725,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from (select rnd_int()::timestamp a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
 
-        assertCast("a\n" +
+        assertCast(
+                "a\n" +
                         "-1148479920\n" +
                         "315515118\n" +
                         "1548800833\n" +
@@ -1659,7 +1754,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastTimestampLong() throws SqlException {
-        assertCastTimestamp("a\n" +
+        assertCastTimestamp(
+                "a\n" +
                         "1451202658992217\n" +
                         "NaN\n" +
                         "1447217632325101\n" +
@@ -1680,7 +1776,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1440583904609561\n" +
                         "1443915505356062\n" +
                         "1448396353843643\n",
-                ColumnType.LONG);
+                ColumnType.LONG
+        );
     }
 
     @Test
@@ -1762,45 +1859,49 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "t TIMESTAMP, " +
                         "`bool.flag` BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
     public void testCompareStringAndChar() throws Exception {
         assertMemoryLeak(() -> {
             // constant 
-            assertSql("select 'ab' > 'a'", "column\ntrue\n");
-            assertSql("select 'ab' = 'a'", "column\nfalse\n");
-            assertSql("select 'ab' != 'a'", "column\ntrue\n");
-            assertSql("select 'ab' < 'a'", "column\nfalse\n");
+            assertSql("column\ntrue\n", "select 'ab' > 'a'");
+            assertSql("column\nfalse\n", "select 'ab' = 'a'");
+            assertSql("column\ntrue\n", "select 'ab' != 'a'");
+            assertSql("column\nfalse\n", "select 'ab' < 'a'");
 
             // non-constant 
-            assertSql("select x < 'd' from (select 'a' x union all select 'cd')", "column\ntrue\ntrue\n");
-            assertSql("select rnd_str('be', 'cd') < 'd' ", "column\ntrue\n");
-            assertSql("select rnd_str('ac', 'be', 'cd') != 'd'", "column\ntrue\n");
-            assertSql("select rnd_str('d', 'cd') != 'd' from long_sequence(5)",
+            assertSql("column\ntrue\ntrue\n", "select x < 'd' from (select 'a' x union all select 'cd')");
+            assertSql("column\ntrue\n", "select rnd_str('be', 'cd') < 'd' ");
+            assertSql("column\ntrue\n", "select rnd_str('ac', 'be', 'cd') != 'd'");
+            assertSql(
+
                     "column\n" +
                             "true\n" +
                             "true\n" +
                             "true\n" +
                             "true\n" +
-                            "false\n");
+                            "false\n",
+                    "select rnd_str('d', 'cd') != 'd' from long_sequence(5)"
+            );
 
-            assertSql("select cast('ab' as char) <= 'a'", "column\ntrue\n");
-            assertSql("select cast('ab' as string) <= 'a'", "column\nfalse\n");
-            assertSql("select cast('a' as string) <= 'a'", "column\ntrue\n");
-            assertSql("select cast('a' as char) <= 'a'", "column\ntrue\n");
-            assertSql("select cast('a' as char) <= 'a'::string", "column\ntrue\n");
-            assertSql("select cast('' as char) = null", "column\ntrue\n");
-            assertSql("select cast('' as char) < null", "column\nfalse\n");
-            assertSql("select cast('' as char) > null", "column\nfalse\n");
-            assertSql("select cast('' as char) <= null", "column\nfalse\n"); // inconsistent with = null
-            assertSql("select cast('' as char) >= null", "column\nfalse\n"); // inconsistent with = null
-            assertSql("select cast('' as string) = null", "column\nfalse\n");
-            assertSql("select cast('' as string) <= null", "column\nfalse\n");
-            assertSql("select cast(null as string) = null", "column\ntrue\n");
-            assertSql("select cast(null as string) <= null", "column\nfalse\n");// inconsistent with = null
-            assertSql("select cast(null as string) >= null", "column\nfalse\n");// inconsistent with = null 
+            assertSql("column\ntrue\n", "select cast('ab' as char) <= 'a'");
+            assertSql("column\nfalse\n", "select cast('ab' as string) <= 'a'");
+            assertSql("column\ntrue\n", "select cast('a' as string) <= 'a'");
+            assertSql("column\ntrue\n", "select cast('a' as char) <= 'a'");
+            assertSql("column\ntrue\n", "select cast('a' as char) <= 'a'::string");
+            assertSql("column\ntrue\n", "select cast('' as char) = null");
+            assertSql("column\nfalse\n", "select cast('' as char) < null");
+            assertSql("column\nfalse\n", "select cast('' as char) > null");
+            assertSql("column\nfalse\n", "select cast('' as char) <= null"); // inconsistent with = null
+            assertSql("column\nfalse\n", "select cast('' as char) >= null"); // inconsistent with = null
+            assertSql("column\nfalse\n", "select cast('' as string) = null");
+            assertSql("column\nfalse\n", "select cast('' as string) <= null");
+            assertSql("column\ntrue\n", "select cast(null as string) = null");
+            assertSql("column\nfalse\n", "select cast(null as string) <= null");// inconsistent with = null
+            assertSql("column\nfalse\n", "select cast(null as string) >= null");// inconsistent with = null
 
 
             assertFailure(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
@@ -1950,17 +2051,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCharToGeoHash() throws Exception {
         assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c))", null, "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                        "q\n" +
-                        "q\n" +
-                        "u\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "u\n" +
-                        "q\n" +
-                        "u\n", true, true, false);
+                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                "q\n" +
+                "q\n" +
+                "u\n" +
+                "e\n" +
+                "e\n" +
+                "e\n" +
+                "e\n" +
+                "u\n" +
+                "q\n" +
+                "u\n", true, true, false);
     }
 
     @Test
@@ -1988,17 +2089,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCharToNarrowGeoByte() throws Exception {
         assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(4b))", null, "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                        "1011\n" +
-                        "1011\n" +
-                        "1101\n" +
-                        "0110\n" +
-                        "0110\n" +
-                        "0110\n" +
-                        "0110\n" +
-                        "1101\n" +
-                        "1011\n" +
-                        "1101\n", true, true, false);
+                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                "1011\n" +
+                "1011\n" +
+                "1101\n" +
+                "0110\n" +
+                "0110\n" +
+                "0110\n" +
+                "0110\n" +
+                "1101\n" +
+                "1011\n" +
+                "1101\n", true, true, false);
     }
 
     @Test
@@ -2029,7 +2130,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 }
                             }
                         }
-                    });
+                    }
+            );
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "underlying cursor is extremely volatile");
@@ -2106,17 +2208,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashByteSizedStorage5() throws Exception {
         assertMemoryLeak(() -> assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c))", null, "insert into geohash " +
-                        "select rnd_str('q','u','e') from long_sequence(10)", "geohash\n" +
-                        "q\n" +
-                        "q\n" +
-                        "u\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "u\n" +
-                        "q\n" +
-                        "u\n", true, true, false));
+                "select rnd_str('q','u','e') from long_sequence(10)", "geohash\n" +
+                "q\n" +
+                "q\n" +
+                "u\n" +
+                "e\n" +
+                "e\n" +
+                "e\n" +
+                "e\n" +
+                "u\n" +
+                "q\n" +
+                "u\n", true, true, false));
     }
 
     @Test
@@ -2338,17 +2440,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCreateAsSelectInVolumeFail() throws Exception {
         try {
             assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume 'niza'", null, "insert into geohash " +
-                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                                "q\n" +
-                                "q\n" +
-                                "u\n" +
-                                "e\n" +
-                                "e\n" +
-                                "e\n" +
-                                "e\n" +
-                                "u\n" +
-                                "q\n" +
-                                "u\n", true, true, false);
+                    "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                    "q\n" +
+                    "q\n" +
+                    "u\n" +
+                    "e\n" +
+                    "e\n" +
+                    "e\n" +
+                    "e\n" +
+                    "u\n" +
+                    "q\n" +
+                    "u\n", true, true, false);
             Assert.fail();
         } catch (SqlException e) {
             if (Os.isWindows()) {
@@ -2393,17 +2495,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         try {
             configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             assertQuery("geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
-                                " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                                "q\n" +
-                                "q\n" +
-                                "u\n" +
-                                "e\n" +
-                                "e\n" +
-                                "e\n" +
-                                "e\n" +
-                                "u\n" +
-                                "q\n" +
-                                "u\n", true, true, false);
+                    " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                    "q\n" +
+                    "q\n" +
+                    "u\n" +
+                    "e\n" +
+                    "e\n" +
+                    "e\n" +
+                    "e\n" +
+                    "u\n" +
+                    "q\n" +
+                    "u\n", true, true, false);
             Assert.fail();
         } catch (SqlException e) {
             if (Os.isWindows()) {
@@ -2429,17 +2531,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             Assert.assertTrue(volume.delete());
             assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
-                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                                "q\n" +
-                                "q\n" +
-                                "u\n" +
-                                "e\n" +
-                                "e\n" +
-                                "e\n" +
-                                "e\n" +
-                                "u\n" +
-                                "q\n" +
-                                "u\n", true, true, false);
+                    "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                    "q\n" +
+                    "q\n" +
+                    "u\n" +
+                    "e\n" +
+                    "e\n" +
+                    "e\n" +
+                    "e\n" +
+                    "u\n" +
+                    "q\n" +
+                    "u\n", true, true, false);
             Assert.fail();
         } catch (SqlException | CairoException e) {
             if (Os.isWindows()) {
@@ -2457,7 +2559,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertFailure(97, "TIMESTAMP column expected",
                 "create table y as (" +
                         "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                        ")  timestamp(a) partition by DAY");
+                        ")  timestamp(a) partition by DAY"
+        );
     }
 
     @Test
@@ -2482,7 +2585,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             }
                         }
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -2509,7 +2613,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 }
                             }
                         }
-                    });
+                    }
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(43, e.getPosition());
@@ -2540,7 +2645,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             }
                         }
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -2567,7 +2673,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 }
                             }
                         }
-                    });
+                    }
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(46, e.getPosition());
@@ -2599,7 +2706,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
                     "{\"columnCount\":12,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"c\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"d\",\"type\":\"LONG\"},{\"index\":4,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":5,\"name\":\"f\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"BINARY\"},{\"index\":8,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":9,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"z\",\"type\":\"STRING\"},{\"index\":11,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":8}",
-                    sink);
+                    sink
+            );
 
             Assert.assertEquals(PartitionBy.NONE, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
@@ -2634,7 +2742,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
                     "{\"columnCount\":12,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"c\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"d\",\"type\":\"LONG\"},{\"index\":4,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":5,\"name\":\"f\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"BINARY\"},{\"index\":8,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":9,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"z\",\"type\":\"STRING\"},{\"index\":11,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":-1}",
-                    sink);
+                    sink
+            );
 
             Assert.assertEquals(PartitionBy.NONE, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
@@ -2671,7 +2780,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
                     "{\"columnCount\":12,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"c\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"d\",\"type\":\"LONG\"},{\"index\":4,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":5,\"name\":\"f\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"BINARY\"},{\"index\":8,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":9,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"z\",\"type\":\"STRING\"},{\"index\":11,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":8}",
-                    sink);
+                    sink
+            );
 
             Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
@@ -2708,7 +2818,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
                     "{\"columnCount\":12,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"c\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"d\",\"type\":\"LONG\"},{\"index\":4,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":5,\"name\":\"f\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"BINARY\"},{\"index\":8,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":9,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"z\",\"type\":\"STRING\"},{\"index\":11,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":8}",
-                    sink);
+                    sink
+            );
 
             Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
@@ -2745,7 +2856,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
                     "{\"columnCount\":12,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"c\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"d\",\"type\":\"LONG\"},{\"index\":4,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":5,\"name\":\"f\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"BINARY\"},{\"index\":8,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":9,\"name\":\"x\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":2048},{\"index\":10,\"name\":\"z\",\"type\":\"STRING\"},{\"index\":11,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":8}",
-                    sink);
+                    sink
+            );
 
             Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
@@ -2841,7 +2953,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         metadata.toJson(sink);
                         TestUtils.assertEquals(
                                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
-                                sink);
+                                sink
+                        );
                         Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
                         Assert.assertEquals(250000, metadata.getO3MaxLag());
                     }
@@ -2891,7 +3004,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "t TIMESTAMP, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
@@ -2928,7 +3042,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ddl("create table test(time TIMESTAMP, symbol STRING);");
 
         assertFailure(97, "unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,INT constant)",
-                "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)");
+                "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)"
+        );
     }
 
     @Test
@@ -2936,7 +3051,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ddl("create table tab ( ts timestamp)");
 
         assertFailure(28, "Invalid column: ",
-                "SELECT * FROM tab WHERE SUM(\"\", \"\")");
+                "SELECT * FROM tab WHERE SUM(\"\", \"\")"
+        );
     }
 
     @Test
@@ -3055,7 +3171,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                 "00000010 ab 3f a1 f5\n";
 
-        testInsertAsSelect(expectedData,
+        testInsertAsSelect(
+                expectedData,
                 "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x " +
                         "select" +
@@ -3110,7 +3227,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                 "00000010 ab 3f a1 f5\n";
 
-        testInsertAsSelect(expectedData,
+        testInsertAsSelect(
+                expectedData,
                 "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x (a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) " +
                         "select" +
@@ -3138,7 +3256,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectColumnListAndNoTimestamp() throws Exception {
         try {
-            testInsertAsSelect("",
+            testInsertAsSelect(
+                    "",
                     "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
                     "insert into x (a) " +
                             "select * from (select" +
@@ -3182,7 +3301,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                 "00000010 ab 3f a1 f5\n";
 
-        testInsertAsSelect(expectedData,
+        testInsertAsSelect(
+                expectedData,
                 "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY) timestamp(n)",
                 "insert into x (a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) " +
                         "select * from (select" +
@@ -3216,7 +3336,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "315515118\t1970-01-01T05:16:40.000000Z\t0\t\n" +
                 "-1148479920\t1970-01-01T05:33:20.000000Z\t0\t\n";
 
-        testInsertAsSelect(expectedData,
+        testInsertAsSelect(
+                expectedData,
                 "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
                 "insert into x (a, n) " +
                         "select * from (select" +
@@ -3230,7 +3351,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectColumnListAndTimestampOfWrongType() throws Exception {
         try {
-            testInsertAsSelect("",
+            testInsertAsSelect(
+                    "",
                     "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n)",
                     "insert into x (a, n) " +
                             "select * from (select" +
@@ -3279,7 +3401,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "NaN\tNaN\tfalse\t\t0.2459345277606021\tNaN\t0\t\t\tNaN\tNaN\t1970-01-01T07:46:40.000000Z\t0\t\n" +
                 "NaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\tNaN\t1970-01-01T08:03:20.000000Z\t0\t\n";
 
-        testInsertAsSelect(expectedData,
+        testInsertAsSelect(
+                expectedData,
                 "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x (e,n)" +
                         "select" +
@@ -3324,7 +3447,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "NaN\tNaN\tfalse\t\t0.17370570324289436\tNaN\t9478\t\t\tNaN\tNaN\t\t0\t\n" +
                 "NaN\tNaN\tfalse\t\t0.04645849844580874\tNaN\t6093\t\t\tNaN\tNaN\t\t0\t\n";
 
-        testInsertAsSelect(expectedData,
+        testInsertAsSelect(
+                expectedData,
                 "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x (e,g)" +
                         "select" +
@@ -3337,7 +3461,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectConvertible1() throws Exception {
-        testInsertAsSelect("a\tb\n" +
+        testInsertAsSelect(
+                "a\tb\n" +
                         "-1148479920\tJWCPS\n" +
                         "592859671\tYRXPE\n" +
                         "806715481\tRXGZS\n" +
@@ -3374,12 +3499,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_str(5,5,0)" +
                         " from long_sequence(30)",
-                "x");
+                "x"
+        );
     }
 
     @Test
     public void testInsertAsSelectConvertible2() throws Exception {
-        testInsertAsSelect("b\ta\n" +
+        testInsertAsSelect(
+                "b\ta\n" +
                         "-2144581835\tSBEOUOJSH\n" +
                         "-1162267908\tUEDRQQU\n" +
                         "-1575135393\tHYRXPEH\n" +
@@ -3411,12 +3538,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_symbol(8,6,10,2)" +
                         " from long_sequence(25)",
-                "x");
+                "x"
+        );
     }
 
     @Test
     public void testInsertAsSelectConvertibleList1() throws Exception {
-        testInsertAsSelect("a\tb\tn\n" +
+        testInsertAsSelect(
+                "a\tb\tn\n" +
                         "JWCPS\t-1148479920\t\n" +
                         "YRXPE\t592859671\t\n" +
                         "RXGZS\t806715481\t\n" +
@@ -3453,12 +3582,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_str(5,5,0)" +
                         " from long_sequence(30)",
-                "x");
+                "x"
+        );
     }
 
     @Test
     public void testInsertAsSelectConvertibleList2() throws Exception {
-        testInsertAsSelect("a\tb\tn\n" +
+        testInsertAsSelect(
+                "a\tb\tn\n" +
                         "SBEOUOJSH\t-2144581835\t\n" +
                         "UEDRQQU\t-1162267908\t\n" +
                         "HYRXPEH\t-1575135393\t\n" +
@@ -3495,7 +3626,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_symbol(8,6,10,2)" +
                         " from long_sequence(30)",
-                "x");
+                "x"
+        );
     }
 
     @Test
@@ -3510,7 +3642,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         engine.releaseAllWriters();
 
         assertFailure(21, "Duplicate column [name=X]",
-                "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )");
+                "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )"
+        );
     }
 
     @Test
@@ -3525,7 +3658,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         engine.releaseAllWriters();
 
         assertFailure(24, "Duplicate column [name=龜]",
-                "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )");
+                "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )"
+        );
     }
 
     public void testInsertAsSelectError(
@@ -3572,7 +3706,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int()," +
                         " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
-                        " from long_sequence(30)", 32, "inconvertible types");
+                        " from long_sequence(30)", 32, "inconvertible types"
+        );
     }
 
     @Test
@@ -3597,7 +3732,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int()," +
                         " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)", 17, "inconvertible types"
+        );
     }
 
     @Test
@@ -3637,7 +3773,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int()," +
                         " rnd_double(2)" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)", 17, "inconvertible types"
+        );
     }
 
     @Test
@@ -3662,7 +3799,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int()," +
                         " rnd_long()" +
-                        " from long_sequence(30)", 20, "Invalid column: blast");
+                        " from long_sequence(30)", 20, "Invalid column: blast"
+        );
     }
 
     @Test
@@ -3796,7 +3934,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int()," +
                         " rnd_int()" +
-                        " from long_sequence(30)", 12, "select clause must provide timestamp column");
+                        " from long_sequence(30)", 12, "select clause must provide timestamp column"
+        );
     }
 
     @Test
@@ -3865,77 +4004,88 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testInsertGeoHashByteSizedStorage1() throws Exception {
         testGeoHashWithBits("1c", "'s'",
                 "geohash\n" +
-                        "s\n");
+                        "s\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashByteSizedStorage2() throws Exception {
         testGeoHashWithBits("4b", "cast('s' as geohash(4b))",
                 "geohash\n" +
-                        "1100\n");
+                        "1100\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashByteSizedStorage3() throws Exception {
         testGeoHashWithBits("6b", "##100011",
                 "geohash\n" +
-                        "100011\n");
+                        "100011\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashByteSizedStorage4() throws Exception {
         testGeoHashWithBits("3b", "##100011",
                 "geohash\n" +
-                        "100\n");
+                        "100\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashCharsLiteral() throws Exception {
         testGeoHashWithBits("8c", "#sp052w92p1p8",
                 "geohash\n" +
-                        "sp052w92\n");
+                        "sp052w92\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashCharsLiteralWithBits1() throws Exception {
         testGeoHashWithBits("8c", "#sp052w92p1p8/40",
                 "geohash\n" +
-                        "sp052w92\n");
+                        "sp052w92\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashCharsLiteralWithBits2() throws Exception {
         testGeoHashWithBits("2b", "#0/2",
                 "geohash\n" +
-                        "00\n");
+                        "00\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashCharsLiteralWithBits3() throws Exception {
         testGeoHashWithBits("9b", "#100/9",
                 "geohash\n" +
-                        "000010000\n");
+                        "000010000\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashCharsLiteralWithBits4() throws Exception {
         testGeoHashWithBits("5b", "#1",
                 "geohash\n" +
-                        "1\n");
+                        "1\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashCharsLiteralWithBits5() throws Exception {
         testGeoHashWithBits("4b", "#1/4",
                 "geohash\n" +
-                        "0000\n");
+                        "0000\n"
+        );
     }
 
     @Test
     public void testInsertGeoHashCharsLiteralWithBits6() throws Exception {
         testGeoHashWithBits("20b", "#1110",
                 "geohash\n" +
-                        "1110\n");
+                        "1110\n"
+        );
     }
 
     @Test
@@ -4143,16 +4293,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
         //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
         assertFailure(35, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
+        );
 
         // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
         // t2.ts as ts1 which produces the error
         assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;");
+                "select t2.ts as \"TS\", t1.*, t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;"
+        );
         assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
+        );
         assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
+                "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
+        );
     }
 
     @Test
@@ -4169,7 +4323,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "GroupBy vectorized: false\n" +
                             "  values: [count(*)]\n" +
                             "    Hash Outer Join Light\n" +
@@ -4187,12 +4342,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "        Hash\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n");
+                            "                Frame forward scan on: tab\n"
+            );
 
             assertQuery("count\n" +
                             "0\n",
                     query,
-                    null, false, true);
+                    null, false, true
+            );
         });
     }
 
@@ -4209,7 +4366,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T2 ON T1.created<T2.created " +
                     "WHERE T2.created is null or T2.created::long > 0";
 
-            assertPlan(query1,
+            assertPlan(
+                    query1,
                     "SelectedRecord\n" +
                             "    Filter filter: (T2.created=null or 0<T2.created::long)\n" +
                             "        Nested Loop Left Join\n" +
@@ -4220,12 +4378,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "                    Frame backward scan on: tab\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n");
+                            "                Frame forward scan on: tab\n"
+            );
 
             assertQuery("created\n" +
                             "1970-01-01T00:00:00.000002Z\n",
                     query1,
-                    "created", false, false);
+                    "created", false, false
+            );
 
             assertQuery("created\tvalue\tcreated1\tvalue1\n" +
                             "1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000001Z\t1\n" +
@@ -4236,7 +4396,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  LIMIT -1) as T1 " +
                             "LEFT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
                             "WHERE T2.created is null or T2.created::long > 0",
-                    "created", false, false);
+                    "created", false, false
+            );
 
             assertQuery("value\tvalue1\tvalue2\n" +
                             "0\t1\t2\n" +
@@ -4248,7 +4409,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created<T3.created " +
                             "WHERE T2.created::long > 0",
-                    null, false, false);
+                    null, false, false
+            );
 
             assertQuery("value\tvalue1\tvalue2\n" +
                             "0\t1\t1\n" +
@@ -4259,7 +4421,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0",
-                    null, false, false);
+                    null, false, false
+            );
 
             assertQuery("value\tvalue1\tvalue2\n" +
                             "0\t1\tNaN\n" +
@@ -4270,7 +4433,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ",
-                    null, false, false);
+                    null, false, false
+            );
 
             assertQuery("value\tvalue1\tvalue2\n" +
                             "0\t1\t1\n" +
@@ -4281,7 +4445,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ",
-                    null, false, false);
+                    null, false, false
+            );
 
             assertQuery("value\tvalue1\tvalue2\n" +
                             "0\t1\t1\n" +
@@ -4292,7 +4457,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ",
-                    null, false, false);
+                    null, false, false
+            );
 
             assertQuery("value\tvalue1\tvalue2\n" +
                             "0\t1\t1\n" +
@@ -4303,7 +4469,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created=T3.created and 1=1 ",
-                    null, false, false);
+                    null, false, false
+            );
 
             assertQuery("value\tvalue1\tvalue2\n" +
                             "0\t1\t1\n" +
@@ -4314,7 +4481,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ",
-                    null, false, false);
+                    null, false, false
+            );
 
             String query3 = "SELECT T1.value, T2.value, T3.value, T4.value " +
                     "FROM (SELECT *  FROM tab limit 2) as T1 " +
@@ -4323,7 +4491,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
                     "WHERE T4.created is null";
 
-            assertPlan(query3,
+            assertPlan(
+                    query3,
                     "SelectedRecord\n" +
                             "    Filter filter: T4.created=null\n" +
                             "        Nested Loop Left Join\n" +
@@ -4347,12 +4516,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "            Limit lo: 4\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n");
+                            "                    Frame forward scan on: tab\n"
+            );
 
             assertQuery("value\tvalue1\tvalue2\tvalue3\n" +
                             "0\t2\t2\tNaN\n" +
                             "1\t2\t2\tNaN\n",
-                    query3, null, false, false);
+                    query3, null, false, false
+            );
         });
     }
 
@@ -4370,7 +4541,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  tab as T1 " +
                             "  JOIN tab as T2 ON T1.created < T2.created " +
                             "  JOIN tab as T3 ON T2.created = T3.created",
-                    null, false, true);
+                    null, false, true
+            );
 
             assertQuery("count\n" +
                             "1\n",
@@ -4380,7 +4552,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "  tab as T1 " +
                             "  JOIN tab as T2 ON T1.created < T2.created " +
                             "  JOIN tab as T3 ON T2.value = T3.value",
-                    null, false, true);
+                    null, false, true
+            );
         });
     }
 
@@ -4424,7 +4597,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "     rnd_double() sine" +
                     " FROM long_sequence(1000)" +
                     ")", sqlExecutionContext);
-            assertQuery("sym\tavg_angle_rad\tSUM(sine)\n" +
+            assertQuery(
+                    "sym\tavg_angle_rad\tSUM(sine)\n" +
                             "A\t-1.95703125\t168.46508050039918\n" +
                             "B\t11.255060728744938\t183.76121842808922\n" +
                             "C\t-0.888030888030888\t164.8875613340687\n",
@@ -4438,7 +4612,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "LIMIT 1000",
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -4452,7 +4627,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "     rnd_double() sine" +
                     " FROM long_sequence(1000)" +
                     ")", sqlExecutionContext);
-            assertQuery("sym\tavg_angle_rad\tSUM(sine)\n" +
+            assertQuery(
+                    "sym\tavg_angle_rad\tSUM(sine)\n" +
                             "A\t-1.95703125\t168.46508050039918\n" +
                             "B\t11.255060728744938\t183.76121842808922\n" +
                             "C\t-0.888030888030888\t164.8875613340687\n",
@@ -4466,7 +4642,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "LIMIT 1000",
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -4740,7 +4917,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRndSymbolEmptyArgs() throws Exception {
         assertFailure(7, "function rnd_symbol expects arguments but has none",
-                "select rnd_symbol() from long_sequence(1)");
+                "select rnd_symbol() from long_sequence(1)"
+        );
     }
 
     @Test
@@ -4959,7 +5137,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStrInListContainingNull() throws Exception {
-        assertQuery("l\tstr\n" +
+        assertQuery(
+                "l\tstr\n" +
                         "2\t2\n" +
                         "3\t\n",
                 "select * from x where str in (null, '2', '2'::symbol)",
@@ -4977,7 +5156,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStrInNull() throws Exception {
-        assertQuery("l\tstr\n" +
+        assertQuery(
+                "l\tstr\n" +
                         "3\t\n",
                 "select * from x where str in null",
                 "create table x as " +
@@ -5023,17 +5203,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
         assertFailure("select 1 from tab where (\"\")",
                 "create table tab (i int)",
-                25, "Invalid column");
+                25, "Invalid column"
+        );
 
         assertFailure("select 1 from tab where (\"a\")",
                 null,
-                25, "Invalid column");
+                25, "Invalid column"
+        );
 
         assertFailure("select 1 from tab where ('')", null,
-                25, "boolean expression expected");
+                25, "boolean expression expected"
+        );
 
         assertFailure("select 1 from tab where ('a')", null,
-                25, "boolean expression expected");
+                25, "boolean expression expected"
+        );
     }
 
     @Test
@@ -5045,7 +5229,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "_\t1970-01-01T00:00:00.030000Z\n" +
                 "VTJW_ffyu\t1970-01-01T00:00:00.040000Z\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select concat(a, '_', to_lowercase(b)) cc, k from x",
                 "create table x as " +
                         "(" +
@@ -5102,7 +5287,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testSymbolToStringAutoCastWhere() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "IBM\tIBM\t1970-01-01T00:00:00.000000Z\n";
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a, b, k from x where a=b",
                 "create table x as " +
                         "(" +
@@ -5354,7 +5540,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertFailure(FilesFacade ff, CharSequence sql, CharSequence message) throws Exception {
-        assertMemoryLeak(ff,
+        assertMemoryLeak(
+                ff,
                 () -> {
                     try {
                         assertException(sql);
