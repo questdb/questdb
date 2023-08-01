@@ -316,7 +316,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int connectionPoolInitialCapacity;
     private int connectionStringPoolCapacity;
     private int dateAdapterPoolCapacity;
-    private FactoryProvider factoryProvider = null;
+    private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private boolean httpAllowDeflateBeforeSend;
     private boolean httpFrozenClock;
@@ -1845,7 +1845,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull FactoryProvider getFactoryProvider() {
+        public @Nullable FactoryProvider getFactoryProvider() {
             return factoryProvider;
         }
 
@@ -1855,7 +1855,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public FilesFacade getFilesFacade() {
+        public @NotNull FilesFacade getFilesFacade() {
             return filesFacade;
         }
 

@@ -45,7 +45,7 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
+    public @NotNull FilesFacade getFilesFacade() {
         return TestFilesFacadeImpl.INSTANCE;
     }
 

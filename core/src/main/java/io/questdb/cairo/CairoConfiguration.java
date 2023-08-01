@@ -38,6 +38,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.ThreadLocal;
 import java.util.function.LongSupplier;
@@ -145,11 +146,12 @@ public interface CairoConfiguration {
 
     int getExplainPoolCapacity();
 
-    @NotNull
+    @Nullable
     FactoryProvider getFactoryProvider();
 
     int getFileOperationRetryCount();
 
+    @NotNull
     FilesFacade getFilesFacade();
 
     int getFloatToStrCastScale();

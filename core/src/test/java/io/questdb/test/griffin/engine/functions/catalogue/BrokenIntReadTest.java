@@ -24,13 +24,15 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.std.FilesFacade;
-import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 public class BrokenIntReadTest extends AbstractGriffinTest {
@@ -140,7 +142,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     private void createTables(FilesFacade ff) {
         try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, "x", PartitionBy.NONE)
@@ -154,7 +156,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
 
         try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, "y", PartitionBy.NONE)
@@ -169,7 +171,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
 
         try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, "z", PartitionBy.NONE)

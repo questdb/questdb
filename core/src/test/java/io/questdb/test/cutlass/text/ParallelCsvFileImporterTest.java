@@ -2934,7 +2934,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
 
@@ -2969,7 +2969,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
 

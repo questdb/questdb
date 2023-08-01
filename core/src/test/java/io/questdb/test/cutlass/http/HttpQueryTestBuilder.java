@@ -121,7 +121,7 @@ public class HttpQueryTestBuilder {
                         return () -> 0;
                     }
 
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return filesFacade;
                     }
 

@@ -37,6 +37,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -238,7 +239,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull FactoryProvider getFactoryProvider() {
+    public @Nullable FactoryProvider getFactoryProvider() {
         return conf.getFactoryProvider();
     }
 
@@ -248,7 +249,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
+    public @NotNull FilesFacade getFilesFacade() {
         return conf.getFilesFacade();
     }
 
