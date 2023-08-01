@@ -57,14 +57,14 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
+        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
 
-        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
+        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation, true);
