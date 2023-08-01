@@ -70,7 +70,7 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
             int writerIndex,
-            boolean isDedupKey
+            boolean dedupKeyFlag
     ) {
         this.name = name;
         this.type = type;
@@ -79,7 +79,7 @@ public class TableColumnMetadata implements Plannable {
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
-        this.isDedupKey = isDedupKey;
+        this.isDedupKey = dedupKeyFlag;
     }
 
     public int getIndexValueBlockCapacity() {

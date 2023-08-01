@@ -850,8 +850,6 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         boolean tsIncludedInDedupColumns = false;
-        int dedupColumns = 0;
-
         if (tok == null || !isUpsertKeyword(tok)) {
             throw SqlException.position(lexer.getPosition()).put("expected 'upsert'");
         }
@@ -878,14 +876,13 @@ public class SqlCompiler implements Closeable {
                     tsIncludedInDedupColumns = true;
                 } else {
                     int columnType = tableMetadata.getColumnType(colIndex);
-                    if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
-                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                    if (ColumnType.isVariableLength(columnType) || columnType < 0) {
+                        throw SqlException.position(lexer.getPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                 .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                     }
                 }
-                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
-                dedupColumns++;
 
+                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && Chars.equals(tok, ',')) {
                     tok = SqlUtil.fetchNext(lexer);
@@ -899,11 +896,6 @@ public class SqlCompiler implements Closeable {
             if (!tsIncludedInDedupColumns) {
                 throw SqlException.position(lexer.getPosition()).put("deduplicate key list must include dedicated timestamp column");
             }
-
-            if (dedupColumns > 0 && !configuration.isMultiKeyDedupEnabled()) {
-                throw SqlException.position(lexer.getPosition()).put("multiple key deduplication is not supported");
-            }
-
         } else {
             throw SqlException.$(lexer.getPosition(), "deduplication column list expected");
         }
