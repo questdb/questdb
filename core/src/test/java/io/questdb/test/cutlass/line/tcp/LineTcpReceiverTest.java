@@ -1117,6 +1117,39 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testTcpIPv4Duplicate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                compiler.compile("create table test (" +
+                        "col ipv4, " +
+                        "ts timestamp " +
+                        ") timestamp(ts) partition by day", sqlExecutionContext);
+
+                engine.releaseInactive();
+                runInContext((receiver) -> {
+                    String lineData =
+                            "test col=\"12.35.40.11\",col=\"23.44.87.56\" 631150000000000000\n" +
+                                    "test col=\"23.45.09.12\",col=\"32.11.35.67\" 31152000000000000\n" +
+                                    "test col=\"255.255.255.255\",col=\"80.45.86.21\" 631160000000000000\n" +
+                                    "test col=\"34.54.23.89\",col=\"22.54.68.90\" 631170000000000000\n";
+                    sendLinger(lineData, "test");
+                });
+                mayDrainWalQueue();
+
+                String expected = "col\tts\n" +
+                        "23.45.9.12\t1970-12-27T13:20:00.000000Z\n" +
+                        "12.35.40.11\t1989-12-31T23:26:40.000000Z\n" +
+                        "255.255.255.255\t1990-01-01T02:13:20.000000Z\n" +
+                        "34.54.23.89\t1990-01-01T05:00:00.000000Z\n";
+                assertTable(expected, "test");
+            }
+        });
+    }
+
+    @Test
     public void testTcpIPv4MultiCol() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -1152,34 +1185,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
         });
     }
-
-    @Test(expected = SqlException.class)
-    public void testTcpIPv4DuplicateThrows() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table test (" +
-                        "col ipv4, " +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day", sqlExecutionContext);
-
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"12.35.40.11\",col=\"23.44.87.56\" 631150000000000000\n" +
-                                    "test col=\"23.45.09.12\",col=\"32.11.35.67\" 31152000000000000\n" +
-                                    "test col=\"255.255.255.255\",col=\"80.45.86.21\" 631160000000000000\n" +
-                                    "test col=\"34.54.23.89\",col=\"22.54.68.90\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-
-            }
-        });
-    }
-
 
     @Test
     public void testTcpIPv4Null() throws Exception {
