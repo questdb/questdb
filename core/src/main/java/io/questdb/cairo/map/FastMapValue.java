@@ -144,18 +144,28 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public int getInt(int index) {
+    public int getIPv4(int index) {
         return Unsafe.getUnsafe().getInt(address0(index));
     }
 
     @Override
-    public int getIPv4(int index) {
+    public int getInt(int index) {
         return Unsafe.getUnsafe().getInt(address0(index));
     }
 
     @Override
     public long getLong(int index) {
         return Unsafe.getUnsafe().getLong(address0(index));
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col) + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col));
     }
 
     @Override
@@ -168,16 +178,6 @@ final class FastMapValue implements MapValue {
                 Unsafe.getUnsafe().getLong(p + 3 * Long.BYTES)
         );
         return long256;
-    }
-
-    @Override
-    public long getLong128Hi(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col) + Long.BYTES);
-    }
-
-    @Override
-    public long getLong128Lo(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col));
     }
 
     @Override

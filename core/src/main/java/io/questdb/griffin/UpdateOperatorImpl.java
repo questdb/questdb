@@ -50,10 +50,10 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
-    private final TableWriter tableWriter;
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
-    private IndexBuilder indexBuilder;
+    private final TableWriter tableWriter;
     private final IntList updateColumnIndexes = new IntList();
+    private IndexBuilder indexBuilder;
 
     public UpdateOperatorImpl(
             CairoConfiguration configuration,

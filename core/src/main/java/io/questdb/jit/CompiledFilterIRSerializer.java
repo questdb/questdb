@@ -1190,7 +1190,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     type = PredicateType.GEO_HASH;
                     break;
                 case ColumnType.IPv4:
-                    if(type != null && type != PredicateType.IPv4) {
+                    if (type != null && type != PredicateType.IPv4) {
                         throw SqlException.position(position)
                                 .put("non-ipv4 column in ipv4 expression: ")
                                 .put(ColumnType.nameOf(columnTypeTag));

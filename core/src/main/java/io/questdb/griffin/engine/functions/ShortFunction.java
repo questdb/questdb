@@ -94,12 +94,15 @@ public abstract class ShortFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getInt(Record rec) {
         return getShort(rec);
     }
 
-    @Override
-    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
     @Override
     public long getLong(Record rec) {
         return getShort(rec);

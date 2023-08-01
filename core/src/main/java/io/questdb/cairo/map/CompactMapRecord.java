@@ -111,13 +111,13 @@ public class CompactMapRecord implements MapRecord {
     }
 
     @Override
-    public int getInt(int col) {
-        return entries.getInt(getColumnOffset(col));
+    public int getIPv4(int col) {
+        return entries.getIPv4(getColumnOffset(col));
     }
 
     @Override
-    public int getIPv4(int col) {
-        return entries.getIPv4(getColumnOffset(col));
+    public int getInt(int col) {
+        return entries.getInt(getColumnOffset(col));
     }
 
     @Override

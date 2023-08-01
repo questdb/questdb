@@ -33,11 +33,11 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
+    private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private boolean hasChanges;
     private long size;
     private long version;
-    private final CairoConfiguration configuration;
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main

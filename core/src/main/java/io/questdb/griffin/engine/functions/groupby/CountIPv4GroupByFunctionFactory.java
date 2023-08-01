@@ -41,7 +41,9 @@ public class CountIPv4GroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean isGroupBy() { return true; }
+    public boolean isGroupBy() {
+        return true;
+    }
 
     @Override
     public Function newInstance(
@@ -52,11 +54,11 @@ public class CountIPv4GroupByFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function arg = args.getQuick(0);
-        if(arg.isConstant()) {
+        if (arg.isConstant()) {
             int val = arg.getIPv4(null);
             // NULL expression would lead to zero matched rows, so it makes
             // no sense to support it until we support count(expression).
-            if(val == Numbers.IPv4_NULL) {
+            if (val == Numbers.IPv4_NULL) {
                 throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
             }
             return new CountLongConstGroupByFunction();

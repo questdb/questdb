@@ -32,19 +32,19 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MaxIPv4GroupByFunctionFactory implements FunctionFactory {
-        @Override
-        public String getSignature() {
-                return "max(X)";
-        }
+    @Override
+    public String getSignature() {
+        return "max(X)";
+    }
 
-        @Override
-        public boolean isGroupBy() {
-                return true;
-        }
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-        @Override
-        public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return new MaxIPv4GroupByFunction(args.getQuick(0));
-        }
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new MaxIPv4GroupByFunction(args.getQuick(0));
+    }
 
 }

@@ -94,12 +94,14 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
-    public int getInt(Record rec) {
-        return getChar(rec);
+    public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+    public int getInt(Record rec) {
+        return getChar(rec);
+    }
 
     @Override
     public long getLong(Record rec) {

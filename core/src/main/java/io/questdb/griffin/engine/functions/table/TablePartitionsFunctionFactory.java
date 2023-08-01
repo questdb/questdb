@@ -51,7 +51,7 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
         final TableToken tt;
         try {
-            tt= context.getTableToken(args.getQuick(0).getStr(null));
+            tt = context.getTableToken(args.getQuick(0).getStr(null));
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }

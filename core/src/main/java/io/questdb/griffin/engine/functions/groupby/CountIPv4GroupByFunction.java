@@ -32,12 +32,14 @@ import org.jetbrains.annotations.NotNull;
 
 public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
 
-    public CountIPv4GroupByFunction(@NotNull Function arg) { super(arg); }
+    public CountIPv4GroupByFunction(@NotNull Function arg) {
+        super(arg);
+    }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final int value = arg.getIPv4(record);
-        if(value != Numbers.IPv4_NULL) {
+        if (value != Numbers.IPv4_NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -47,7 +49,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final int value = arg.getIPv4(record);
-        if(value != Numbers.IPv4_NULL) {
+        if (value != Numbers.IPv4_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }

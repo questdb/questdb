@@ -218,6 +218,11 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public MPSequence getCopyRequestPubSeq() {
+        return textImportRequestPubSeq;
+    }
+
+    @Override
     public Sequence getIndexerPubSequence() {
         return indexerPubSeq;
     }
@@ -385,11 +390,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<CopyTask> getTextImportQueue() {
         return textImportQueue;
-    }
-
-    @Override
-    public MPSequence getCopyRequestPubSeq() {
-        return textImportRequestPubSeq;
     }
 
     @Override

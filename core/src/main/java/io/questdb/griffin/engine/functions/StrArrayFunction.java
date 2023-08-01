@@ -95,12 +95,14 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public final int getInt(Record rec) {
+    public final int getIPv4(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getIPv4(Record rec) { throw new UnsupportedOperationException(); }
+    public final int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final long getLong(Record rec) {

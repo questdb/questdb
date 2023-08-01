@@ -858,16 +858,6 @@ public final class Numbers {
         }
         return parseIPv4_0(sequence, 0, sequence.length());
     }
-    public static int parseIPv4UDP(CharSequence sequence) throws NumericException {
-        if(sequence == null || sequence.length() == 0) {
-            return IPv4_NULL;
-        }
-        // discards quote marks around ip address
-        if(sequence.charAt(0) == '"' && sequence.charAt(sequence.length() - 1) == '"') {
-            return parseIPv4_0(sequence, 1, sequence.length() - 1);
-        }
-        return parseIPv4_0(sequence, 0, sequence.length());
-    }
 
     public static int parseIPv4Quiet(CharSequence sequence)
     {
@@ -893,6 +883,17 @@ public final class Numbers {
         } catch (NumericException e) {
             return -2;
         }
+    }
+
+    public static int parseIPv4UDP(CharSequence sequence) throws NumericException {
+        if(sequence == null || sequence.length() == 0) {
+            return IPv4_NULL;
+        }
+        // discards quote marks around ip address
+        if(sequence.charAt(0) == '"' && sequence.charAt(sequence.length() - 1) == '"') {
+            return parseIPv4_0(sequence, 1, sequence.length() - 1);
+        }
+        return parseIPv4_0(sequence, 0, sequence.length());
     }
 
     public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {

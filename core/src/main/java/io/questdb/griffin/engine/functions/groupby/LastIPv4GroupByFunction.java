@@ -28,6 +28,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import org.jetbrains.annotations.NotNull;
+
 public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
     public LastIPv4GroupByFunction(@NotNull Function arg) {
         super(arg);

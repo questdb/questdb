@@ -56,9 +56,9 @@ public interface MemoryR extends Closeable {
 
     float getFloat(long offset);
 
-    int getInt(long offset);
-
     int getIPv4(long offset);
+
+    int getInt(long offset);
 
     long getLong(long offset);
 

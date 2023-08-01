@@ -121,17 +121,17 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public int getInt(int col) {
-        final long offset = recordIndex * Integer.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getInt(offset);
-    }
-
-    @Override
     public int getIPv4(int col) {
         final long offset = recordIndex * Integer.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
         return reader.getColumn(absoluteColumnIndex).getIPv4(offset);
+    }
+
+    @Override
+    public int getInt(int col) {
+        final long offset = recordIndex * Integer.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getInt(offset);
     }
 
     @Override

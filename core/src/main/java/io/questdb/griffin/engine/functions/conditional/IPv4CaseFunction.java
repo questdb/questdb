@@ -41,8 +41,12 @@ public class IPv4CaseFunction extends IPv4Function implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() { return args; }
+    public ObjList<Function> getArgs() {
+        return args;
+    }
 
     @Override
-    public int getIPv4(Record rec) { return picker.pick(rec).getIPv4(rec); }
+    public int getIPv4(Record rec) {
+        return picker.pick(rec).getIPv4(rec);
+    }
 }

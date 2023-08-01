@@ -93,13 +93,13 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public int getInt(long offset) {
-        return Numbers.INT_NaN;
+    public int getIPv4(long offset) {
+        return Numbers.IPv4_NULL;
     }
 
     @Override
-    public int getIPv4(long offset) {
-        return Numbers.IPv4_NULL;
+    public int getInt(long offset) {
+        return Numbers.INT_NaN;
     }
 
     @Override

@@ -27,5 +27,7 @@ package io.questdb.griffin.engine.functions.cast;
 public class CastIPv4ToIPv4FunctionFactory extends AbstractEntityCastFunctionFactory {
 
     @Override
-    public String getSignature() { return "cast(Xx)"; }
+    public String getSignature() {
+        return "cast(Xx)";
+    }
 }

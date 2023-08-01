@@ -60,74 +60,6 @@ public class FastFloatMath {
 
     }
 
-    static float decFloatLiteralToFloat(boolean isNegative, long significand, int exponent,
-                                        boolean isSignificandTruncated,
-                                        int exponentOfTruncatedSignificand) {
-        if (significand == 0) {
-            return isNegative ? -0.0f : 0.0f;
-        }
-
-        final float result;
-        if (isSignificandTruncated) {
-
-            // We have too many digits. We may have to round up.
-            // To know whether rounding up is needed, we may have to examine up to 768 digits.
-
-            // There are cases, in which rounding has no effect.
-            if (FLOAT_MIN_EXPONENT_POWER_OF_TEN <= exponentOfTruncatedSignificand
-                    && exponentOfTruncatedSignificand <= FLOAT_MAX_EXPONENT_POWER_OF_TEN) {
-                float withoutRounding = tryDecToFloatWithFastAlgorithm(isNegative, significand, exponentOfTruncatedSignificand);
-                float roundedUp = tryDecToFloatWithFastAlgorithm(isNegative, significand + 1, exponentOfTruncatedSignificand);
-                if (!Float.isNaN(withoutRounding) && roundedUp == withoutRounding) {
-                    return withoutRounding;
-                }
-            }
-
-            // We have to take a slow path.
-            //return Double.parseDouble(str.toString());
-            result = Float.NaN;
-
-
-        } else if (FLOAT_MIN_EXPONENT_POWER_OF_TEN <= exponent && exponent <= FLOAT_MAX_EXPONENT_POWER_OF_TEN) {
-            result = tryDecToFloatWithFastAlgorithm(isNegative, significand, exponent);
-        } else {
-            result = Float.NaN;
-        }
-        return result;
-    }
-
-    static float hexFloatLiteralToFloat(boolean isNegative, long significand, int exponent,
-                                        boolean isSignificandTruncated,
-                                        int exponentOfTruncatedSignificand) {
-        if (significand == 0) {
-            return isNegative ? -0.0f : 0.0f;
-        }
-        final float result;
-        if (isSignificandTruncated) {
-
-            // We have too many digits. We may have to round up.
-            // To know whether rounding up is needed, we may have to examine up to 768 digits.
-
-            // There are cases, in which rounding has no effect.
-            if (FLOAT_MIN_EXPONENT_POWER_OF_TWO <= exponentOfTruncatedSignificand && exponentOfTruncatedSignificand <= FLOAT_MAX_EXPONENT_POWER_OF_TWO) {
-                float withoutRounding = tryHexToFloatWithFastAlgorithm(isNegative, significand, exponentOfTruncatedSignificand);
-                float roundedUp = tryHexToFloatWithFastAlgorithm(isNegative, significand + 1, exponentOfTruncatedSignificand);
-                if (!Double.isNaN(withoutRounding) && roundedUp == withoutRounding) {
-                    return withoutRounding;
-                }
-            }
-
-            // We have to take a slow path.
-            result = Float.NaN;
-
-        } else if (FLOAT_MIN_EXPONENT_POWER_OF_TWO <= exponent && exponent <= FLOAT_MAX_EXPONENT_POWER_OF_TWO) {
-            result = tryHexToFloatWithFastAlgorithm(isNegative, significand, exponent);
-        } else {
-            result = Float.NaN;
-        }
-        return result;
-    }
-
     /**
      * Attempts to compute {@literal digits * 10^(power)} exactly;
      * and if "negative" is true, negate the result.
@@ -326,6 +258,74 @@ public class FastFloatMath {
         int bits = (int) (mantissa | real_exponent << (FLOAT_SIGNIFICAND_WIDTH - 1)
                 | (isNegative ? 1L << 31 : 0));
         return Float.intBitsToFloat(bits);
+    }
+
+    static float decFloatLiteralToFloat(boolean isNegative, long significand, int exponent,
+                                        boolean isSignificandTruncated,
+                                        int exponentOfTruncatedSignificand) {
+        if (significand == 0) {
+            return isNegative ? -0.0f : 0.0f;
+        }
+
+        final float result;
+        if (isSignificandTruncated) {
+
+            // We have too many digits. We may have to round up.
+            // To know whether rounding up is needed, we may have to examine up to 768 digits.
+
+            // There are cases, in which rounding has no effect.
+            if (FLOAT_MIN_EXPONENT_POWER_OF_TEN <= exponentOfTruncatedSignificand
+                    && exponentOfTruncatedSignificand <= FLOAT_MAX_EXPONENT_POWER_OF_TEN) {
+                float withoutRounding = tryDecToFloatWithFastAlgorithm(isNegative, significand, exponentOfTruncatedSignificand);
+                float roundedUp = tryDecToFloatWithFastAlgorithm(isNegative, significand + 1, exponentOfTruncatedSignificand);
+                if (!Float.isNaN(withoutRounding) && roundedUp == withoutRounding) {
+                    return withoutRounding;
+                }
+            }
+
+            // We have to take a slow path.
+            //return Double.parseDouble(str.toString());
+            result = Float.NaN;
+
+
+        } else if (FLOAT_MIN_EXPONENT_POWER_OF_TEN <= exponent && exponent <= FLOAT_MAX_EXPONENT_POWER_OF_TEN) {
+            result = tryDecToFloatWithFastAlgorithm(isNegative, significand, exponent);
+        } else {
+            result = Float.NaN;
+        }
+        return result;
+    }
+
+    static float hexFloatLiteralToFloat(boolean isNegative, long significand, int exponent,
+                                        boolean isSignificandTruncated,
+                                        int exponentOfTruncatedSignificand) {
+        if (significand == 0) {
+            return isNegative ? -0.0f : 0.0f;
+        }
+        final float result;
+        if (isSignificandTruncated) {
+
+            // We have too many digits. We may have to round up.
+            // To know whether rounding up is needed, we may have to examine up to 768 digits.
+
+            // There are cases, in which rounding has no effect.
+            if (FLOAT_MIN_EXPONENT_POWER_OF_TWO <= exponentOfTruncatedSignificand && exponentOfTruncatedSignificand <= FLOAT_MAX_EXPONENT_POWER_OF_TWO) {
+                float withoutRounding = tryHexToFloatWithFastAlgorithm(isNegative, significand, exponentOfTruncatedSignificand);
+                float roundedUp = tryHexToFloatWithFastAlgorithm(isNegative, significand + 1, exponentOfTruncatedSignificand);
+                if (!Double.isNaN(withoutRounding) && roundedUp == withoutRounding) {
+                    return withoutRounding;
+                }
+            }
+
+            // We have to take a slow path.
+            result = Float.NaN;
+
+        } else if (FLOAT_MIN_EXPONENT_POWER_OF_TWO <= exponent && exponent <= FLOAT_MAX_EXPONENT_POWER_OF_TWO) {
+            result = tryHexToFloatWithFastAlgorithm(isNegative, significand, exponent);
+        } else {
+            result = Float.NaN;
+        }
+        return result;
     }
 
     static float tryHexToFloatWithFastAlgorithm(boolean isNegative, long digits, int power) {

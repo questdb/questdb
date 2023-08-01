@@ -26,10 +26,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,7 +50,6 @@ public class TableListFunctionFactory implements FunctionFactory {
     private static final int NAME_COLUMN;
     private static final int O3MAXLAG_COLUMN;
     private static final int PARTITION_BY_COLUMN;
-    private static final int WAL_ENABLED_COLUMN;
 
     @Override
     public String getSignature() {
@@ -120,7 +117,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             tableReaderMetadata = Misc.free(tableReaderMetadata);
         }
 
-        private class TableListRecordCursor implements RecordCursor {
+        private class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private int tableIndex = -1;
@@ -135,11 +132,6 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public Record getRecord() {
                 return record;
-            }
-
-            @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -162,11 +154,6 @@ public class TableListFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public long size() {
                 return -1;
             }
@@ -185,10 +172,8 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public boolean getBool(int col) {
-                    if (col == WAL_ENABLED_COLUMN) {
-                        return tableReaderMetadata.isWalEnabled();
-                    }
-                    return false;
+                    // the oonly boolean columns
+                    return tableReaderMetadata.isWalEnabled();
                 }
 
                 @Override
@@ -196,29 +181,12 @@ public class TableListFunctionFactory implements FunctionFactory {
                     if (col == ID_COLUMN) {
                         return tableId;
                     }
-                    if (col == MAX_UNCOMMITTED_ROWS_COLUMN) {
-                        return maxUncommittedRows;
-                    }
-                    return Numbers.INT_NaN;
-                }
-
-                @Override
-                public int getIPv4(int col) {
-                    if (col == ID_COLUMN) {
-                        return tableId;
-                    }
-                    if (col == MAX_UNCOMMITTED_ROWS_COLUMN) {
-                        return maxUncommittedRows;
-                    }
-                    return Numbers.IPv4_NULL;
+                    return maxUncommittedRows;
                 }
 
                 @Override
                 public long getLong(int col) {
-                    if (col == O3MAXLAG_COLUMN) {
                         return o3MaxLag;
-                    }
-                    return Numbers.LONG_NaN;
                 }
 
                 @Override
@@ -298,7 +266,6 @@ public class TableListFunctionFactory implements FunctionFactory {
         PARTITION_BY_COLUMN = 3;
         MAX_UNCOMMITTED_ROWS_COLUMN = 4;
         O3MAXLAG_COLUMN = 5;
-        WAL_ENABLED_COLUMN = 6;
         DIRECTORY_NAME_COLUMN = 7;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));

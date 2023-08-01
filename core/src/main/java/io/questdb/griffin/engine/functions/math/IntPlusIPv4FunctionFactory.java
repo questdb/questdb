@@ -39,7 +39,9 @@ import io.questdb.std.ObjList;
 public class IntPlusIPv4FunctionFactory implements FunctionFactory {
 
     @Override
-    public String getSignature() { return "+(IX)"; }
+    public String getSignature() {
+        return "+(IX)";
+    }
 
     @Override
     public Function newInstance(
@@ -68,19 +70,25 @@ public class IntPlusIPv4FunctionFactory implements FunctionFactory {
 
             final long sum = Numbers.ipv4ToLong(l + r);
 
-            if(sum >> 32 != 0) {
+            if (sum >> 32 != 0) {
                 return Numbers.IPv4_NULL;
             }
             return l != Numbers.INT_NaN && r != Numbers.IPv4_NULL ? (int) sum : Numbers.IPv4_NULL;
         }
 
         @Override
-        public Function getLeft() { return left; }
+        public Function getLeft() {
+            return left;
+        }
 
         @Override
-        public Function getRight() { return right; }
+        public Function getRight() {
+            return right;
+        }
 
         @Override
-        public void toPlan(PlanSink sink) { sink.val(left).val('+').val(right); }
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val('+').val(right);
+        }
     }
 }

@@ -50,6 +50,12 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
+    public long getHeartbeatInterval() {
+        // don't send heartbeat messages by default
+        return -1L;
+    }
+
+    @Override
     public int getInitialBias() {
         return BIAS_READ;
     }
@@ -97,11 +103,5 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public long getTimeout() {
         return 5 * 60 * 1000L;
-    }
-
-    @Override
-    public long getHeartbeatInterval() {
-        // don't send heartbeat messages by default
-        return -1L;
     }
 }

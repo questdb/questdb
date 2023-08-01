@@ -168,19 +168,19 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public int getInt(int columnIndex) {
+    public int getIPv4(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullMemoryMR.INSTANCE.getInt(0);
+            return NullMemoryMR.INSTANCE.getIPv4(0);
         }
         return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
     }
 
     @Override
-    public int getIPv4(int columnIndex) {
+    public int getInt(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullMemoryMR.INSTANCE.getIPv4(0);
+            return NullMemoryMR.INSTANCE.getInt(0);
         }
         return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
     }

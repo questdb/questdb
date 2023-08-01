@@ -360,7 +360,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private static boolean isCompatibleCase(int from, int to) {
-        if(isIPv4Cast(from, to)) {
+        if (isIPv4Cast(from, to)) {
             return true;
         }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
