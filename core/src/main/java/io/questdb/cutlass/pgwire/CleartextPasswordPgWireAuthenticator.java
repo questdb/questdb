@@ -40,8 +40,6 @@ import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 
-import java.io.Closeable;
-
 public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
@@ -58,7 +56,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    private final boolean matchedOwned;
+    private final boolean matcherOwned;
     private final NetworkFacade nf;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
@@ -87,7 +85,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             boolean matcherOwned
     ) {
         this.matcher = matcher;
-        this.matchedOwned = matcherOwned;
+        this.matcherOwned = matcherOwned;
         this.nf = nf;
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
@@ -111,8 +109,8 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     public void close() {
         registry.remove(circuitBreakerId);
         Misc.free(circuitBreaker);
-        if (matchedOwned && matcher instanceof Closeable) {
-            matcher = (UsernamePasswordMatcher) Misc.free((Closeable) matcher);
+        if (matcherOwned) {
+            matcher = Misc.freeIfCloseable(matcher);
         }
     }
 
