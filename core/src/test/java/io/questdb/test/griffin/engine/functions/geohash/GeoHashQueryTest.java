@@ -97,9 +97,9 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
 
                 String columnType = l % 5 == 0 ? (l / 5) + "c" : l + "b";
                 assertSql("show columns from " + tableName, "" +
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                        "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
-                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\tfalse\n", columnType));
+                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                        "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\tfalse\tfalse\n", columnType));
             }
         });
     }
@@ -193,10 +193,9 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                 String tableName = "pos" + l;
                 compiler.compile(String.format("create table %s(x long)", tableName), sqlExecutionContext);
                 compile(String.format("alter table %s add hash geohash(%sc)", tableName, l), sqlExecutionContext);
-                assertSql("show columns from " + tableName, "" +
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                        "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
-                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\tfalse\n", l));
+                assertSql("show columns from " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                        "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\tfalse\tfalse\n", l));
             }
         });
     }

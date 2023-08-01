@@ -24,6 +24,8 @@
 #
 ################################################################################
 
+source ./env.sh
+
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=60;
 export QDB_OS=`uname`
@@ -190,7 +192,6 @@ function start {
         "
     fi
 
-    JAVA_MAIN="io.questdb/io.questdb.ServerMain"
     DATE=`date +%Y-%m-%dT%H-%M-%S`
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
@@ -252,7 +253,7 @@ function banner {
     echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
     echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
     echo ' \__\_\\__,_|\___||___/\__|____/|____/'
-    echo '                        www.questdb.io'
+    echo -e "$QUESTDB_BANNER"
     echo
 }
 

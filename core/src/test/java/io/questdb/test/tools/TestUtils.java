@@ -167,11 +167,13 @@ public final class TestUtils {
                 if (tsL != tsR) {
                     throw new AssertionError(
                             String.format(
-                                    "Row %d column %s[%s] %s",
+                                    "Row %d column %s[%s] %s. Expected %s but found %s",
                                     rowIndex,
                                     metadataActual.getColumnName(timestampIndex),
                                     ColumnType.TIMESTAMP,
-                                    "timestamp mismatch"
+                                    "timestamp mismatch",
+                                    Timestamps.toUSecString(tsL),
+                                    Timestamps.toUSecString(tsR)
                             )
                     );
                 }
@@ -1210,6 +1212,10 @@ public final class TestUtils {
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes) {
+        printColumn(r, m, i, sink, symbolAsString, printTypes, null);
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = m.getColumnType(i);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
@@ -1231,14 +1237,13 @@ public final class TestUtils {
                 sink.put("null");
                 break;
             case ColumnType.STRING:
-                if (symbolAsString && m.getColumnType(i) == ColumnType.SYMBOL) {
-                    sink.put(r.getSym(i));
-                } else {
+                if (!symbolAsString | m.getColumnType(i) != ColumnType.SYMBOL) {
                     sink.put(r.getStr(i));
-                }
-                break;
+                    break;
+                } // Fall down to SYMBOL
             case ColumnType.SYMBOL:
-                sink.put(r.getSym(i));
+                CharSequence sym = r.getSym(i);
+                sink.put(sym == null ? nullStringValue : sym);
                 break;
             case ColumnType.SHORT:
                 sink.put(r.getShort(i));
