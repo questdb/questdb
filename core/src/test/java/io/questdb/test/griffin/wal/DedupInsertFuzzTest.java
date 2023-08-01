@@ -627,27 +627,27 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
             String tableNameWal = tableNameBase + "_wal";
-            String tableNameNoWal = tableNameBase + "_nonwal";
+            String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
-            createInitialTable(tableNameNoWal, true, initialRowCount);
+            createInitialTable(tableNameWalNoDedup, true, initialRowCount);
             createInitialTable(tableNameWal, true, initialRowCount);
 
             // Add long256 type to have to be a chance of a dedup key
             compile("alter table " + tableNameWal + " add column col256 long256");
-            compile("alter table " + tableNameNoWal + " add column col256 long256");
+            compile("alter table " + tableNameWalNoDedup + " add column col256 long256");
 
             drainWalQueue();
 
             ObjList<FuzzTransaction> transactions;
             IntList upsertKeyIndexes = new IntList();
             String comaSeparatedUpsertCols;
-            try (TableReader reader = getReader(tableNameNoWal)) {
+            try (TableReader reader = getReader(tableNameWalNoDedup)) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 chooseUpsertKeys(metadata, dedupKeys, rnd, upsertKeyIndexes);
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
                 long end = start + 2 * Timestamps.SECOND_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
+                transactions = generateSet(rnd, metadata, start, end, tableNameWalNoDedup);
                 comaSeparatedUpsertCols = toCommaSeparatedString(metadata, upsertKeyIndexes);
             }
             String alterStatement = String.format(
@@ -661,12 +661,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             sharedWorkerPool.start(LOG);
 
             try {
-                applyWal(transactions, tableNameNoWal, 1, new Rnd());
+                applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
                 applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
 
                 String renamedUpsertKeys;
                 ObjList<CharSequence> upsertKeyNames = new ObjList<>();
-                try (TableWriter writer = getWriter(tableNameNoWal)) {
+                try (TableWriter writer = getWriter(tableNameWalNoDedup)) {
                     collectUpsertKeyNames(writer.getMetadata(), upsertKeyIndexes, upsertKeyNames);
                     renamedUpsertKeys = toCommaSeparatedString(writer.getMetadata(), upsertKeyIndexes);
                 }
@@ -675,7 +675,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 assertSqlCursorsNoDups(
                         compiler,
                         sqlExecutionContext,
-                        tableNameNoWal,
+                        tableNameWalNoDedup,
                         upsertKeyNames,
                         tableNameWal
                 );
