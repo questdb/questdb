@@ -1766,6 +1766,48 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "partition by MONTH");
     }
 
+    @Test
+    public void testCompareStringAndChar() throws Exception {
+        assertMemoryLeak(() -> {
+            // constant 
+            assertSql("select 'ab' > 'a'", "column\ntrue\n");
+            assertSql("select 'ab' = 'a'", "column\nfalse\n");
+            assertSql("select 'ab' != 'a'", "column\ntrue\n");
+            assertSql("select 'ab' < 'a'", "column\nfalse\n");
+
+            // non-constant 
+            assertSql("select x < 'd' from (select 'a' x union all select 'cd')", "column\ntrue\ntrue\n");
+            assertSql("select rnd_str('be', 'cd') < 'd' ", "column\ntrue\n");
+            assertSql("select rnd_str('ac', 'be', 'cd') != 'd'", "column\ntrue\n");
+            assertSql("select rnd_str('d', 'cd') != 'd' from long_sequence(5)",
+                    "column\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "false\n");
+
+            assertSql("select cast('ab' as char) <= 'a'", "column\ntrue\n");
+            assertSql("select cast('ab' as string) <= 'a'", "column\nfalse\n");
+            assertSql("select cast('a' as string) <= 'a'", "column\ntrue\n");
+            assertSql("select cast('a' as char) <= 'a'", "column\ntrue\n");
+            assertSql("select cast('a' as char) <= 'a'::string", "column\ntrue\n");
+            assertSql("select cast('' as char) = null", "column\ntrue\n");
+            assertSql("select cast('' as char) < null", "column\nfalse\n");
+            assertSql("select cast('' as char) > null", "column\nfalse\n");
+            assertSql("select cast('' as char) <= null", "column\nfalse\n"); // inconsistent with = null
+            assertSql("select cast('' as char) >= null", "column\nfalse\n"); // inconsistent with = null
+            assertSql("select cast('' as string) = null", "column\nfalse\n");
+            assertSql("select cast('' as string) <= null", "column\nfalse\n");
+            assertSql("select cast(null as string) = null", "column\ntrue\n");
+            assertSql("select cast(null as string) <= null", "column\nfalse\n");// inconsistent with = null
+            assertSql("select cast(null as string) >= null", "column\nfalse\n");// inconsistent with = null 
+
+
+            assertFailure(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+        });
+    }
+
     //close command is a no-op in qdb
     @Test
     public void testCompileCloseDoesNothing() throws Exception {
