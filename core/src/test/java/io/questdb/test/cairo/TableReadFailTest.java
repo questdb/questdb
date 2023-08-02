@@ -29,17 +29,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -217,7 +213,7 @@ public class TableReadFailTest extends AbstractCairoTest {
             try {
                 newTableReader(new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public @NotNull FilesFacade getFilesFacade() {
+                    public FilesFacade getFilesFacade() {
                         return ff;
                     }
 

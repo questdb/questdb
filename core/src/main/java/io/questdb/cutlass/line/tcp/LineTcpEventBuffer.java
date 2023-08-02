@@ -40,7 +40,6 @@ public class LineTcpEventBuffer {
     private final long bufLo;
     private final long bufSize;
     private final FloatingDirectCharSink tempSink = new FloatingDirectCharSink();
-    private final FloatingDirectCharSink tempSinkB = new FloatingDirectCharSink();
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
@@ -74,27 +73,18 @@ public class LineTcpEventBuffer {
         return address + Integer.BYTES;
     }
 
-    public long addColumnName(long address, CharSequence colName, CharSequence principal) {
-        int colNameLen = colName.length();
-        int principalLen = principal != null ? principal.length() : 0;
-        int colNameCapacity = Integer.BYTES + 2 * colNameLen;
-        int fullCapacity = colNameCapacity + Integer.BYTES + 2 * principalLen;
-        checkCapacity(address, fullCapacity);
+    public long addColumnName(long address, CharSequence colName) {
+        int length = colName.length();
+        int capacity = Integer.BYTES + 2 * length;
+        checkCapacity(address, capacity);
 
         // Negative length indicates to the writer thread that column is passed by
         // name rather than by index. When value is positive (on the else branch)
         // the value is treated as column index.
-        Unsafe.getUnsafe().putInt(address, -colNameLen);
-        Chars.copyStrChars(colName, 0, colNameLen, address + Integer.BYTES);
+        Unsafe.getUnsafe().putInt(address, -1 * length);
 
-        // Now write principal name, so that we can call DdlListener#onColumnAdded()
-        // when adding the column.
-        Unsafe.getUnsafe().putInt(address + colNameCapacity, principalLen);
-        if (principalLen > 0) {
-            Chars.copyStrChars(principal, 0, principalLen, address + colNameCapacity + Integer.BYTES);
-        }
-
-        return address + fullCapacity;
+        Chars.copyStrChars(colName, 0, length, address + Integer.BYTES);
+        return address + capacity;
     }
 
     public long addDate(long address, long value) {
@@ -343,10 +333,6 @@ public class LineTcpEventBuffer {
 
     public CharSequence readUtf16Chars(long address, int length) {
         return tempSink.asCharSequence(address, address + length * 2L);
-    }
-
-    public CharSequence readUtf16CharsB(long address, int length) {
-        return tempSinkB.asCharSequence(address, address + length * 2L);
     }
 
     private long addString(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {

@@ -32,7 +32,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -51,7 +50,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
             }
 
             @Override
-            public @NotNull MillisecondClock getMillisecondClock() {
+            public MillisecondClock getMillisecondClock() {
                 return () -> testMicrosClock.getTicks() / 1000L;
             }
 

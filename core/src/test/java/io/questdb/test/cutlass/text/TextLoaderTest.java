@@ -42,7 +42,6 @@ import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -969,7 +968,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull TextConfiguration getTextConfiguration() {
+                public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -1242,7 +1241,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
+            public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1347,7 +1346,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
+            public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1408,7 +1407,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
+            public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1497,7 +1496,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull TextConfiguration getTextConfiguration() {
+                public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -2071,7 +2070,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
+            public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -3233,7 +3232,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
+            public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -3393,7 +3392,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         };
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public @NotNull FilesFacade getFilesFacade() {
+            public FilesFacade getFilesFacade() {
                 return ff;
             }
 
@@ -3408,7 +3407,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
 
             @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
+            public TextConfiguration getTextConfiguration() {
                 return new DefaultTextConfiguration() {
                     @Override
                     public int getTextAnalysisMaxLines() {

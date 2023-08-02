@@ -27,7 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
-import org.jetbrains.annotations.NotNull;
 
 public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     public DefaultTestCairoConfiguration(CharSequence root) {
@@ -45,7 +44,7 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public @NotNull FilesFacade getFilesFacade() {
+    public FilesFacade getFilesFacade() {
         return TestFilesFacadeImpl.INSTANCE;
     }
 
@@ -56,12 +55,7 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public long getPartitionO3SplitMinSize() {
-        return 512 * (1L << 10); // 512KiB
-    }
-
-    @Override
-    public @NotNull CharSequence getSystemTableNamePrefix() {
+    public CharSequence getSystemTableNamePrefix() {
         return "sys.";
     }
 
@@ -79,5 +73,10 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return true;
+    }
+
+    @Override
+    public long getPartitionO3SplitMinSize() {
+        return 512 * (1L << 10); // 512KiB
     }
 }

@@ -43,7 +43,6 @@ import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
@@ -2934,12 +2933,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public @NotNull FilesFacade getFilesFacade() {
+                    public FilesFacade getFilesFacade() {
                         return ff;
                     }
 
                     @Override
-                    public @NotNull IOURingFacade getIOURingFacade() {
+                    public IOURingFacade getIOURingFacade() {
                         return ioURingFacade;
                     }
 
@@ -2969,12 +2968,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public @NotNull FilesFacade getFilesFacade() {
+                    public FilesFacade getFilesFacade() {
                         return ff;
                     }
 
                     @Override
-                    public @NotNull IOURingFacade getIOURingFacade() {
+                    public IOURingFacade getIOURingFacade() {
                         return ioURingFacade;
                     }
 

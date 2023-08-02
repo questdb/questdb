@@ -36,8 +36,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -69,7 +67,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull String getAttachPartitionSuffix() {
+    public String getAttachPartitionSuffix() {
         return conf.getAttachPartitionSuffix();
     }
 
@@ -89,7 +87,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getBackupTempDirName() {
+    public CharSequence getBackupTempDirName() {
         return conf.getBackupTempDirName();
     }
 
@@ -104,12 +102,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull BuildInformation getBuildInformation() {
+    public BuildInformation getBuildInformation() {
         return conf.getBuildInformation();
     }
 
     @Override
-    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return conf.getCircuitBreakerConfiguration();
     }
 
@@ -154,12 +152,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getConfRoot() {
+    public CharSequence getConfRoot() {
         return conf.getConfRoot();
     }
 
     @Override
-    public @NotNull LongSupplier getCopyIDSupplier() {
+    public LongSupplier getCopyIDSupplier() {
         return conf.getCopyIDSupplier();
     }
 
@@ -204,17 +202,17 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDbDirectory() {
+    public CharSequence getDbDirectory() {
         return conf.getDbDirectory();
     }
 
     @Override
-    public @NotNull DateLocale getDefaultDateLocale() {
+    public DateLocale getDefaultDateLocale() {
         return conf.getDefaultDateLocale();
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
+    public CharSequence getDefaultMapType() {
         return conf.getDefaultMapType();
     }
 
@@ -239,7 +237,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public FactoryProvider getFactoryProvider() {
         return conf.getFactoryProvider();
     }
 
@@ -249,7 +247,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull FilesFacade getFilesFacade() {
+    public FilesFacade getFilesFacade() {
         return conf.getFilesFacade();
     }
 
@@ -339,12 +337,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull MicrosecondClock getMicrosecondClock() {
+    public MicrosecondClock getMicrosecondClock() {
         return conf.getMicrosecondClock();
     }
 
     @Override
-    public @NotNull MillisecondClock getMillisecondClock() {
+    public MillisecondClock getMillisecondClock() {
         return conf.getMillisecondClock();
     }
 
@@ -484,7 +482,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull String getRoot() {
+    public String getRoot() {
         return conf.getRoot();
     }
 
@@ -499,12 +497,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotInstanceId() {
+    public CharSequence getSnapshotInstanceId() {
         return conf.getSnapshotInstanceId();
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotRoot() {
+    public CharSequence getSnapshotRoot() {
         return conf.getSnapshotRoot();
     }
 
@@ -779,7 +777,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSystemTableNamePrefix() {
+    public CharSequence getSystemTableNamePrefix() {
         return conf.getSystemTableNamePrefix();
     }
 
@@ -794,12 +792,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+    public TelemetryConfiguration getTelemetryConfiguration() {
         return conf.getTelemetryConfiguration();
     }
 
     @Override
-    public @NotNull TextConfiguration getTextConfiguration() {
+    public TextConfiguration getTextConfiguration() {
         return conf.getTextConfiguration();
     }
 
@@ -814,7 +812,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull VolumeDefinitions getVolumeDefinitions() {
+    public VolumeDefinitions getVolumeDefinitions() {
         return conf.getVolumeDefinitions();
     }
 

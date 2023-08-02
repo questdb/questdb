@@ -393,7 +393,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
                             tud.commit(false);
                             try {
-                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
+                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
+                                tud.getEngine().onColumnAdded(securityContext, tud.getTableToken(), columnNameUtf16);
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                             } catch (CairoException e) {
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);

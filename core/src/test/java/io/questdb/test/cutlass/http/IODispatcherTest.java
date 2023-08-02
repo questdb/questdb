@@ -8056,7 +8056,7 @@ public class IODispatcherTest extends AbstractTest {
         final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
-            public @NotNull FilesFacade getFilesFacade() {
+            public FilesFacade getFilesFacade() {
                 return new TestFilesFacadeImpl() {
                     @Override
                     public void msync(long addr, long len, boolean async) {

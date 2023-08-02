@@ -34,8 +34,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -85,7 +83,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull String getAttachPartitionSuffix() {
+    public String getAttachPartitionSuffix() {
         return TableUtils.ATTACHABLE_DIR_MARKER;
     }
 
@@ -105,7 +103,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getBackupTempDirName() {
+    public CharSequence getBackupTempDirName() {
         return "tmp";
     }
 
@@ -120,12 +118,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull BuildInformation getBuildInformation() {
+    public BuildInformation getBuildInformation() {
         return buildInformation;
     }
 
     @Override
-    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
 
@@ -170,12 +168,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getConfRoot() {
+    public CharSequence getConfRoot() {
         return confRoot;
     }
 
     @Override
-    public @NotNull LongSupplier getCopyIDSupplier() {
+    public LongSupplier getCopyIDSupplier() {
         return importIDSupplier;
     }
 
@@ -220,17 +218,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDbDirectory() {
+    public CharSequence getDbDirectory() {
         return PropServerConfiguration.DB_DIRECTORY;
     }
 
     @Override
-    public @NotNull DateLocale getDefaultDateLocale() {
+    public DateLocale getDefaultDateLocale() {
         return DateFormatUtils.enLocale;
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
+    public CharSequence getDefaultMapType() {
         return "fast";
     }
 
@@ -255,7 +253,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
 
@@ -265,7 +263,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull FilesFacade getFilesFacade() {
+    public FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
     }
 
@@ -491,7 +489,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull String getRoot() {
+    public String getRoot() {
         return root;
     }
 
@@ -506,12 +504,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotInstanceId() {
+    public CharSequence getSnapshotInstanceId() {
         return "";
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotRoot() {
+    public CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }
 
@@ -788,7 +786,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSystemTableNamePrefix() {
+    public CharSequence getSystemTableNamePrefix() {
         return "__sys";
     }
 
@@ -803,12 +801,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+    public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
 
     @Override
-    public @NotNull TextConfiguration getTextConfiguration() {
+    public TextConfiguration getTextConfiguration() {
         return textConfiguration;
     }
 
@@ -823,7 +821,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull VolumeDefinitions getVolumeDefinitions() {
+    public VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
     }
 

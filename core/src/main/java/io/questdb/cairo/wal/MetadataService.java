@@ -24,8 +24,12 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
@@ -68,7 +72,7 @@ public interface MetadataService {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
-            SecurityContext securityContext
+            SqlExecutionContext executionContext
     );
 
     default void addColumn(

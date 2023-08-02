@@ -45,7 +45,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.BrokenBarrierException;
 import java.util.function.LongSupplier;
@@ -105,7 +104,7 @@ public class HttpQueryTestBuilder {
             if (cairoConfiguration == null) {
                 cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
                     @Override
-                    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                         return new DefaultSqlExecutionCircuitBreakerConfiguration() {
                             @Override
                             public long getTimeout() {
@@ -117,16 +116,16 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
-                    public @NotNull LongSupplier getCopyIDSupplier() {
+                    public LongSupplier getCopyIDSupplier() {
                         return () -> 0;
                     }
 
-                    public @NotNull FilesFacade getFilesFacade() {
+                    public FilesFacade getFilesFacade() {
                         return filesFacade;
                     }
 
                     @Override
-                    public @NotNull MicrosecondClock getMicrosecondClock() {
+                    public MicrosecondClock getMicrosecondClock() {
                         return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
                     }
 

@@ -3545,7 +3545,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeVanilla(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return ff;
                 }
             };

@@ -44,7 +44,6 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -3661,7 +3660,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             };
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return ff;
                 }
             };

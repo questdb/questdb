@@ -43,6 +43,7 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
         this.ptr = lo;
         this.lo = hi;
         this.hi = hi;
+
         return this;
     }
 
@@ -84,6 +85,7 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
         this.ptr = lo;
         this.lo = lo;
         this.hi = hi;
+
         return this;
     }
 

@@ -81,9 +81,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence vectorAggregatePubSeq;
     private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
     private final MCSequence vectorAggregateSubSeq;
-    private final MPSequence walTxnNotificationPubSequence;
+    private final Sequence walTxnNotificationPubSequence;
     private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
-    private final MCSequence walTxnNotificationSubSequence;
+    private final Sequence walTxnNotificationSubSequence;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -198,7 +198,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getColumnPurgePubSeq() {
+    public Sequence getColumnPurgePubSeq() {
         return columnPurgePubSeq;
     }
 
@@ -218,12 +218,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getCopyRequestPubSeq() {
-        return textImportRequestPubSeq;
-    }
-
-    @Override
-    public MPSequence getIndexerPubSequence() {
+    public Sequence getIndexerPubSequence() {
         return indexerPubSeq;
     }
 
@@ -233,12 +228,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MCSequence getIndexerSubSequence() {
+    public Sequence getIndexerSubSequence() {
         return indexerSubSeq;
     }
 
     @Override
-    public MPSequence getLatestByPubSeq() {
+    public Sequence getLatestByPubSeq() {
         return latestByPubSeq;
     }
 
@@ -248,7 +243,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MCSequence getLatestBySubSeq() {
+    public Sequence getLatestBySubSeq() {
         return latestBySubSeq;
     }
 
@@ -383,7 +378,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public SPSequence getTextImportPubSeq() {
+    public Sequence getTextImportPubSeq() {
         return textImportPubSeq;
     }
 
@@ -393,22 +388,27 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public MPSequence getCopyRequestPubSeq() {
+        return textImportRequestPubSeq;
+    }
+
+    @Override
     public RingQueue<CopyRequestTask> getTextImportRequestQueue() {
         return textImportRequestQueue;
     }
 
     @Override
-    public SCSequence getTextImportRequestSubSeq() {
+    public Sequence getTextImportRequestSubSeq() {
         return textImportRequestSubSeq;
     }
 
     @Override
-    public MCSequence getTextImportSubSeq() {
+    public Sequence getTextImportSubSeq() {
         return textImportSubSeq;
     }
 
     @Override
-    public MPSequence getVectorAggregatePubSeq() {
+    public Sequence getVectorAggregatePubSeq() {
         return vectorAggregatePubSeq;
     }
 
@@ -418,12 +418,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MCSequence getVectorAggregateSubSeq() {
+    public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
     }
 
     @Override
-    public MPSequence getWalTxnNotificationPubSequence() {
+    public Sequence getWalTxnNotificationPubSequence() {
         return walTxnNotificationPubSequence;
     }
 
@@ -433,7 +433,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MCSequence getWalTxnNotificationSubSequence() {
+    public Sequence getWalTxnNotificationSubSequence() {
         return walTxnNotificationSubSequence;
     }
 

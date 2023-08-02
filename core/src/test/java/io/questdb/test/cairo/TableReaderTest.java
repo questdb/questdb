@@ -2806,7 +2806,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return ff;
                 }
             };

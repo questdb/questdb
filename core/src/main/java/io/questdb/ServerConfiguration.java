@@ -39,8 +39,6 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
-    FactoryProvider getFactoryProvider();
-
     HttpMinServerConfiguration getHttpMinServerConfiguration();
 
     HttpServerConfiguration getHttpServerConfiguration();
@@ -57,10 +55,11 @@ public interface ServerConfiguration {
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
+    FactoryProvider getFactoryProvider();
+
     default void init(
             CairoEngine engine,
             FunctionFactoryCache functionFactoryCache,
-            FreeOnExit freeOnExit
-    ) {
+            FreeOnExit freeOnExit) {
     }
 }

@@ -34,8 +34,6 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
@@ -54,7 +52,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull String getAttachPartitionSuffix() {
+    public String getAttachPartitionSuffix() {
         return overrides.getAttachableDirSuffix() == null ? super.getAttachPartitionSuffix() : overrides.getAttachableDirSuffix();
     }
 
@@ -74,7 +72,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
 
@@ -104,17 +102,17 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getDefaultMapType() {
+    public CharSequence getDefaultMapType() {
         return overrides.getDefaultMapType() == null ? super.getDefaultMapType() : overrides.getDefaultMapType();
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public FactoryProvider getFactoryProvider() {
         return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
 
     @Override
-    public @NotNull FilesFacade getFilesFacade() {
+    public FilesFacade getFilesFacade() {
         // This method gets called in super constructor, hence the extra null check.
         return overrides != null && overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
     }
@@ -145,17 +143,17 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull MicrosecondClock getMicrosecondClock() {
+    public MicrosecondClock getMicrosecondClock() {
         return overrides.getTestMicrosClock();
     }
 
     @Override
-    public @NotNull MillisecondClock getMillisecondClock() {
+    public MillisecondClock getMillisecondClock() {
         return () -> overrides.getTestMicrosClock().getTicks() / 1000L;
     }
 
     @Override
-    public @NotNull NanosecondClock getNanosecondClock() {
+    public NanosecondClock getNanosecondClock() {
         return () -> overrides.getTestMicrosClock().getTicks() * 1000L;
     }
 
@@ -221,7 +219,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull RostiAllocFacade getRostiAllocFacade() {
+    public RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
     }
 
@@ -231,7 +229,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotInstanceId() {
+    public CharSequence getSnapshotInstanceId() {
         return overrides.getSnapshotInstanceId() != null ? overrides.getSnapshotInstanceId() : super.getSnapshotInstanceId();
     }
 
@@ -286,12 +284,12 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+    public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
 
     @Override
-    public @NotNull VolumeDefinitions getVolumeDefinitions() {
+    public VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
     }
 

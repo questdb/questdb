@@ -265,7 +265,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public CharSequence getPrincipal() {
+    public String getPrincipal() {
         return null;
     }
 }

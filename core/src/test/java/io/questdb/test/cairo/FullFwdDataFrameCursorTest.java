@@ -29,10 +29,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -44,7 +41,6 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -1191,7 +1187,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -1304,7 +1300,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -1448,7 +1444,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -1635,7 +1631,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return ff;
                 }
 
@@ -2524,11 +2520,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     final static class MyWorkScheduler extends MessageBusImpl {
-        private final MPSequence pubSeq;
+        private final Sequence pubSeq;
         private final RingQueue<ColumnIndexerTask> queue = new RingQueue<>(ColumnIndexerTask::new, 1024);
-        private final MCSequence subSeq;
+        private final Sequence subSeq;
 
-        public MyWorkScheduler(MPSequence pubSequence, MCSequence subSequence) {
+        public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
+
             super(configuration);
 
             this.pubSeq = pubSequence;
@@ -2543,7 +2540,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MPSequence getIndexerPubSequence() {
+        public Sequence getIndexerPubSequence() {
             return pubSeq;
         }
 
@@ -2553,7 +2550,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MCSequence getIndexerSubSequence() {
+        public Sequence getIndexerSubSequence() {
             return subSeq;
         }
     }

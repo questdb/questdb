@@ -38,7 +38,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -302,7 +301,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return facade;
                 }
             };
@@ -900,7 +899,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public @NotNull FilesFacade getFilesFacade() {
+                public FilesFacade getFilesFacade() {
                     return facade;
                 }
             };
@@ -1076,6 +1075,15 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertForwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
+        try {
+            new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
+            Assert.fail();
+        } catch (CairoException e) {
+            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
+        }
     }
 
     @Test
@@ -1569,15 +1577,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertForwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
-        try {
-            new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
-            Assert.fail();
-        } catch (CairoException e) {
-            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
-        }
-    }
-
     private void assertThat(LongList expected, RowCursor cursor) {
         int i = 0;
         while (cursor.hasNext()) {
@@ -1589,14 +1588,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals("missing values in index", i, expected.size());
-    }
-
-    private void assertThat(String expected, RowCursor cursor, LongList temp) {
-        temp.clear();
-        while (cursor.hasNext()) {
-            temp.add(cursor.next());
-        }
-        Assert.assertEquals(expected, temp.toString());
     }
 
     private void assertValuesMatchBitmapWriter(int count, BitmapIndexWriter writer, LongList values) {
@@ -1617,6 +1608,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
         keyValues.reverse();
         assertThat(keyValues, writer.getCursor(lastKey));
+    }
+
+    private void assertThat(String expected, RowCursor cursor, LongList temp) {
+        temp.clear();
+        while (cursor.hasNext()) {
+            temp.add(cursor.next());
+        }
+        Assert.assertEquals(expected, temp.toString());
     }
 
     private void assertWriterConstructorFail(CharSequence contains) {

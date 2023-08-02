@@ -28,10 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
@@ -43,7 +40,6 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
@@ -51,7 +47,6 @@ import org.junit.Test;
 
 public class LatestByParallelTest extends AbstractTest {
     protected static final StringSink sink = new StringSink();
-
     @Before
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -272,7 +267,7 @@ public class LatestByParallelTest extends AbstractTest {
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public @NotNull FilesFacade getFilesFacade() {
+                    public FilesFacade getFilesFacade() {
                         return TestFilesFacadeImpl.INSTANCE;
                     }
                 };
@@ -282,7 +277,7 @@ public class LatestByParallelTest extends AbstractTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public @NotNull FilesFacade getFilesFacade() {
+                    public FilesFacade getFilesFacade() {
                         return TestFilesFacadeImpl.INSTANCE;
                     }
 

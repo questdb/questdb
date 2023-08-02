@@ -42,7 +42,6 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1734,7 +1733,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public @NotNull RostiAllocFacade getRostiAllocFacade() {
+                    public RostiAllocFacade getRostiAllocFacade() {
                         return rostiAllocFacade;
                     }
 
