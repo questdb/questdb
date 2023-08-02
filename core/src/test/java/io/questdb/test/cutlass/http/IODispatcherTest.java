@@ -69,7 +69,6 @@ import org.junit.rules.Timeout;
 
 import java.io.InputStream;
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -90,6 +89,7 @@ public class IODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
+    private static final String UTF_8 = "UTF-8";
     private static final Metrics metrics = Metrics.enabled();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
@@ -115,13 +115,11 @@ public class IODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
-
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     @Before
@@ -1003,7 +1001,7 @@ public class IODispatcherTest extends AbstractTest {
         testJsonQuery(
                 1,
                 "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query="
-                        + URLEncoder.encode("select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)", StandardCharsets.UTF_8)
+                        + URLEncoder.encode("select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)", UTF_8)
                         + " HTTP/1.1\r\n" +
                         "Accept: */*\r\n" +
                         "Accept-Encoding: gzip, deflate, br\r\n" +
