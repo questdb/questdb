@@ -548,12 +548,6 @@ public final class Chars {
         return -1;
     }
 
-    public static String ipv4ToString(int ip) {
-        StringSink sink = new StringSink();
-        Numbers.intToIPv4Sink(sink, ip);
-        return sink.toString();
-    }
-
     public static boolean isBlank(CharSequence s) {
         if (s == null) {
             return true;

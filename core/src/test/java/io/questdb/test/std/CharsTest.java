@@ -48,12 +48,6 @@ public class CharsTest {
     }
 
     @Test
-    public void testIPv4ToString() {
-        Assert.assertEquals("255.255.255.255", Chars.ipv4ToString(0xffffffff));
-        Assert.assertEquals("0.0.0.25", Chars.ipv4ToString(25));
-    }
-
-    @Test
     public void testBase64Decode() {
         String encoded = "+W8kK89c79Jb97CrQM3aGuPJE85fEdFoXwSsEWjU736IXm4v7+mZKiOL82uYhGaxmIYUUJh5/Xj44tX0NrD4lQ==";
         ByteBuffer buffer = ByteBuffer.allocate(1024);
@@ -309,6 +303,12 @@ public class CharsTest {
         Assert.assertFalse(Chars.endsWith("ab", "abc"));
         Assert.assertFalse(Chars.endsWith("abc", "x"));
         Assert.assertTrue(Chars.endsWith("abcd", "cd"));
+    }
+
+    @Test
+    public void testIPv4ToString() {
+        Assert.assertEquals("255.255.255.255", TestUtils.ipv4ToString(0xffffffff));
+        Assert.assertEquals("0.0.0.25", TestUtils.ipv4ToString(25));
     }
 
     @Test

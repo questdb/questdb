@@ -33,6 +33,9 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
@@ -63,23 +66,31 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             final int value = arg.getIPv4(rec);
-            sinkA.clear();
-            Numbers.intToIPv4Sink(sinkA, value);
-            return sinkA;
+            return toSink(value, sinkA);
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
             final int value = arg.getIPv4(rec);
-            Numbers.intToIPv4Sink(sink, value);
+            if (value != IPv4_NULL) {
+                Numbers.intToIPv4Sink(sink, value);
+            }
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             final int value = arg.getIPv4(rec);
-            sinkB.clear();
-            Numbers.intToIPv4Sink(sinkB, value);
-            return sinkB;
+            return toSink(value, sinkB);
+        }
+
+        @Nullable
+        private StringSink toSink(int value, StringSink sinkB) {
+            if (value != IPv4_NULL) {
+                sinkB.clear();
+                Numbers.intToIPv4Sink(sinkB, value);
+                return sinkB;
+            }
+            return null;
         }
     }
 }

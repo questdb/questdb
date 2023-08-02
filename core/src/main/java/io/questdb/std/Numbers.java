@@ -733,10 +733,7 @@ public final class Numbers {
     }
 
     public static void intToIPv4Sink(CharSink sink, int value) {
-        if(value == IPv4_NULL) {
-            sink.put("null");
-            return;
-        }
+        // NULL handling should be done outside, null here will be printed as 0.0.0.0
         append(sink, (value >> 24) & 0xff);
         sink.put('.');
         append(sink, (value >> 16) & 0xff);

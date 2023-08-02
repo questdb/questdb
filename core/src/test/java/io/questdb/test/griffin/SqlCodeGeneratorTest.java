@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2023 QuestDB
- * <p>
+ *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- * <p>
+ *
  *  http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -60,7 +60,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test (col ipv4)", sqlExecutionContext);
         executeInsert("insert into test values(null)");
         assertSql("test", "col\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
@@ -72,7 +72,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         }
 
         assertSql("test", "col1\tcol2\n" +
-                "0.0.0.1\tnull\n");
+                "0.0.0.1\t\n");
     }
 
     @Test
@@ -83,7 +83,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         assertSql("x", "b\n" +
                 "128.0.0.0\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
@@ -708,18 +708,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "2.2.76.40\t167\tNOT NULL\n" +
                         "2.2.95.15\t803\tNOT NULL\n" +
                         "2.2.45.145\t182\tNOT NULL\n" +
-                        "null\t647\tNULL\n" +
+                        "\t647\tNULL\n" +
                         "2.2.249.199\t203\tNOT NULL\n" +
-                        "null\t827\tNULL\n" +
+                        "\t827\tNULL\n" +
                         "2.2.170.235\t987\tNOT NULL\n" +
                         "2.2.184.81\t614\tNOT NULL\n" +
                         "2.2.213.108\t539\tNOT NULL\n" +
                         "2.2.47.76\t585\tNOT NULL\n" +
-                        "null\t16\tNULL\n" +
+                        "\t16\tNULL\n" +
                         "2.2.129.200\t981\tNOT NULL\n" +
                         "2.2.171.12\t313\tNOT NULL\n" +
                         "2.2.253.254\t297\tNOT NULL\n" +
-                        "null\t773\tNULL\n" +
+                        "\t773\tNULL\n" +
                         "2.2.227.50\t411\tNOT NULL\n" +
                         "2.2.12.210\t95\tNOT NULL\n" +
                         "2.2.205.4\t916\tNOT NULL\n" +
@@ -727,7 +727,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "2.2.183.179\t369\tNOT NULL\n" +
                         "2.2.220.75\t12\tNOT NULL\n" +
                         "2.2.157.48\t613\tNOT NULL\n" +
-                        "null\t114\tNULL\n" +
+                        "\t114\tNULL\n" +
                         "2.2.52.211\t678\tNOT NULL\n" +
                         "2.2.35.79\t262\tNOT NULL\n" +
                         "2.2.207.241\t497\tNOT NULL\n" +
@@ -743,9 +743,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "2.2.167.123\t849\tNOT NULL\n" +
                         "2.2.2.123\t941\tNOT NULL\n" +
                         "2.2.140.124\t551\tNOT NULL\n" +
-                        "null\t343\tNULL\n" +
-                        "null\t77\tNULL\n" +
-                        "null\t519\tNULL\n" +
+                        "\t343\tNULL\n" +
+                        "\t77\tNULL\n" +
+                        "\t519\tNULL\n" +
                         "2.2.15.163\t606\tNOT NULL\n" +
                         "2.2.245.83\t446\tNOT NULL\n" +
                         "2.2.204.60\t835\tNOT NULL\n" +
@@ -775,18 +775,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "2.2.76.40\t167\tNOT NULL\n" +
                         "2.2.95.15\t803\tNOT NULL\n" +
                         "2.2.45.145\t182\tNOT NULL\n" +
-                        "null\t647\tNULL\n" +
+                        "\t647\tNULL\n" +
                         "2.2.249.199\t203\tNOT NULL\n" +
-                        "null\t827\tNULL\n" +
+                        "\t827\tNULL\n" +
                         "2.2.170.235\t987\tNOT NULL\n" +
                         "2.2.184.81\t614\tNOT NULL\n" +
                         "2.2.213.108\t539\tNOT NULL\n" +
                         "2.2.47.76\t585\tNOT NULL\n" +
-                        "null\t16\tNULL\n" +
+                        "\t16\tNULL\n" +
                         "2.2.129.200\t981\tNOT NULL\n" +
                         "2.2.171.12\t313\tNOT NULL\n" +
                         "2.2.253.254\t297\tNOT NULL\n" +
-                        "null\t773\tNULL\n" +
+                        "\t773\tNULL\n" +
                         "2.2.227.50\t411\tNOT NULL\n" +
                         "2.2.12.210\t95\tNOT NULL\n" +
                         "2.2.205.4\t916\tNOT NULL\n" +
@@ -794,7 +794,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "2.2.183.179\t369\tNOT NULL\n" +
                         "2.2.220.75\t12\tNOT NULL\n" +
                         "2.2.157.48\t613\tNOT NULL\n" +
-                        "null\t114\tNULL\n" +
+                        "\t114\tNULL\n" +
                         "2.2.52.211\t678\tNOT NULL\n" +
                         "2.2.35.79\t262\tNOT NULL\n" +
                         "2.2.207.241\t497\tNOT NULL\n" +
@@ -810,9 +810,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "2.2.167.123\t849\tNOT NULL\n" +
                         "2.2.2.123\t941\tNOT NULL\n" +
                         "2.2.140.124\t551\tNOT NULL\n" +
-                        "null\t343\tNULL\n" +
-                        "null\t77\tNULL\n" +
-                        "null\t519\tNULL\n" +
+                        "\t343\tNULL\n" +
+                        "\t77\tNULL\n" +
+                        "\t519\tNULL\n" +
                         "2.2.15.163\t606\tNOT NULL\n" +
                         "2.2.245.83\t446\tNOT NULL\n" +
                         "2.2.204.60\t835\tNOT NULL\n" +
@@ -1469,18 +1469,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExplicitCastIPv4ToInt() throws Exception {
-        assertSql("select rnd_ipv4()::int from long_sequence(10)", "cast\n" +
-                "315515118\n" +
-                "-727724771\n" +
-                "-948263339\n" +
-                "592859671\n" +
-                "-847531048\n" +
-                "-2041844972\n" +
-                "-1575378703\n" +
-                "1545253512\n" +
-                "1573662097\n" +
-                "339631474\n");
+    public void testExplicitCastIPv4ToStr() throws Exception {
+        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col string)",
+                21,
+                "inconvertible types: IPv4 -> STRING [from=col, to=col]"
+        );
     }
 
     @Test
@@ -1496,6 +1490,21 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "92.26.178.136\n" +
                 "93.204.45.145\n" +
                 "20.62.93.114\n");
+    }
+
+    @Test
+    public void testExplicitCastNullToIPv4() throws Exception {
+        assertSql("select cast(case when x = 1 then null else rnd_ipv4() end as string) from long_sequence(10)", "cast\n" +
+                "\n" +
+                "187.139.150.80\n" +
+                "18.206.96.238\n" +
+                "92.80.211.65\n" +
+                "212.159.205.29\n" +
+                "4.98.173.21\n" +
+                "199.122.166.85\n" +
+                "79.15.250.138\n" +
+                "35.86.82.23\n" +
+                "111.98.117.250\n");
     }
 
     @Test
@@ -1516,16 +1525,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testExplicitCastStrToIPv4Null() throws Exception {
         assertSql("select rnd_str()::ipv4 from long_sequence(10)", "cast\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n");
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n");
     }
 
     @Test
@@ -2667,7 +2676,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
         assertSql("select count(count), ip from test group by ip", "count\tip\n" +
                 "1\t10.5.96.238\n" +
-                "6\tnull\n" +
+                "6\t\n" +
                 "1\t10.5.173.21\n" +
                 "1\t10.5.250.138\n" +
                 "1\t10.5.76.40\n" +
@@ -2688,7 +2697,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
         assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
                 "1\t10.5.96.238\n" +
-                "6\tnull\n" +
+                "6\t\n" +
                 "1\t10.5.173.21\n" +
                 "1\t10.5.250.138\n" +
                 "1\t10.5.76.40\n" +
@@ -2709,7 +2718,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
         assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
                 "4\t10.5.6.2\n" +
-                "6\tnull\n" +
+                "6\t\n" +
                 "1\t10.5.6.1\n" +
                 "5\t10.5.6.0\n" +
                 "4\t10.5.6.3\n");
@@ -2724,106 +2733,106 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testIPv4BitwiseAndFails() throws Exception {
         assertQuery("column\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n",
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
                 "select ip & ipv4 'apple' from test",
                 "create table test as " +
                         "(" +
@@ -2841,7 +2850,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testIPv4BitwiseAndFailsConst() throws Exception {
         assertSql("select ipv4 '1.1.1.1' & ipv4 '0.0.1'", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test(expected = ImplicitCastException.class)
@@ -2970,92 +2979,92 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testIPv4BitwiseAndVar() throws Exception {
         assertQuery("column\n" +
                         "0.0.0.12\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n" +
                         "0.0.0.8\n" +
                         "0.0.0.16\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.20\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.5\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.9\n" +
                         "0.0.0.5\n" +
                         "0.0.0.4\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.6\n" +
                         "0.0.0.5\n" +
                         "0.0.0.1\n" +
                         "0.0.0.4\n" +
                         "0.0.0.5\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.4\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.18\n" +
                         "0.0.0.1\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.5\n" +
                         "0.0.0.2\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.2\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n" +
                         "0.0.0.2\n" +
                         "0.0.0.6\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.2\n" +
                         "0.0.0.14\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.8\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.4\n" +
                         "0.0.0.8\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n" +
                         "0.0.0.6\n" +
                         "0.0.0.2\n" +
                         "0.0.0.16\n" +
                         "0.0.0.2\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.2\n" +
                         "0.0.0.2\n" +
                         "0.0.0.2\n" +
                         "0.0.0.1\n" +
                         "0.0.0.2\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.16\n" +
                         "0.0.0.4\n" +
                         "0.0.0.5\n" +
                         "0.0.0.5\n" +
                         "0.0.0.1\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.12\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.4\n" +
                         "0.0.0.10\n" +
                         "0.0.0.8\n" +
@@ -3064,10 +3073,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.16\n" +
                         "0.0.0.2\n" +
                         "0.0.0.16\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.2\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.6\n",
                 "select ip & ip2 from test",
                 "create table test as " +
@@ -3093,7 +3102,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testIPv4BitwiseNotFails() throws Exception {
         assertSql("select ~ ipv4 'apple'", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test(expected = ImplicitCastException.class)
@@ -3477,7 +3486,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/1'", sink, "col\n" +
                 "12.67.45.3\n" +
                 "1.6.2.0\n" +
-                "null\n");
+                "\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '255.6.8.10/8'", sink, "col\n" +
                 "255.255.255.255\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/0'", sink, "col\n" +
@@ -3486,7 +3495,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "240.110.88.22\n" +
                 "1.6.2.0\n" +
                 "255.255.255.255\n" +
-                "null\n");
+                "\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0/32'", sink, "col\n" +
                 "1.6.2.0\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0'", sink, "col\n" +
@@ -3519,10 +3528,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0.0.0.218\n" +
                 "0.0.0.34\n" +
                 "0.0.0.90\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.161\n" +
                 "0.0.0.188\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.29\n" +
                 "0.0.0.159\n");
     }
@@ -3761,25 +3770,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
 
         assertSql("select * from test where ip != '0.0.0.1'", "ip\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.4\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.5\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.3\n" +
                 "0.0.0.2\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
                 "0.0.0.2\n" +
                 "0.0.0.2\n" +
-                "null\n" +
-                "null\n");
+                "\n" +
+                "\n");
     }
 
     @Test
@@ -3787,66 +3796,66 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
 
         assertSql("select * from test where '0.0.0.1' != ip", "ip\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.4\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.5\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.3\n" +
                 "0.0.0.2\n" +
-                "null\n" +
+                "\n" +
                 "0.0.0.5\n" +
                 "0.0.0.4\n" +
                 "0.0.0.2\n" +
                 "0.0.0.2\n" +
-                "null\n" +
-                "null\n");
+                "\n" +
+                "\n");
     }
 
     @Test
     public void testIPv4EqNull() throws Exception {
         compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
         assertSql("select * from test where ip = null", "ip\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n" +
-                "null\n");
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "\n");
     }
 
     @Test
@@ -4130,23 +4139,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testIPv4MinusIntConstOverflow() throws Exception {
         assertSql("select ipv4 '1.1.1.1' - 16843010", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
     public void testIPv4MinusIntHalfConst() throws Exception {
         assertQuery("column\n" +
                         "0.0.0.7\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.13\n" +
                         "0.0.0.15\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.10\n" +
                         "0.0.0.4\n" +
                         "0.0.0.14\n" +
                         "0.0.0.14\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.15\n" +
                         "0.0.0.3\n" +
                         "0.0.0.11\n" +
@@ -4154,13 +4163,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.13\n" +
                         "0.0.0.6\n" +
                         "0.0.0.8\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.1\n" +
                         "0.0.0.2\n" +
                         "0.0.0.12\n" +
                         "0.0.0.8\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.11\n" +
                         "0.0.0.4\n" +
                         "0.0.0.11\n" +
@@ -4170,16 +4179,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.1\n" +
                         "0.0.0.13\n" +
                         "0.0.0.10\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.3\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.11\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.13\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.14\n" +
                         "0.0.0.11\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.5\n" +
                         "0.0.0.1\n" +
                         "0.0.0.7\n" +
@@ -4196,33 +4205,33 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.2\n" +
                         "0.0.0.7\n" +
                         "0.0.0.11\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n" +
                         "0.0.0.1\n" +
                         "0.0.0.12\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.4\n" +
                         "0.0.0.13\n" +
                         "0.0.0.12\n" +
                         "0.0.0.13\n" +
                         "0.0.0.13\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.13\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.4\n" +
                         "0.0.0.5\n" +
                         "0.0.0.11\n" +
                         "0.0.0.13\n" +
                         "0.0.0.11\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.2\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.8\n" +
                         "0.0.0.14\n" +
                         "0.0.0.7\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.15\n" +
                         "0.0.0.6\n" +
                         "0.0.0.3\n" +
@@ -4231,10 +4240,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.15\n" +
                         "0.0.0.1\n" +
                         "0.0.0.14\n" +
-                        "null\n" +
-                        "null\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.5\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.0.1\n",
                 "select ip - 5 from test",
                 "create table test as " +
@@ -4305,7 +4314,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.1.189\n" +
                         "0.0.4.89\n" +
                         "0.0.3.224\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.8.229\n" +
                         "0.0.6.127\n" +
                         "0.0.6.11\n" +
@@ -4341,7 +4350,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.4.52\n" +
                         "0.0.2.253\n" +
                         "0.0.2.37\n" +
-                        "null\n" +
+                        "\n" +
                         "0.0.3.70\n" +
                         "0.0.6.69\n" +
                         "0.0.2.19\n" +
@@ -4353,7 +4362,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.6.186\n" +
                         "0.0.7.42\n" +
                         "0.0.0.196\n" +
-                        "null\n",
+                        "\n",
                 "select ip - bytes from test",
                 "create table test as " +
                         "(" +
@@ -4382,7 +4391,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/1' >>= col", sink, "col\n" +
                 "12.67.45.3\n" +
                 "1.6.2.0\n" +
-                "null\n");
+                "\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '255.6.8.10/8' >>= col", sink, "col\n" +
                 "255.255.255.255\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/0' >>= col", sink, "col\n" +
@@ -4391,7 +4400,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "240.110.88.22\n" +
                 "1.6.2.0\n" +
                 "255.255.255.255\n" +
-                "null\n");
+                "\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0/32' >>= col", sink, "col\n" +
                 "1.6.2.0\n");
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0' >>= col", sink, "col\n" +
@@ -4603,11 +4612,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1970-01-01T00:06:40.000000Z\t0.0.0.9\n" +
                         "1970-01-01T00:08:20.000000Z\t0.0.0.10\n" +
                         "1970-01-01T00:10:00.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T00:11:40.000000Z\tnull\n" +
+                        "1970-01-01T00:11:40.000000Z\t\n" +
                         "1970-01-01T00:13:20.000000Z\t0.0.0.8\n" +
                         "1970-01-01T00:15:00.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:16:40.000000Z\tnull\n" +
-                        "1970-01-01T00:18:20.000000Z\tnull\n" +
+                        "1970-01-01T00:16:40.000000Z\t\n" +
+                        "1970-01-01T00:18:20.000000Z\t\n" +
                         "1970-01-01T00:20:00.000000Z\t0.0.0.4\n" +
                         "1970-01-01T00:21:40.000000Z\t0.0.0.8\n" +
                         "1970-01-01T00:23:20.000000Z\t0.0.0.6\n" +
@@ -4620,12 +4629,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1970-01-01T00:35:00.000000Z\t0.0.0.9\n" +
                         "1970-01-01T00:36:40.000000Z\t0.0.0.3\n" +
                         "1970-01-01T00:38:20.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T00:40:00.000000Z\tnull\n" +
+                        "1970-01-01T00:40:00.000000Z\t\n" +
                         "1970-01-01T00:41:40.000000Z\t0.0.0.8\n" +
                         "1970-01-01T00:43:20.000000Z\t0.0.0.10\n" +
                         "1970-01-01T00:45:00.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:46:40.000000Z\tnull\n" +
-                        "1970-01-01T00:48:20.000000Z\tnull\n" +
+                        "1970-01-01T00:46:40.000000Z\t\n" +
+                        "1970-01-01T00:48:20.000000Z\t\n" +
                         "1970-01-01T00:50:00.000000Z\t0.0.0.4\n" +
                         "1970-01-01T00:51:40.000000Z\t0.0.0.10\n" +
                         "1970-01-01T00:53:20.000000Z\t0.0.0.9\n" +
@@ -4636,7 +4645,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1970-01-01T01:01:40.000000Z\t0.0.0.2\n" +
                         "1970-01-01T01:03:20.000000Z\t0.0.0.7\n" +
                         "1970-01-01T01:05:00.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T01:06:40.000000Z\tnull\n" +
+                        "1970-01-01T01:06:40.000000Z\t\n" +
                         "1970-01-01T01:08:20.000000Z\t0.0.0.9\n" +
                         "1970-01-01T01:10:00.000000Z\t0.0.0.9\n" +
                         "1970-01-01T01:11:40.000000Z\t0.0.0.1\n" +
@@ -4649,9 +4658,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1970-01-01T01:23:20.000000Z\t0.0.0.10\n" +
                         "1970-01-01T01:25:00.000000Z\t0.0.0.7\n" +
                         "1970-01-01T01:26:40.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T01:28:20.000000Z\tnull\n" +
+                        "1970-01-01T01:28:20.000000Z\t\n" +
                         "1970-01-01T01:30:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T01:31:40.000000Z\tnull\n" +
+                        "1970-01-01T01:31:40.000000Z\t\n" +
                         "1970-01-01T01:33:20.000000Z\t0.0.0.4\n" +
                         "1970-01-01T01:35:00.000000Z\t0.0.0.2\n" +
                         "1970-01-01T01:36:40.000000Z\t0.0.0.4\n" +
@@ -4674,25 +4683,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1970-01-01T02:05:00.000000Z\t0.0.0.6\n" +
                         "1970-01-01T02:06:40.000000Z\t0.0.0.3\n" +
                         "1970-01-01T02:08:20.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T02:10:00.000000Z\tnull\n" +
-                        "1970-01-01T02:11:40.000000Z\tnull\n" +
+                        "1970-01-01T02:10:00.000000Z\t\n" +
+                        "1970-01-01T02:11:40.000000Z\t\n" +
                         "1970-01-01T02:13:20.000000Z\t0.0.0.6\n" +
                         "1970-01-01T02:15:00.000000Z\t0.0.0.2\n" +
                         "1970-01-01T02:16:40.000000Z\t0.0.0.9\n" +
                         "1970-01-01T02:18:20.000000Z\t0.0.0.6\n" +
                         "1970-01-01T02:20:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T02:21:40.000000Z\tnull\n" +
+                        "1970-01-01T02:21:40.000000Z\t\n" +
                         "1970-01-01T02:23:20.000000Z\t0.0.0.6\n" +
                         "1970-01-01T02:25:00.000000Z\t0.0.0.9\n" +
                         "1970-01-01T02:26:40.000000Z\t0.0.0.1\n" +
                         "1970-01-01T02:28:20.000000Z\t0.0.0.10\n" +
                         "1970-01-01T02:30:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T02:31:40.000000Z\tnull\n" +
+                        "1970-01-01T02:31:40.000000Z\t\n" +
                         "1970-01-01T02:33:20.000000Z\t0.0.0.10\n" +
                         "1970-01-01T02:35:00.000000Z\t0.0.0.2\n" +
                         "1970-01-01T02:36:40.000000Z\t0.0.0.1\n" +
                         "1970-01-01T02:38:20.000000Z\t0.0.0.7\n" +
-                        "1970-01-01T02:40:00.000000Z\tnull\n" +
+                        "1970-01-01T02:40:00.000000Z\t\n" +
                         "1970-01-01T02:41:40.000000Z\t0.0.0.1\n" +
                         "1970-01-01T02:43:20.000000Z\t0.0.0.6\n" +
                         "1970-01-01T02:45:00.000000Z\t0.0.0.2\n", "select k, nullif(ip, '0.0.0.5') from test",
@@ -4724,19 +4733,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testIPv4PlusIntConstNull() throws Exception {
         assertSql("select ipv4 '0.0.0.0' + 20", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
     public void testIPv4PlusIntConstOverflow() throws Exception {
         assertSql("select ipv4 '255.255.255.255' + 1", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
     public void testIPv4PlusIntConstOverflow2() throws Exception {
         assertSql("select ipv4 '255.255.255.20' + 236", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
@@ -5799,19 +5808,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testIntPlusIPv4ConstNull() throws Exception {
         assertSql("select 20 + ipv4 '0.0.0.0'", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
     public void testIntPlusIPv4ConstOverflow() throws Exception {
         assertSql("select 1 + ipv4 '255.255.255.255'", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
     public void testIntPlusIPv4ConstOverflow2() throws Exception {
         assertSql("select 236 + ipv4 '255.255.255.20'", "column\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
@@ -6240,7 +6249,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertSql("select sym, last(ip) from test", "sym\tlast\n" +
                 "$a\t10.5.237.229\n" +
                 "ac\t10.5.235.200\n" +
-                "ab\tnull\n");
+                "ab\t\n");
     }
 
     @Test
@@ -9279,11 +9288,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_ipv4('1.1.1.1/16', 0) ip, 1 count from long_sequence(5))", sqlExecutionContext);
         compiler.compile("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))", sqlExecutionContext);
         assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
-                "1.1.96.238\tnull\t1\tNaN\n" +
-                "1.1.50.227\tnull\t1\tNaN\n" +
-                "1.1.89.171\tnull\t1\tNaN\n" +
-                "1.1.82.23\tnull\t1\tNaN\n" +
-                "1.1.76.40\tnull\t1\tNaN\n");
+                "1.1.96.238\t\t1\tNaN\n" +
+                "1.1.50.227\t\t1\tNaN\n" +
+                "1.1.89.171\t\t1\tNaN\n" +
+                "1.1.82.23\t\t1\tNaN\n" +
+                "1.1.76.40\t\t1\tNaN\n");
     }
 
     @Test
@@ -9291,60 +9300,60 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(50))", sqlExecutionContext);
         compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))", sqlExecutionContext);
         assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
-                "12.5.9.238\tnull\t1\tNaN\n" +
-                "12.5.9.227\tnull\t1\tNaN\n" +
-                "12.5.9.171\tnull\t1\tNaN\n" +
-                "12.5.9.23\tnull\t1\tNaN\n" +
-                "12.5.9.40\tnull\t1\tNaN\n" +
-                "12.5.9.236\tnull\t1\tNaN\n" +
-                "12.5.9.15\tnull\t1\tNaN\n" +
-                "12.5.9.136\tnull\t1\tNaN\n" +
-                "12.5.9.145\tnull\t1\tNaN\n" +
+                "12.5.9.238\t\t1\tNaN\n" +
+                "12.5.9.227\t\t1\tNaN\n" +
+                "12.5.9.171\t\t1\tNaN\n" +
+                "12.5.9.23\t\t1\tNaN\n" +
+                "12.5.9.40\t\t1\tNaN\n" +
+                "12.5.9.236\t\t1\tNaN\n" +
+                "12.5.9.15\t\t1\tNaN\n" +
+                "12.5.9.136\t\t1\tNaN\n" +
+                "12.5.9.145\t\t1\tNaN\n" +
                 "12.5.9.114\t12.5.9.114\t1\t2\n" +
-                "12.5.9.243\tnull\t1\tNaN\n" +
-                "12.5.9.229\tnull\t1\tNaN\n" +
-                "12.5.9.120\tnull\t1\tNaN\n" +
-                "12.5.9.160\tnull\t1\tNaN\n" +
-                "12.5.9.196\tnull\t1\tNaN\n" +
-                "12.5.9.235\tnull\t1\tNaN\n" +
+                "12.5.9.243\t\t1\tNaN\n" +
+                "12.5.9.229\t\t1\tNaN\n" +
+                "12.5.9.120\t\t1\tNaN\n" +
+                "12.5.9.160\t\t1\tNaN\n" +
+                "12.5.9.196\t\t1\tNaN\n" +
+                "12.5.9.235\t\t1\tNaN\n" +
                 "12.5.9.159\t12.5.9.159\t1\t2\n" +
-                "12.5.9.81\tnull\t1\tNaN\n" +
-                "12.5.9.196\tnull\t1\tNaN\n" +
-                "12.5.9.108\tnull\t1\tNaN\n" +
-                "12.5.9.173\tnull\t1\tNaN\n" +
-                "12.5.9.76\tnull\t1\tNaN\n" +
-                "12.5.9.126\tnull\t1\tNaN\n" +
-                "12.5.9.248\tnull\t1\tNaN\n" +
+                "12.5.9.81\t\t1\tNaN\n" +
+                "12.5.9.196\t\t1\tNaN\n" +
+                "12.5.9.108\t\t1\tNaN\n" +
+                "12.5.9.173\t\t1\tNaN\n" +
+                "12.5.9.76\t\t1\tNaN\n" +
+                "12.5.9.126\t\t1\tNaN\n" +
+                "12.5.9.248\t\t1\tNaN\n" +
                 "12.5.9.226\t12.5.9.226\t1\t2\n" +
-                "12.5.9.115\tnull\t1\tNaN\n" +
-                "12.5.9.98\tnull\t1\tNaN\n" +
-                "12.5.9.200\tnull\t1\tNaN\n" +
-                "12.5.9.247\tnull\t1\tNaN\n" +
-                "12.5.9.216\tnull\t1\tNaN\n" +
-                "12.5.9.48\tnull\t1\tNaN\n" +
-                "12.5.9.202\tnull\t1\tNaN\n" +
-                "12.5.9.50\tnull\t1\tNaN\n" +
-                "12.5.9.228\tnull\t1\tNaN\n" +
-                "12.5.9.210\tnull\t1\tNaN\n" +
-                "12.5.9.7\tnull\t1\tNaN\n" +
-                "12.5.9.4\tnull\t1\tNaN\n" +
-                "12.5.9.135\tnull\t1\tNaN\n" +
-                "12.5.9.117\tnull\t1\tNaN\n" +
+                "12.5.9.115\t\t1\tNaN\n" +
+                "12.5.9.98\t\t1\tNaN\n" +
+                "12.5.9.200\t\t1\tNaN\n" +
+                "12.5.9.247\t\t1\tNaN\n" +
+                "12.5.9.216\t\t1\tNaN\n" +
+                "12.5.9.48\t\t1\tNaN\n" +
+                "12.5.9.202\t\t1\tNaN\n" +
+                "12.5.9.50\t\t1\tNaN\n" +
+                "12.5.9.228\t\t1\tNaN\n" +
+                "12.5.9.210\t\t1\tNaN\n" +
+                "12.5.9.7\t\t1\tNaN\n" +
+                "12.5.9.4\t\t1\tNaN\n" +
+                "12.5.9.135\t\t1\tNaN\n" +
+                "12.5.9.117\t\t1\tNaN\n" +
                 "12.5.9.43\t12.5.9.43\t1\t2\n" +
                 "12.5.9.43\t12.5.9.43\t1\t2\n" +
                 "12.5.9.179\t12.5.9.179\t1\t2\n" +
                 "12.5.9.179\t12.5.9.179\t1\t2\n" +
-                "12.5.9.142\tnull\t1\tNaN\n" +
-                "12.5.9.75\tnull\t1\tNaN\n" +
-                "12.5.9.239\tnull\t1\tNaN\n" +
-                "12.5.9.48\tnull\t1\tNaN\n" +
+                "12.5.9.142\t\t1\tNaN\n" +
+                "12.5.9.75\t\t1\tNaN\n" +
+                "12.5.9.239\t\t1\tNaN\n" +
+                "12.5.9.48\t\t1\tNaN\n" +
                 "12.5.9.100\t12.5.9.100\t1\t2\n" +
                 "12.5.9.100\t12.5.9.100\t1\t2\n" +
                 "12.5.9.100\t12.5.9.100\t1\t2\n" +
-                "12.5.9.26\tnull\t1\tNaN\n" +
-                "12.5.9.240\tnull\t1\tNaN\n" +
-                "12.5.9.192\tnull\t1\tNaN\n" +
-                "12.5.9.181\tnull\t1\tNaN\n");
+                "12.5.9.26\t\t1\tNaN\n" +
+                "12.5.9.240\t\t1\tNaN\n" +
+                "12.5.9.192\t\t1\tNaN\n" +
+                "12.5.9.181\t\t1\tNaN\n");
     }
 
     @Test
@@ -11633,7 +11642,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testStrIPv4CastOverflow() throws Exception {
         assertSql("select ipv4 '256.5.5.5'", "cast\n" +
-                "null\n");
+                "\n");
     }
 
     @Test
@@ -12308,66 +12317,66 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.1\t0.0.0.1\n" +
                         "0.0.0.3\t0.0.0.3\n" +
                         "0.0.0.7\t0.0.0.7\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
+                        "\t\n" +
+                        "\t\n" +
                         "0.0.0.5\t0.0.0.5\n" +
                         "0.0.0.9\t0.0.0.9\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
+                        "\t\n" +
+                        "\t\n" +
                         "0.0.0.4\t0.0.0.4\n" +
                         "0.0.0.2\t0.0.0.2\n" +
                         "0.0.0.9\t0.0.0.9\n" +
                         "0.0.0.9\t0.0.0.9\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.9\t0.0.0.9\n" +
                         "0.0.0.8\t0.0.0.8\n" +
                         "0.0.0.7\t0.0.0.7\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
+                        "\t\n" +
+                        "\t\n" +
+                        "\t\n" +
+                        "\t\n" +
                         "0.0.0.3\t0.0.0.3\n" +
                         "0.0.0.6\t0.0.0.6\n" +
                         "0.0.0.1\t0.0.0.1\n" +
                         "0.0.0.4\t0.0.0.4\n" +
                         "0.0.0.3\t0.0.0.3\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
+                        "\t\n" +
                         "0.0.0.4\t0.0.0.4\n" +
                         "0.0.0.3\t0.0.0.3\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.3\t0.0.0.3\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.9\t0.0.0.9\n" +
                         "0.0.0.9\t0.0.0.9\n" +
                         "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.8\t0.0.0.8\n" +
                         "0.0.0.4\t0.0.0.4\n" +
                         "0.0.0.8\t0.0.0.8\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.9\t0.0.0.9\n" +
                         "0.0.0.8\t0.0.0.8\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.4\t0.0.0.4\n" +
                         "0.0.0.8\t0.0.0.8\n" +
                         "0.0.0.6\t0.0.0.6\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.1\t0.0.0.1\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.8\t0.0.0.8\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
+                        "\t\n" +
                         "0.0.0.7\t0.0.0.7\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.5\t0.0.0.5\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.8\t0.0.0.8\n" +
                         "0.0.0.2\t0.0.0.2\n" +
                         "0.0.0.6\t0.0.0.6\n" +
@@ -12376,17 +12385,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.3\t0.0.0.3\n" +
                         "0.0.0.2\t0.0.0.2\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
+                        "\t\n" +
                         "0.0.0.9\t0.0.0.9\n" +
-                        "null\tnull\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
+                        "\t\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.1\t0.0.0.1\n" +
                         "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.2\t0.0.0.2\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.8\t0.0.0.8\n" +
                         "0.0.0.9\t0.0.0.9\n" +
                         "0.0.0.8\t0.0.0.8\n" +
@@ -12394,15 +12403,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.5\t0.0.0.5\n" +
                         "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.6\t0.0.0.6\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.2\t0.0.0.2\n" +
                         "0.0.0.5\t0.0.0.5\n" +
                         "0.0.0.6\t0.0.0.6\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.5\t0.0.0.5\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.7\t0.0.0.7\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.4\t0.0.0.4\n" +
                         "0.0.0.2\t0.0.0.2\n" +
                         "0.0.0.1\t0.0.0.1\n" +
@@ -12410,7 +12419,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0.0.0.5\t0.0.0.5\n" +
                         "0.0.0.3\t0.0.0.3\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "null\tnull\n" +
+                        "\t\n" +
                         "0.0.0.6\t0.0.0.6\n" +
                         "0.0.0.9\t0.0.0.9\n" +
                         "0.0.0.1\t0.0.0.1\n" +

@@ -58,14 +58,16 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
         final Function elseBranch;
+        int returnType = -1;
         if (n % 2 == 0) {
             elseBranch = args.getLast();
+            returnType = elseBranch.getType();
             n--;
         } else {
             elseBranch = null;
         }
 
-        int returnType = -1;
+
         for (int i = 1; i < n; i += 2) {
             final Function keyFunc = args.getQuick(i);
             final int keyArgType = keyFunc.getType();

@@ -33,6 +33,9 @@ import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.Numbers.IPv4_NULL;
 
 public abstract class IPv4Function implements ScalarFunction {
     private final StringSink sinkA = new StringSink();
@@ -145,23 +148,20 @@ public abstract class IPv4Function implements ScalarFunction {
 
     @Override
     public final CharSequence getStr(Record rec) {
-        final int value = getIPv4(rec);
-        sinkA.clear();
-        Numbers.intToIPv4Sink(sinkA, value);
-        return sinkA;
+        return getStringSink(rec, sinkA);
     }
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        Numbers.intToIPv4Sink(sink, getIPv4(rec));
+        int value = getIPv4(rec);
+        if (value != IPv4_NULL) {
+            Numbers.intToIPv4Sink(sink, value);
+        }
     }
 
     @Override
     public final CharSequence getStrB(Record rec) {
-        final int value = getIPv4(rec);
-        sinkB.clear();
-        Numbers.intToIPv4Sink(sinkB, value);
-        return sinkB;
+        return getStringSink(rec, sinkB);
     }
 
     @Override
@@ -187,5 +187,16 @@ public abstract class IPv4Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.IPv4;
+    }
+
+    @Nullable
+    private StringSink getStringSink(Record rec, StringSink sinkA) {
+        final int value = getIPv4(rec);
+        if (value != IPv4_NULL) {
+            sinkA.clear();
+            Numbers.intToIPv4Sink(sinkA, value);
+            return sinkA;
+        }
+        return null;
     }
 }

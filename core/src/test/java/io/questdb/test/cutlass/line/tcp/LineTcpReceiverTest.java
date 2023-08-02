@@ -1213,10 +1213,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
 
                 String expected = "col\tts\n" +
-                        "null\t1970-12-27T13:20:00.000000Z\n" +
-                        "null\t1989-12-31T23:26:40.000000Z\n" +
-                        "null\t1990-01-01T02:13:20.000000Z\n" +
-                        "null\t1990-01-01T05:00:00.000000Z\n";
+                        "\t1970-12-27T13:20:00.000000Z\n" +
+                        "\t1989-12-31T23:26:40.000000Z\n" +
+                        "\t1990-01-01T02:13:20.000000Z\n" +
+                        "\t1990-01-01T05:00:00.000000Z\n";
                 assertTable(expected, "test");
             }
         });
@@ -1249,10 +1249,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
 
                 String expected = "col\tts\n" +
-                        "null\t1970-12-27T13:20:00.000000Z\n" +
-                        "null\t1989-12-31T23:26:40.000000Z\n" +
-                        "null\t1990-01-01T02:13:20.000000Z\n" +
-                        "null\t1990-01-01T05:00:00.000000Z\n";
+                        "\t1970-12-27T13:20:00.000000Z\n" +
+                        "\t1989-12-31T23:26:40.000000Z\n" +
+                        "\t1990-01-01T02:13:20.000000Z\n" +
+                        "\t1990-01-01T05:00:00.000000Z\n";
                 assertTable(expected, "test");
             }
         });
