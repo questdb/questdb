@@ -4731,6 +4731,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIPv4PlusIntConst3() throws Exception {
+        assertSql("select  ('255.255.255.255')::ipv4 + 10", "column\n" +
+                "\n");
+    }
+
+    @Test
     public void testIPv4PlusIntConstNull() throws Exception {
         assertSql("select ipv4 '0.0.0.0' + 20", "column\n" +
                 "\n");

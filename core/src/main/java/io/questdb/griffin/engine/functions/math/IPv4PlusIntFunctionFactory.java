@@ -67,7 +67,7 @@ public class IPv4PlusIntFunctionFactory implements FunctionFactory {
         public int getIPv4(Record rec) {
             final int l = left.getIPv4(rec);
             final int r = right.getInt(rec);
-            final long sum = Numbers.ipv4ToLong(l + r);
+            final long sum = Numbers.ipv4ToLong(l) + r;
 
             if (sum >> 32 != 0) {
                 return Numbers.IPv4_NULL;
