@@ -24,7 +24,10 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngineFactory;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,13 +56,13 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    private final BuildInformation buildInformation;
     private final String banner;
+    private final BuildInformation buildInformation;
+    private final CairoEngineFactory cairoEngineFactory;
     private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
     private final String rootDirectory;
-    private final CairoEngineFactory cairoEngineFactory;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -175,7 +178,7 @@ public class Bootstrap {
                             if (cairoConf == null) {
                                 cairoConf = new PropCairoConfiguration() {
                                     @Override
-                                    public FilesFacade getFilesFacade() {
+                                    public @NotNull FilesFacade getFilesFacade() {
                                         return ffOverride;
                                     }
                                 };
@@ -320,6 +323,10 @@ public class Bootstrap {
         return buildInformation;
     }
 
+    public CairoEngineFactory getCairoEngineFactory() {
+        return cairoEngineFactory;
+    }
+
     public ServerConfiguration getConfiguration() {
         return config;
     }
@@ -330,10 +337,6 @@ public class Bootstrap {
 
     public Metrics getMetrics() {
         return metrics;
-    }
-
-    public CairoEngineFactory getCairoEngineFactory() {
-        return cairoEngineFactory;
     }
 
     public String getRootDirectory() {

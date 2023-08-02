@@ -35,25 +35,27 @@ import java.io.Closeable;
 
 public interface MessageBus extends Closeable {
 
-    Sequence getColumnPurgePubSeq();
+    MPSequence getColumnPurgePubSeq();
 
     RingQueue<ColumnPurgeTask> getColumnPurgeQueue();
 
-    Sequence getColumnPurgeSubSeq();
+    SCSequence getColumnPurgeSubSeq();
 
     CairoConfiguration getConfiguration();
 
-    Sequence getIndexerPubSequence();
+    MPSequence getCopyRequestPubSeq();
+
+    MPSequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();
 
-    Sequence getIndexerSubSequence();
+    MCSequence getIndexerSubSequence();
 
-    Sequence getLatestByPubSeq();
+    MPSequence getLatestByPubSeq();
 
     RingQueue<LatestByTask> getLatestByQueue();
 
-    Sequence getLatestBySubSeq();
+    MCSequence getLatestBySubSeq();
 
     MPSequence getO3CallbackPubSeq();
 
@@ -107,27 +109,25 @@ public interface MessageBus extends Closeable {
 
     SCSequence getTextImportColSeq();
 
-    Sequence getTextImportPubSeq();
+    SPSequence getTextImportPubSeq();
 
     RingQueue<CopyTask> getTextImportQueue();
 
-    MPSequence getCopyRequestPubSeq();
-
     RingQueue<CopyRequestTask> getTextImportRequestQueue();
 
-    Sequence getTextImportRequestSubSeq();
+    SCSequence getTextImportRequestSubSeq();
 
-    Sequence getTextImportSubSeq();
+    MCSequence getTextImportSubSeq();
 
-    Sequence getVectorAggregatePubSeq();
+    MPSequence getVectorAggregatePubSeq();
 
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
-    Sequence getVectorAggregateSubSeq();
+    MCSequence getVectorAggregateSubSeq();
 
-    Sequence getWalTxnNotificationPubSequence();
+    MPSequence getWalTxnNotificationPubSequence();
 
     RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue();
 
-    Sequence getWalTxnNotificationSubSequence();
+    MCSequence getWalTxnNotificationSubSequence();
 }

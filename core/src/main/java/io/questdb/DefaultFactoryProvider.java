@@ -24,6 +24,8 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DdlListenerFactory;
+import io.questdb.cairo.DdlListenerFactoryImpl;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.BasicWalInitializerFactory;
@@ -68,5 +70,10 @@ public class DefaultFactoryProvider implements FactoryProvider {
     @Override
     public WalInitializerFactory getWalInitializerFactory() {
         return BasicWalInitializerFactory.INSTANCE;
+    }
+
+    @Override
+    public DdlListenerFactory getDdlListenerFactory() {
+        return DdlListenerFactoryImpl.INSTANCE;
     }
 }

@@ -175,6 +175,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public void clear() {
         command = DO_NOTHING;
+        sqlExecutionContext = null;
+        securityContext = null;
         extraStrInfo.clear();
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
@@ -348,7 +350,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         isIndexed,
                         indexValueBlockCapacity,
                         false,
-                        sqlExecutionContext
+                        securityContext
                 );
             } catch (CairoException e) {
                 e.position(columnNamePosition);
