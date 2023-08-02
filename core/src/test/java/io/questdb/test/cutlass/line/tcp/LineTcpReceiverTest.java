@@ -1187,6 +1187,40 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testTcpIPv4NoMagicNumbers() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                compiler.compile("create table test (" +
+                        "col ipv4, " +
+                        "ts timestamp " +
+                        ") timestamp(ts) partition by day", sqlExecutionContext);
+
+                engine.releaseInactive();
+
+                // Check that -1 and -2 are not magic numbers in ILP parsing
+                runInContext((receiver) -> {
+                    String lineData =
+                            "test col=\"255.255.255.254\" 631150000000000000\n" +
+                                    "test col=\"255.255.255.255\" 631150000000000000\n";
+                    sendLinger(lineData, "test");
+                });
+                mayDrainWalQueue();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("test"));
+                }
+
+                String expected = "col\tts\n" +
+                        "255.255.255.254\t1989-12-31T23:26:40.000000Z\n" +
+                        "255.255.255.255\t1989-12-31T23:26:40.000000Z\n";
+                assertTable(expected, "test");
+            }
+        });
+    }
+
+    @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
             try (

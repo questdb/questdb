@@ -856,6 +856,15 @@ public final class Numbers {
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
+    public static int parseIPv4Nl(CharSequence sequence) throws NumericException {
+        // "null" string is not a null ip address if received via ilp
+        // via ilp, null ips are either null, empty strings or "0.0.0.0"
+        if (sequence == null || sequence.length() == 0) {
+            return IPv4_NULL;
+        }
+        return Numbers.parseIPv4(sequence);
+    }
+
     public static int parseIPv4Quiet(CharSequence sequence)
     {
         try {
@@ -865,20 +874,6 @@ public final class Numbers {
             return parseIPv4(sequence);
         } catch (NumericException e) {
             return IPv4_NULL;
-        }
-    }
-
-    public static int parseIPv4QuietTCP(CharSequence sequence)
-    {
-        // "null" string is not a null ip address if received via ilp
-        // via ilp, null ips are either null, empty strings or "0.0.0.0"
-        try {
-            if (sequence == null || sequence.length() == 0) {
-                return IPv4_NULL;
-            }
-            return parseIPv4(sequence);
-        } catch (NumericException e) {
-            return -2;
         }
     }
 
