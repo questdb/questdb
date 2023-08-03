@@ -130,7 +130,7 @@ questdb stop  // To stop questdb
   <a href="https://questdb.io/time-series-benchmark-suite/">
     <img
       alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
+      src="../.github/readme-benchmark.png"
     />
   </a>
 </div>

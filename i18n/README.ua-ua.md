@@ -83,7 +83,7 @@ questdb stop  // To stop questdb
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="Діаграма порівняння максимальної пропускної здатності QuestDB, ClickHouse, TimescaleDB і InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
+    <img alt="Діаграма порівняння максимальної пропускної здатності QuestDB, ClickHouse, TimescaleDB і InfluxDB." src="../.github/readme-benchmark.png"/>
   </a>
 </div>
 

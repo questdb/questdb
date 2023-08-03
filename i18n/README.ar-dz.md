@@ -105,7 +105,7 @@ questdb stop  // To stop questdb
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
     <img
       alt="مخطط بياني يقارن الحد الأقصى من الإنتاجية لكل من QuestDB و ClickHouse و TimescaleDB و InfluxDB."
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
+      src="../.github/readme-benchmark.png"
     />
   </a>
 </div>

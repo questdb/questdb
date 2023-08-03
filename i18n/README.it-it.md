@@ -90,7 +90,7 @@ risultati ottenuti usando `cpu-only` con 6 workers su un AMD Ryzen 3970X:
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="Grafico che compara la massima portata di QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
+    <img alt="Grafico che compara la massima portata di QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="../.github/readme-benchmark.png"/>
   </a>
 </div>
 
