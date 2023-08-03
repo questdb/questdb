@@ -223,11 +223,11 @@ public class UpdateTest extends AbstractCairoTest {
                     "1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238\n" +
                     "1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65\n" +
                     "1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29\n";
-            assertSql("up", data);
+            assertSql(data, "up");
 
             update("UPDATE up set str = 'abc'");
             update("UPDATE up set str = ip");
-            assertSql("up", data);
+            assertSql(data, "up");
         });
     }
 
