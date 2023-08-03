@@ -9342,19 +9342,6 @@ create table tab as (
         });
     }
 
-    private static void assertResultNTimes(Connection connection, String sql, String expected, int maxRows, int times) throws SQLException, IOException {
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setMaxRows(maxRows);
-
-            for (int i = 0; i < times; i++) {
-                sink.clear();
-                try (ResultSet rs = statement.executeQuery()) {
-                    assertResultSet(expected, sink, rs);
-                }
-            }
-        }
-    }
-
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
         int backendPid;
         AtomicBoolean isCancelled = new AtomicBoolean(false);
@@ -9526,6 +9513,19 @@ create table tab as (
                 }
                 try (ResultSet result = ps.executeQuery()) {
                     assertResultSet(metaSink.toString(), expSink, sink, result);
+                }
+            }
+        }
+    }
+
+    private void assertResultNTimes(Connection connection, String sql, String expected, int maxRows, int times) throws SQLException, IOException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setMaxRows(maxRows);
+
+            for (int i = 0; i < times; i++) {
+                sink.clear();
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(expected, sink, rs);
                 }
             }
         }
