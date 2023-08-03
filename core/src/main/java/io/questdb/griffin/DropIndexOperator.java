@@ -41,8 +41,8 @@ public class DropIndexOperator {
     private final FilesFacade ff;
     private final Path other;
     private final Path path;
-    private final LongList rollbackColumnVersions = new LongList();
     private final PurgingOperator purgingOperator;
+    private final LongList rollbackColumnVersions = new LongList();
     private final int rootLen;
     private final TableWriter tableWriter;
 

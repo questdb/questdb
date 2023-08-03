@@ -99,6 +99,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public int getIPv4(int col) {
+        return base.getIPv4(getColumnIndex(col));
+    }
+
+    @Override
     public int getInt(int col) {
         return base.getInt(getColumnIndex(col));
     }

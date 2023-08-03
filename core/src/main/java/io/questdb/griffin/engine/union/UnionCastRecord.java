@@ -147,6 +147,14 @@ public class UnionCastRecord extends AbstractUnionRecord {
     // symbol is not supported by set functions
 
     @Override
+    public int getIPv4(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getIPv4(recordA);
+        }
+        return castFunctionsB.getQuick(col).getIPv4(recordB);
+    }
+
+    @Override
     public int getInt(int col) {
         if (useA) {
             return castFunctionsA.getQuick(col).getInt(recordA);

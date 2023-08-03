@@ -115,6 +115,9 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public int getIPv4(Record rec) { return 0; }
+
+        @Override
         public long getLong(Record rec) {
             return 0;
         }

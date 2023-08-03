@@ -362,6 +362,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 case ColumnType.INT:
                     bindVarMemory.putLong(function.getInt(null));
                     return;
+                case ColumnType.IPv4:
+                    bindVarMemory.putLong(function.getIPv4(null));
+                    return;
                 case ColumnType.GEOINT:
                     bindVarMemory.putLong(function.getGeoInt(null));
                     return;

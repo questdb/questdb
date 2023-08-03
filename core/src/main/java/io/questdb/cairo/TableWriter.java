@@ -2295,6 +2295,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             case ColumnType.INT:
                 nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
                 break;
+            case ColumnType.IPv4:
+                nullers.add(() -> mem1.putInt(Numbers.IPv4_NULL));
+                break;
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
@@ -2889,6 +2892,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
                         case ColumnType.UUID:
+                        case ColumnType.IPv4:
                             attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
                         case ColumnType.STRING:

@@ -338,6 +338,7 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
                                 .add(ColumnType.UUID)
+                                .add(ColumnType.IPv4)
                         ,
                         N,
                         0.9,
@@ -545,6 +546,7 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.getGeoHashTypeWithBits(10))
                                 .add(ColumnType.getGeoHashTypeWithBits(20))
                                 .add(ColumnType.getGeoHashTypeWithBits(40))
+                                .add(ColumnType.IPv4)
                         ,
                         N,
                         0.9,
@@ -582,6 +584,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(11));
                         Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(12));
                         Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoLong(13));
+                        Assert.assertEquals(rnd2.nextInt(), value.getIPv4(14));
                     }
                 }
             }
@@ -837,6 +840,7 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putShort(11, (short) Math.abs(rnd2.nextShort()));
             value.putInt(12, Math.abs(rnd2.nextInt()));
             value.putLong(13, Math.abs(rnd2.nextLong()));
+            value.putInt(14, rnd2.nextInt());
         }
     }
 

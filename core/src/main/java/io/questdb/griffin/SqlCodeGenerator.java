@@ -913,7 +913,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // Wider types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                             default:
-
                         }
                         break;
                     case ColumnType.INT:
@@ -936,6 +935,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // INT will be cast to wider types, not other way around
                             // Wider types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                        }
+                        break;
+                    case ColumnType.IPv4:
+                        if (fromTag == ColumnType.IPv4) {
+                            castFunctions.add(new IPv4Column(i));
+                        } else {
+                            throw SqlException.unsupportedCast(
+                                    modelPosition,
+                                    castFromMetadata.getColumnName(i),
+                                    fromType,
+                                    toType
+                            );
                         }
                         break;
                     case ColumnType.LONG:
@@ -4455,6 +4466,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.CHAR:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.LONG:
                     case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
@@ -4482,7 +4494,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY");
                 }
             }
         }

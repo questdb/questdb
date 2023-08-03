@@ -42,9 +42,9 @@ import java.io.Closeable;
 
 class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
+    private final TableRenameSupportExecutionContext renameSupportExecutionContext;
     private final Rnd rnd;
     private final SqlCompiler sqlCompiler;
-    private final TableRenameSupportExecutionContext renameSupportExecutionContext;
 
     OperationCompiler(
             CairoEngine engine,

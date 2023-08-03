@@ -133,6 +133,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return Long128Column.newInstance(index);
             case ColumnType.UUID:
                 return UuidColumn.newInstance(index);
+            case ColumnType.IPv4:
+                return IPv4Column.newInstance(index);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")
@@ -484,6 +486,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.REGPROCEDURE
                         || columnType == ColumnType.ARRAY_STRING
                         || columnType == ColumnType.UUID
+                        || columnType == ColumnType.IPv4
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -973,6 +976,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return function;
                 } else {
                     return new UuidConstant(function.getLong128Lo(null), function.getLong128Hi(null));
+                }
+            case ColumnType.IPv4:
+                if (function instanceof IPv4Constant) {
+                    return function;
+                } else {
+                    return IPv4Constant.newInstance(function.getIPv4(null));
                 }
             default:
                 return function;
