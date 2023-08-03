@@ -127,7 +127,7 @@ questdb stop  // To stop questdb
     <img
       alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
       src="../.github/readme-benchmark.png"
-      width="1024"
+      width="600"
     />
   </a>
 </div>
