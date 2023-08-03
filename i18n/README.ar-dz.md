@@ -103,7 +103,7 @@ questdb stop  // To stop questdb
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." width="1042" alt="tsbs-results" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png">
+    <img alt="مخطط بياني يقارن الحد الأقصى من الإنتاجية لكل من QuestDB و ClickHouse و TimescaleDB و InfluxDB." width="1042" alt="tsbs-results" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png">
   </a>
 </div>
 
