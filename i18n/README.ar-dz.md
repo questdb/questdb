@@ -1,9 +1,5 @@
 <div align="center">
-  <img
-    alt="QuestDB Logo"
-    src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"
-    width="305px"
-  />
+   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 

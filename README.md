@@ -36,7 +36,7 @@ Java and C++, with no dependencies and zero garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing s SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="800" />
+    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
