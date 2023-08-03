@@ -336,7 +336,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testBug484() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery("sym\n" +
+        assertQuery(
+                "sym\n" +
                         "cc\n" +
                         "cc\n" +
                         "cc\n" +
@@ -1898,22 +1899,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // 2022-03-31 10:00:00.0
         currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
         assertQuery("min\tmax\n" +
-                        "\t\n", "SELECT min(ts), max(ts)\n" +
-                        "FROM tab\n" +
-                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())", "CREATE TABLE tab AS (\n" +
-                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
-                        "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
+                "\t\n", "SELECT min(ts), max(ts)\n" +
+                "FROM tab\n" +
+                "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())", "CREATE TABLE tab AS (\n" +
+                "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                "    FROM long_sequence(10)\n" +
+                ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
 
         drop("drop table tab");
 
         assertQuery("min\tmax\n" +
-                        "\t\n", "SELECT min(ts), max(ts)\n" +
-                        " FROM tab\n" +
-                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())", "CREATE TABLE tab AS (\n" +
-                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
-                        "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
+                "\t\n", "SELECT min(ts), max(ts)\n" +
+                " FROM tab\n" +
+                " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())", "CREATE TABLE tab AS (\n" +
+                "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                "    FROM long_sequence(10)\n" +
+                ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
     }
 
     @Test
@@ -2017,9 +2018,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testGroupByConstantMatchingColumnName() throws Exception {
         assertQuery("nts\tmin\nnts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                        "from long_sequence(2L)", "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z\n", false, true, false);
+                "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                "from long_sequence(2L)", "nts\tmin\n" +
+                "nts\t2020-01-01T00:00:00.000010Z\n", false, true, false);
     }
 
     @Test
@@ -2281,54 +2282,54 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAll() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllBool() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                        "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select * from" +
-                        "(" +
-                        " select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_boolean() b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20) " +
-                        ")" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " false," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tb\tk\n" +
-                        "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                        "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select * from" +
+                "(" +
+                " select" +
+                " rnd_double(0)*100 a," +
+                " rnd_boolean() b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20) " +
+                ")" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " false," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2340,25 +2341,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected, "select * from x where 6 < 10 latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2369,24 +2370,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected, "select * from x where a > 40 latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2398,25 +2399,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected, "select * from x latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2428,24 +2429,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected, "select * from x where 5 > 2 latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -2456,29 +2457,29 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
         assertQuery(expected, "select * from (select a,k,b from x latest on k partition by b) where a > 40", "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 46.578761277152225," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tk\tb\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, false, false);
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 46.578761277152225," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tk\tb\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, false, false);
     }
 
     @Test
@@ -2490,30 +2491,30 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
         assertQuery(expected, "select a,k,b from x where a > 40 latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 46.578761277152225," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tk\tb\n" +
-                        "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 46.578761277152225," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tk\tb\n" +
+                "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
     }
 
     @Test
@@ -2521,23 +2522,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
         assertQuery(expected, "select * from x where c = 'SXUX' latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_symbol(5,4,4,1) c," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " 'SXUX'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tb\tc\tk\n" +
-                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
-                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_symbol(5,4,4,1) c," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " 'SXUX'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tc\tk\n" +
+                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
+                "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -3232,32 +3233,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
         assertQuery(expected, "select a,k,b from x latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "a\tk\tb\n" +
-                        "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
-                        "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tk\tb\n" +
+                "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
+                "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
     }
 
     @Test
@@ -3269,25 +3270,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
                 "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
         assertQuery(expected, "select k,a from x latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "k\ta\n" +
-                        "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
-                        "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
-                        "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
-                        "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
-                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "k\ta\n" +
+                "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
+                "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
+                "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
+                "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
+                "2019-01-01T00:00:00.000000Z\t56.594291398612405\n", true, true, false);
     }
 
     @Test
@@ -3342,37 +3343,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllMixed() throws Exception {
         assertQuery("b\tk\ta\n" +
-                        "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
-                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
-                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
-                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
-                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
-                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n", "select b,k,a from x latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", "b\tk\ta\n" +
-                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
-                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
-                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
-                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
-                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
-                        "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n", true, true, false);
+                "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
+                "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n", "select b,k,a from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "b\tk\ta\n" +
+                "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
+                "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n", true, true, false);
     }
 
     @Test
@@ -3432,21 +3433,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected, "select * from x where a > 40 latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'CCKS'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)", expected +
-                        "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'CCKS'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", expected +
+                "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -3903,24 +3904,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByKeyValues() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -3928,26 +3929,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestMatchFunctionFactory.clear();
         // no index
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match() latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(5)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(5)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -3955,48 +3956,48 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByKeyValuesIndexed() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4153,46 +4154,46 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByMissingKeyValues() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ','HYRX') latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ','HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByMissingKeyValuesFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4201,46 +4202,46 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMissingKeyValuesIndexed() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
-                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 10000000000) k" +
-                        " from" +
-                        " long_sequence(300)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " 88.1," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
-                        "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 10000000000) k" +
+                " from" +
+                " long_sequence(300)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 88.1," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
+                "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4329,32 +4330,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMultipleColumns() throws Exception {
         assertQuery("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n", "select * from balances latest on timestamp partition by cust_id, balance_ccy", "create table balances (\n" +
-                        "\tcust_id int, \n" +
-                        "\tbalance_ccy symbol, \n" +
-                        "\tbalance double, \n" +
-                        "\tstatus byte, \n" +
-                        "\ttimestamp timestamp\n" +
-                        ") timestamp(timestamp)", "timestamp", "insert into balances select * from (" +
-                        " select" +
-                        " abs(rnd_int()) % 4," +
-                        " rnd_str('USD', 'GBP', 'EUR')," +
-                        " rnd_double()," +
-                        " rnd_byte(0,1)," +
-                        " cast(0 as timestamp) timestamp" +
-                        " from long_sequence(150)" +
-                        ") timestamp (timestamp)", "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
-                        "3\tUSD\t0.8796413468565342\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "3\tEUR\t0.011099265671968506\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\tEUR\t0.10747511833573742\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\tGBP\t0.15274858078119136\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "0\tGBP\t0.07383464174908916\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\tEUR\t0.30062011052460846\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\tUSD\t0.12454054765285283\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "0\tUSD\t0.3124458010612313\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n", true, true, false);
+                "\tcust_id int, \n" +
+                "\tbalance_ccy symbol, \n" +
+                "\tbalance double, \n" +
+                "\tstatus byte, \n" +
+                "\ttimestamp timestamp\n" +
+                ") timestamp(timestamp)", "timestamp", "insert into balances select * from (" +
+                " select" +
+                " abs(rnd_int()) % 4," +
+                " rnd_str('USD', 'GBP', 'EUR')," +
+                " rnd_double()," +
+                " rnd_byte(0,1)," +
+                " cast(0 as timestamp) timestamp" +
+                " from long_sequence(150)" +
+                ") timestamp (timestamp)", "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
+                "3\tUSD\t0.8796413468565342\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "3\tEUR\t0.011099265671968506\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "1\tEUR\t0.10747511833573742\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "1\tGBP\t0.15274858078119136\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "0\tGBP\t0.07383464174908916\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "2\tEUR\t0.30062011052460846\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "1\tUSD\t0.12454054765285283\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "0\tUSD\t0.3124458010612313\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -4590,53 +4591,53 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySubQuery() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferred() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -4644,29 +4645,29 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestMatchFunctionFactory.clear();
         // no index
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -4675,56 +4676,56 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryDeferredIndexed() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferredIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -4734,28 +4735,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestMatchFunctionFactory.clear();
         // no index
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -4763,54 +4764,54 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryIndexed() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -4836,22 +4837,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryIndexedStrColumn() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n", "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n", "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -4951,7 +4952,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH] are supported in LATEST BY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY";
         ddl(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
@@ -5425,55 +5426,55 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n";
 
         assertQuery(expected, "x order by a,b,c,d,e,f,g,i,j,k,l,n", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", null, "insert into x(a,d,c,k) select * from (" +
-                        "select" +
-                        " 1194691157," +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
-                        "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
-                        "-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
-                        "-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
-                        "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
-                        "-1508370878\tfalse\t\tNaN\tNaN\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
-                        "00000010 2c 23\tVLOMPBETTTKRIV\n" +
-                        "-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
-                        "-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
-                        "-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
-                        "-857795778\ttrue\t\t0.07828020681514525\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
-                        "-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
-                        "-42049305\tfalse\tW\t0.4698648140712085\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
-                        "33027131\tfalse\tS\t0.15369837085455984\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
-                        "131103569\ttrue\tO\tNaN\tNaN\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
-                        "161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
-                        "00000010 8e e5 61 2f\tQOLYXWC\n" +
-                        "971963578\ttrue\t\t0.22347827811588927\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
-                        "976011946\ttrue\tU\t0.24001459007748394\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
-                        "1150448121\ttrue\tC\t0.600707072503926\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
-                        "00000010 00\t\n" +
-                        "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
-                        "1194691157\tfalse\tRXGZ\t88.69397617459538\tNaN\t0\t\t\tNaN\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
-                        "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_boolean() b," +
+                " rnd_str(1,1,2) c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) i," +
+                " rnd_long() j," +
+                " timestamp_sequence(0, 1000000000) k," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", null, "insert into x(a,d,c,k) select * from (" +
+                "select" +
+                " 1194691157," +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
+                "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
+                "-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
+                "-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                "-1508370878\tfalse\t\tNaN\tNaN\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
+                "00000010 2c 23\tVLOMPBETTTKRIV\n" +
+                "-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
+                "-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
+                "-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
+                "-857795778\ttrue\t\t0.07828020681514525\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
+                "-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
+                "-42049305\tfalse\tW\t0.4698648140712085\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
+                "33027131\tfalse\tS\t0.15369837085455984\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
+                "131103569\ttrue\tO\tNaN\tNaN\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
+                "161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                "00000010 8e e5 61 2f\tQOLYXWC\n" +
+                "971963578\ttrue\t\t0.22347827811588927\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
+                "976011946\ttrue\tU\t0.24001459007748394\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
+                "1150448121\ttrue\tC\t0.600707072503926\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                "00000010 00\t\n" +
+                "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
+                "1194691157\tfalse\tRXGZ\t88.69397617459538\tNaN\t0\t\t\tNaN\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
+                "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
+                "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n", true, true, false);
     }
 
     @Test
@@ -5636,7 +5637,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "ZOU\t65.90341607692226\t1970-01-03T15:00:00.000000Z\n" +
                         "\t32.5403220015421\t1970-01-03T18:00:00.000000Z\n" +
                         "YCT\t57.78947915182423\t1970-01-03T18:00:00.000000Z\n",
-                // we have 'sample by fill(none)' because it doesn't support
                 // random record access, which is what we intend on testing
                 "select b, sum(a), k from x sample by 3h fill(none) order by k,b",
                 "create table x as " +
@@ -5735,21 +5735,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
 
         assertQuery(expected, "select * from x " +
-                        " order by b, a", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_long256() a," +
-                        " rnd_char() b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_long256()," +
-                        " 'W'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", expected2, true, true, false);
+                " order by b, a", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_long256() a," +
+                " rnd_char() b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", null, "insert into x select * from (" +
+                "select" +
+                " rnd_long256()," +
+                " 'W'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", expected2, true, true, false);
     }
 
     @Test
@@ -5777,43 +5777,43 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
         assertQuery(expected, "x order by c", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_str(1,1,2) c," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_int()," +
-                        " 'J'," +
-                        " to_timestamp('1971', 'yyyy') t," +
-                        " 'APPC'" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tc\tk\tn\n" +
-                        "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
-                        "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
-                        "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
-                        "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
-                        "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
-                        "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
-                        "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
-                        "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
-                        "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
-                        "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
-                        "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
-                        "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tAPPC\n" +
-                        "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
-                        "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
-                        "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
-                        "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
-                        "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                        "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_str(1,1,2) c," +
+                " timestamp_sequence(0, 1000000000) k," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                "select" +
+                " rnd_int()," +
+                " 'J'," +
+                " to_timestamp('1971', 'yyyy') t," +
+                " 'APPC'" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tc\tk\tn\n" +
+                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tAPPC\n" +
+                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
     }
 
     @Test
@@ -6000,43 +6000,43 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n";
 
         assertQuery(expected, "x order by k,a", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_str(1,1,2) c," +
-                        " cast(1000000 as timestamp) k," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
-                        "select" +
-                        " 852921272," +
-                        " 'J'," +
-                        " cast(1000000 as timestamp) t," +
-                        " 'APPC'" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tc\tk\tn\n" +
-                        "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
-                        "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
-                        "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
-                        "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
-                        "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
-                        "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
-                        "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
-                        "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
-                        "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
-                        "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
-                        "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
-                        "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                        "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
-                        "852921272\tJ\t1970-01-01T00:00:01.000000Z\tAPPC\n" +
-                        "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
-                        "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
-                        "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
-                        "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_str(1,1,2) c," +
+                " cast(1000000 as timestamp) k," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " 852921272," +
+                " 'J'," +
+                " cast(1000000 as timestamp) t," +
+                " 'APPC'" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tc\tk\tn\n" +
+                "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
+                "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
+                "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
+                "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
+                "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
+                "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
+                "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
+                "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
+                "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
+                "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
+                "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
+                "852921272\tJ\t1970-01-01T00:00:01.000000Z\tAPPC\n" +
+                "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
+                "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
+                "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
+                "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n", true, true, false);
     }
 
     @Test
@@ -6064,43 +6064,43 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
         assertQuery(expected, "x order by c,n desc", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_str(1,1,2) c," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_int()," +
-                        " 'J'," +
-                        " to_timestamp('1971', 'yyyy') t," +
-                        " 'ZZCC'" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tc\tk\tn\n" +
-                        "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
-                        "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
-                        "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
-                        "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
-                        "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
-                        "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
-                        "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
-                        "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
-                        "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
-                        "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
-                        "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
-                        "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tZZCC\n" +
-                        "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
-                        "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
-                        "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
-                        "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
-                        "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                        "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_str(1,1,2) c," +
+                " timestamp_sequence(0, 1000000000) k," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                "select" +
+                " rnd_int()," +
+                " 'J'," +
+                " to_timestamp('1971', 'yyyy') t," +
+                " 'ZZCC'" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tc\tk\tn\n" +
+                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tZZCC\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
     }
 
     @Test
@@ -6133,62 +6133,62 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testOrderChar() throws Exception {
         assertQuery("a\n" +
-                        "C\n" +
-                        "E\n" +
-                        "G\n" +
-                        "H\n" +
-                        "H\n" +
-                        "J\n" +
-                        "N\n" +
-                        "P\n" +
-                        "P\n" +
-                        "R\n" +
-                        "R\n" +
-                        "S\n" +
-                        "T\n" +
-                        "V\n" +
-                        "W\n" +
-                        "W\n" +
-                        "X\n" +
-                        "X\n" +
-                        "Y\n" +
-                        "Z\n", "select * from x order by a", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_char() a" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ")", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_char()" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ")", "a\n" +
-                        "C\n" +
-                        "E\n" +
-                        "G\n" +
-                        "H\n" +
-                        "H\n" +
-                        "I\n" +
-                        "J\n" +
-                        "N\n" +
-                        "P\n" +
-                        "P\n" +
-                        "R\n" +
-                        "R\n" +
-                        "S\n" +
-                        "S\n" +
-                        "T\n" +
-                        "U\n" +
-                        "V\n" +
-                        "W\n" +
-                        "W\n" +
-                        "X\n" +
-                        "X\n" +
-                        "X\n" +
-                        "X\n" +
-                        "Y\n" +
-                        "Z\n", true, true, false);
+                "C\n" +
+                "E\n" +
+                "G\n" +
+                "H\n" +
+                "H\n" +
+                "J\n" +
+                "N\n" +
+                "P\n" +
+                "P\n" +
+                "R\n" +
+                "R\n" +
+                "S\n" +
+                "T\n" +
+                "V\n" +
+                "W\n" +
+                "W\n" +
+                "X\n" +
+                "X\n" +
+                "Y\n" +
+                "Z\n", "select * from x order by a", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_char() a" +
+                " from" +
+                " long_sequence(20)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " rnd_char()" +
+                " from" +
+                " long_sequence(5)" +
+                ")", "a\n" +
+                "C\n" +
+                "E\n" +
+                "G\n" +
+                "H\n" +
+                "H\n" +
+                "I\n" +
+                "J\n" +
+                "N\n" +
+                "P\n" +
+                "P\n" +
+                "R\n" +
+                "R\n" +
+                "S\n" +
+                "S\n" +
+                "T\n" +
+                "U\n" +
+                "V\n" +
+                "W\n" +
+                "W\n" +
+                "X\n" +
+                "X\n" +
+                "X\n" +
+                "X\n" +
+                "Y\n" +
+                "Z\n", true, true, false);
     }
 
     @Test
@@ -6216,41 +6216,41 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b asc", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6278,41 +6278,41 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b desc", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6340,40 +6340,40 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b, k desc", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6401,41 +6401,41 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b desc, k", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by DAY", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)", "a\tb\tk\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by DAY", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6675,16 +6675,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "9\n";
 
         assertQuery(expected, "select distinct a from x order by a", "create table x as " +
-                        "(" +
-                        "select" +
-                        " abs(rnd_int())%10 a" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ")", null, "insert into x select * from (" +
-                        "select" +
-                        " abs(rnd_int())%10 a" +
-                        " from long_sequence(1000000)" +
-                        ") ", expected, true, true, false);
+                "(" +
+                "select" +
+                " abs(rnd_int())%10 a" +
+                " from" +
+                " long_sequence(20)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " abs(rnd_int())%10 a" +
+                " from long_sequence(1000000)" +
+                ") ", expected, true, true, false);
     }
 
     @Test
@@ -6746,16 +6746,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "ZSXU\n";
 
         assertQuery(expected, "select distinct a from x order by a", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol(20,4,6,2) a" +
-                        " from" +
-                        " long_sequence(10000)" +
-                        ")", null, "insert into x select * from (" +
-                        "select" +
-                        " rnd_symbol(10,3,5,0) a" +
-                        " from long_sequence(1000000)" +
-                        ") ", expected2, true, true, false);
+                "(" +
+                "select" +
+                " rnd_symbol(20,4,6,2) a" +
+                " from" +
+                " long_sequence(10000)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " rnd_symbol(10,3,5,0) a" +
+                " from long_sequence(1000000)" +
+                ") ", expected2, true, true, false);
     }
 
     @Test

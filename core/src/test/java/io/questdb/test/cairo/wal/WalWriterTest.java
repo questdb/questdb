@@ -1530,6 +1530,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("string8", ColumnType.STRING) // putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars)
                     .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long lo, long hi)
                     .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
+                    .col("IPv4", ColumnType.IPv4)
                     .timestamp("ts")
                     .wal()
             ) {
@@ -1599,6 +1600,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         stringSink.clear();
                         Numbers.appendUuid(i, i + 1, stringSink);
                         row.putUuid(29, stringSink);
+                        row.putInt(30, i);
 
                         row.append();
                     }
@@ -1613,7 +1615,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(31, reader.getColumnCount());
+                    assertEquals(32, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -1678,8 +1680,9 @@ public class WalWriterTest extends AbstractCairoTest {
 
                         assertEquals(i, record.getLong128Lo(29));
                         assertEquals(i + 1, record.getLong128Hi(29));
+                        assertEquals(i, record.getIPv4(30));
 
-                        assertEquals(ts, record.getTimestamp(30));
+                        assertEquals(ts, record.getTimestamp(31));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);

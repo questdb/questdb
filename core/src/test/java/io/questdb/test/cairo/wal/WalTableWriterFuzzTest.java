@@ -912,7 +912,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putGeoHash(col++, i); // geo long
         row.putStr(col++, (char) (65 + i % 26));
         row.putSym(col++, symbol);
-        row.putLong128(col, Hash.fastLongMix(i), Hash.fastLongMix(i + 1)); // UUID
+        row.putLong128(col++, Hash.fastLongMix(i), Hash.fastLongMix(i + 1)); // UUID
         row.append();
     }
 

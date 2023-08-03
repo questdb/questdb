@@ -824,6 +824,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         case ColumnType.SYMBOL:
                             TestUtils.assertEquals(expected[expectedRow].getSym(col), record.getSym(col));
                             break;
+                        case ColumnType.IPv4:
+                            Assert.assertEquals(expected[expectedRow].getIPv4(col), record.getIPv4(col));
+                            break;
                         case ColumnType.LONG256:
                             Long256 l1 = expected[expectedRow].getLong256A(col);
                             Long256 l2 = record.getLong256A(col);

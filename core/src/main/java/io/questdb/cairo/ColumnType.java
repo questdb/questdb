@@ -47,7 +47,7 @@ public final class ColumnType {    //@formatter:off
     public static final short BOOLEAN = 1;
     public static final short BYTE = BOOLEAN + 1;       // = 2;
     public static final short SHORT = BYTE + 1;         // = 3;
-    public static final short CHAR = SHORT + 1;         // = 4
+    public static final short CHAR = SHORT + 1;         // = 4;
     public static final short INT = CHAR + 1;           // = 5;
     public static final short LONG = INT + 1;           // = 6;
     public static final short DATE = LONG + 1;          // = 7;
@@ -71,12 +71,14 @@ public final class ColumnType {    //@formatter:off
     // inside the MAX type value.
     public static final short GEOHASH = RECORD + 1;     // = 23;
     public static final short LONG128 = GEOHASH + 1;    // = 24; // Limited support, few tests only
+    public static final short IPv4 = LONG128 + 1;       // = 25;
     // PG specific types to work with 3rd party software with canned catalogue queries
-    public static final short REGCLASS = LONG128 + 1;   // = 25;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 26;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 27;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 28;
-    public static final short NULL = PARAMETER + 1;             // = 29;
+    public static final short REGCLASS = IPv4 + 1;   // = 26;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 27;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
+    public static final short NULL = PARAMETER + 1;             // = 30;
+
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
@@ -225,7 +227,8 @@ public final class ColumnType {    //@formatter:off
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
-                || isImplicitParsingCast(fromType, toType);
+                || isImplicitParsingCast(fromType, toType)
+                || isIPv4Cast(fromType, toType);
     }
 
     public static boolean isUndefined(int columnType) {
@@ -318,6 +321,10 @@ public final class ColumnType {    //@formatter:off
                 || (fromTag == GEOSHORT && toTag == GEOBYTE);
     }
 
+    private static boolean isIPv4Cast(int fromType, int toType) {
+        return (fromType == STRING && toType == IPv4);
+    }
+
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         return (fromType == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6)
@@ -406,6 +413,7 @@ public final class ColumnType {    //@formatter:off
         typeNameMap.put(REGCLASS, "regclass");
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
+        typeNameMap.put(IPv4, "IPv4");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
@@ -435,6 +443,7 @@ public final class ColumnType {    //@formatter:off
         nameTypeMap.put("regclass", REGCLASS);
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
+        nameTypeMap.put("IPv4", IPv4);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
@@ -457,6 +466,7 @@ public final class ColumnType {    //@formatter:off
         TYPE_SIZE_POW2[CHAR] = 1;
         TYPE_SIZE_POW2[FLOAT] = 2;
         TYPE_SIZE_POW2[INT] = 2;
+        TYPE_SIZE_POW2[IPv4] = 2;
         TYPE_SIZE_POW2[SYMBOL] = 2;
         TYPE_SIZE_POW2[DOUBLE] = 3;
         TYPE_SIZE_POW2[STRING] = -1;
@@ -484,6 +494,7 @@ public final class ColumnType {    //@formatter:off
         TYPE_SIZE[CHAR] = Character.BYTES;
         TYPE_SIZE[FLOAT] = Float.BYTES;
         TYPE_SIZE[INT] = Integer.BYTES;
+        TYPE_SIZE[IPv4] = Integer.BYTES;
         TYPE_SIZE[SYMBOL] = Integer.BYTES;
         TYPE_SIZE[STRING] = 0;
         TYPE_SIZE[DOUBLE] = Double.BYTES;

@@ -2386,6 +2386,7 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
+
     @Test
     public void testIntToSymbol() throws Exception {
         assertQuery("a\n", "select a from tab", "create table tab (a symbol)", null, "insert into tab select cast(rnd_int(1,150,100) as symbol) from long_sequence(10)", "a\n" +

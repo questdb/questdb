@@ -7832,6 +7832,7 @@ public class O3Test extends AbstractO3Test {
                         r.putChar(indexes.get(j), rnd.nextChar());
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.GEOINT:
                         r.putInt(indexes.get(j), rnd.nextInt());
                         break;

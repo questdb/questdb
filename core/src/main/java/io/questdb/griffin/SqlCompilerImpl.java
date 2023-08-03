@@ -371,7 +371,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     }
 
     private static boolean isCompatibleCase(int from, int to) {
+        if (isIPv4Cast(from, to)) {
+            return true;
+        }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
+    }
+
+    private static boolean isIPv4Cast(int from, int to) {
+        return (from == ColumnType.STRING && to == ColumnType.IPv4);
+    }
+
+    private static boolean isIPv4UpdateCast(int from, int to) {
+        return (from == ColumnType.STRING && to == ColumnType.IPv4)
+                || (from == ColumnType.IPv4 && to == ColumnType.STRING);
     }
 
     private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {
@@ -2326,7 +2338,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
                 int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
-                if (virtualColumnType != tableColumnType) {
+                if (virtualColumnType != tableColumnType && !isIPv4UpdateCast(virtualColumnType, tableColumnType)) {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         // get column position
                         ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();

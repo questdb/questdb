@@ -651,6 +651,8 @@ public final class TableUtils {
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
                 return GeoHashes.NULL;
+            case ColumnType.IPv4:
+                return Numbers.IPv4_NULL;
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
@@ -1317,6 +1319,9 @@ public final class TableUtils {
                 break;
             case ColumnType.INT:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                break;
+            case ColumnType.IPv4:
+                Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
                 break;
             case ColumnType.GEOINT:
                 Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);

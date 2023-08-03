@@ -404,6 +404,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                     case ColumnType.STRING:
                         valid = columnTypeTag == ColumnType.STRING ||
                                 columnTypeTag == ColumnType.CHAR ||
+                                columnTypeTag == ColumnType.IPv4 ||
                                 isForField &&
                                         (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
                         break;

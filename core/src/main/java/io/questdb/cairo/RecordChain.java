@@ -365,6 +365,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
+        public int getIPv4(int col) {
+            return mem.getIPv4(fixedWithColumnOffset(col));
+        }
+
+        @Override
         public int getInt(int col) {
             return mem.getInt(fixedWithColumnOffset(col));
         }
@@ -397,6 +402,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public Long256 getLong256B(int col) {
             return mem.getLong256B(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getLongIPv4(int col) {
+            return Numbers.ipv4ToLong(mem.getIPv4(fixedWithColumnOffset(col)));
         }
 
         @Override

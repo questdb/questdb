@@ -205,6 +205,33 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringToIpv4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " cast(case when x = 1 then null else rnd_ipv4() end as string) as str," +
+                            " cast(null as ipv4) as ip " +
+                            " from long_sequence(5))" +
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("UPDATE up SET ip = str");
+
+            String data = "ts\tstr\tip\n" +
+                    "1970-01-01T00:00:00.000000Z\t\t\n" +
+                    "1970-01-01T00:00:01.000000Z\t187.139.150.80\t187.139.150.80\n" +
+                    "1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238\n" +
+                    "1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65\n" +
+                    "1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29\n";
+            assertSql("up", data);
+
+            update("UPDATE up set str = 'abc'");
+            update("UPDATE up set str = ip");
+            assertSql("up", data);
+        });
+    }
+
+    @Test
     public void testSymbolIndexCopyOnWrite() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table up as" +

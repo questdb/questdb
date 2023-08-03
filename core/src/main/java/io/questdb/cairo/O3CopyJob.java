@@ -655,6 +655,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 Unsafe.getUnsafe().putLong(dstFixAddr + mergeCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.INT:
+            case ColumnType.IPv4:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
             case ColumnType.GEOINT:
@@ -1098,6 +1099,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
                 break;
             case ColumnType.INT:
+            case ColumnType.IPv4:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
             case ColumnType.GEOINT:

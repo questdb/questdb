@@ -140,6 +140,9 @@ public class LineUdpParserSupport {
                     case ColumnType.INT:
                         row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));
                         break;
+                    case ColumnType.IPv4:
+                        row.putInt(columnIndex, Numbers.parseIPv4UDP(value));
+                        break;
                     case ColumnType.SHORT:
                         row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
                         break;
@@ -260,6 +263,8 @@ public class LineUdpParserSupport {
             case ColumnType.INT:
                 row.putInt(columnIndex, Numbers.INT_NaN);
                 break;
+            case ColumnType.IPv4:
+                row.putInt(columnIndex, Numbers.IPv4_NULL);
             case ColumnType.SHORT:
                 row.putShort(columnIndex, (short) 0);
                 break;

@@ -25,7 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -138,7 +138,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return rnd;
     }
 
-    public ObjList<FuzzTransaction> generateSet(Rnd rnd, RecordMetadata metadata, long start, long end, String tableName) {
+    public ObjList<FuzzTransaction> generateSet(Rnd rnd, TableRecordMetadata metadata, long start, long end, String tableName) {
         return FuzzTransactionGenerator.generateSet(
                 metadata,
                 rnd,
@@ -159,7 +159,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 equalTsRowsProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                3
+                (int) metadata.getMetadataVersion()
         );
     }
 
@@ -555,6 +555,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         compile("alter table " + tableName1 + " add column long_top long");
         compile("alter table " + tableName1 + " add column str_top long");
         compile("alter table " + tableName1 + " add column sym_top symbol index");
+        compile("alter table " + tableName1 + " add column ip4 ipv4");
 
         return engine.verifyTableName(tableName1);
     }
@@ -631,7 +632,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             createInitialTable(tableNameNoWal, false, initialRowCount);
 
             ObjList<FuzzTransaction> transactions;
-            try (TableReader reader = newTableReader(configuration, tableNameWal)) {
+            try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
                 TableReaderMetadata metadata = reader.getMetadata();
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");

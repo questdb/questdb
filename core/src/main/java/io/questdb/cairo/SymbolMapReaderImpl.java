@@ -82,6 +82,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return nullValue;
     }
 
+    @TestOnly
+    public int getCacheSize() {
+        return cache.size();
+    }
+
     @Override
     public int getSymbolCapacity() {
         return symbolCapacity;
@@ -243,11 +248,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue2(int key) {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
-    }
-
-    @TestOnly
-    public int getCacheSize() {
-        return cache.size();
     }
 
     private class SymbolTableView implements StaticSymbolTable {

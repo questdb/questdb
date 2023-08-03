@@ -31,11 +31,6 @@ public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
 
     @Override
-    public void sync(boolean async) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean getNullFlag() {
         return false;
     }
@@ -77,6 +72,11 @@ public class NullMapWriter implements MapWriter {
 
     @Override
     public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void sync(boolean async) {
         throw new UnsupportedOperationException();
     }
 

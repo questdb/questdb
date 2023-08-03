@@ -51,7 +51,7 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return true;
     }
-    
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Empty table");

@@ -74,7 +74,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllSymbolsFiltered");
         sink.optAttr("filter", ((LatestByAllSymbolsFilteredRecordCursor) cursor).getFilter());
-        sink.child((Plannable) cursor);
+        sink.child(cursor);
         sink.child(dataFrameCursorFactory);
     }
 

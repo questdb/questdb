@@ -56,8 +56,8 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    private final BuildInformation buildInformation;
     private final String banner;
+    private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
@@ -333,10 +333,6 @@ public class Bootstrap {
         return metrics;
     }
 
-    public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
-    }
-
     public String getRootDirectory() {
         return rootDirectory;
     }
@@ -351,6 +347,10 @@ public class Bootstrap {
             properties.load(is);
         }
         return properties;
+    }
+
+    public CairoEngine newCairoEngine() {
+        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {

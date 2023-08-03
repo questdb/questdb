@@ -56,6 +56,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
         return false;
     }
 
+    FactoryProvider getFactoryProvider();
+
     int getInsertCacheBlockCount();
 
     int getInsertCacheRowCount();
@@ -104,6 +106,4 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     boolean isUpdateCacheEnabled();
 
     boolean readOnlySecurityContext();
-
-    FactoryProvider getFactoryProvider();
 }

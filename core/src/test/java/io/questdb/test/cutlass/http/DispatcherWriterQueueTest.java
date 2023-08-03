@@ -54,7 +54,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DispatcherWriterQueueTest extends AbstractTest {
-    private static final String utf8Encoding = "UTF-8";
+    private static final String UTF_8 = "UTF-8";
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -309,7 +309,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 null,
                 1,
                 3,
-                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", utf8Encoding)
+                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", UTF_8)
         );
     }
 
@@ -346,8 +346,8 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 null,
                 -1L,
                 3,
-                URLEncoder.encode("update x set x=1 where s = 'a'", utf8Encoding),
-                URLEncoder.encode("update x set x=10 where s = 'b'", utf8Encoding)
+                URLEncoder.encode("update x set x=1 where s = 'a'", UTF_8),
+                URLEncoder.encode("update x set x=10 where s = 'b'", UTF_8)
         );
     }
 
@@ -383,7 +383,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 null,
                 1000,
                 0,
-                URLEncoder.encode("update x set x=1 from tables()", utf8Encoding)
+                URLEncoder.encode("update x set x=1 from tables()", UTF_8)
         );
     }
 

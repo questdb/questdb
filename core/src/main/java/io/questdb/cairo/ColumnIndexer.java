@@ -60,7 +60,7 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void rollback(long maxRow);
 
-    boolean tryLock(long expectedSequence);
-
     void sync(boolean async);
+
+    boolean tryLock(long expectedSequence);
 }
