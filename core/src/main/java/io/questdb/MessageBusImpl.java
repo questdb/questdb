@@ -223,11 +223,6 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getCopyRequestPubSeq() {
-        return textImportRequestPubSeq;
-    }
-
-    @Override
     public MPSequence getIndexerPubSequence() {
         return indexerPubSeq;
     }
