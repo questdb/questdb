@@ -41,8 +41,8 @@ import java.io.Closeable;
 public class TelemetryJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
     private final Telemetry<TelemetryTask> telemetry;
-    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TelemetryConfigLogger telemetryConfigLogger;
+    private final Telemetry<TelemetryWalTask> telemetryWal;
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
         this(engine, null);

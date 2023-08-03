@@ -34,10 +34,9 @@ import java.util.function.BiFunction;
 public class DateLocaleFactory {
 
     public static final DateLocaleFactory INSTANCE = new DateLocaleFactory(TimeZoneRuleFactory.INSTANCE);
-
+    private final ConcurrentHashMap<DateLocale> dateLocales = new ConcurrentHashMap<>();
     private final DateLocale dummyLocale = new DateLocale(new DateFormatSymbols(), TimeZoneRuleFactory.INSTANCE);
     private final TimeZoneRuleFactory timeZoneRuleFactory;
-    private final ConcurrentHashMap<DateLocale> dateLocales = new ConcurrentHashMap<>();
     private final BiFunction<CharSequence, DateLocale, DateLocale> computeDateLocaleBiFunc = this::computeDateLocale;
 
     public DateLocaleFactory(TimeZoneRuleFactory timeZoneRuleFactory) {

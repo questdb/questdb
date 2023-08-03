@@ -40,6 +40,8 @@ public interface HttpContextConfiguration {
 
     boolean getDumpNetworkTraffic();
 
+    FactoryProvider getFactoryProvider();
+
     String getHttpVersion();
 
     int getMultipartHeaderBufferSize();
@@ -57,6 +59,4 @@ public interface HttpContextConfiguration {
     boolean getServerKeepAlive();
 
     boolean readOnlySecurityContext();
-
-    FactoryProvider getFactoryProvider();
 }

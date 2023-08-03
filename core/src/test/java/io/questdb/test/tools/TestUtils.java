@@ -66,6 +66,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.std.Numbers.IPv4_NULL;
 
 public final class TestUtils {
 
@@ -871,6 +872,9 @@ public final class TestUtils {
                 case ColumnType.SHORT:
                     sql.append("CAST(x AS SHORT) ").append(colName);
                     break;
+                case ColumnType.IPv4:
+                    sql.append("CAST(x AS IPv4) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }
@@ -1147,6 +1151,9 @@ public final class TestUtils {
                 case ColumnType.LONG128:
                     insertFromSelect.append("to_long128(x, 0) ").append(colName);
                     break;
+                case ColumnType.IPv4:
+                    insertFromSelect.append("CAST(x as IPv4) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }
@@ -1157,6 +1164,12 @@ public final class TestUtils {
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
         return insertFromSelect;
+    }
+
+    public static String ipv4ToString(int ip) {
+        StringSink sink = new StringSink();
+        Numbers.intToIPv4Sink(sink, ip);
+        return sink.toString();
     }
 
     public static int maxDayOfMonth(int month) {
@@ -1291,6 +1304,13 @@ public final class TestUtils {
                     uuid.toSink(sink);
                 }
                 break;
+            case ColumnType.IPv4: {
+                final int val = r.getIPv4(i);
+                if (val != IPv4_NULL) {
+                    Numbers.intToIPv4Sink(sink, val);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -1469,6 +1489,7 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
                         break;
                     case ColumnType.GEOINT:

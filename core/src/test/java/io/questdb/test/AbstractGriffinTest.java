@@ -591,6 +591,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                         case ColumnType.INT:
                             Assert.assertEquals(expected[expectedRow].getInt(col), record.getInt(col));
                             break;
+                        case ColumnType.IPv4:
+                            Assert.assertEquals(expected[expectedRow].getIPv4(col), record.getIPv4(col));
+                            break;
                         case ColumnType.LONG:
                             Assert.assertEquals(expected[expectedRow].getLong(col), record.getLong(col));
                             break;

@@ -57,7 +57,7 @@ public interface TableNameRegistry extends Closeable {
      * @return resolves table name to TableToken. If no token exists, returns null
      */
     TableToken getTableToken(CharSequence tableName);
-    
+
     /**
      * Returns table token by directory name. If table does not exist, returns null.
      *
