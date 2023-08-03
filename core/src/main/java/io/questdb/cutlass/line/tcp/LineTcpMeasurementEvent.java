@@ -462,6 +462,14 @@ class LineTcpMeasurementEvent implements Closeable {
                     final DirectByteCharSequence entityValue = entity.getValue();
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.IPv4:
+                                try {
+                                    int value = Numbers.parseIPv4Nl(entityValue);
+                                    offset = buffer.addInt(offset, value);
+                                } catch (NumericException e) {
+                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                }
+                                break;
                             case ColumnType.STRING:
                                 offset = buffer.addString(offset, entityValue, parser.hasNonAsciiChars());
                                 break;

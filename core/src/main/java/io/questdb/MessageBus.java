@@ -43,9 +43,9 @@ public interface MessageBus extends Closeable {
 
     CairoConfiguration getConfiguration();
 
-    MPSequence getCopyRequestPubSeq();
-
     MPSequence getIndexerPubSequence();
+    
+    MPSequence getCopyRequestPubSeq();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();
 

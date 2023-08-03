@@ -3331,6 +3331,7 @@ public class CastTest extends AbstractGriffinTest {
         );
     }
 
+
     @Test
     public void testIntToSymbol() throws Exception {
         assertQuery13(

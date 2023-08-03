@@ -33,7 +33,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class O3OpenColumnTask {
     private int activeFixFd;
     private int activeVarFd;
-    private long partitionUpdateSinkAddr;
     private AtomicInteger columnCounter;
     private int columnIndex;
     private CharSequence columnName;
@@ -52,6 +51,7 @@ public class O3OpenColumnTask {
     private int openColumnMode;
     private AtomicInteger partCounter;
     private long partitionTimestamp;
+    private long partitionUpdateSinkAddr;
     private Path pathToTable;
     private long prefixHi;
     private long prefixLo;
@@ -82,10 +82,6 @@ public class O3OpenColumnTask {
 
     public int getActiveVarFd() {
         return activeVarFd;
-    }
-
-    public long getPartitionUpdateSinkAddr() {
-        return partitionUpdateSinkAddr;
     }
 
     public AtomicInteger getColumnCounter() {
@@ -158,6 +154,10 @@ public class O3OpenColumnTask {
 
     public long getPartitionTimestamp() {
         return partitionTimestamp;
+    }
+
+    public long getPartitionUpdateSinkAddr() {
+        return partitionUpdateSinkAddr;
     }
 
     public Path getPathToTable() {

@@ -66,8 +66,6 @@ public interface MapWriter extends SymbolCountProvider {
         }
     }
 
-    void sync(boolean async);
-
     boolean getNullFlag();
 
     int getSymbolCapacity();
@@ -83,6 +81,8 @@ public interface MapWriter extends SymbolCountProvider {
     void rollback(int symbolCount);
 
     void setSymbolIndexInTxWriter(int symbolIndexInTxWriter);
+
+    void sync(boolean async);
 
     void truncate();
 

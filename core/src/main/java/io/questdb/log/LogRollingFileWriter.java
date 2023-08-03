@@ -208,6 +208,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         Misc.free(logFileNameSink);
     }
 
+    @TestOnly
+    public long getRolledCount() {
+        return rolledCounter.get();
+    }
+
     @Override
     public boolean runSerially() {
         if (subSeq.consumeAll(ring, copyToBufferRef)) {
@@ -443,11 +448,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             logFileList.clear();
             logFileList.resetCapacity();
         }
-    }
-
-    @TestOnly
-    public long getRolledCount() {
-        return rolledCounter.get();
     }
 
     @FunctionalInterface

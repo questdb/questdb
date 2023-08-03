@@ -715,6 +715,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void appendIPv4Col(Record record, int columnIndex) {
+        int value = record.getIPv4(columnIndex);
+        if (value == Numbers.IPv4_NULL) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.intToIPv4Sink(responseAsciiSink, value);
+            responseAsciiSink.putLenEx(a);
+        }
+    }
+
     private void appendIntCol(Record record, int i) {
         final int intValue = record.getInt(i);
         if (intValue != Numbers.INT_NaN) {
@@ -794,6 +805,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     break;
                 case ColumnType.INT:
                     appendIntCol(record, i);
+                    break;
+                case ColumnType.IPv4:
+                    appendIPv4Col(record, i);
                     break;
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:

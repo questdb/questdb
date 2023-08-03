@@ -26,8 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.GcUtf8String;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
@@ -49,10 +49,6 @@ public class TableToken implements Sinkable {
         this.isWal = isWal;
     }
 
-    public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal);
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -64,16 +60,6 @@ public class TableToken implements Sinkable {
         if (isWal != that.isWal) return false;
         if (!tableName.equals(that.tableName)) return false;
         return dirName.equals(that.dirName);
-    }
-
-    @Override
-    public String toString() {
-        return "TableToken{" +
-                "tableName=" + tableName +
-                ", dirName=" + dirName +
-                ", tableId=" + tableId +
-                ", isWal=" + isWal +
-                '}';
     }
 
     /**
@@ -113,8 +99,22 @@ public class TableToken implements Sinkable {
         return isWal;
     }
 
+    public TableToken renamed(String newName) {
+        return new TableToken(newName, dirName, tableId, isWal);
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.encodeUtf8(tableName);
+    }
+
+    @Override
+    public String toString() {
+        return "TableToken{" +
+                "tableName=" + tableName +
+                ", dirName=" + dirName +
+                ", tableId=" + tableId +
+                ", isWal=" + isWal +
+                '}';
     }
 }

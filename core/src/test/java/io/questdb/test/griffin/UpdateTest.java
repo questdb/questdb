@@ -93,39 +93,6 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateSymbolToChar() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table up as" +
-                            " (select timestamp_sequence(0, 1000000) ts," +
-                            " rnd_symbol('ab', 'bc') sym," +
-                            " cast(null as timestamp) ts2" +
-                            " from long_sequence(5))" +
-                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
-
-            executeUpdate("UPDATE up \n" +
-                    "SET sym = NULLIF(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
-
-            assertSql("up", "ts\tsym\tts2\n" +
-                    "1970-01-01T00:00:00.000000Z\t\t\n" +
-                    "1970-01-01T00:00:01.000000Z\t\t\n" +
-                    "1970-01-01T00:00:02.000000Z\t\t\n" +
-                    "1970-01-01T00:00:03.000000Z\t\t\n" +
-                    "1970-01-01T00:00:04.000000Z\t\t\n");
-
-            executeUpdate("UPDATE up \n" +
-                    "SET sym = COALESCE(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
-
-            assertSql("up", "ts\tsym\tts2\n" +
-                    "1970-01-01T00:00:00.000000Z\tn\t\n" +
-                    "1970-01-01T00:00:01.000000Z\tn\t\n" +
-                    "1970-01-01T00:00:02.000000Z\tn\t\n" +
-                    "1970-01-01T00:00:03.000000Z\tn\t\n" +
-                    "1970-01-01T00:00:04.000000Z\tn\t\n");
-        });
-    }
-
-    @Test
     public void testInsertAfterUpdate() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
@@ -225,6 +192,33 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
                     "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
                     "1970-01-01T00:00:04.000000Z\t5\t5\t5\n");
+        });
+    }
+
+    @Test
+    public void testStringToIpv4() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " cast(case when x = 1 then null else rnd_ipv4() end as string) as str," +
+                            " cast(null as ipv4) as ip " +
+                            " from long_sequence(5))" +
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET ip = str");
+
+            String data = "ts\tstr\tip\n" +
+                    "1970-01-01T00:00:00.000000Z\t\t\n" +
+                    "1970-01-01T00:00:01.000000Z\t187.139.150.80\t187.139.150.80\n" +
+                    "1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238\n" +
+                    "1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65\n" +
+                    "1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29\n";
+            assertSql("up", data);
+
+            executeUpdate("UPDATE up set str = 'abc'");
+            executeUpdate("UPDATE up set str = ip");
+            assertSql("up", data);
         });
     }
 
@@ -1634,6 +1628,39 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-08T10:40:00.000000Z\t\t13\t15\n" +
                     "1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2\n" +
                     "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n");
+        });
+    }
+
+    @Test
+    public void testUpdateSymbolToChar() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " rnd_symbol('ab', 'bc') sym," +
+                            " cast(null as timestamp) ts2" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
+
+            executeUpdate("UPDATE up \n" +
+                    "SET sym = NULLIF(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
+
+            assertSql("up", "ts\tsym\tts2\n" +
+                    "1970-01-01T00:00:00.000000Z\t\t\n" +
+                    "1970-01-01T00:00:01.000000Z\t\t\n" +
+                    "1970-01-01T00:00:02.000000Z\t\t\n" +
+                    "1970-01-01T00:00:03.000000Z\t\t\n" +
+                    "1970-01-01T00:00:04.000000Z\t\t\n");
+
+            executeUpdate("UPDATE up \n" +
+                    "SET sym = COALESCE(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
+
+            assertSql("up", "ts\tsym\tts2\n" +
+                    "1970-01-01T00:00:00.000000Z\tn\t\n" +
+                    "1970-01-01T00:00:01.000000Z\tn\t\n" +
+                    "1970-01-01T00:00:02.000000Z\tn\t\n" +
+                    "1970-01-01T00:00:03.000000Z\tn\t\n" +
+                    "1970-01-01T00:00:04.000000Z\tn\t\n");
         });
     }
 

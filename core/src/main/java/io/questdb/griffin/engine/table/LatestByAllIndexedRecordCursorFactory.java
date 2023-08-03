@@ -65,7 +65,7 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllIndexed");
-        sink.child((Plannable) cursor);
+        sink.child(cursor);
         sink.child(dataFrameCursorFactory);
     }
 

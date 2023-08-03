@@ -53,6 +53,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
+                .col("ipv4", ColumnType.IPv4)
         ) {
             CreateTableTestUtils.create(model);
         }
@@ -73,6 +74,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 row.putBool(7, rnd.nextBoolean());
                 row.putDate(8, rnd.nextLong());
                 row.putTimestamp(9, rnd.nextLong());
+                row.putInt(10, rnd.nextInt());
                 row.append();
             }
             writer.commit();
@@ -118,6 +120,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
                     Assert.assertEquals(rnd.nextLong(), value.getDate(8));
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
+                    Assert.assertEquals(rnd.nextInt(), value.getIPv4(10));
                 }
             }
         }
@@ -137,6 +140,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
+                .col("IPv4", ColumnType.IPv4)
         ) {
             CreateTableTestUtils.create(model);
         }
@@ -157,6 +161,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 row.putBool(7, rnd.nextBoolean());
                 row.putDate(8, rnd.nextLong());
                 row.putTimestamp(9, rnd.nextLong());
+                row.putInt(10, rnd.nextInt());
                 row.append();
             }
             writer.commit();
@@ -209,6 +214,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(0)); // 7
                     rnd.nextLong(); // 8
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(1)); // 9
+                    rnd.nextInt(); //10
                 }
             }
         }
