@@ -50,10 +50,7 @@ import io.questdb.std.datetime.microtime.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cairo.ConfigurationOverrides;
-import io.questdb.test.cairo.Overrides;
-import io.questdb.test.cairo.RecordCursorPrinter;
-import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.*;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -97,10 +94,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
     protected static CairoConfiguration configuration;
+    protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
     protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
+    protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
     protected static String inputRoot = null;
@@ -407,7 +406,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         // created mid-test
         AbstractTest.setUpStatic();
         nodes.clear();
-        node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides());
+        node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides(), getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
@@ -435,6 +434,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         backupDir = null;
         backupDirTimestampFormat = null;
         factoryProvider = null;
+        engineFactory = null;
+        configurationFactory = null;
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
@@ -499,6 +500,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 throw SqlException.$(0, "drop table timeout");
             }
         }
+    }
+
+    private static TestCairoConfigurationFactory getConfigurationFactory() {
+        return configurationFactory != null ? configurationFactory : CairoTestConfiguration::new;
+    }
+
+    private static TestCairoEngineFactory getEngineFactory() {
+        return engineFactory != null ? engineFactory : CairoEngine::new;
     }
 
     private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
@@ -1406,12 +1415,19 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static QuestDBTestNode newNode(int nodeId) {
         String root = TestUtils.unchecked(() -> temp.newFolder("dbRoot" + nodeId).getAbsolutePath());
-        return newNode(root, true, nodeId, new Overrides());
+        return newNode(root, true, nodeId, new Overrides(), getEngineFactory(), getConfigurationFactory());
     }
 
-    protected static QuestDBTestNode newNode(String root, boolean ownRoot, int nodeId, ConfigurationOverrides overrides) {
+    protected static QuestDBTestNode newNode(
+            String root,
+            boolean ownRoot,
+            int nodeId,
+            ConfigurationOverrides overrides,
+            TestCairoEngineFactory engineFactory,
+            TestCairoConfigurationFactory configurationFactory
+    ) {
         final QuestDBTestNode node = new QuestDBTestNode(nodeId);
-        node.initCairo(root, ownRoot, overrides);
+        node.initCairo(root, ownRoot, overrides, engineFactory, configurationFactory);
         nodes.add(node);
         return node;
     }

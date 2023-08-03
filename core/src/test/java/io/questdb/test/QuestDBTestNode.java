@@ -36,7 +36,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
-import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.ConfigurationOverrides;
 import io.questdb.test.tools.TestUtils;
 
@@ -90,11 +89,17 @@ public class QuestDBTestNode {
         return griffin.sqlExecutionContext;
     }
 
-    public void initCairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
+    public void initCairo(
+            String root,
+            boolean ownRoot,
+            ConfigurationOverrides overrides,
+            TestCairoEngineFactory engineFactory,
+            TestCairoConfigurationFactory configurationFactory
+    ) {
         if (root == null || root.isEmpty()) {
             throw new IllegalArgumentException("must specify dbRoot");
         }
-        cairo = new Cairo(root, ownRoot, overrides);
+        cairo = new Cairo(root, ownRoot, overrides, engineFactory, configurationFactory);
     }
 
     public void initGriffin() {
@@ -138,7 +143,13 @@ public class QuestDBTestNode {
         private final CharSequence root;
         private CairoEngine engine;
 
-        private Cairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
+        private Cairo(
+                String root,
+                boolean ownRoot,
+                ConfigurationOverrides overrides,
+                TestCairoEngineFactory engineFactory,
+                TestCairoConfigurationFactory configurationFactory
+        ) {
             this.root = root;
             this.ownRoot = ownRoot;
             this.overrides = overrides;
@@ -149,9 +160,9 @@ public class QuestDBTestNode {
                 }
             };
 
-            configuration = new CairoTestConfiguration(root, telemetryConfiguration, overrides);
+            configuration = configurationFactory.getInstance(root, telemetryConfiguration, overrides);
             metrics = Metrics.enabled();
-            engine = new CairoEngine(configuration, metrics);
+            engine = engineFactory.getInstance(configuration, metrics);
             messageBus = engine.getMessageBus();
         }
 
