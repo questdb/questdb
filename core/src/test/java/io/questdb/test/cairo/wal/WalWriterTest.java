@@ -1410,8 +1410,11 @@ public class WalWriterTest extends AbstractCairoTest {
             insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
             tickWalQueue(1);
 
-            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
-                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+            assertSql(
+                    "a\tb\tts\n" +
+                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    tableToken.getTableName()
+            );
 
             insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
             insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
@@ -1423,18 +1426,24 @@ public class WalWriterTest extends AbstractCairoTest {
             tickWalQueue(2);
 
             // We expect all, but the last row to be visible.
-            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
-                    "0\t\t2023-08-04T21:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T22:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+            assertSql(
+                    "a\tb\tts\n" +
+                            "0\t\t2023-08-04T21:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T22:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    tableToken.getTableName()
+            );
 
             drainWalQueue();
 
-            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
-                    "0\t\t2023-08-04T20:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T21:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T22:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+            assertSql(
+                    "a\tb\tts\n" +
+                            "0\t\t2023-08-04T20:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T21:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T22:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    tableToken.getTableName()
+            );
         });
     }
 
@@ -3210,7 +3219,8 @@ public class WalWriterTest extends AbstractCairoTest {
             byte actualByte = actual.byteAt(i);
             assertEquals("Binary sequences not equals at offset " + i
                             + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
-                    expectedByte, actualByte);
+                    expectedByte, actualByte
+            );
         }
     }
 
