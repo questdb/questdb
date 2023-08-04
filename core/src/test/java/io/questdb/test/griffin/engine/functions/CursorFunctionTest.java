@@ -91,6 +91,11 @@ public class CursorFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        function.getInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         function.getInt(null);
     }

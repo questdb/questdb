@@ -32,11 +32,11 @@ import java.util.Map;
 public interface BootstrapConfiguration {
     String getBanner();
 
+    CairoEngineFactory getCairoEngineFactory();
+
     Map<String, String> getEnv();
 
     FilesFacade getFilesFacade();
-
-    CairoEngineFactory getCairoEngineFactory();
 
     ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception;
 

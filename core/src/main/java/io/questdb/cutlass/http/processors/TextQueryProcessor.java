@@ -250,6 +250,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
+    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final int ip = rec.getIPv4(col);
+        if (ip != Numbers.IPv4_NULL) {
+            Numbers.intToIPv4Sink(socket, ip);
+        }
+    }
+
     private static void putStringOrNull(CharSink r, CharSequence str) {
         if (str != null) {
             r.encodeUtf8AndQuote(str);
@@ -602,6 +609,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
+            case ColumnType.IPv4:
+                putIPv4Value(socket, rec, col);
+                break;
             default:
                 assert false;
         }

@@ -857,6 +857,16 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 @Override
+                public int getIPv4(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
+                    } else {
+                        return Numbers.IPv4_NULL;
+                    }
+                }
+
+                @Override
                 public int getInt(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {

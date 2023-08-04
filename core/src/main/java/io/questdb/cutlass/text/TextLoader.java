@@ -25,8 +25,8 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;

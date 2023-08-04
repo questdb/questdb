@@ -98,6 +98,12 @@ public class TableTransactionLog implements Closeable {
         return true;
     }
 
+    public void sync() {
+        txnMetaMemIndex.sync(false);
+        txnMetaMem.sync(false);
+        txnMem.sync(false);
+    }
+
     private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
         final int rootLen = path.length();
         path.concat(fileName).$();
@@ -106,12 +112,6 @@ public class TableTransactionLog implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    public void sync() {
-        txnMetaMemIndex.sync(false);
-        txnMetaMem.sync(false);
-        txnMem.sync(false);
     }
 
     @NotNull

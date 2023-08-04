@@ -223,6 +223,30 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIPv4Args() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "54.98.173.21\t54.98.173.21\t\t54.98.173.21\t1.1.96.238\n" +
+                        "54.132.76.40\t54.132.76.40\t\t54.132.76.40\t1.1.250.138\n" +
+                        "3.7.4.15\t3.7.4.15\t3.7.4.15\t\t1.1.20.236\n" +
+                        "54.62.93.114\t54.62.93.114\t\t54.62.93.114\t1.1.132.196\n" +
+                        "3.7.4.252\t3.7.4.252\t3.7.4.252\t54.22.249.199\t\n",
+                "select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
+                        "from test",
+                "create table test as (" +
+                        "select " +
+                        " rnd_ipv4('1.1.1.1/16', 2) x," +
+                        " rnd_ipv4('3.7.4.2/24', 2) a," +
+                        " rnd_ipv4('54.23.11.87/8', 2) b\n" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testIntArgs() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +

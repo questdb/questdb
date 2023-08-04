@@ -486,6 +486,17 @@ public class SqlUtil {
         return Float.NaN;
     }
 
+    public static int implicitCastStrAsIPv4(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseIPv4(value);
+            } catch (NumericException exception) {
+                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+            }
+        }
+        return Numbers.IPv4_NULL;
+    }
+
     public static int implicitCastStrAsInt(CharSequence value) {
         if (value != null) {
             try {

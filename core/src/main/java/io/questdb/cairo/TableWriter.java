@@ -1805,23 +1805,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 o3RowCount = o3Hi - o3Lo + walLagRowCount;
 
-                // Now that everything from WAL lag is in memory or in WAL columns,
-                // we can remove artificial 0 length partition created to store lag when table did not have any partitions
-                if (txWriter.getRowCount() == 0 && txWriter.getPartitionCount() == 1 && txWriter.getPartitionSize(0) == 0) {
-                    txWriter.setMaxTimestamp(Long.MIN_VALUE);
-                    lastPartitionTimestamp = Long.MIN_VALUE;
-                    closeActivePartition(false);
-                    partitionTimestampHi = Long.MIN_VALUE;
-                    long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
-                    long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
-                    txWriter.removeAttachedPartitions(partitionTimestamp);
-                    safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-                }
 
                 // Real data writing into table happens here.
                 // Everything above it is to figure out how much data to write now,
                 // map symbols and sort data if necessary.
                 if (o3Hi > o3Lo) {
+
+                    // Now that everything from WAL lag is in memory or in WAL columns,
+                    // we can remove artificial 0 length partition created to store lag when table did not have any partitions
+                    if (txWriter.getRowCount() == 0 && txWriter.getPartitionCount() == 1 && txWriter.getPartitionSize(0) == 0) {
+                        txWriter.setMaxTimestamp(Long.MIN_VALUE);
+                        lastPartitionTimestamp = Long.MIN_VALUE;
+                        closeActivePartition(false);
+                        partitionTimestampHi = Long.MIN_VALUE;
+                        long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
+                        long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
+                        txWriter.removeAttachedPartitions(partitionTimestamp);
+                        safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+                    }
+                    
                     processO3Block(
                             walLagRowCount,
                             timestampIndex,
@@ -2292,6 +2294,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 break;
             case ColumnType.INT:
                 nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
+                break;
+            case ColumnType.IPv4:
+                nullers.add(() -> mem1.putInt(Numbers.IPv4_NULL));
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
@@ -2887,6 +2892,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
                         case ColumnType.UUID:
+                        case ColumnType.IPv4:
                             attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
                         case ColumnType.STRING:

@@ -147,6 +147,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         sum += record.getShort(i);
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.SYMBOL: // We're interested in pre-touching pages, so we read the symbol key only.
                         sum += record.getInt(i);
                         break;

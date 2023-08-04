@@ -34,13 +34,6 @@ public class FreeOnExit implements QuietCloseable {
 
     private final ObjList<Closeable> list = new ObjList<>();
 
-    public <T extends Closeable> T register(T closeable) {
-        if (closeable != null) {
-            list.add(closeable);
-        }
-        return closeable;
-    }
-
     @Override
     public void close() {
         // free instances in reverse order to which we allocated them
@@ -48,5 +41,12 @@ public class FreeOnExit implements QuietCloseable {
             Misc.free(list.getQuick(i));
         }
         list.clear();
+    }
+
+    public <T extends Closeable> T register(T closeable) {
+        if (closeable != null) {
+            list.add(closeable);
+        }
+        return closeable;
     }
 }

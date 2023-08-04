@@ -1766,6 +1766,48 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "partition by MONTH");
     }
 
+    @Test
+    public void testCompareStringAndChar() throws Exception {
+        assertMemoryLeak(() -> {
+            // constant 
+            assertSql("select 'ab' > 'a'", "column\ntrue\n");
+            assertSql("select 'ab' = 'a'", "column\nfalse\n");
+            assertSql("select 'ab' != 'a'", "column\ntrue\n");
+            assertSql("select 'ab' < 'a'", "column\nfalse\n");
+
+            // non-constant 
+            assertSql("select x < 'd' from (select 'a' x union all select 'cd')", "column\ntrue\ntrue\n");
+            assertSql("select rnd_str('be', 'cd') < 'd' ", "column\ntrue\n");
+            assertSql("select rnd_str('ac', 'be', 'cd') != 'd'", "column\ntrue\n");
+            assertSql("select rnd_str('d', 'cd') != 'd' from long_sequence(5)",
+                    "column\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "false\n");
+
+            assertSql("select cast('ab' as char) <= 'a'", "column\ntrue\n");
+            assertSql("select cast('ab' as string) <= 'a'", "column\nfalse\n");
+            assertSql("select cast('a' as string) <= 'a'", "column\ntrue\n");
+            assertSql("select cast('a' as char) <= 'a'", "column\ntrue\n");
+            assertSql("select cast('a' as char) <= 'a'::string", "column\ntrue\n");
+            assertSql("select cast('' as char) = null", "column\ntrue\n");
+            assertSql("select cast('' as char) < null", "column\nfalse\n");
+            assertSql("select cast('' as char) > null", "column\nfalse\n");
+            assertSql("select cast('' as char) <= null", "column\nfalse\n"); // inconsistent with = null
+            assertSql("select cast('' as char) >= null", "column\nfalse\n"); // inconsistent with = null
+            assertSql("select cast('' as string) = null", "column\nfalse\n");
+            assertSql("select cast('' as string) <= null", "column\nfalse\n");
+            assertSql("select cast(null as string) = null", "column\ntrue\n");
+            assertSql("select cast(null as string) <= null", "column\nfalse\n");// inconsistent with = null
+            assertSql("select cast(null as string) >= null", "column\nfalse\n");// inconsistent with = null 
+
+
+            assertFailure(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+        });
+    }
+
     //close command is a no-op in qdb
     @Test
     public void testCompileCloseDoesNothing() throws Exception {
@@ -4149,6 +4191,207 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
         assertFailure(28, "Duplicate column [name=ts1]",
                 "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
+    }
+
+    @Test
+    public void testLeftJoinPostMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
+            compile("insert into tab values (0, 0), (1, 1)");
+
+            String query = "SELECT count(1) FROM " +
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 0) as T1 " +
+                    "LEFT OUTER JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT OUTER JOIN tab as T3 ON T2.created=T3.created " +
+                    "WHERE T2.created IN (NOW(),NOW()) ";
+
+            assertPlan(query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count(*)]\n" +
+                            "    Hash Outer Join Light\n" +
+                            "      condition: T3.created=T2.created\n" +
+                            "        Filter filter: T2.created in [now(),now()]\n" +
+                            "            Nested Loop Left Join\n" +
+                            "              filter: T1.created<T2.created\n" +
+                            "                Limit lo: 0\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n");
+
+            assertQuery("count\n" +
+                            "0\n",
+                    query,
+                    null, false, true);
+        });
+    }
+
+    @Test
+    public void testLeftJoinReorder() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
+            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+
+            String query1 = "SELECT T1.created FROM " +
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT -1) as T1 " +
+                    "LEFT OUTER JOIN tab as T2 ON T1.created<T2.created " +
+                    "WHERE T2.created is null or T2.created::long > 0";
+
+            assertPlan(query1,
+                    "SelectedRecord\n" +
+                            "    Filter filter: (T2.created=null or 0<T2.created::long)\n" +
+                            "        Nested Loop Left Join\n" +
+                            "          filter: T1.created<T2.created\n" +
+                            "            Limit lo: 1\n" +
+                            "                DataFrame\n" +
+                            "                    Row backward scan\n" +
+                            "                    Frame backward scan on: tab\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n");
+
+            assertQuery("created\n" +
+                            "1970-01-01T00:00:00.000002Z\n",
+                    query1,
+                    "created", false, false);
+
+            assertQuery("created\tvalue\tcreated1\tvalue1\n" +
+                            "1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000001Z\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\n",
+                    "SELECT * FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT -1) as T1 " +
+                            "LEFT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
+                            "WHERE T2.created is null or T2.created::long > 0",
+                    "created", false, false);
+
+            assertQuery("value\tvalue1\tvalue2\n" +
+                            "0\t1\t2\n" +
+                            "0\t2\tNaN\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created<T3.created " +
+                            "WHERE T2.created::long > 0",
+                    null, false, false);
+
+            assertQuery("value\tvalue1\tvalue2\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0",
+                    null, false, false);
+
+            assertQuery("value\tvalue1\tvalue2\n" +
+                            "0\t1\tNaN\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ",
+                    null, false, false);
+
+            assertQuery("value\tvalue1\tvalue2\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\tNaN\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ",
+                    null, false, false);
+
+            assertQuery("value\tvalue1\tvalue2\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ",
+                    null, false, false);
+
+            assertQuery("value\tvalue1\tvalue2\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and 1=1 ",
+                    null, false, false);
+
+            assertQuery("value\tvalue1\tvalue2\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ",
+                    null, false, false);
+
+            String query3 = "SELECT T1.value, T2.value, T3.value, T4.value " +
+                    "FROM (SELECT *  FROM tab limit 2) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN (select * from tab limit 3) as T3 ON T2.created=T3.created " +
+                    "LEFT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
+                    "WHERE T4.created is null";
+
+            assertPlan(query3,
+                    "SelectedRecord\n" +
+                            "    Filter filter: T4.created=null\n" +
+                            "        Nested Loop Left Join\n" +
+                            "          filter: T3.created<T4.created\n" +
+                            "            Hash Outer Join Light\n" +
+                            "              condition: T3.created=T2.created\n" +
+                            "                Nested Loop Left Join\n" +
+                            "                  filter: T1.created<T2.created\n" +
+                            "                    Limit lo: 2\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: tab\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    Limit lo: 3\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: tab\n" +
+                            "            Limit lo: 4\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n");
+
+            assertQuery("value\tvalue1\tvalue2\tvalue3\n" +
+                            "0\t2\t2\tNaN\n" +
+                            "1\t2\t2\tNaN\n",
+                    query3, null, false, false);
+        });
     }
 
     @Test

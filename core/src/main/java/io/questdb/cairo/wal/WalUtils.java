@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
+    public static final int CREATE_TABLE_WALID = -3;
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WALID = -2;
     public static final String EVENT_FILE_NAME = "_event";

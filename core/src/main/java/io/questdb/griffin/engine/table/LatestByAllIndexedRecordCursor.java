@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;

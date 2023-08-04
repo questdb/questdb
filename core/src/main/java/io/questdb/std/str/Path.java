@@ -231,6 +231,19 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    public Path prefix(Path prefix, int prefixLen) {
+        if (prefix != null) {
+            if (prefixLen > 0) {
+                int thisLen = length();
+                checkExtend(thisLen + prefixLen);
+                Vect.memmove(headPtr + prefixLen, headPtr, thisLen);
+                Vect.memcpy(headPtr, prefix.address(), prefixLen);
+                tailPtr += prefixLen;
+            }
+        }
+        return this;
+    }
+
     public void put(int index, char c) {
         Unsafe.getUnsafe().putByte(headPtr + index, (byte) c);
     }
@@ -351,19 +364,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public void zeroPad(int len) {
         checkExtend(len);
         Vect.memset(tailPtr, len, 0);
-    }
-
-    public Path prefix(Path prefix, int prefixLen) {
-        if (prefix != null) {
-            if (prefixLen > 0) {
-                int thisLen = length();
-                checkExtend(thisLen + prefixLen);
-                Vect.memmove(headPtr + prefixLen, headPtr, thisLen);
-                Vect.memcpy(headPtr, prefix.address(), prefixLen);
-                tailPtr += prefixLen;
-            }
-        }
-        return this;
     }
 
     private void checkClosed() {

@@ -139,6 +139,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);

@@ -36,10 +36,10 @@
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>0.2.4</web.console.version>
+        <web.console.version>0.2.5</web.console.version>
     </properties>
 
-    <version>7.2.2-SNAPSHOT</version>
+    <version>7.3.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>

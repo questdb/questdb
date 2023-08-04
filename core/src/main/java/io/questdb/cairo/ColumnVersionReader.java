@@ -118,6 +118,10 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return getColumnTopByIndexOrDefault(recordIndex, partitionTimestamp, columnIndex, -1L);
     }
 
+    public long getColumnTopByIndex(int versionRecordIndex) {
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_TOP_OFFSET) : 0L;
+    }
+
     public long getColumnTopByIndexOrDefault(int recordIndex, long partitionTimestamp, int columnIndex, long defaultValue) {
         if (recordIndex > -1L) {
             return cachedList.getQuick(recordIndex + COLUMN_TOP_OFFSET);
@@ -131,10 +135,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         // This column does not exist in the partition
         return defaultValue;
-    }
-
-    public long getColumnTopByIndex(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_TOP_OFFSET) : 0L;
     }
 
     /**
