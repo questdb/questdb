@@ -33,4 +33,8 @@ public class BasicWalInitializer implements WalInitializer {
     @Override
     public void initDirectory(Path dirPath) {
     }
+
+    @Override
+    public void rollbackDirectory(Path path) {
+    }
 }

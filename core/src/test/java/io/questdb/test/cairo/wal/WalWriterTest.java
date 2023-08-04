@@ -2994,6 +2994,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                                 throw new RuntimeException(e);
                             }
                         }
+
+                        @Override
+                        public void rollbackDirectory(Path path) {
+                            // do nothing
+                        }
                     };
                 }
             });

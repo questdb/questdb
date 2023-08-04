@@ -127,7 +127,7 @@ public class TableSequencerImpl implements TableSequencer {
             // Nothing to do.
             return EmptyOperationCursor.INSTANCE;
         }
-        return tableTransactionLog.getTableMetadataChangeLog(tableToken, structureVersionLo, alterCommandWalFormatter);
+        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
     }
 
     @Override
@@ -336,7 +336,7 @@ public class TableSequencerImpl implements TableSequencer {
             return null;
         }
 
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getMetadataVersion(), alterCommandWalFormatter)) {
             boolean updated = false;
             while (metaChangeCursor.hasNext()) {
                 TableMetadataChange change = metaChangeCursor.next();
@@ -396,7 +396,7 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw e;
         }
-        walInitializer.initDirectory(path);
+//        walInitializer.initDirectory(path);
         path.trimTo(rootLen);
     }
 

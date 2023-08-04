@@ -1192,11 +1192,17 @@ public class WalWriter implements TableWriterAPI {
 
     private void releaseSegmentLock(int segmentId, int segmentLockFd) {
         if (ff.close(segmentLockFd)) {
-            sequencer.notifySegmentClosed(tableToken, walId, segmentId);
-            LOG.debug().$("released segment lock [walId=").$(walId)
-                    .$(", segmentId=").$(segmentId)
-                    .$(", fd=").$(segmentLockFd)
-                    .$(']').$();
+            if (segmentRowCount > 0) {
+                sequencer.notifySegmentClosed(tableToken, walId, segmentId);
+                LOG.debug().$("released segment lock [walId=").$(walId)
+                        .$(", segmentId=").$(segmentId)
+                        .$(", fd=").$(segmentLockFd)
+                        .$(']').$();
+            } else {
+                path.trimTo(rootLen).slash().put(segmentId);
+                walInitializer.rollbackDirectory(path);
+                path.trimTo(rootLen);
+            }
         } else {
             LOG.error()
                     .$("cannot close segment lock fd [walId=").$(walId)

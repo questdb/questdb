@@ -29,4 +29,6 @@ import io.questdb.std.str.Path;
 
 public interface WalInitializer {
     void initDirectory(Path dirPath);
+
+    void rollbackDirectory(Path path);
 }

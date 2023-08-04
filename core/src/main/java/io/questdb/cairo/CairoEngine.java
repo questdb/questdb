@@ -665,6 +665,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void releaseAllWriters() {
         writerPool.releaseAll();
+        walWriterPool.releaseAll();
     }
 
     public boolean releaseInactive() {

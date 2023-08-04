@@ -26,7 +26,6 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
@@ -54,7 +53,7 @@ public class TableTransactionLog implements Closeable {
     public static final int STRUCTURAL_CHANGE_WAL_ID = -1;
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
-    private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
+    public static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     private static final long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
     private static final long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
     private static final long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
@@ -183,7 +182,6 @@ public class TableTransactionLog implements Closeable {
         }
     }
 
-    @NotNull
     boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
@@ -193,7 +191,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     @NotNull
-    TableMetadataChangeLog getTableMetadataChangeLog(TableToken tableToken, long structureVersionLo, MemorySerializer serializer) {
+    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
         final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
         cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
         return cursor;
