@@ -86,11 +86,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    @AfterClass
-    public static void tearDownStatic() throws Exception {
-        AbstractCairoTest.tearDownStatic();
-    }
-
     public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
