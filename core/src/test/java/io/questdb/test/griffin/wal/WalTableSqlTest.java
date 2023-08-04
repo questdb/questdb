@@ -258,7 +258,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             }
 
             // Eject after every transaction
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(1);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(1);
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 for (int i = 0; i < count; i++) {
@@ -270,7 +270,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     rowCount += rows;
                 }
             }
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(Timestamps.MINUTE_MICROS);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(Timestamps.MINUTE_MICROS);
             drainWalQueue();
 
             assertSql("select count(*) from " + tableName, "count\n" + rowCount + "\n");
@@ -1066,8 +1066,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" +
-                    "testEmptyTruncate\tfalse\t1\t1\n");
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
+                    "testEmptyTruncate\tfalse\t1\t0\t1\n");
         });
     }
 
@@ -1117,7 +1117,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
@@ -1490,7 +1490,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
@@ -1549,7 +1549,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
         });
     }
-    
+
     @Test
     public void testWhenApplyJobTerminatesEarlierLagCommitted() throws Exception {
         AtomicBoolean isTerminating = new AtomicBoolean();

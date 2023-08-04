@@ -625,7 +625,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
-                LOG.debug().$("cannot publish WAL notifications, queue is full [current=")
+                LOG.info().$("cannot publish WAL notifications, queue is full [current=")
                         .$(pubSeq.current()).$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables

@@ -37,7 +37,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
-import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
@@ -754,7 +753,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuote(maxApplyTimePerTable);
+        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
         node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
     }
