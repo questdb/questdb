@@ -24,33 +24,27 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
-
-import static org.junit.Assert.assertEquals;
 
 public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testInvalidKind() {
-        try {
-            assertException("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
-        } catch (SqlException e) {
-            assertEquals(18, e.getPosition());
-            TestUtils.assertContains("invalid unit 'invalid'", e.getFlyweightMessage());
-        }
+    public void testInvalidKind() throws Exception {
+        assertException(
+                "select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
+                18,
+                "invalid unit 'invalid'"
+        );
     }
 
     @Test
-    public void testNullKind() {
-        try {
-            assertException("select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated");
-        } catch (SqlException e) {
-            assertEquals(18, e.getPosition());
-            TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
-        }
+    public void testNullKind() throws Exception {
+        assertException(
+                "select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
+                18,
+                "invalid unit 'null'"
+        );
     }
 
     @Test

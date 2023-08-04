@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalUtils;
@@ -114,7 +113,7 @@ public class TableBackupTest {
             @NotNull CairoEngine engine,
             @NotNull SqlExecutionContext context
     ) throws SqlException {
-        executeSqlStmt(engine,
+        engine.ddl(
                 "CREATE TABLE '" + tableName + "' AS (" +
                         selectGenerator(numRows) +
                         "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
@@ -131,7 +130,7 @@ public class TableBackupTest {
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        executeSqlStmt(engine, "INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', sqlExecutionContext);
+        engine.insert("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', sqlExecutionContext);
     }
 
     public static String testTableName(String tableName, String tableNameSuffix) {
@@ -240,9 +239,9 @@ public class TableBackupTest {
         Assume.assumeTrue(PartitionBy.isPartitioned(partitionBy));
         assertMemoryLeak(() -> {
             TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-            executeSqlStmt("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
-            executeSqlStmt("alter table " + tableToken.getTableName() + " add column new_g8 geohash(32b)");
-            executeSqlStmt("INSERT INTO '" + tableToken.getTableName() + "' (new_g4, new_g8, timestamp2) SELECT * FROM (" +
+            compileAndDrainWalQueue("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
+            compileAndDrainWalQueue("alter table " + tableToken.getTableName() + " add column new_g8 geohash(32b)");
+            compileAndDrainWalQueue("INSERT INTO '" + tableToken.getTableName() + "' (new_g4, new_g8, timestamp2) SELECT * FROM (" +
                     " SELECT" +
                     "     rnd_geohash(30)," +
                     "     rnd_geohash(32)," +
@@ -272,7 +271,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                executeSqlStmt("backup table .." + Files.SEPARATOR + tableToken.getTableName());
+                compileAndDrainWalQueue("backup table .." + Files.SEPARATOR + tableToken.getTableName());
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("'.' is an invalid table name", ex.getFlyweightMessage());
@@ -298,7 +297,7 @@ public class TableBackupTest {
     public void testInvalidSql1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                executeSqlStmt("backup something");
+                compileAndDrainWalQueue("backup something");
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertEquals(7, ex.getPosition());
@@ -311,7 +310,7 @@ public class TableBackupTest {
     public void testInvalidSql2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                executeSqlStmt("backup table");
+                compileAndDrainWalQueue("backup table");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
@@ -325,7 +324,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                executeSqlStmt("backup table " + tableToken.getTableName() + " tb2");
+                compileAndDrainWalQueue("backup table " + tableToken.getTableName() + " tb2");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("expected ','", ex.getFlyweightMessage());
@@ -338,7 +337,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                executeSqlStmt("backup table " + tableToken.getTableName() + ", tb2");
+                compileAndDrainWalQueue("backup table " + tableToken.getTableName() + ", tb2");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("table does not exist [table=tb2]", e.getFlyweightMessage());
@@ -351,7 +350,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             TableToken token1 = executeCreateTableStmt(testName.getMethodName());
             TableToken token2 = executeCreateTableStmt(token1.getTableName() + "_yip");
-            executeSqlStmt("backup table " + token1.getTableName() + ", " + token2.getTableName());
+            compileAndDrainWalQueue("backup table " + token1.getTableName() + ", " + token2.getTableName());
             setFinalBackupPath();
             assertTables(token1);
             assertTables(token2);
@@ -428,15 +427,6 @@ public class TableBackupTest {
         });
     }
 
-    private static void executeSqlStmt(CairoEngine engine, CharSequence stmt, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                OperationFuture future = compiler.compile(stmt, sqlExecutionContext).execute(null)
-        ) {
-            future.await();
-        }
-    }
-
     private static String selectGenerator(int size) {
         return " SELECT" +
                 "     rnd_boolean() bool," +
@@ -511,9 +501,9 @@ public class TableBackupTest {
         selectAll(tableToken, true, sink2);
         TestUtils.assertEquals(sink1, sink2);
 
-        String sql1 = "INSERT INTO '" + tableToken.getTableName() + "'(timestamp2) VALUES('2123')";
-        executeBackupSqlStmt(sql1);
-        executeSqlStmt(sql1);
+        String sql = "INSERT INTO '" + tableToken.getTableName() + "'(timestamp2) VALUES('2123')";
+        executeBackupSqlStmt(sql);
+        compileAndDrainWalQueue(sql);
 
         selectAll(tableToken, false, sink1);
         selectAll(tableToken, true, sink2);
@@ -571,8 +561,8 @@ public class TableBackupTest {
         drainWalQueue();
     }
 
-    private void executeSqlStmt(String stmt) throws SqlException {
-        executeSqlStmt(mainEngine, stmt, mainSqlExecutionContext);
+    private void compileAndDrainWalQueue(String sql) throws SqlException {
+        mainEngine.compile(sql, mainSqlExecutionContext);
         drainWalQueue();
     }
 

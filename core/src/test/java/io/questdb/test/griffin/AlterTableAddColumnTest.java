@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -38,8 +37,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static io.questdb.griffin.CompiledQuery.ALTER;
 
 public class AlterTableAddColumnTest extends AbstractCairoTest {
 
@@ -574,28 +571,21 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     createX();
                     engine.clear();
 
-                    try (
-                            CairoEngine engine = new CairoEngine(configuration, metrics);
-                            SqlCompiler compiler = engine.getSqlCompiler()
-                    ) {
-                        CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
-                        Assert.assertEquals(ALTER, cc.getType());
-                        cc.execute(null).await();
+                    ddl("alter table x add column meh symbol");
 
-                        try (TableReader reader = getReader("x")) {
-                            SymbolMapReader smr = reader.getSymbolMapReader(16);
-                            Assert.assertNotNull(smr);
-                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                            //check that both configuration and new column have cached  == true
-                            Assert.assertTrue(engine.getConfiguration().getDefaultSymbolCacheFlag());
-                            Assert.assertTrue(smr.isCached());
-                        }
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    try (TableReader reader = getReader("x")) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(16);
+                        Assert.assertNotNull(smr);
+                        Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                        Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                        Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                        //check that both configuration and new column have cached  == true
+                        Assert.assertTrue(engine.getConfiguration().getDefaultSymbolCacheFlag());
+                        Assert.assertTrue(smr.isCached());
                     }
+
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
                 }
         );
     }

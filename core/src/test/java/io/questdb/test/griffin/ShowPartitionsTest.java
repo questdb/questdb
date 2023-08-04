@@ -431,8 +431,10 @@ public class ShowPartitionsTest extends AbstractCairoTest {
 
     @Test
     public void testShowPartitionsTableDoesNotExist() throws Exception {
-        assertFailure("show partitions from banana", null, 21, "table does not exist [table=banana]");
-        assertFailure("SELECT * FROM table_partitions('banana')", null, 31, "table does not exist [table=banana]");
+        assertMemoryLeak(() -> {
+            assertException("show partitions from banana", 21, "table does not exist [table=banana]");
+            assertException("SELECT * FROM table_partitions('banana')", 31, "table does not exist [table=banana]");
+        });
     }
 
     @Test

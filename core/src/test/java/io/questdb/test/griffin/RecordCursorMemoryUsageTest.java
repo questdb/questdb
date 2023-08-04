@@ -41,7 +41,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinRecordCursorReleasesMemoryOnClose() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (select" +
+            ddl("create table tab as (select" +
                     " rnd_symbol(20,4,4,20000) sym1," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +

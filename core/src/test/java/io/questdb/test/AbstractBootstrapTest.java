@@ -169,11 +169,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         }
     }
 
-    static void dropTable(
-            SqlCompiler compiler,
-            SqlExecutionContext context,
-            TableToken tableToken
-    ) throws Exception {
+    static void dropTable(SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken) throws Exception {
         compiler.compile("DROP TABLE '" + tableToken.getTableName() + '\'', context);
     }
 

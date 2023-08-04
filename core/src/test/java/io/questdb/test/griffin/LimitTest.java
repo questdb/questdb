@@ -128,7 +128,7 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidHiType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from y limit 5,'ab'",
                 "create table y as (" +
                         "select" +
@@ -157,7 +157,7 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidLoType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from y limit 5 + 0.3",
                 "create table y as (" +
                         "select" +

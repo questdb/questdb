@@ -28,15 +28,12 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.runner.RunWith;
@@ -198,19 +195,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     throw new AssertionError("Table: " + table.getName(), e);
                 }
             } else {
-                try (
-                        SqlCompiler compiler = engine.getSqlCompiler();
-                        SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                ) {
                     final String sql = tableName + " where timestamp > " + timestampMark;
-                    try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    try (RecordCursorFactory factory = select(sql)) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                                     .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
                             assertCursorTwoPass(expected, cursor, metadata);
                         }
                     }
-                }
             }
         }
     }
@@ -338,13 +330,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             }
         }
 
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-        ) {
             final String sql = tableName + " where timestamp > " + timestampMark;
-            try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            try (RecordCursorFactory factory = select(sql)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                             .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
                     return table.size() <= cursor.size();
@@ -359,7 +347,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     throw ex;
                 }
             }
-        }
     }
 
     protected void clearTables() {

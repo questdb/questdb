@@ -62,7 +62,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByBindVariable() throws Exception {
         ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
-        assertFailure(
+        assertException(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
                 "create table x (id int, ref int, ref3 int)",
                 73, "literal expected"
@@ -100,7 +100,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV1() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -115,7 +115,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV2() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym2",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -130,7 +130,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsingAliasedColumnAndWrongTableAlias() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym ccy, avg(bid) avgBid from x a where sym in ('AA', 'BB' ) group by b.ccy",
                 "create table x (\n" +
                         "    sym symbol,\n" +
@@ -144,7 +144,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsingFunctionColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by avgBid",
                 "create table x (\n" +
                         "    sym symbol,\n" +
@@ -158,7 +158,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsingInvalidColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by badColumn",
                 "create table x (\n" +
                         "    sym symbol,\n" +
@@ -172,7 +172,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByInvalidColumnName1() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by b.rubbish",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -188,7 +188,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByInvalidColumnName2() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by b.sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -229,8 +229,11 @@ public class NoopGroupByTest extends AbstractCairoTest {
             compile("create table y(id int, ref int, val double)");
             compile("create table x (id int, ref int, ref3 int)");
             engine.releaseAllWriters();
-            assertFailure("select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref",
-                    null, 21, "column must appear in GROUP BY clause or aggregate function");
+            assertException(
+                    "select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref",
+                    21,
+                    "column must appear in GROUP BY clause or aggregate function"
+            );
         });
     }
 
@@ -262,7 +265,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByJoinReferenceNonSelected() throws Exception {
         ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
-        assertFailure(
+        assertException(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
                 "create table x (id int, ref int, ref3 int)",
                 13, "column must appear in GROUP BY clause or aggregate function"
@@ -280,7 +283,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByMissingColumnWithTableAlias1() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, a.sym2, avg(bid) avgBid from x a group by a.sym1", //a.sym2 is missing in group by clause
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -415,7 +418,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test//sym1 is aliased as ccy at stage later than group by
     public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable() throws Exception {
-        assertFailure("select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
+        assertException("select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -427,7 +430,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable2() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym1 ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by b.ccy",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -662,7 +665,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupReferenceAggregate() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by a.sym1, avgBid order by a.sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -678,7 +681,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupReferenceNonKeyColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by a.sym2 order by a.sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +

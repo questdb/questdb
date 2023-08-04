@@ -310,7 +310,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, true);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
 
             insert(
                     "insert into x select * from " +
@@ -2075,7 +2075,7 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCacheFullFat(expected, query, null, false, false, true);
+            assertQueryAndCacheFullFat(expected, query, null, false, false);
         });
     }
 
@@ -2100,7 +2100,7 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCacheFullFat(expected, query, null, false, false, true);
+            assertQueryAndCacheFullFat(expected, query, null, false, false);
         });
     }
 
@@ -3819,7 +3819,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, fullFatJoin);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
 
             ddl(
                     "insert into x select * from (" +
@@ -3932,7 +3932,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, fullFatJoin);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
 
             insert(
                     "insert into x select * from " +
@@ -4180,7 +4180,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true, fullFatJoin);
+            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
 
             ddl("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
@@ -4497,8 +4497,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
                     null,
                     false,
-                    false,
-                    fullFatJoin
+                    false
             );
 
             ddl("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
@@ -4701,8 +4700,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
                     null,
                     false,
-                    false,
-                    fullFatJoin
+                    false
             );
 
             insert("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
@@ -4751,8 +4749,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300",
                     null,
                     false,
-                    false,
-                    fullFatJoin
+                    false
             );
 
             insert("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");

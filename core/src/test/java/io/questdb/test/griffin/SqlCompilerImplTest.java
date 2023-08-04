@@ -1355,7 +1355,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastNumberFail() {
+    public void testCastNumberFail() throws Exception {
         assertCastIntFail(ColumnType.BOOLEAN);
         assertCastLongFail(ColumnType.BOOLEAN);
         assertCastByteFail(ColumnType.BOOLEAN);
@@ -2066,7 +2066,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectCharToGeoShort() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into geohash " +
                         "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
                 "create table geohash (geohash geohash(2c))",
@@ -2077,7 +2077,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectCharToGeoWiderByte() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into geohash " +
                         "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
                 "create table geohash (geohash geohash(6b))",
@@ -3009,13 +3009,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyQuery() {
-        try {
-            assertException("                        ");
-        } catch (SqlException e) {
-            Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "empty query");
-        }
+    public void testEmptyQuery() throws Exception {
+        assertException(
+                "                        ",
+                0,
+                "empty query"
+        );
     }
 
     @Test
@@ -4649,63 +4648,61 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testRaceToCreateEmptyTable() throws InterruptedException {
-        try (SqlCompiler compiler2 = engine.getSqlCompiler()) {
-            AtomicInteger index = new AtomicInteger();
-            AtomicInteger success = new AtomicInteger();
+        AtomicInteger index = new AtomicInteger();
+        AtomicInteger success = new AtomicInteger();
 
-            for (int i = 0; i < 50; i++) {
-                CyclicBarrier barrier = new CyclicBarrier(2);
-                CountDownLatch haltLatch = new CountDownLatch(2);
+        for (int i = 0; i < 50; i++) {
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            CountDownLatch haltLatch = new CountDownLatch(2);
 
-                index.set(-1);
-                success.set(0);
+            index.set(-1);
+            success.set(0);
 
-                LOG.info().$("create race [i=").$(i).$(']').$();
+            LOG.info().$("create race [i=").$(i).$(']').$();
 
-                new Thread(() -> {
-                    try {
-                        barrier.await();
-                        ddl("create table x (a INT, b FLOAT)");
-                        index.set(0);
-                        success.incrementAndGet();
-                    } catch (Exception ignore) {
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    ddl("create table x (a INT, b FLOAT)");
+                    index.set(0);
+                    success.incrementAndGet();
+                } catch (Exception ignore) {
 //                    e.printStackTrace();
-                    } finally {
-                        haltLatch.countDown();
-                    }
-                }).start();
-
-                new Thread(() -> {
-                    try {
-                        barrier.await();
-                        compiler2.compile("create table x (a STRING, b DOUBLE)", sqlExecutionContext);
-                        index.set(1);
-                        success.incrementAndGet();
-                    } catch (Exception ignore) {
-//                    e.printStackTrace();
-                    } finally {
-                        haltLatch.countDown();
-                    }
-                }).start();
-
-                Assert.assertTrue(haltLatch.await(30, TimeUnit.SECONDS));
-
-                Assert.assertEquals(1, success.get());
-                Assert.assertNotEquals(-1, index.get());
-
-                TableToken tt;
-                try (TableReader reader = getReader("x")) {
-                    tt = reader.getTableToken();
-                    sink.clear();
-                    reader.getMetadata().toJson(sink);
-                    if (index.get() == 0) {
-                        TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}", sink);
-                    } else {
-                        TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
-                    }
+                } finally {
+                    haltLatch.countDown();
                 }
-                engine.drop(path, tt);
+            }).start();
+
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    ddl("create table x (a STRING, b DOUBLE)");
+                    index.set(1);
+                    success.incrementAndGet();
+                } catch (Exception ignore) {
+//                    e.printStackTrace();
+                } finally {
+                    haltLatch.countDown();
+                }
+            }).start();
+
+            Assert.assertTrue(haltLatch.await(30, TimeUnit.SECONDS));
+
+            Assert.assertEquals(1, success.get());
+            Assert.assertNotEquals(-1, index.get());
+
+            TableToken tt;
+            try (TableReader reader = getReader("x")) {
+                tt = reader.getTableToken();
+                sink.clear();
+                reader.getMetadata().toJson(sink);
+                if (index.get() == 0) {
+                    TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}", sink);
+                } else {
+                    TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
+                }
             }
+            engine.drop(path, tt);
         }
     }
 
@@ -4781,7 +4778,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testReindexSyntaxError() throws Exception {
-        assertFailure(
+        assertException(
                 "REINDEX TABLE xxx",
                 "create table xxx as (" +
                         "select " +
@@ -4795,44 +4792,38 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "LOCK EXCLUSIVE expected"
         );
 
-        assertFailure(
+        assertException(
                 "REINDEX TABLE xxx COLUMN sym2",
-                null,
                 "REINDEX TABLE xxx COLUMN sym2".length(),
                 "LOCK EXCLUSIVE expected"
         );
 
-        assertFailure(
+        assertException(
                 "REINDEX TABLE xxx LOCK",
-                null,
                 "REINDEX TABLE xxx LOCK".length(),
                 "LOCK EXCLUSIVE expected"
         );
 
-        assertFailure(
+        assertException(
                 "REINDEX TABLE xxx PARTITION '1234''",
-                null,
                 "REINDEX TABLE xxx PARTITION '1234''".length(),
                 "LOCK EXCLUSIVE expected"
         );
 
-        assertFailure(
+        assertException(
                 "REINDEX xxx PARTITION '1234''",
-                null,
                 "REINDEX ".length(),
                 "TABLE expected"
         );
 
-        assertFailure(
+        assertException(
                 "REINDEX TABLE ",
-                null,
                 "REINDEX TABLE ".length(),
                 "table name expected"
         );
 
-        assertFailure(
+        assertException(
                 "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice",
-                null,
                 "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice".length(),
                 "EOF expecte"
         );
@@ -5079,9 +5070,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectInvalidGeoHashLiteralBits() throws Exception {
-        assertFailure(
+        assertException(
                 "select ##k from long_sequence(10)",
-                null,
                 7,
                 "invalid constant: ##k"
         );
@@ -5201,21 +5191,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
-        assertFailure("select 1 from tab where (\"\")",
+        assertException("select 1 from tab where (\"\")",
                 "create table tab (i int)",
                 25, "Invalid column"
         );
 
-        assertFailure("select 1 from tab where (\"a\")",
-                null,
+        assertException("select 1 from tab where (\"a\")",
                 25, "Invalid column"
         );
 
-        assertFailure("select 1 from tab where ('')", null,
+        assertException("select 1 from tab where ('')",
                 25, "boolean expression expected"
         );
 
-        assertFailure("select 1 from tab where ('a')", null,
+        assertException("select 1 from tab where ('a')",
                 25, "boolean expression expected"
         );
     }
@@ -5325,17 +5314,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCastByteFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(94, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastByteFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                94,
+                "unsupported cast"
+        );
     }
 
     private void assertCastDate(String expectedData, int castTo) throws SqlException {
@@ -5358,17 +5344,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCastDoubleFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select * from (select rnd_double(2) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(93, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastDoubleFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select * from (select rnd_double(2) a from long_sequence(20))" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                93,
+                "unsupported cast"
+        );
     }
 
     private void assertCastFloat(String expectedData, int castTo) throws SqlException {
@@ -5381,17 +5364,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCastFloatFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select * from (select rnd_float(2) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(92, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastFloatFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select * from (select rnd_float(2) a from long_sequence(20))" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                92,
+                "unsupported cast"
+        );
     }
 
     private void assertCastInt(String expectedData, int castTo) throws SqlException {
@@ -5408,17 +5388,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCastIntFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(97, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastIntFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                97,
+                "unsupported cast"
+        );
     }
 
     private void assertCastLong(String expectedData, int castTo) throws SqlException {
@@ -5435,17 +5412,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCastLongFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(98, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastLongFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                98,
+                "unsupported cast"
+        );
     }
 
     private void assertCastShort(String expectedData, int castTo) throws SqlException {
@@ -5461,43 +5435,34 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCastShortFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select * from (select rnd_short(2,10) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(95, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastShortFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select * from (select rnd_short(2,10) a from long_sequence(20))" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                95,
+                "unsupported cast"
+        );
     }
 
-    private void assertCastStringFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(95, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastStringFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                95,
+                "unsupported cast"
+        );
     }
 
-    private void assertCastSymbolFail(int castTo) {
-        try {
-            assertException(
-                    "create table y as (" +
-                            "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
-                            "), cast(a as " + ColumnType.nameOf(castTo) + ")"
-            );
-        } catch (SqlException e) {
-            Assert.assertEquals(84, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
-        }
+    private void assertCastSymbolFail(int castTo) throws Exception {
+        assertException(
+                "create table y as (" +
+                        "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                84,
+                "unsupported cast"
+        );
     }
 
     private void assertCastTimestamp(String expectedData, int castTo) throws SqlException {

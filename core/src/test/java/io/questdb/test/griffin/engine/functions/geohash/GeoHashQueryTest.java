@@ -44,7 +44,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             for (int i = 1; i < b; i++) {
                 setUp();
                 try {
-                    assertFailure(
+                    assertException(
                             String.format("insert into gh select rnd_geohash(%s) from long_sequence(5)", i),
                             String.format("create table gh as (select rnd_geohash(%s) from long_sequence(5))", b),
                             22,

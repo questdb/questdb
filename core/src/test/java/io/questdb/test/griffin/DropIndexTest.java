@@ -25,13 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -77,16 +73,12 @@ public class DropIndexTest extends AbstractCairoTest {
             "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ")" +
             ", INDEX(temperature CAPACITY 4) " +
             "TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
-    protected static SqlCompiler compiler2;
-    protected static SqlExecutionContext sqlExecutionContext2;
     private static Path path;
     private static int tablePathLen;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        compiler2 = engine.getSqlCompiler();
-        sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(dirName);
         tablePathLen = path.length();
@@ -94,7 +86,6 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        compiler2 = Misc.free(compiler2);
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }
@@ -264,9 +255,8 @@ public class DropIndexTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
             engine.releaseAllWriters();
-            assertFailure(
+            assertException(
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
-                    null,
                     36,
                     "Column is not indexed [name=колонка]"
             );
@@ -301,8 +291,8 @@ public class DropIndexTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(tableName);
             try (Path path2 = new Path().put(configuration.getRoot()).concat(tableToken)) {
                 for (int i = 0; i < 5; i++) {
-                    try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
-                        try (RecordCursor ignored = factory.getCursor(sqlExecutionContext2)) {
+                    try (RecordCursorFactory factory = select(select)) {
+                        try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                             // 1st reader sees the index as DROP INDEX has not happened yet
                             // the readers that follow do not see the index, because it has been dropped
                             boolean isIndexed = i == 0;
@@ -384,11 +374,8 @@ public class DropIndexTest extends AbstractCairoTest {
             // drop index thread
             new Thread(() -> {
                 try {
-                    CompiledQuery cc = compiler2.compile(dropIndexStatement(), sqlExecutionContext2);
                     startBarrier.await();
-                    try (OperationFuture future = cc.execute(null)) {
-                        future.await();
-                    }
+                    ddl(dropIndexStatement());
                 } catch (Throwable e) {
                     concurrentDropIndexFailure.set(e);
                 } finally {
@@ -403,7 +390,7 @@ public class DropIndexTest extends AbstractCairoTest {
             try {
                 ddl(dropIndexStatement(), sqlExecutionContext);
                 endLatch.await();
-                // we didnt fail, check they did
+                // we didn't fail, check they did
                 Throwable fail = concurrentDropIndexFailure.get();
                 Assert.assertNotNull(fail);
                 if (fail instanceof EntryUnavailableException) {
@@ -474,7 +461,7 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void testDropIndexSyntaxErrors0() throws Exception {
-        assertFailure(
+        assertException(
                 "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
                 CREATE_TABLE_STMT,
                 43,
@@ -484,7 +471,7 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void testDropIndexSyntaxErrors1() throws Exception {
-        assertFailure(
+        assertException(
                 "ALTER TABLE sensors ALTER COLUMN sensor_id DROP",
                 CREATE_TABLE_STMT,
                 47,
@@ -494,7 +481,7 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void testDropIndexSyntaxErrors2() throws Exception {
-        assertFailure(
+        assertException(
                 "ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX,",
                 CREATE_TABLE_STMT,
                 53,

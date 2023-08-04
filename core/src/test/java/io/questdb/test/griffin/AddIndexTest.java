@@ -111,7 +111,7 @@ public class AddIndexTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableAlterColumnSyntaxError1() throws Exception {
-        assertFailure(
+        assertException(
                 "alter table trades alter columnz",
                 "create table trades as (\n" +
                         "    select \n" +
@@ -127,7 +127,7 @@ public class AddIndexTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableAttachPartitionSyntaxError1() throws Exception {
-        assertFailure(
+        assertException(
                 "alter table trades attach bucket",
                 "create table trades as (\n" +
                         "    select \n" +
@@ -143,7 +143,7 @@ public class AddIndexTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableDropColumnSyntaxError1() throws Exception {
-        assertFailure(
+        assertException(
                 "alter table trades drop bucket",
                 "create table trades as (\n" +
                         "    select \n" +
@@ -159,7 +159,7 @@ public class AddIndexTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableRenameColumnSyntaxError1() throws Exception {
-        assertFailure(
+        assertException(
                 "alter table trades rename bucket",
                 "create table trades as (\n" +
                         "    select \n" +

@@ -418,7 +418,7 @@ public class UuidTest extends AbstractCairoTest {
         ddl("create table x (u uuid)");
         insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
         ddl("create table y (i int)");
-        assertFailure("insert into y select u from x", null, 21, "inconvertible types");
+        assertException("insert into y select u from x", 21, "inconvertible types");
     }
 
     @Test
@@ -489,7 +489,7 @@ public class UuidTest extends AbstractCairoTest {
     public void testLongExplicitCastAsUuid() throws Exception {
         ddl("create table x (l long)");
         insert("insert into x values (42)");
-        assertFailure("select cast(l as uuid) from x", null, 7, "unexpected argument for function");
+        assertException("select cast(l as uuid) from x", 7, "unexpected argument for function");
     }
 
     @Test

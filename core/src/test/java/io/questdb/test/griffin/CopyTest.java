@@ -96,9 +96,8 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testCopyEmptyFileName() throws Exception {
-        assertMemoryLeak(() -> assertFailure(
+        assertMemoryLeak(() -> assertException(
                 "copy x from ''",
-                null,
                 12,
                 "file name expected"
         ));
@@ -106,9 +105,8 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testCopyFullHack() throws Exception {
-        assertMemoryLeak(() -> assertFailure(
+        assertMemoryLeak(() -> assertException(
                 "copy x from '../../../../../'",
-                null,
                 12,
                 "'.' is not allowed"
         ));
@@ -116,9 +114,8 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testCopyFullHack2() throws Exception {
-        assertMemoryLeak(() -> assertFailure(
+        assertMemoryLeak(() -> assertException(
                 "copy x from '\\..\\..\\'",
-                null,
                 13,
                 "'.' is not allowed"
         ));

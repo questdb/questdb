@@ -257,22 +257,22 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testShowTransactionIsolationLevelErr1() throws Exception {
-        assertFailure("show transaction", null, 16, "expected 'isolation'");
+        assertException("show transaction", 16, "expected 'isolation'");
     }
 
     @Test
     public void testShowTransactionIsolationLevelErr2() throws Exception {
-        assertFailure("show transaction oh", null, 17, "expected 'isolation'");
+        assertException("show transaction oh", 17, "expected 'isolation'");
     }
 
     @Test
     public void testShowTransactionIsolationLevelErr3() throws Exception {
-        assertFailure("show transaction isolation", null, 26, "expected 'level'");
+        assertException("show transaction isolation", 26, "expected 'level'");
     }
 
     @Test
     public void testShowTransactionIsolationLevelErr4() throws Exception {
-        assertFailure("show transaction isolation oops", null, 27, "expected 'level'");
+        assertException("show transaction isolation oops", 27, "expected 'level'");
     }
 
     @Test

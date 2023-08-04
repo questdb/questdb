@@ -67,7 +67,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
 
     @Test
     public void testDynamicRegexFailure() throws Exception {
-        assertFailure(
+        assertException(
                 "x where s ~ s",
                 "create table x as (select rnd_str() s from long_sequence(100))",
                 12,

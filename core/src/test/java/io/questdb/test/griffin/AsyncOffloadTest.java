@@ -177,7 +177,7 @@ public class AsyncOffloadTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool((() -> workerCount));
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
                                     "timestamp (timestamp) PARTITION BY HOUR",
@@ -187,26 +187,21 @@ public class AsyncOffloadTest extends AbstractCairoTest {
                     final int numOfRows = 2000;
                     for (int i = 0; i < numOfRows; i++) {
                         final int seconds = i % 60;
-                        final CompiledQuery cq = compiler.compile(
+                        engine.insert(
                                 "INSERT INTO test1 (column1, timestamp) " +
                                         "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
                                         + (seconds < 10 ? "0" + seconds : String.valueOf(seconds)) + "Z')",
                                 sqlExecutionContext
                         );
-                        try (final OperationFuture fut = cq.execute(null)) {
-                            fut.await();
-                        }
                     }
 
                     final String query = "SELECT column1 FROM test1 WHERE to_lowercase(column1) = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'";
 
-                    final SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
                     for (int i = 0; i < threadCount; i++) {
                         // Each factory should use a dedicated compiler instance, so that they don't
                         // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = engine.getSqlCompiler();
-                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        factories[i] = engine.select(query, sqlExecutionContext);
                     }
 
                     final AtomicInteger errors = new AtomicInteger();
@@ -239,9 +234,7 @@ public class AsyncOffloadTest extends AbstractCairoTest {
 
                     haltLatch.await();
 
-                    Misc.free(compilers);
                     Misc.free(factories);
-
                     Assert.assertEquals(0, errors.get());
                 },
                 configuration,
@@ -539,26 +532,24 @@ public class AsyncOffloadTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x ( " +
                                     "v long, " +
                                     "s symbol capacity 4 cache " +
                                     ")",
                             sqlExecutionContext
                     );
-                    compiler.compile(
+                    engine.insert(
                             "insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
 
-                    SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
 
                     for (int i = 0; i < threadCount; i++) {
                         // Each factory should use a dedicated compiler instance, so that they don't
                         // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = engine.getSqlCompiler();
-                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        factories[i] = engine.select(query, sqlExecutionContext);
                         Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
                     }
 
@@ -584,9 +575,7 @@ public class AsyncOffloadTest extends AbstractCairoTest {
 
                     haltLatch.await();
 
-                    Misc.free(compilers);
                     Misc.free(factories);
-
                     Assert.assertEquals(0, errors.get());
                 },
                 configuration,

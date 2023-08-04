@@ -39,6 +39,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -120,7 +121,8 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 ILP_PORT + pgPortDelta,
                 root,
                 PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
-                PropertyKey.CAIRO_SQL_BACKUP_ROOT.getPropertyPath() + '=' + backupRoot));
+                PropertyKey.CAIRO_SQL_BACKUP_ROOT.getPropertyPath() + '=' + backupRoot
+        ));
     }
 
     @Test
@@ -135,7 +137,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             // - keep track of the table tokens that made it into the backup and the number of overall rows expected in the backup
             // - the first error breaks the test
 
-            AtomicReference<List<TableToken>> tableTokens = new AtomicReference<>(new ArrayList<>());
+            AtomicReference<ObjList<TableToken>> tableTokens = new AtomicReference<>(new ObjList<>());
             AtomicLong expectedTotalRows = new AtomicLong();
 
             try (
@@ -150,10 +152,10 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 SOCountDownLatch writersCompleted = new SOCountDownLatch(N);
                 SOCountDownLatch backupCompleted = new SOCountDownLatch(1);
                 AtomicBoolean endWriters = new AtomicBoolean(false);
-                AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
+                AtomicReference<ObjList<Throwable>> errors = new AtomicReference<>(new ObjList<>());
 
                 CairoEngine engine = qdb.getEngine();
-                List<SqlExecutionContext> contexts = new ArrayList<>();
+                ObjList<SqlExecutionContext> contexts = new ObjList<>();
 
                 // create/populate tables concurrently
                 for (int t = 0; t < N; t++) {
@@ -178,8 +180,9 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 contexts.clear();
 
                 // drop tables
-                for (TableToken tableToken : tableTokens.get()) {
-                    dropTable(defaultCompiler, defaultContext, tableToken);
+                ObjList<TableToken> tokens = tableTokens.get();
+                for (int i = 0, n = tokens.size(); i < n; i++) {
+                    dropTable(defaultCompiler, defaultContext, tokens.getQuick(i));
                 }
 
                 // fail on first error found
@@ -226,7 +229,8 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                     "SELECT name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
                             "FROM tables() " +
                             "WHERE name='" + tableToken.getTableName() + '\'',
-                    context);
+                    context
+            );
             try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
                 TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
                 String expected = tableToken.getTableName() + "\ttimestamp2\t" + PartitionBy.toString(partitionBy) + '\t' + isWal + '\t' + tableToken.getDirName();
@@ -248,7 +252,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     }
 
     private static String getLatestBackupDbRoot() {
-        List<File> roots = new ArrayList<>();
+        ObjList<File> roots = new ObjList<>();
         for (File f : Objects.requireNonNull(new File(backupRoot).listFiles())) {
             if (f.isDirectory()) {
                 if (!f.getName().equals("tmp")) {
@@ -274,7 +278,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,
             SOCountDownLatch backupCompleted,
-            AtomicReference<List<Throwable>> errors
+            AtomicReference<ObjList<Throwable>> errors
     ) {
         startThread(backupCompleted, errors, () -> {
             long deadline = System.currentTimeMillis() + 3000L;
@@ -295,11 +299,11 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             boolean isWal,
             CairoEngine engine,
             SqlExecutionContext context,
-            AtomicReference<List<TableToken>> tableTokens,
+            AtomicReference<ObjList<TableToken>> tableTokens,
             CyclicBarrier creatorsBarrier,
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,
-            AtomicReference<List<Throwable>> errors
+            AtomicReference<ObjList<Throwable>> errors
     ) {
         startThread(createsCompleted, errors, () -> {
             creatorsBarrier.await();
@@ -314,12 +318,12 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             int tableId,
             CairoEngine engine,
             SqlExecutionContext context,
-            AtomicReference<List<TableToken>> tableTokens,
+            AtomicReference<ObjList<TableToken>> tableTokens,
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,
             SOCountDownLatch writersCompleted,
             AtomicBoolean endWriters,
-            AtomicReference<List<Throwable>> errors
+            AtomicReference<ObjList<Throwable>> errors
     ) {
         startThread(writersCompleted, errors, () -> {
             TableToken tableToken = null;
@@ -343,7 +347,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void startThread(SOCountDownLatch completedLatch, AtomicReference<List<Throwable>> errors, Callable<Void> code) {
+    private static void startThread(SOCountDownLatch completedLatch, AtomicReference<ObjList<Throwable>> errors, Callable<Void> code) {
         new Thread(() -> {
             try {
                 code.call();

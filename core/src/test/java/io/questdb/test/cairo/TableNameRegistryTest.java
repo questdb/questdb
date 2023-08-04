@@ -31,7 +31,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
@@ -66,13 +65,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    compiler.compile("drop table tab" + j, executionContext);
+                                    drop("drop table tab" + j, executionContext);
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
@@ -96,14 +92,11 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         Rnd rnd = TestUtils.generateRandom(LOG);
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();
                                 try {
-                                    compiler.compile(
+                                    ddl(
                                             "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
                                                     + (!isWal ? "BYPASS" : "")
                                                     + " WAL ",
@@ -115,7 +108,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 }
 
                                 try {
-                                    compiler.compile("drop table tab" + j, executionContext);
+                                    drop("drop table tab" + j, executionContext);
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
@@ -204,7 +197,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             engine.getTableTokens(tableTokenBucket, true);
-            if (0 != tableTokenBucket.size()) {
+            if (!tableTokenBucket.isEmpty()) {
                 Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
             }
         });
@@ -320,19 +313,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(threadCount);
             ObjList<Thread> threads = new ObjList<>(threadCount);
 
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 for (int j = 0; j < tableCount; j++) {
                     String tableName = "tab" + j;
                     if (j % 2 == 0) {
                         tableName = "Tab" + j;
                     }
-                    compiler.compile(
-                            "create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
-                            executionContext
-                    );
+                    ddl("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL", executionContext);
                 }
             }
 
@@ -341,13 +328,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    compiler.compile("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
+                                    ddl("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
                                         throw e;
@@ -539,13 +523,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("alter table " + tt2.getTableName() + " set type bypass wal", sqlExecutionContext);
-                compiler.compile("alter table " + tt3.getTableName() + " set type wal", sqlExecutionContext);
-            }
+            ddl("alter table " + tt2.getTableName() + " set type bypass wal");
+            ddl("alter table " + tt3.getTableName() + " set type wal");
             if (releaseInactiveBeforeConversion) {
                 engine.releaseInactive();
             }

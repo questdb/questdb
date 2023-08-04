@@ -261,8 +261,8 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableFromLikeTableWithPartition() throws Exception {
         ddl(
                 "create table x (" +
-                "a INT," +
-                "t timestamp) timestamp(t) partition by MONTH"
+                        "a INT," +
+                        "t timestamp) timestamp(t) partition by MONTH"
         );
         ddl("create table tab (like x)");
         assertSql("a\tt\n", "select * from tab");
@@ -322,12 +322,9 @@ public class CreateTableTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
-                                compiler.compile("create table if not exists tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                                ddl("create table if not exists tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
                             }
                         }
                     } catch (Throwable e) {
@@ -481,13 +478,8 @@ public class CreateTableTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
-                            for (int j = 0; j < tableCount; j++) {
-                                compiler.compile("create table tab" + (threadId * tableCount + j) + " (x int)", executionContext);
-                            }
+                        for (int j = 0; j < tableCount; j++) {
+                            ddl("create table tab" + (threadId * tableCount + j) + " (x int)");
                         }
                     } catch (Throwable e) {
                         ref.set(e);
@@ -521,13 +513,10 @@ public class CreateTableTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                                    ddl("create table tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
                                 } catch (SqlException e) {
                                     TestUtils.assertEquals("table already exists", e.getFlyweightMessage());
                                 }
@@ -587,14 +576,11 @@ public class CreateTableTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    compiler.compile("create table tab" + j + " (x int)", executionContext);
-                                    compiler.compile("drop table tab" + j, executionContext);
+                                    ddl("create table tab" + j + " (x int)", executionContext);
+                                    drop("drop table tab" + j, executionContext);
                                 } catch (SqlException e) {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                                     Os.pause();
@@ -612,14 +598,11 @@ public class CreateTableTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = engine.getSqlCompiler();
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL ", executionContext);
-                                    compiler.compile("drop table tab" + j, executionContext);
+                                    ddl("create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL ", executionContext);
+                                    drop("drop table tab" + j, executionContext);
                                 } catch (SqlException e) {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                                     Os.pause();

@@ -103,9 +103,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testComma() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(hour, '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "Invalid column: hour"
         );
@@ -373,9 +372,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMissingPart() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                null,
                 14,
                 "unbalanced ("
         );
@@ -396,9 +394,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMultipleFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(hour from from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                null,
                 14,
                 "unbalanced ("
         );
@@ -406,9 +403,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNonLiteralPart() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(1+1 from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 17,
                 "we expect timestamp part here"
         );
@@ -416,9 +412,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNotExtractFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select something(null from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 16,
                 "unbalanced ("
         );
@@ -426,9 +421,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNullFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(null from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "unsupported timestamp part: null"
         );
@@ -540,9 +534,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testUnsupported() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(timezone from '2022-12-30T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "unsupported timestamp part: timezone"
         );

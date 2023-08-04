@@ -1075,15 +1075,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         }
     }
 
-    private void assertUpdateFailsBecausePartitionIsReadOnly(String updateStmt, String tableName, String partitionName) {
+    private void assertUpdateFailsBecausePartitionIsReadOnly(String updateSql, String tableName, String partitionName) {
         try {
-            assertException(updateStmt);
+            assertException(updateSql);
         } catch (CairoException e) {
             TestUtils.assertContains(
                     "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",
                     e.getFlyweightMessage());
-        } catch (SqlException e) {
-            Assert.fail("not expecting any SqlException: " + e.getFlyweightMessage());
+        } catch (Throwable e) {
+            Assert.fail("not expecting any Exception: " + e.getMessage());
         }
     }
 

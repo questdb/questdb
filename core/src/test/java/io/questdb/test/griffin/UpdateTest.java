@@ -1351,12 +1351,12 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            ddl("alter table up add column y long", sqlExecutionContext);
+            ddl("alter table up add column y long");
             ddl("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
-                    " from long_sequence(5))", sqlExecutionContext);
+                    " from long_sequence(5))");
 
             update("UPDATE up SET y = 42 where x = 9 or x = 10 or x = 11");
 

@@ -343,7 +343,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testUnsupportedColumnType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x where b in (select 12, rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as (" +
                         "select" +

@@ -32,7 +32,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -81,8 +80,8 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testDesignatedTimestampOpSymbolColumns() throws Exception {
         assertQuery("a\tdk\tk\n" +
-                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
-                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n", "select a, dk, k from x where dk < cast(a as timestamp)", "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", "k", null, null, true, false, false);
+                "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
+                "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n", "select a, dk, k from x where dk < cast(a as timestamp)", "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", "k", null, null, true, false, false);
     }
 
     @Test
@@ -631,9 +630,11 @@ public class TimestampQueryTest extends AbstractCairoTest {
             int min = Integer.MAX_VALUE;
             int max = Integer.MIN_VALUE;
             for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
-                int results = compareNowRange("select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
+                int results = compareNowRange(
+                        "select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
                         datesArr,
-                        ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour));
+                        ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour)
+                );
                 min = Math.min(min, results);
                 max = Math.max(max, results);
             }
@@ -701,9 +702,11 @@ public class TimestampQueryTest extends AbstractCairoTest {
             }
 
             for (currentMicros = 0; currentMicros < count * hour + 4 * day; currentMicros += 5 * hour) {
-                compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
+                compareNowRange(
+                        "select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
                         datesArr,
-                        ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day));
+                        ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day)
+                );
             }
 
             currentMicros = 100L * hour;
@@ -727,14 +730,16 @@ public class TimestampQueryTest extends AbstractCairoTest {
                         "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
                         "dts",
                         true,
-                        true);
+                        true
+                );
 
                 assertQuery(
                         expected,
                         "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
                         "dts",
                         true,
-                        false);
+                        false
+                );
             }
         });
     }
@@ -742,23 +747,23 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampDifferentThanFixedValue() throws Exception {
         assertQuery("t\n" +
-                        "1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:02.000000Z\n", "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)", "t", null, null, true, true, false);
+                "1970-01-01T00:00:01.000000Z\n" +
+                "1970-01-01T00:00:02.000000Z\n", "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)", "t", null, null, true, true, false);
     }
 
     @Test
     public void testTimestampDifferentThanNonFixedValue() throws Exception {
         assertQuery("t\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:01.000000Z\n", "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')", "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)", "t", null, null, true, false, false);
+                "1970-01-01T00:00:00.000000Z\n" +
+                "1970-01-01T00:00:01.000000Z\n", "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')", "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)", "t", null, null, true, false, false);
     }
 
     @Test
     public void testTimestampInDay1orDay2() throws Exception {
         assertQuery("min\tmax\n\t\n", "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)", "min\tmax\n" +
-                        "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n", false, true, false);
+                "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                "from long_sequence(48L)", "min\tmax\n" +
+                "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n", false, true, false);
     }
 
     @Test
@@ -868,17 +873,17 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampMin() throws Exception {
         assertQuery("nts\tmin\n" +
-                        "nts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                        "from long_sequence(2L)", "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z\n", false, true, false);
+                "nts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
+                "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                "from long_sequence(2L)", "nts\tmin\n" +
+                "nts\t2020-01-01T00:00:00.000010Z\n", false, true, false);
     }
 
     @Test
     public void testTimestampOpSymbolColumns() throws Exception {
         assertQuery("a\tk\n" +
-                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
-                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n", "select a, k from x where k < cast(a as timestamp)", "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", "k", null, null, true, false, false);
+                "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
+                "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n", "select a, k from x where k < cast(a as timestamp)", "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", "k", null, null, true, false, false);
     }
 
     @Test
@@ -929,9 +934,9 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampStringComparison() throws Exception {
         assertQuery("min\tmax\n\t\n", "select min(nts), max(nts) from tt where nts = '2020-01-01'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)", "min\tmax\n" +
-                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n", false, true, false);
+                "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                "from long_sequence(48L)", "min\tmax\n" +
+                "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n", false, true, false);
     }
 
     @Test
@@ -1285,15 +1290,15 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampStringDateAdd() throws Exception {
         assertQuery("dateadd\n" +
-                        "2020-01-02T00:00:00.000000Z\n", "select dateadd('d', 1, '2020-01-01')", null, null, null, null, true, true, false);
+                "2020-01-02T00:00:00.000000Z\n", "select dateadd('d', 1, '2020-01-01')", null, null, null, null, true, true, false);
     }
 
     @Test
     public void testTimestampSymbolComparison() throws Exception {
         assertQuery("min\tmax\n\t\n", "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)", "min\tmax\n" +
-                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n", false, true, false);
+                "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                "from long_sequence(48L)", "min\tmax\n" +
+                "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n", false, true, false);
     }
 
     @Test
@@ -1349,14 +1354,16 @@ public class TimestampQueryTest extends AbstractCairoTest {
                         "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
                         "dts",
                         true,
-                        true);
+                        true
+                );
 
                 assertQuery(
                         expected,
                         "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
                         "dts",
                         true,
-                        false);
+                        false
+                );
             }
         });
     }
@@ -1364,7 +1371,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampSymbolDateAdd() throws Exception {
         assertQuery("dateadd\n" +
-                        "2020-01-02T00:00:00.000000Z\n", "select dateadd('d', 1, cast('2020-01-01' as symbol))", null, null, null, null, true, true, false);
+                "2020-01-02T00:00:00.000000Z\n", "select dateadd('d', 1, cast('2020-01-01' as symbol))", null, null, null, null, true, true, false);
     }
 
     private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
@@ -1380,18 +1387,14 @@ public class TimestampQueryTest extends AbstractCairoTest {
         assertSql(expected, query + joining + columnName + " not in '1970-01-01'");
     }
 
-    private void assertTimestampTtFailedQuery(String expectedError, String query) {
-        assertTimestampTtFailedQuery0(expectedError, query);
-        String dtsQuery = query.replace("nts", "dts");
-        assertTimestampTtFailedQuery0(expectedError, dtsQuery);
+    private void assertTimestampTtFailedQuery(String expectedError, String sql) throws Exception {
+        assertTimestampTtFailedQuery0(sql, expectedError);
+        String dtsQuery = sql.replace("nts", "dts");
+        assertTimestampTtFailedQuery0(dtsQuery, expectedError);
     }
 
-    private void assertTimestampTtFailedQuery0(String expectedError, String query) {
-        try {
-            assertException(query);
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
-        }
+    private void assertTimestampTtFailedQuery0(String sql, String contains) throws Exception {
+        assertException(sql, -1, contains);
     }
 
     private void assertTimestampTtQuery(String expected, String query) throws SqlException {

@@ -468,8 +468,7 @@ public class UnionTest extends AbstractCairoTest {
                         .replace("#CLAUSE" + i + "#", "order by x desc")
                         .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
 
-                assertFailure(orderQuery,
-                        null,
+                assertException(orderQuery,
                         (i == 0 ? 16 : 43),
                         "unexpected token 'order'"
                 );
@@ -478,8 +477,7 @@ public class UnionTest extends AbstractCairoTest {
                         .replace("#CLAUSE" + i + "#", "limit 1        ")
                         .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
 
-                assertFailure(limitQuery,
-                        null,
+                assertException(limitQuery,
                         (i == 0 ? 16 : 43),
                         "unexpected token 'limit'"
                 );

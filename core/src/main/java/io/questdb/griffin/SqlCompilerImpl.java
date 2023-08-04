@@ -3381,8 +3381,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     } else {
                         lexer.unparseLast(); // tok has table name
                     }
-                    final int tableNamePosition = lexer.getPosition();
                     final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table-name"));
+                    final int tableNamePosition = lexer.lastTokenPosition();
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {
                         return dropTable(executionContext, tableName, tableNamePosition, hasIfExists);

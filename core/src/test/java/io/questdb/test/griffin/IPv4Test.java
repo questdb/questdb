@@ -584,7 +584,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testExplicitCastIPv4ToStr() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col string)",
                 21,
@@ -934,7 +934,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseAndFailsStr() throws Exception {
-        assertFailure("select '1.1.1.1' & '0.0.1.1'", null, 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
+        assertException("select '1.1.1.1' & '0.0.1.1'", 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
     }
 
     @Test
@@ -1196,7 +1196,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseNotFailsStr() throws Exception {
-        assertFailure("select ~ '0.0.1.1'", null, 0, "inconvertible value: `0.0.1.1` [STRING -> LONG]");
+        assertException("select ~ '0.0.1.1'", 0, "inconvertible value: `0.0.1.1` [STRING -> LONG]");
     }
 
     @Test
@@ -1448,7 +1448,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseOrFailsStr() throws Exception {
-        assertFailure("select '1.1.1.1' | '0.0.1.1'", null, 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
+        assertException("select '1.1.1.1' | '0.0.1.1'", 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
     }
 
     @Test
@@ -1639,7 +1639,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFails() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '0.0.0.1/hello'",
                 "create table test as " +
                         "(" +
@@ -1656,7 +1656,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFails2() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '0.0.0/hello'",
                 "create table test as " +
                         "(" +
@@ -1673,7 +1673,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFails3() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '0.0.0.0/65'",
                 "create table test as " +
                         "(" +
@@ -1690,7 +1690,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFails4() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '0.0.0/65'",
                 "create table test as " +
                         "(" +
@@ -1707,7 +1707,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFails5() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '0.0.0.0/-1'",
                 "create table test as " +
                         "(" +
@@ -1724,7 +1724,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFails6() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '0.0.0/-1'",
                 "create table test as " +
                         "(" +
@@ -1741,7 +1741,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFailsChars() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= 'apple'",
                 "create table test as " +
                         "(" +
@@ -1758,7 +1758,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFailsNetmaskOverflow() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '85.7.36/74'",
                 "create table test as " +
                         "(" +
@@ -1775,7 +1775,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFailsNums() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '8573674'",
                 "create table test as " +
                         "(" +
@@ -1792,7 +1792,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetFailsOverflow() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '256.256.256.256'",
                 "create table test as " +
                         "(" +
@@ -1809,7 +1809,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4ContainsEqSubnetIncorrectMask() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip <<= '0.0.0/32'",
                 "create table test as " +
                         "(" +
@@ -2648,7 +2648,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFails() throws Exception {
-        assertFailure("select * from test where '0.0.0.1/hello' >>= ip", "create table test as " +
+        assertException("select * from test where '0.0.0.1/hello' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2660,7 +2660,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFails2() throws Exception {
-        assertFailure("select * from test where '0.0.0/hello' >>= ip", "create table test as " +
+        assertException("select * from test where '0.0.0/hello' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2672,7 +2672,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFails3() throws Exception {
-        assertFailure("select * from test where '0.0.0.0/65' >>= ip", "create table test as " +
+        assertException("select * from test where '0.0.0.0/65' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2684,7 +2684,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFails4() throws Exception {
-        assertFailure("select * from test where '0.0.0/65' >>= ip", "create table test as " +
+        assertException("select * from test where '0.0.0/65' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2696,7 +2696,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFails5() throws Exception {
-        assertFailure("select * from test where '0.0.0.0/-1' >>= ip", "create table test as " +
+        assertException("select * from test where '0.0.0.0/-1' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2708,7 +2708,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFails6() throws Exception {
-        assertFailure("select * from test where '0.0.0/-1' >>= ip", "create table test as " +
+        assertException("select * from test where '0.0.0/-1' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2720,7 +2720,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsChars() throws Exception {
-        assertFailure("select * from test where 'apple' >>= ip", "create table test as " +
+        assertException("select * from test where 'apple' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2732,7 +2732,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsNetmaskOverflow() throws Exception {
-        assertFailure("select * from test where '85.7.36/74' >>= ip", "create table test as " +
+        assertException("select * from test where '85.7.36/74' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2744,7 +2744,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsNums() throws Exception {
-        assertFailure("select * from test where '8573674' >>= ip", "create table test as " +
+        assertException("select * from test where '8573674' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2756,7 +2756,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsOverflow() throws Exception {
-        assertFailure("select * from test where '256.256.256.256' >>= ip", "create table test as " +
+        assertException("select * from test where '256.256.256.256' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -2768,7 +2768,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4NegContainsEqSubnetIncorrectMask() throws Exception {
-        assertFailure("select * from test where '0.0.0/32' >>= ip", "create table test as " +
+        assertException("select * from test where '0.0.0/32' >>= ip", "create table test as " +
                 "(" +
                 "  select" +
                 "    rnd_int(1000,2000,0)::ipv4 ip," +
@@ -3622,7 +3622,7 @@ public class IPv4Test extends AbstractCairoTest {
 
         engine.releaseInactive();
 
-        assertFailure("select col1 from x union select col2 from y", null, 25, "unsupported cast [column=col2, from=STRING, to=IPv4]");
+        assertException("select col1 from x union select col2 from y", 25, "unsupported cast [column=col2, from=STRING, to=IPv4]");
     }
 
     @Test
@@ -3684,7 +3684,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastBinaryToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_bin() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3694,7 +3694,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastBoolToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_boolean() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3704,7 +3704,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastByteToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_byte() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3714,7 +3714,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastCharToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_char() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3724,7 +3724,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastDateToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_date() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3734,7 +3734,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastDoubleToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_double() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3744,7 +3744,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastFloatToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_float() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3754,7 +3754,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToBinary() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col binary)",
                 21,
@@ -3764,7 +3764,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToBool() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col boolean)",
                 21,
@@ -3774,7 +3774,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToByte() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col byte)",
                 21,
@@ -3784,7 +3784,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToChar() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col char)",
                 21,
@@ -3794,7 +3794,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToDate() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col date)",
                 21,
@@ -3804,7 +3804,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToDouble() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col double)",
                 21,
@@ -3814,7 +3814,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToFloat() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col float)",
                 21,
@@ -3824,7 +3824,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToInt() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col int)",
                 21,
@@ -3834,7 +3834,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToLong() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col long)",
                 21,
@@ -3844,7 +3844,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToLong128() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col long128)",
                 21,
@@ -3854,7 +3854,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToLong256() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col long256)",
                 21,
@@ -3864,7 +3864,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToShort() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col short)",
                 21,
@@ -3874,7 +3874,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToStr() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col string)",
                 21,
@@ -3884,7 +3884,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToSymbol() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col symbol)",
                 21,
@@ -3894,7 +3894,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToTimestamp() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col timestamp)",
                 21,
@@ -3904,7 +3904,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIPv4ToUUID() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_ipv4() col from long_sequence(10)",
                 "create table y (col uuid)",
                 21,
@@ -3914,7 +3914,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastIntToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_int() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3924,7 +3924,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastLong256ToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_long256() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3934,7 +3934,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastLongToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_long() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3944,7 +3944,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastShortToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_short() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -3991,7 +3991,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastSymbolToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_symbol(4,4,4,2) col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -4001,7 +4001,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastTimestampToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_timestamp(10,100000,356) col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -4011,7 +4011,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastUUIDToIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into y select rnd_uuid4() col from long_sequence(10)",
                 "create table y (col ipv4)",
                 21,
@@ -5133,7 +5133,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testWhereInvalidIPv4() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from test where ip = 'hello'",
                 "create table test as " +
                         "(" +

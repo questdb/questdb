@@ -732,14 +732,11 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    WalWriter walWriter = engine.getWalWriter(tableToken)
-            ) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                assertSqlCursors(tableCopyName, tableName);
 
-                assertException(
+                assertExceptionNoLeakCheck(
                         "UPDATE " + tableName + " SET INT=systimestamp()",
                         43,
                         "inconvertible types: TIMESTAMP -> INT"
@@ -747,12 +744,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
                 assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
 
-                assertException(
+                assertExceptionNoLeakCheck(
                         "UPDATE " + tableCopyName + " SET INT=systimestamp()",
                         48,
                         "inconvertible types: TIMESTAMP -> INT"
                 );
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                assertSqlCursors(tableCopyName, tableName);
             }
         });
     }
@@ -912,7 +909,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putGeoHash(col++, i); // geo long
         row.putStr(col++, (char) (65 + i % 26));
         row.putSym(col++, symbol);
-        row.putLong128(col++, Hash.fastLongMix(i), Hash.fastLongMix(i + 1)); // UUID
+        row.putLong128(col, Hash.fastLongMix(i), Hash.fastLongMix(i + 1)); // UUID
         row.append();
     }
 

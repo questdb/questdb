@@ -684,39 +684,19 @@ public class InsertTest extends AbstractCairoTest {
             ddl("create table trades (i int, sym symbol)");
 
             // No comma delimiter between rows
-            expectInsertException(
-                    "insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');",
-                    39,
-                    "',' expected"
-            );
+            assertException("insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');", 39, "',' expected");
 
             // Empty row
-            expectInsertException(
-                    "insert into trades VALUES (1, 'USDJPY'), ();",
-                    42,
-                    "Expression expected"
-            );
+            assertException("insert into trades VALUES (1, 'USDJPY'), ();", 42, "Expression expected");
 
             // Empty row with comma delimiter inside
-            expectInsertException(
-                    "insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);",
-                    57,
-                    "Expression expected"
-            );
+            assertException("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);", 57, "Expression expected");
 
             // Empty row column
-            expectInsertException(
-                    "insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);",
-                    59,
-                    "Expression expected"
-            );
+            assertException("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);", 59, "Expression expected");
 
             // Multi row insert can't end in comma token
-            expectInsertException(
-                    "insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;",
-                    55,
-                    "'(' expected"
-            );
+            assertException("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;", 55, "'(' expected");
         });
     }
 
@@ -724,11 +704,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertMultipleRowsFailRowWrongColumnCount() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (i int, sym symbol)");
-            expectInsertException(
-                    "insert into trades VALUES (1, 'USDJPY'), ('USDFJD');",
-                    50,
-                    "row value count does not match column count [expected=2, actual=1, tuple=2]"
-            );
+            assertException("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');", 50, "row value count does not match column count [expected=2, actual=1, tuple=2]");
         });
     }
 
@@ -736,11 +712,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertMultipleRowsFailTypeConversion() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trades (sym symbol)");
-            expectInsertException(
-                    "insert into trades VALUES ('USDJPY'), (1), ('USDFJD');",
-                    39,
-                    "inconvertible types: INT -> SYMBOL [from=1, to=sym]"
-            );
+            assertException("insert into trades VALUES ('USDJPY'), (1), ('USDFJD');", 39, "inconvertible types: INT -> SYMBOL [from=1, to=sym]");
         });
     }
 
@@ -782,11 +754,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertNoSelfReference() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
-            expectInsertException(
-                    "insert into trades_aapl (ts) values (ts)",
-                    37,
-                    "Invalid column"
-            );
+            assertException("insert into trades_aapl (ts) values (ts)", 37, "Invalid column");
         });
     }
 
@@ -806,11 +774,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertNotEnoughFields() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            expectInsertException(
-                    "insert into balances values (1, 'USD')",
-                    37,
-                    "row value count does not match column count [expected=3, actual=2, tuple=1]"
-            );
+            assertException("insert into balances values (1, 'USD')", 37, "row value count does not match column count [expected=3, actual=2, tuple=1]");
         });
     }
 
@@ -969,11 +933,7 @@ public class InsertTest extends AbstractCairoTest {
 
             assertReaderCheckWal(expected2, "t");
 
-            expectInsertException(
-                    "insert into t values  (timestamp with time zone)",
-                    47,
-                    "String literal expected after 'timestamp with time zone'"
-            );
+            assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
         });
     }
 
@@ -981,19 +941,14 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            expectInsertException(
-                    "insert into balances values (1, ccy, 356.12)",
-                    32,
-                    "Invalid column: ccy"
-            );
+            assertException("insert into balances values (1, ccy, 356.12)", 32, "Invalid column: ccy");
         });
     }
 
     @Test
     public void testInsertValuesAsLambda() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into names values(select rnd_str('Tom', 'Anna', 'John', 'Tim', 'Kim', 'Jim'), rnd_str('Smith', 'Mason', 'Johnson', 'Thompson') from long_sequence(8))",
-                null,
                 25,
                 "query is not allowed here"
         );
@@ -1003,11 +958,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertWithLessColumnsThanExistingTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
-            expectInsertException(
-                    "insert into tab select x ac  from long_sequence(10)",
-                    12,
-                    "select clause must provide timestamp column"
-            );
+            assertException("insert into tab select x ac  from long_sequence(10)", 12, "select clause must provide timestamp column");
         });
     }
 
@@ -1015,11 +966,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertWithWrongDesignatedColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
-            expectInsertException(
-                    "insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)",
-                    12,
-                    "designated timestamp of existing table"
-            );
+            assertException("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", 12, "designated timestamp of existing table");
         });
     }
 
@@ -1057,11 +1004,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertWithoutDesignatedTimestampAndTypeDoesNotMatch() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab(seq long, ts timestamp) timestamp(ts);");
-            expectInsertException(
-                    "insert into tab select x ac, rnd_int() id from long_sequence(10)",
-                    12,
-                    "expected timestamp column"
-            );
+            assertException("insert into tab select x ac, rnd_int() id from long_sequence(10)", 12, "expected timestamp column");
         });
     }
 
@@ -1069,7 +1012,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertWrongTypeConstant() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (a timestamp)", sqlExecutionContext);
-            expectInsertException("insert into test values ('foobar')", 0, "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
+            assertException("insert into test values ('foobar')", 0, "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
         });
     }
 

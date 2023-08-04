@@ -218,7 +218,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     Assert.assertNotNull(tableToken);
                     engine.registerTableToken(tableToken);
                     createTable(cairoConfig, mem, path.concat(tableToken), tableModel, 1, tableToken.getDirName());
-                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
+                    engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
                     engine.unlockTableName(tableToken);
                 }
                 Assert.assertNotNull(tableToken);

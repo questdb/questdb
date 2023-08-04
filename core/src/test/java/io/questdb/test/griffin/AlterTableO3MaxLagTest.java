@@ -289,7 +289,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setMaxUncommittedRowsMissingEquals() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM maxUncommittedRows 100",
+        assertException("ALTER TABLE X SET PARAM maxUncommittedRows 100",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 43,
                 "'=' expected");
@@ -297,7 +297,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setMaxUncommittedRowsNegativeValue() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM maxUncommittedRows = -1",
+        assertException("ALTER TABLE X SET PARAM maxUncommittedRows = -1",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 24,
                 "invalid value [value=-,parameter=maxUncommittedRows]");
@@ -325,7 +325,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setO3MaxLagWrongSetSyntax() throws Exception {
-        assertFailure("ALTER TABLE X SET o3MaxLag = 111ms",
+        assertException("ALTER TABLE X SET o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 18,
                 "'param' or 'type' expected");
@@ -333,7 +333,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setO3MaxLagWrongSetSyntax2() throws Exception {
-        assertFailure("ALTER TABLE X PARAM o3MaxLag = 111ms",
+        assertException("ALTER TABLE X PARAM o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 14,
                 "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
@@ -341,7 +341,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setO3MaxLagWrongTimeQualifier() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111days",
+        assertException("ALTER TABLE X SET PARAM o3MaxLag = 111days",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 27,
                 "interval qualifier");
@@ -349,7 +349,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setO3MaxLagWrongTimeQualifier2() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111ml",
+        assertException("ALTER TABLE X SET PARAM o3MaxLag = 111ml",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 29,
                 "interval qualifier");

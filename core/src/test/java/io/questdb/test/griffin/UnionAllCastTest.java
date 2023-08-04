@@ -2257,7 +2257,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
         compile(ddlY);
         engine.releaseAllWriters();
-        assertFailure("x union all y",
+        assertException("x union all y",
                 ddlX,
                 pos,
                 "unsupported cast"

@@ -71,9 +71,9 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             compile("CREATE TABLE tabb ( x int, bid int );");
         });
 
-        assertFailure("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
+        assertException("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
                 "FROM taba " +
-                "join tabb on aid = bid", null, 11, "Invalid table name or alias");
+                "join tabb on aid = bid", 11, "Invalid table name or alias");
     }
 
     @Test
@@ -81,11 +81,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE taba ( x int, aid int );");
             compile("CREATE TABLE tabb ( x int, bid int );");
+            assertException("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
+                    "FROM taba " +
+                    "join tabb on aid = bid", 11, "Invalid column: taba.k");
         });
-
-        assertFailure("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
-                "FROM taba " +
-                "join tabb on aid = bid", null, 11, "Invalid column: taba.k");
     }
 
     @Test
@@ -93,10 +92,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE taba ( x int, aid int );");
             compile("  CREATE TABLE tabb ( x int, bid int );");
+            assertException("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
+                    "FROM taba " +
+                    "join tabb on aid = bid", 11, "Ambiguous column [name=x]");
         });
-        assertFailure("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
-                "FROM taba " +
-                "join tabb on aid = bid", null, 11, "Ambiguous column [name=x]");
     }
 
     @Test

@@ -1091,10 +1091,9 @@ public class KeyedAggregationTest extends AbstractCairoTest {
         };
 
         executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(100000))", sqlExecutionContext);
+            engine.ddl("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(100000))", sqlExecutionContext);
             String query = "select i, sum(d) from tab group by i";
-
-            assertRostiMemory(compiler, query, sqlExecutionContext);
+            assertRostiMemory(engine, query, sqlExecutionContext);
         });
     }
 
@@ -1180,10 +1179,10 @@ public class KeyedAggregationTest extends AbstractCairoTest {
         };
 
         executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(2000))", sqlExecutionContext);
+            engine.ddl("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(2000))", sqlExecutionContext);
             String query = "select i, sum(l) from tab group by i";
 
-            assertRostiMemory(compiler, query, sqlExecutionContext);
+            assertRostiMemory(engine, query, sqlExecutionContext);
         });
     }
 
@@ -1217,15 +1216,15 @@ public class KeyedAggregationTest extends AbstractCairoTest {
         };
 
         executeWithPool(WORKER_COUNT, 64, raf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab as " +
+            engine.ddl("create table tab as " +
                     "(select rnd_double() d, x, " +
                     "rnd_int() i, " +
                     "rnd_long() l, " +
                     "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
                     "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp " +
                     "from long_sequence(100))", sqlExecutionContext);
-            compiler.compile("alter table tab add column s symbol cache", sqlExecutionContext).execute(null).await();
-            compiler.compile("insert into tab select rnd_double(), " +
+            engine.ddl("alter table tab add column s symbol cache", sqlExecutionContext);
+            engine.insert("insert into tab select rnd_double(), " +
                     "x + 1000,   " +
                     "rnd_int() i, " +
                     "rnd_long() l, " +
@@ -1243,7 +1242,7 @@ public class KeyedAggregationTest extends AbstractCairoTest {
                 String query = "select s, " + function + " from tab group by s";
                 LOG.infoW().$(function).$();
                 //String query = "select s, sum(d) from tab group by s";
-                assertRostiMemory(compiler, query, sqlExecutionContext);
+                assertRostiMemory(engine, query, sqlExecutionContext);
                 sizeCounter.set(0);
             }
         });
@@ -1273,11 +1272,10 @@ public class KeyedAggregationTest extends AbstractCairoTest {
         };
 
         executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab as (select rnd_double() d, x from long_sequence(100))", sqlExecutionContext);
-            compiler.compile("alter table tab add column s symbol cache", sqlExecutionContext).execute(null).await();
-            compiler.compile("insert into tab select rnd_double(), x + 1000, cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext);
-
-            assertRostiMemory(compiler, "select s, sum(d) from tab group by s", sqlExecutionContext);
+            engine.ddl("create table tab as (select rnd_double() d, x from long_sequence(100))", sqlExecutionContext);
+            engine.ddl("alter table tab add column s symbol cache", sqlExecutionContext);
+            engine.insert("insert into tab select rnd_double(), x + 1000, cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext);
+            assertRostiMemory(engine, "select s, sum(d) from tab group by s", sqlExecutionContext);
         });
     }
 
@@ -1468,7 +1466,9 @@ public class KeyedAggregationTest extends AbstractCairoTest {
                 "count(d) cd, " +
                 "count(dat) cdat, " +
                 "count(ts) cts " +
-                "from x order by k", sqlExecutionContext);
+                "from x order by k",
+                sqlExecutionContext
+        );
         try {
             assertCursor("k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts\n" +
                             "NaN\t3\t3\t0\t0\t0\t0\t0\n" +
@@ -1642,9 +1642,9 @@ public class KeyedAggregationTest extends AbstractCairoTest {
         }
     }
 
-    private void assertRostiMemory(SqlCompiler compiler, String query, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void assertRostiMemory(CairoEngine engine, String query, SqlExecutionContext sqlExecutionContext) throws SqlException {
         long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
-        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+        try (final RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
             try {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     cursor.hasNext();

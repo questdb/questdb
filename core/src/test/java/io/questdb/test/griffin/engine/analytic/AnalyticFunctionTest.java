@@ -67,7 +67,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankFailsInNonAnalyticContext() throws Exception {
-        assertFailure(
+        assertException(
                 "select rank(), * from trades",
                 "create table trades as " +
                         "(" +
@@ -392,7 +392,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberFailsInNonAnalyticContext() throws Exception {
-        assertFailure(
+        assertException(
                 "select row_number(), * from trades",
                 "create table trades as " +
                         "(" +

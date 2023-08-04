@@ -787,7 +787,7 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInvalidOrderByExpression() throws Exception {
-        assertFailure(
+        assertException(
                 "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
                 "CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);",
                 69,

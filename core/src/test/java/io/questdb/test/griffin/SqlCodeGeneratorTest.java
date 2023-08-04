@@ -50,8 +50,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
-
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
@@ -645,9 +643,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCached() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
-            }
+            ddl("create table x (col string)");
 
             engine.clear();
 
@@ -675,9 +671,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
-            }
+            ddl("create table x (col string)");
 
             try {
                 assertException("create table y as (x), cast(col as symbol capacity 100000000)");
@@ -693,10 +687,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
-            }
-
+            ddl("create table x (col string)");
             ddl("create table y as (x), cast(col as symbol nocache)");
 
             try (TableReader reader = getReader("y")) {
@@ -940,7 +931,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
-        assertFailure(
+        assertException(
                 "with tab as (x where b in ('BB')) select * from tab latest by b",
                 "create table x as " +
                         "(" +
@@ -1975,7 +1966,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterWrongType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x where b - a",
                 "create table x as " +
                         "(" +
@@ -2087,7 +2078,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testInsertMissingQuery() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into x (a,b)",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b from long_sequence(20)), index(b)",
                 19,
@@ -3549,7 +3540,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByFailsOnNonDesignatedTimestamp() throws Exception {
-        assertFailure(
+        assertException(
                 "tab latest on ts partition by id",
                 "create table tab(" +
                         "    id symbol, " +
@@ -4360,7 +4351,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByNonExistingColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x latest on k partition by y",
                 "create table x as " +
                         "(" +
@@ -4818,7 +4809,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryIndexedIntColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x where b in (select 1 a from long_sequence(4)) latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -4956,9 +4947,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         ddl(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
-            assertFailure(
+            assertException(
                     "comprehensive latest on ts partition by " + nameType[0],
-                    null,
                     40,
                     String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail)
             );
@@ -6105,7 +6095,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByUnsupportedType() throws Exception {
-        assertFailure(
+        assertException(
                 "x order by a,m,n",
                 "create table x as " +
                         "(" +
@@ -6774,10 +6764,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSelectDistinctWithColumnAliasAndTableFunction() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (id long)", sqlExecutionContext).getType());
-            }
-
+            ddl("create table my_table (id long)");
             try (RecordCursorFactory factory = select("select distinct x as foo from long_sequence(1)")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
@@ -6901,9 +6888,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSelectFromAliasedTable() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (sym int, id long)", sqlExecutionContext).getType());
-            }
+            ddl("create table my_table (sym int, id long)");
             try (RecordCursorFactory factory = select("select sum(a.sym) yo, a.id from my_table a")) {
                 Assert.assertNotNull(factory);
             }
@@ -7470,7 +7455,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testWithinClauseWithFilterFails() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym",
                 "create table tab as " +
                         "(" +
@@ -7484,7 +7469,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testWithinClauseWithLatestByNonSymbolOrNonIndexedSymbolColumnFails() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz) latest on ts partition by x",
                 "create table tab as " +
                         "(" +
@@ -7499,23 +7484,20 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "WITHIN clause requires LATEST BY using only indexed symbol columns"
         );
 
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
-                null,
                 28,
                 "WITHIN clause requires LATEST BY using only indexed symbol columns"
         );
 
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
-                null,
                 28,
                 "WITHIN clause requires LATEST BY using only indexed symbol columns"
         );
 
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
-                null,
                 28,
                 "WITHIN clause requires LATEST BY using only indexed symbol columns"
         );
@@ -7542,7 +7524,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testWithinClauseWithoutLatestByFails() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz)",
                 "create table tab as " +
                         "(" +

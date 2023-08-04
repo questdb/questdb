@@ -40,12 +40,10 @@ import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.SimpleWaitingLock;
-import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
@@ -60,6 +58,7 @@ import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
@@ -163,11 +162,43 @@ public class CairoEngine implements Closeable, WriterSource {
         this.sqlCompilerPool = new SqlCompilerPool(this);
     }
 
-    public static void ddl(SqlCompiler compiler, CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+    public static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+        switch (cq.getType()) {
+            default:
+                try (OperationFuture future = cq.execute(null)) {
+                    future.await();
+                }
+                break;
+            case INSERT:
+            case INSERT_AS_SELECT:
+                final InsertOperation insertOperation = cq.getInsertOperation();
+                if (insertOperation != null) {
+                    // for insert as select the operation is null
+                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                        insertMethod.execute();
+                        insertMethod.commit();
+                    }
+                }
+                break;
+            case DROP:
+                drop0(null, cq);
+                break;
+            case SELECT:
+                throw SqlException.$(0, "use select()");
+        }
+    }
+
+    public static void ddl(
+            SqlCompiler compiler,
+            CharSequence ddl,
+            SqlExecutionContext sqlExecutionContext,
+            @Nullable SCSequence eventSubSeq
+    ) throws SqlException {
+        CompiledQuery cc = compiler.compile(ddl, sqlExecutionContext);
         switch (cc.getType()) {
             default:
-                try (OperationFuture future = cc.execute(null)) {
+                try (OperationFuture future = cc.execute(eventSubSeq)) {
                     future.await();
                 }
                 break;
@@ -242,6 +273,12 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    public void compile(CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            compile(compiler, sql, sqlExecutionContext);
+        }
     }
 
     public void completeSnapshot() throws SqlException {
@@ -335,9 +372,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
-    public void ddl(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    public void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
+        ddl(ddl, executionContext, null);
+    }
+
+    public void ddl(CharSequence ddl, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = getSqlCompiler()) {
-            ddl(compiler, query, executionContext);
+            ddl(compiler, ddl, sqlExecutionContext, eventSubSeq);
         }
     }
 
@@ -368,6 +409,31 @@ public class CairoEngine implements Closeable, WriterSource {
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken).put("' [reason='").put(lockedReason).put("']");
+        }
+    }
+
+    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
+            switch (cq.getType()) {
+                case UPDATE:
+                case DROP:
+                    drop0(eventSubSeq, cq);
+                    break;
+                case INSERT:
+                case INSERT_AS_SELECT:
+                    throw SqlException.$(0, "use insert()");
+                case SELECT:
+                    throw SqlException.$(0, "use select()");
+                default:
+                    throw SqlException.$(0, "use ddl()");
+            }
+        } catch (SqlException | CairoException ex) {
+            if (!Chars.contains(ex.getFlyweightMessage(), "table does not exist")) {
+                throw ex;
+            }
+        } catch (TableReferenceOutOfDateException e) {
+            // ignore
         }
     }
 
@@ -955,6 +1021,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
+        }
+    }
+
+    private static void drop0(@Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {
+        try (OperationFuture fut = cq.execute(eventSubSeq)) {
+            if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
+                throw SqlException.$(0, "drop table timeout");
+            }
         }
     }
 

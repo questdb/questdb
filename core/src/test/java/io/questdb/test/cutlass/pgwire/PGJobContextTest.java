@@ -33,7 +33,6 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
@@ -9576,10 +9575,6 @@ create table tab as (
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
 
             @Override
             public int getWorkerCount() {
@@ -9655,8 +9650,7 @@ create table tab as (
                     connection.commit();
 
                     try (
-                            SqlCompiler compiler = engine.getSqlCompiler();
-                            RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory();
+                            RecordCursorFactory factory = select("xyz");
                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                     ) {
                         final Record record = cursor.getRecord();

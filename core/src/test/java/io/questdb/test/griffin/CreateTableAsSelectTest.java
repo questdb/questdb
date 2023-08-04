@@ -26,8 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class CreateTableAsSelectTest extends AbstractCairoTest {
@@ -37,7 +35,10 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            assertFailure(
+            assertException(
+                    "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
+                    13,
+                    "Could not create table. See log for details."
             );
         });
     }
@@ -55,15 +56,6 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     @Test
     public void testCreatePartitionedTableAsSelectTimestampNoOrder() throws Exception {
         testCreatePartitionedTableAsSelectWithOrderBy("");
-    }
-
-    private void assertFailure() {
-        try {
-            assertException("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table. See log for details.");
-            Assert.assertEquals(13, e.getPosition());
-        }
     }
 
     private void createSrcTable() throws SqlException {

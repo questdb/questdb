@@ -186,8 +186,8 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL"
             );
-            assertFailure("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", null, 54, "')' expected");
-            assertFailure("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s", null, 55, "')' expected");
+            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", 54, "')' expected");
+            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s", 55, "')' expected");
         });
     }
 
