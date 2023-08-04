@@ -48,12 +48,13 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
     @Override
     protected C newTenant(TableToken tableName, Entry<C> entry, int index) {
-        // todo: fix this method-train.
-        // why it looks like this: there is a life-cycle issue: when the SqlCompilerPool is constructed
-        // the configuration is not yet initialized thus getFactoryProvider returns null
-        // see PropServerConfiguration#init(CairoEngine engine, FunctionFactoryCache functionFactoryCache, FreeOnExit freeOnExit)
-        SqlCompiler delegate = engine.getSqlCompilerFactory().getInstance(engine);
-        return new C(delegate, this, tableName, entry, index);
+        return new C(
+                engine.getSqlCompilerFactory().getInstance(engine),
+                this,
+                tableName,
+                entry,
+                index
+        );
     }
 
     static class C implements SqlCompiler, PoolTenant {

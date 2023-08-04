@@ -24,7 +24,10 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -40,7 +43,6 @@ import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -77,14 +79,7 @@ public class ServerMain implements Closeable {
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         engine = freeOnExit.register(bootstrap.newCairoEngine());
-
-        // obtain function factory cache
-        FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
-        // TODO: now the engine has access to the FFC, so all methods below
-        //       that pass it in their signature should be simplified. Not
-        //       done for compatibility with enterprise
         config.init(engine, freeOnExit);
-
         freeOnExit.register(config.getFactoryProvider());
 
         // create the worker pool manager, and configure the shared pool
@@ -138,7 +133,7 @@ public class ServerMain implements Closeable {
 
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-                        final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
+                        final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExit.register(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);

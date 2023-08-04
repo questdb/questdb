@@ -44,8 +44,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.util.ServiceLoader;
-
 public class WhereClauseParserTest extends AbstractCairoTest {
 
     private static RecordMetadata metadata;
@@ -61,7 +59,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final WhereClauseParser e = new WhereClauseParser();
     private final FunctionParser functionParser = new FunctionParser(
             configuration,
-            new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+            engine.getFunctionFactoryCache()
     );
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
     private final RpnBuilder rpn = new RpnBuilder();
