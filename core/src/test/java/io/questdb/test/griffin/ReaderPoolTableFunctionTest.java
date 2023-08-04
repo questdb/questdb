@@ -26,19 +26,19 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
 import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -47,12 +47,14 @@ import java.util.concurrent.Callable;
 
 import static org.junit.Assert.assertTrue;
 
-public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
+public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testCursorDoesHaveUpfrontSize() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory();
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            try (
+                    RecordCursorFactory factory = select("select * from reader_pool()");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
                 Assert.assertEquals(-1, cursor.size());
             }
         });
@@ -69,13 +71,13 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertMemoryLeak(() -> assertSql("select * from reader_pool()", "table\towner\ttimestamp\ttxn\n"));
+        assertMemoryLeak(() -> assertSql("table\towner\ttimestamp\ttxn\n", "select * from reader_pool()"));
     }
 
     @Test
     public void testFactoryDoesNotSupportRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from reader_pool()")) {
                 Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
             }
         });
@@ -84,7 +86,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from reader_pool()")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(4, metadata.getColumnCount());
                 Assert.assertEquals("table", metadata.getColumnName(0));
@@ -230,12 +232,12 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
                 createPopulateTable(tm, 2, "2020-01-01", 1);
             }
 
-            assertSql("select * from tab1", "ts\tID\n" +
+            assertSql("ts\tID\n" +
                     "2020-01-01T00:00:00.000000Z\t1\n" +
-                    "2020-01-01T00:00:00.000000Z\t2\n");
+                    "2020-01-01T00:00:00.000000Z\t2\n", "select * from tab1");
 
-            assertSql("select table, owner, txn from reader_pool", "table\towner\ttxn\n" +
-                    "tab1\t-1\t1\n");
+            assertSql("table\towner\ttxn\n" +
+                    "tab1\t-1\t1\n", "select table, owner, txn from reader_pool");
         });
     }
 
@@ -261,8 +263,10 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     }
 
     private static void assertReaderPool(int expectedRowCount, ReaderPoolRowValidator validator) throws Exception {
-        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool() order by table", sqlExecutionContext).getRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+        try (
+                RecordCursorFactory factory = select("select * from reader_pool() order by table");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
             RecordMetadata metadata = factory.getMetadata();
             int i = 0;
             Record record = cursor.getRecord();
@@ -298,7 +302,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     }
 
     private static void executeTx(CharSequence tableName) throws SqlException {
-        compiler.compile("insert into " + tableName + " values (now(), 42)", sqlExecutionContext).execute(null).await();
+        insert("insert into " + tableName + " values (now(), 42)");
     }
 
     private static ReaderPoolRowValidator recordValidator(long startTime, CharSequence applicableTableName, long expectedOwner, long expectedTxn) {

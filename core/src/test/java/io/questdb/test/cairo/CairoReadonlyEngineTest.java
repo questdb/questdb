@@ -42,6 +42,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        super.setUp();
         currentMicros = 0;
         roConfig = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -63,7 +64,6 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 return true;
             }
         };
-        super.setUp();
     }
 
     @Test

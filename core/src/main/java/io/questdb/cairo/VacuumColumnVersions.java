@@ -60,14 +60,14 @@ public class VacuumColumnVersions implements Closeable {
     public VacuumColumnVersions(CairoEngine engine) {
         this.engine = engine;
         this.purgeExecution = new ColumnPurgeOperator(engine.getConfiguration());
-        this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.MMAP_UPDATE);
+        this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.NATIVE_SQL_COMPILER);
         this.ff = engine.getConfiguration().getFilesFacade();
     }
 
     @Override
     public void close() {
         this.purgeExecution = Misc.free(purgeExecution);
-        this.tableFiles = Misc.free(this.tableFiles);
+        this.tableFiles = Misc.free(tableFiles);
     }
 
     public void run(TableReader reader) {
@@ -124,7 +124,6 @@ public class VacuumColumnVersions implements Closeable {
                     CharSequence columnName = metadata.getColumnName(newReaderIndex);
                     int columnType = metadata.getColumnType(newReaderIndex);
                     purgeTask.of(reader.getTableToken(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
-
                 }
             }
 

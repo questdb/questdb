@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class RightFunctionFactoryTest extends AbstractGriffinTest {
+public class RightFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstLarge() throws Exception {

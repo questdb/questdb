@@ -29,9 +29,6 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -39,7 +36,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,21 +50,14 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class DispatcherWriterQueueTest extends AbstractTest {
+public class DispatcherWriterQueueTest extends AbstractCairoTest {
     private static final String UTF_8 = "UTF-8";
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-    private SqlCompiler compiler;
     private Error error = null;
-    private SqlExecutionContext sqlExecutionContext;
-
-    public void setupSql(CairoEngine engine) {
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(engine.getConfiguration()));
-    }
 
     @Test
     public void testAlterTableAddCacheAlterCache() throws Exception {
@@ -420,15 +410,17 @@ public class DispatcherWriterQueueTest extends AbstractTest {
             final String... httpAlterQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
-            setupSql(engine);
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
+                engine.ddl(
+                        "create table IF NOT EXISTS " + tableName + " as (" +
                         " select rnd_symbol('a', 'b', 'c') as s," +
                         " cast(x as timestamp) ts" +
                         " from long_sequence(10)" +
-                        " )", sqlExecutionContext);
+                        " )",
+                        sqlExecutionContext
+                );
                 writer = TestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
                 AtomicInteger errors = new AtomicInteger();
@@ -491,7 +483,6 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 if (writer != null) {
                     writer.close();
                 }
-                compiler.close();
             }
         });
     }
@@ -525,16 +516,17 @@ public class DispatcherWriterQueueTest extends AbstractTest {
             final String... httpUpdateQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
-            setupSql(engine);
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
+                engine.ddl("create table IF NOT EXISTS " + tableName + " as (" +
                         " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
                         " x," +
                         " cast(x as timestamp) ts" +
                         " from long_sequence(9)" +
-                        " )", sqlExecutionContext);
+                        " )",
+                        sqlExecutionContext
+                );
                 writer = TestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpUpdateQueries.length);
                 AtomicInteger errors = new AtomicInteger();
@@ -609,7 +601,6 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 if (writer != null) {
                     writer.close();
                 }
-                compiler.close();
             }
         });
     }

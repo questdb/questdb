@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -45,7 +45,7 @@ import org.junit.Test;
  * Tests for advanced features and scenarios, such as col tops, bind variables,
  * random access, record behavior, and so on.
  */
-public class CompiledFilterTest extends AbstractGriffinTest {
+public class CompiledFilterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
@@ -59,7 +59,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     public void testAllBindVariableTypes() throws Exception {
         assertMemoryLeak(() -> {
 
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " rnd_boolean() aboolean," +
                     " rnd_byte(2,50) abyte," +
                     " rnd_geohash(4) ageobyte," +
@@ -75,7 +75,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
                     " rnd_geohash(32) ageolong," +
                     " timestamp_sequence(400000000000, 500000000) atimestamp" +
-                    " from long_sequence(100)) timestamp(atimestamp)", sqlExecutionContext);
+                    " from long_sequence(100)) timestamp(atimestamp)");
 
             bindVariableService.clear();
             bindVariableService.setBoolean("aboolean", false);
@@ -113,7 +113,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String expected = "aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp\n" +
                     "false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.4882\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -146,11 +146,11 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testDeferredSymbolConstants() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " timestamp_sequence(400000000000, 500000000) ts," +
                     " x l," +
                     " rnd_symbol('A','B','C') sym" +
-                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5)) timestamp(ts)");
 
             // The column order is important here, since we want
             // query and table column indexes to be different.
@@ -158,14 +158,14 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String expected = "sym\tl\tts\n" +
                     "B\t3\t1970-01-05T15:23:20.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
 
-            compiler.compile("insert into x select " +
+            ddl("insert into x select " +
                     " timestamp_sequence(500000000000, 500000000) ts," +
                     " (x+5) l," +
                     " rnd_symbol('D','E','F') sym " +
-                    "from long_sequence(5)", sqlExecutionContext);
+                    "from long_sequence(5)");
 
             final String expected2 = "sym\tl\tts\n" +
                     "B\t3\t1970-01-05T15:23:20.000000Z\n" +
@@ -173,7 +173,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "F\t7\t1970-01-06T19:01:40.000000Z\n" +
                     "D\t9\t1970-01-06T19:18:20.000000Z\n";
 
-            assertSql(query, expected2);
+            assertSql(expected2, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -181,10 +181,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testIndexBindVariableReplacedContext() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " x l," +
                     " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(100)) timestamp(ts)");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             indexBindVariableReplacedContext(false);
@@ -199,10 +199,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             configOverrideColumnPreTouchEnabled(true);
 
-            compiler.compile("create table t1 as (select " +
+            ddl("create table t1 as (select " +
                     " x," +
                     " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(10)) timestamp(ts) partition by day", sqlExecutionContext);
+                    "from long_sequence(10)) timestamp(ts) partition by day");
 
             final String query = "select 1 as one, (4 + 2) as the_answer, ts as col_ts, x as col_x, sqrt(x) as root_x from t1 where x > 1";
             final String expected = "one\tthe_answer\tcol_ts\tcol_x\troot_x\n" +
@@ -216,7 +216,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0\n" +
                     "1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -224,15 +224,15 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testMultiplePartitionsOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table t1 as (select " +
+            ddl("create table t1 as (select " +
                     " x," +
                     " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(1000)) timestamp(ts) partition by day", sqlExecutionContext);
+                    "from long_sequence(1000)) timestamp(ts) partition by day");
 
-            compiler.compile("insert into t1 select " +
+            ddl("insert into t1 select " +
                     " x," +
                     " timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(1000)", sqlExecutionContext);
+                    "from long_sequence(1000)");
 
             final String query = "select * from t1 where x < 3 order by ts desc";
             final String expected = "x\tts\n" +
@@ -241,7 +241,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "2\t1970-01-01T00:00:00.100000Z\n" +
                     "1\t1970-01-01T00:00:00.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -249,10 +249,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testNameBindVariableReplacedContext() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " x l," +
                     " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(100)) timestamp(ts)");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             namedBindVariableReplacedContext(false);
@@ -267,17 +267,17 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         pageFrameMaxRows = 128;
         final long N = 8 * pageFrameMaxRows + 1;
         assertMemoryLeak(() -> {
-            compiler.compile("create table t1 as (select " +
+            ddl("create table t1 as (select " +
                     " x," +
                     " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(" + N + ")) timestamp(ts) partition by day", sqlExecutionContext);
+                    "from long_sequence(" + N + ")) timestamp(ts) partition by day");
 
             final String query = "select * from t1 where x < 3";
             final String expected = "x\tts\n" +
                     "1\t1970-01-01T00:00:00.000000Z\n" +
                     "2\t1970-01-01T00:00:00.100000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -285,20 +285,20 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testRandomAccessAfterToTop() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " x l," +
                     " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5)) timestamp(ts)");
 
             final String query = "select * from x where l > 3";
             final String expected = "l\tts\n" +
                     "4\t1970-01-05T15:31:40.000000Z\n" +
                     "5\t1970-01-05T15:40:00.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final Record record = cursor.getRecord();
                     // 1. iteration
@@ -329,28 +329,28 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testRandomAccessWithColTops() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " x l," +
                     " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5)) timestamp(ts)");
 
-            compile("alter table x add column j long", sqlExecutionContext);
+            ddl("alter table x add column j long", sqlExecutionContext);
 
-            compiler.compile("insert into x select " +
+            ddl("insert into x select " +
                     " (x+5) l," +
                     " timestamp_sequence(500000000000, 500000000) ts," +
                     " rnd_long() j " +
-                    "from long_sequence(5)", sqlExecutionContext);
+                    "from long_sequence(5)");
 
             final String query = "select * from x where l > 3 and j = null";
             final String expected = "l\tts\tj\n" +
                     "4\t1970-01-05T15:31:40.000000Z\tNaN\n" +
                     "5\t1970-01-05T15:40:00.000000Z\tNaN\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final Record record = cursor.getRecord();
                     // 1. iteration
@@ -440,10 +440,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testSymbolBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " rnd_symbol('A','B','C') sym," +
                     " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5)) timestamp(ts)");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym", "B");
@@ -452,7 +452,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             // query and table column indexes to be different.
             final String query = "select ts, sym from x where sym = :sym";
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -484,7 +484,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
         final String query = "select $2 as a, l from x where l = $1";
 
-        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select(query)) {
             if (jit) {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
             }
@@ -517,7 +517,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
         final String query = "select :v2 as a, l from x where l = :v1";
 
-        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select(query)) {
             if (jit) {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
             }
@@ -547,10 +547,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
             final long value = 42;
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " " + value + " l," +
                     " to_timestamp('1971', 'yyyy') ts" +
-                    " from long_sequence(1)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(1)) timestamp(ts)");
 
             bindVariableService.clear();
             bindVariableService.setLong("l", Numbers.LONG_NaN);
@@ -560,7 +560,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String query = "select * from x where l + :l = " + (Numbers.LONG_NaN + value);
             final String expected = "l\tts\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -570,20 +570,20 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             sqlExecutionContext.setJitMode(jitMode);
             configOverrideColumnPreTouchEnabled(preTouch);
 
-            compiler.compile("create table t1 as (select " +
+            ddl("create table t1 as (select " +
                     " x," +
                     " timestamp_sequence(0, 1000000) ts " +
-                    "from long_sequence(20)) timestamp(ts)", sqlExecutionContext);
+                    "from long_sequence(20)) timestamp(ts)");
 
-            compile("alter table t1 add column j long", sqlExecutionContext);
+            ddl("alter table t1 add column j long");
 
-            compiler.compile("insert into t1 select " +
+            ddl("insert into t1 select " +
                     " x," +
                     " timestamp_sequence(100000000, 1000000) ts," +
                     " rnd_long() j " +
-                    "from long_sequence(20)", sqlExecutionContext);
+                    "from long_sequence(20)");
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }
@@ -676,10 +676,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
 
-            compiler.compile("create table x as (select" +
+            ddl("create table x as (select" +
                     " rnd_long() l," +
                     " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(100)) timestamp(ts)");
 
             bindVariableService.clear();
             bindVariableService.setLong("l", 3614738589890112276L);
@@ -688,7 +688,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             final String expected = "l\tts\n" +
                     "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
 
-            assertSql(query, expected);
+            assertSql(expected, query);
             assertSqlRunWithJit(query);
         });
     }

@@ -33,7 +33,9 @@ import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -45,7 +47,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -59,7 +61,7 @@ import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
 
-public abstract class BasePGTest extends AbstractGriffinTest {
+public abstract class BasePGTest extends AbstractCairoTest {
 
     protected CopyRequestJob copyRequestJob = null;
 
@@ -67,8 +69,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             PGWireServer.PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
@@ -76,15 +76,13 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             return null;
         }
 
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory, registry);
+        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
     }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
+            WorkerPool workerPool
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -97,8 +95,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
-                snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,
@@ -164,7 +160,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
-        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount(), compiler.getFunctionFactoryCache());
+        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
         workerPool.assign(copyRequestJob);
         workerPool.freeOnExit(copyRequestJob);
@@ -172,9 +168,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return createPGWireServer(
                 configuration,
                 engine,
-                workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent
+                workerPool
         );
     }
 
@@ -214,11 +208,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
             }
 
             @Override

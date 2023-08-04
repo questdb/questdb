@@ -31,7 +31,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -46,7 +45,6 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -76,14 +74,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
 
-    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
-        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount, ffCache);
+        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());

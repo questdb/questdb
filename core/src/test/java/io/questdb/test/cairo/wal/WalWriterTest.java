@@ -36,7 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
 
-public class WalWriterTest extends AbstractGriffinTest {
+public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnRollsUncommittedRowsToNewSegment() throws Exception {
@@ -499,7 +499,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 try {
                     addColumn(walWriter, "c", ColumnType.SHORT);
-                    fail("Should not be able to add duplicate column");
+                    assertException("Should not be able to add duplicate column");
                 } catch (CairoException e) {
                     assertEquals("[-1] duplicate column name: c", e.getMessage());
                 }
@@ -595,7 +595,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 try {
                     engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1);
-                    fail("Segment 2 should not exist");
+                    assertException("Segment 2 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
                             File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
@@ -663,14 +663,14 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testAlterAddChangeLag() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
-            compile("alter table " + tableToken.getTableName() + " SET PARAM o3MaxLag = 20s");
-            compile("alter table " + tableToken.getTableName() + " add i2 int");
-            compile("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
+            ddl("alter table " + tableToken.getTableName() + " SET PARAM o3MaxLag = 20s");
+            ddl("alter table " + tableToken.getTableName() + " add i2 int");
+            insert("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(tableToken.getTableName(), "a\tb\tts\ti2\n" +
-                    "0\t\t2022-02-24T00:00:00.000000Z\t2\n");
+            assertSql("a\tb\tts\ti2\n" +
+                    "0\t\t2022-02-24T00:00:00.000000Z\t2\n", tableToken.getTableName());
         });
     }
 
@@ -678,14 +678,14 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testAlterAddChangeMaxUncommitted() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
-            compile("alter table " + tableToken.getTableName() + " set PARAM maxUncommittedRows = 20000");
-            compile("alter table " + tableToken.getTableName() + " add i2 int");
-            compile("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
+            ddl("alter table " + tableToken.getTableName() + " set PARAM maxUncommittedRows = 20000");
+            ddl("alter table " + tableToken.getTableName() + " add i2 int");
+            insert("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(tableToken.getTableName(), "a\tb\tts\ti2\n" +
-                    "0\t\t2022-02-24T00:00:00.000000Z\t2\n");
+            assertSql("a\tb\tts\ti2\n" +
+                    "0\t\t2022-02-24T00:00:00.000000Z\t2\n", tableToken.getTableName());
         });
     }
 
@@ -697,12 +697,12 @@ public class WalWriterTest extends AbstractGriffinTest {
             compile("alter table " + tableToken.getTableName() + " alter column sym2 add index");
             compile("alter table " + tableToken.getTableName() + " alter column sym2 drop index");
             compile("alter table " + tableToken.getTableName() + " add i2 int");
-            compile("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
+            insert("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(tableToken.getTableName(), "a\tb\tts\tsym2\ti2\n" +
-                    "0\t\t2022-02-24T00:00:00.000000Z\t\t2\n");
+            assertSql("a\tb\tts\tsym2\ti2\n" +
+                    "0\t\t2022-02-24T00:00:00.000000Z\t\t2\n", tableToken.getTableName());
         });
     }
 
@@ -717,7 +717,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.append();
                 // no commit intentional
                 addColumn(walWriter, "c", ColumnType.INT);
-                fail("Exception expected");
+                assertException("Exception expected");
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
                 assertTrue(e.getMessage().endsWith("cannot alter table with uncommitted inserts [table=testAlterTableRejectedIfTransactionPending]"));
@@ -1256,7 +1256,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             try {
                 createTable(testName.getMethodName());
-                fail("Exception expected");
+                assertException("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
             }
@@ -1283,7 +1283,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             try {
                 createTable(testName.getMethodName());
-                fail("Exception expected");
+                assertException("Exception expected");
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
                 assertEquals("Test failure", e.getMessage());
@@ -1316,7 +1316,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             try {
                 createTable(testName.getMethodName());
-                fail("Exception expected");
+                assertException("Exception expected");
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
                 assertTrue(e.getMessage().startsWith("[999] Cannot create sequencer directory:"));
@@ -1407,15 +1407,18 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
+            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
             tickWalQueue(1);
 
-            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
-                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+            assertSql(
+                    "a\tb\tts\n" +
+                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    tableToken.getTableName()
+            );
 
-            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
-            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
-            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T20:00:00.000000Z')");
+            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
+            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
+            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T20:00:00.000000Z')");
 
             // Run WAL apply job two times:
             // Tick 1. Put row 2023-08-04T22 into the lag.
@@ -1423,18 +1426,24 @@ public class WalWriterTest extends AbstractGriffinTest {
             tickWalQueue(2);
 
             // We expect all, but the last row to be visible.
-            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
-                    "0\t\t2023-08-04T21:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T22:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+            assertSql(
+                    "a\tb\tts\n" +
+                            "0\t\t2023-08-04T21:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T22:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    tableToken.getTableName()
+            );
 
             drainWalQueue();
 
-            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
-                    "0\t\t2023-08-04T20:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T21:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T22:00:00.000000Z\n" +
-                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+            assertSql(
+                    "a\tb\tts\n" +
+                            "0\t\t2023-08-04T20:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T21:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T22:00:00.000000Z\n" +
+                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    tableToken.getTableName()
+            );
         });
     }
 
@@ -1457,7 +1466,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
-                    fail("Exception expected");
+                    assertException("Exception expected");
                 } catch (CairoException e) {
                     // this exception will be handled in ILP/PG/HTTP
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
@@ -1490,7 +1499,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
-                    fail("Exception expected");
+                    assertException("Exception expected");
                 } catch (Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
                     assertTrue(e.getMessage().contains("could not open read-only"));
@@ -1523,7 +1532,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
-                    fail("Exception expected");
+                    assertException("Exception expected");
                 } catch (Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
                     assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
@@ -1727,13 +1736,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                         assertEquals("WalReaderRecord [recordIndex=" + i + "]", testSink.toString());
                         try {
                             cursor.getRecordB();
-                            fail("UnsupportedOperationException expected");
+                            assertException("UnsupportedOperationException expected");
                         } catch (UnsupportedOperationException e) {
                             // ignore, this is expected
                         }
                         try {
                             record.getUpdateRowId();
-                            fail("UnsupportedOperationException expected");
+                            assertException("UnsupportedOperationException expected");
                         } catch (UnsupportedOperationException e) {
                             // ignore, this is expected
                         }
@@ -1971,7 +1980,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 try {
                     engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 0);
-                    fail("Segment 1 should not exist");
+                    assertException("Segment 1 should not exist");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only [file=" + engine.getConfiguration().getRoot() +
                             File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
@@ -1999,7 +2008,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 try {
                     removeColumn(walWriter, "noColLikeThis");
-                    fail("Should not be able to remove non existent column");
+                    assertException("Should not be able to remove non existent column");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exists [table=testRemovingNonExistentColumn, column=noColLikeThis]");
                 }
@@ -2093,12 +2102,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.putInt(0, 133);
                 try {
                     row.putSym(1, "anything");
-                    fail("UnsupportedOperationException expected");
+                    assertException("UnsupportedOperationException expected");
                 } catch (UnsupportedOperationException ignore) {
                 }
                 try {
                     TestUtils.putUtf8(row, "Щось", 1, true);
-                    fail("UnsupportedOperationException expected");
+                    assertException("UnsupportedOperationException expected");
                 } catch (UnsupportedOperationException ignore) {
                 }
 
@@ -2998,8 +3007,8 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            assertSql(tableName, "a\tb\tts\n" +
-                    "1\t\t1970-01-01T00:00:00.000000Z\n");
+            assertSql("a\tb\tts\n" +
+                    "1\t\t1970-01-01T00:00:00.000000Z\n", tableName);
         });
     }
 
@@ -3021,16 +3030,13 @@ public class WalWriterTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setFactoryProvider(new DefaultFactoryProvider() {
                 @Override
                 public WalInitializerFactory getWalInitializerFactory() {
-                    return () -> new WalInitializer() {
-                        @Override
-                        public void initSegmentDirectory(Path segmentDir, TableToken tableToken1, int walId, int segmentId) {
-                            final File segmentDirFile = new File(segmentDir.toString());
-                            final File customInitFile = new File(segmentDirFile, "customInitFile");
-                            try {
-                                customInitFile.createNewFile();
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
+                    return () -> (WalInitializer) (segmentDir, tableToken1, walId, segmentId) -> {
+                        final File segmentDirFile = new File(segmentDir.toString());
+                        final File customInitFile = new File(segmentDirFile, "customInitFile");
+                        try {
+                            customInitFile.createNewFile();
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
                         }
                     };
                 }
@@ -3213,7 +3219,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             byte actualByte = actual.byteAt(i);
             assertEquals("Binary sequences not equals at offset " + i
                             + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
-                    expectedByte, actualByte);
+                    expectedByte, actualByte
+            );
         }
     }
 

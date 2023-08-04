@@ -36,14 +36,13 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,7 +50,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-public class WalPurgeJobTest extends AbstractGriffinTest {
+public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testClosedButUnappliedSegment() throws Exception {
         // Test two segment with changes committed to the sequencer, but never applied to the table.
@@ -62,9 +61,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     + "x long,"
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             compile("alter table " + tableName + " add column s1 string");
-            compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+            insert("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -94,9 +93,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             // After draining, it's all deleted.
             drainWalQueue();
-            assertSql(tableName, "x\tts\ts1\n" +
+            assertSql("x\tts\ts1\n" +
                     "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\tx\n");
+                    "2\t2022-02-24T00:00:01.000000Z\tx\n", tableName);
             runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
             assertWalLockExistence(false, tableName, 1);
@@ -126,7 +125,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 + "ts timestamp"
                 + ") timestamp(ts) partition by DAY WAL");
 
-        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
         assertWalExistence(true, tableName, 1);
 
         // A test FilesFacade that hides the "wal2" directory.
@@ -199,11 +198,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
                 drainWalQueue();
 
-                assertSql(tableName, "x\tts\ti1\ti2\n" +
+                assertSql("x\tts\ti1\ti2\n" +
                         "1\t2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
                         "2\t2022-02-25T00:00:00.000000Z\t2\tNaN\n" +
                         "3\t2022-02-26T00:00:00.000000Z\t3\tNaN\n" +
-                        "4\t2022-02-27T00:00:00.000000Z\t4\t4\n");
+                        "4\t2022-02-27T00:00:00.000000Z\t4\t4\n", tableName);
 
                 assertWalExistence(true, tableName, 1);
                 assertSegmentExistence(true, tableName, 1, 0);
@@ -278,7 +277,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLastSegmentUnlockedPrevLocked() throws Exception {
+    public void testLastSegmentUnlockedPrevLocked() {
         /*
           discovered=[
               (1,1),(1,2),(1,3),(1,4),(1,5),(1,6:locked),(1,7),(wal1:locked),
@@ -331,7 +330,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLastSegmentUnlockedPrevLocked2() throws Exception {
+    public void testLastSegmentUnlockedPrevLocked2() {
         /*
           discovered=[
               (1,1),(1,2:locked),(1,3),(wal1:locked),
@@ -375,12 +374,12 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql(tableName, "x\tts\n" +
+            assertSql("x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n" +
                     "2\t2022-02-24T00:00:01.000000Z\n" +
                     "3\t2022-02-24T00:00:02.000000Z\n" +
                     "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n");
+                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
 
             runWalPurgeJob();
 
@@ -415,7 +414,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             // Create a second segment.
             compile("alter table " + tableName + " add column sss string");
-            executeInsert("insert into " + tableName + " values (6, '2022-02-24T00:00:05.000000Z', 'x')");
+            insert("insert into " + tableName + " values (6, '2022-02-24T00:00:05.000000Z', 'x')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             final File segment1DirPath = assertSegmentExistence(true, tableName, 1, 1);
@@ -430,7 +429,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             // Create a third segment.
             compile("alter table " + tableName + " add column ttt string");
-            executeInsert("insert into " + tableName + " values (7, '2022-02-24T00:00:06.000000Z', 'x', 'y')");
+            insert("insert into " + tableName + " values (7, '2022-02-24T00:00:06.000000Z', 'x', 'y')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -488,7 +487,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             Assert.assertTrue(pendingFilePath.createNewFile());
 
             // Drop the table and apply all outstanding operations.
-            compile("drop table " + tableName);
+            drop("drop table " + tableName);
             drainWalQueue();
             engine.releaseInactive();
             runWalPurgeJob();
@@ -539,7 +538,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
 
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
             drainWalQueue();
 
@@ -564,7 +563,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 + "ts timestamp"
                 + ") timestamp(ts) partition by DAY WAL");
 
-        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
         drainWalQueue();
 
@@ -600,7 +599,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 + "ts timestamp"
                 + ") timestamp(ts) partition by DAY WAL");
 
-        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
         try (WalWriter walWriter1 = getWalWriter(tableName)) {
             // Alter is committed.
@@ -621,8 +620,8 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         drainWalQueue();
         engine.releaseInactive();
         runWalPurgeJob();
-        assertSql(tableName, "x\tts\ti1\n" +
-                "1\t2022-02-24T00:00:00.000000Z\tNaN\n");
+        assertSql("x\tts\ti1\n" +
+                "1\t2022-02-24T00:00:00.000000Z\tNaN\n", tableName);
         assertWalExistence(false, tableName, 1);
     }
 
@@ -636,7 +635,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     + "x long,"
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
             drainWalQueue();
             assertWalExistence(true, tableName, 1);
@@ -647,7 +646,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalLockEngagement(true, tableName, 1);
 
             compile("alter table " + tableName + " add column s1 string");
-            compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+            insert("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
             assertWalLockEngagement(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 1);
             assertSegmentLockExistence(true, tableName, 1, 1);
@@ -713,7 +712,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
 
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             drainWalQueue();
@@ -733,10 +732,10 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            assertSql(tableName, "x\tts\ti1\n" +
+            assertSql("x\tts\ti1\n" +
                     "1\t2022-02-24T00:00:00.000000Z\tNaN\n" +
                     "11\t2022-02-24T00:00:00.000000Z\tNaN\n" +
-                    "2\t2022-02-25T00:00:00.000000Z\t2\n");
+                    "2\t2022-02-25T00:00:00.000000Z\t2\n", tableName);
 
 
             // All applied, all segments can be deleted.
@@ -782,12 +781,14 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         assertMemoryLeak(testFF, () -> {
             final String tableName = testName.getMethodName();
-            compile("create table " + tableName + "("
+            compile(
+                    "create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
-                    + ") timestamp(ts) partition by DAY WAL");
+                    + ") timestamp(ts) partition by DAY WAL"
+            );
 
-            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             drainWalQueue();
@@ -803,10 +804,10 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            assertSql(tableName, "x\tts\ti1\ti2\n" +
+            assertSql("x\tts\ti1\ti2\n" +
                     "1\t2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
                     "2\t2022-02-25T00:00:00.000000Z\t2\tNaN\n" +
-                    "2\t2022-02-25T00:00:00.000000Z\t2\tNaN\n");
+                    "2\t2022-02-25T00:00:00.000000Z\t2\tNaN\n", tableName);
 
 
             // All applied, all segments can be deleted.
@@ -844,7 +845,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertSegmentExistence(false, tableName, 1, 1);
 
             // Inserting data with the added column creates a new segment.
-            executeInsert("insert into " + tableName + " values (6, '2022-02-24T00:00:05.000000Z', 'x')");
+            insert("insert into " + tableName + " values (6, '2022-02-24T00:00:05.000000Z', 'x')");
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -857,13 +858,13 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             // After draining the wal queue, all the WAL data is still there.
             drainWalQueue();
-            assertSql(tableName, "x\tts\tsss\n" +
+            assertSql("x\tts\tsss\n" +
                     "1\t2022-02-24T00:00:00.000000Z\t\n" +
                     "2\t2022-02-24T00:00:01.000000Z\t\n" +
                     "3\t2022-02-24T00:00:02.000000Z\t\n" +
                     "4\t2022-02-24T00:00:03.000000Z\t\n" +
                     "5\t2022-02-24T00:00:04.000000Z\t\n" +
-                    "6\t2022-02-24T00:00:05.000000Z\tx\n");
+                    "6\t2022-02-24T00:00:05.000000Z\tx\n", tableName);
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -969,12 +970,12 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql(tableName, "x\tts\n" +
+            assertSql("x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n" +
                     "2\t2022-02-24T00:00:01.000000Z\n" +
                     "3\t2022-02-24T00:00:02.000000Z\n" +
                     "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n");
+                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
 
             engine.releaseInactive();
 
@@ -1016,12 +1017,12 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql(tableName, "x\tts\n" +
+            assertSql("x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n" +
                     "2\t2022-02-24T00:00:01.000000Z\n" +
                     "3\t2022-02-24T00:00:02.000000Z\n" +
                     "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n");
+                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
 
             engine.releaseInactive();
 
@@ -1050,13 +1051,6 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 sb.append(deleter.events.get(i)).append(", ");
             }
             Assert.fail("Unexpected events: " + sb);
-        }
-    }
-
-    private void logDeletionEvents(List<DeletionEvent> events) {
-        System.err.println("Deletion events:");
-        for (DeletionEvent event : events) {
-            System.err.println("  " + event);
         }
     }
 

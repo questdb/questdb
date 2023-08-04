@@ -23,10 +23,10 @@
  ******************************************************************************/
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
+public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
 
     public static final String ORDER_BY_DESC = " order by ts desc";
 

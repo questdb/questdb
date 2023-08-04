@@ -24,17 +24,17 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
  * Tests set operations that occur in subquery.
  */
-public class NestedSetOperationTest extends AbstractGriffinTest {
+public class NestedSetOperationTest extends AbstractCairoTest {
 
     @Test
     public void testColumnPushdownWithDistinctAndUnionAll() throws Exception {
-        assertQuery9("c\n" +
+        assertQuery("c\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
@@ -50,7 +50,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWith2UnionAllQueryOnTableReturnsAllRowsOnTable() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n" +
                         "abc\n" +
                         "abc\n",
@@ -69,7 +69,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWith2UnionQueryOnTableReturnsOnlyDistinctRows() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n",
                 "select status from ( " +
                         "select * from test where id = 1 " +
@@ -82,7 +82,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWith2UnionQueryReturnsAllRows() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n" +
                         "def\n" +
                         "ghi\n",
@@ -127,7 +127,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithExceptQueryOnTableReturnsAllRowsFromFirstTable() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n",
                 "select status from ( " +
                         "select * from test where id = 1 " +
@@ -144,7 +144,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithExceptQueryOnTableReturnsNoRows() throws Exception {
-        assertQuery9("status\n",
+        assertQuery("status\n",
                 "select status from ( " +
                         "select * from test where id = 1 " +
                         "except " +
@@ -185,7 +185,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithIntersectQueryOnTableReturnsCommonRow() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n",
                 "select status from ( " +
                         "select * from test where id = 1 " +
@@ -198,7 +198,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithIntersectQueryOnTableReturnsNoRows() throws Exception {
-        assertQuery9("status\n",
+        assertQuery("status\n",
                 "select status from ( " +
                         "select * from test where id = 1 " +
                         "intersect " +
@@ -270,7 +270,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
     //select columns pushdown with real tables
     @Test
     public void testColumnsPushdownWithUnionAllQueryOnTableReturnsAllRowsOnTable() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n" +
                         "abc\n",
                 "select status from ( " +
@@ -308,7 +308,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithUnionQueryOnTableReturnsAllRows() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n" +
                         "abc\n",
                 "select status from ( " +
@@ -324,7 +324,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithUnionQueryOnTableReturnsOnlyDistinctRows() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n",
                 "select status from ( " +
                         "select * from test where id = 1 " +
@@ -338,7 +338,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
     //select columns pushdown with virtual selects - start
     @Test
     public void testColumnsPushdownWithUnionQueryReturnsAllRows() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n" +
                         "def\n",
                 "select status from ( " +
@@ -352,7 +352,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithUnionQueryReturnsAllRows2() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n" +
                         "abc\n",
                 "select status from ( " +
@@ -363,7 +363,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnsPushdownWithUnionQueryReturnsOnlyDistinctRows() throws Exception {
-        assertQuery9("status\n" +
+        assertQuery("status\n" +
                         "abc\n",
                 "select status from ( " +
                         "select 1 as id, 100 as amount, 'abc' status " +
@@ -525,7 +525,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testSumOverUnionAll() throws Exception {
-        assertQuery9("sm\n" +
+        assertQuery("sm\n" +
                         "6\n",
                 "select * from ( select sum(x) as sm from (select * from test union all select * from test ) ) where sm = 6",
                 "create table test as (" +
@@ -554,7 +554,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
     //with column of different type (e.g. string or symbol) in set component other than first
     @Test
     public void testTimestampPushdownWith2UnionQueryReturnsAllDistinctRows() throws Exception {
-        assertQuery9("type\tts\n" +
+        assertQuery("type\tts\n" +
                         "st\t1970-01-01T00:00:00.000001Z\n" +
                         "st\t1970-01-01T00:00:00.000002Z\n" +
                         "st\t1970-01-01T00:00:00.000003Z\n",
@@ -569,7 +569,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPushdownWithExceptQueryReturnsOneRecord() throws Exception {
-        assertQuery9("type\tts\n" +
+        assertQuery("type\tts\n" +
                         "st\t1970-01-01T00:00:00.000001Z\n",
                 "select type, ts from ( " +
                         "select 1 as id, 'st' as type, cast(1 as timestamp) ts " +
@@ -579,7 +579,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPushdownWithExceptQueryReturnsZeroRecords() throws Exception {
-        assertQuery9("type\tts\n",
+        assertQuery("type\tts\n",
                 "select type, ts from ( " +
                         "select 1 as id, 'st' as type, cast(1 as timestamp) ts " +
                         "except " +
@@ -588,7 +588,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPushdownWithIntersectQueryReturnsOneCommonRecords() throws Exception {
-        assertQuery9("type\tts\n" +
+        assertQuery("type\tts\n" +
                         "st\t1970-01-01T00:00:00.000001Z\n",
                 "select type, ts from ( " +
                         "select 1 as id, 'st' as type, cast(1 as timestamp) ts " +
@@ -598,7 +598,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPushdownWithIntersectQueryReturnsZeroRecords() throws Exception {
-        assertQuery9("type\tts\n",
+        assertQuery("type\tts\n",
                 "select type, ts from ( " +
                         "select 1 as id, 'st' as type, cast(1 as timestamp) ts " +
                         "intersect " +
@@ -641,7 +641,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPushdownWithUnionQueryReturnsAllDistinctRows() throws Exception {
-        assertQuery9("type\tts\n" +
+        assertQuery("type\tts\n" +
                         "st\t1970-01-01T00:00:00.000001Z\n" +
                         "st\t1970-01-01T00:00:00.000002Z\n",
                 "select type, ts from ( " +
@@ -652,7 +652,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPushdownWithUnionQueryReturnsReturnsOnlyDistinctRow() throws Exception {
-        assertQuery9("type\tts\n" +
+        assertQuery("type\tts\n" +
                         "st\t1970-01-01T00:00:00.000001Z\n",
                 "select type,ts from ( " +
                         "select 1 as id, 'st' as type, cast(1 as timestamp) ts " +
@@ -662,7 +662,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWith2UnionQueryReturnsOnlyMatchingRow() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +
@@ -676,7 +676,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithExceptEmptySetQueryReturnsFirstRow() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +
@@ -688,7 +688,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
     //where clause pushdown tests start
     @Test
     public void testWhereClausePushdownWithExceptQueryReturnsFirstRow() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +
@@ -699,7 +699,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithExceptQueryReturnsNoRows() throws Exception {
-        assertQuery9("rec_type\n",
+        assertQuery("rec_type\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +
                         "except " +
@@ -709,7 +709,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithIntersectQueryReturnsCommonRow() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +
@@ -720,7 +720,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithIntersectQueryReturnsZeroRows() throws Exception {
-        assertQuery9("rec_type\n",
+        assertQuery("rec_type\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +
                         "intersect " +
@@ -730,7 +730,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithUnionAllQueryReturnsAllMatchingRows() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n" +
                         "t2\n",
                 "select rec_type from ( " +
@@ -742,7 +742,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithUnionAllQueryReturnsOneMatchingRows() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +
@@ -753,7 +753,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithUnionQueryReturnsAllRows() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n" +
                         "t2\n",
                 "select rec_type from ( " +
@@ -765,7 +765,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
     public void testWhereClausePushdownWithUnionQueryReturnsOneRow() throws Exception {
-        assertQuery9("rec_type\n" +
+        assertQuery("rec_type\n" +
                         "t1\n",
                 "select rec_type from ( " +
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts " +

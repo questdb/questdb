@@ -26,18 +26,18 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
+public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesQueryCache() throws Exception {
@@ -46,7 +46,7 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
             cloneCreateTable("B", true);
             cloneCreateTable("C", true);
 
-            try (RecordCursorFactory factory = compiler.compile("wal_tables()", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("wal_tables()")) {
                 // RecordCursorFactory could be cached in QueryCache and reused
                 // so let's run the query few times using the same factory
                 for (int i = 0; i < 5; i++) {
@@ -81,12 +81,12 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
             cloneCreateTable("C", true);
             cloneCreateTable("D", true);
 
-            executeInsert("insert into B values (1, 'A', '2022-12-05T01', 'B')");
+            insert("insert into B values (1, 'A', '2022-12-05T01', 'B')");
             compile("update B set x = 101");
-            executeInsert("insert into B values (2, 'C', '2022-12-05T02', 'D')");
-            executeInsert("insert into C values (1, 'A', '2022-12-05T01', 'B')");
-            executeInsert("insert into C values (2, 'C', '2022-12-05T02', 'D')");
-            executeInsert("insert into D values (1, 'A', '2022-12-05T01', 'B')");
+            insert("insert into B values (2, 'C', '2022-12-05T02', 'D')");
+            insert("insert into C values (1, 'A', '2022-12-05T01', 'B')");
+            insert("insert into C values (2, 'C', '2022-12-05T02', 'D')");
+            insert("insert into D values (1, 'A', '2022-12-05T01', 'B')");
 
             drainWalQueue();
 
@@ -94,18 +94,18 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
-            assertSql("wal_tables() order by name", "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
                     "B\ttrue\t1\t0\t3\n" +
                     "C\tfalse\t2\t0\t2\n" +
-                    "D\tfalse\t1\t0\t1\n");
+                    "D\tfalse\t1\t0\t1\n", "wal_tables() order by name");
 
-            assertSql("select name, suspended, writerTxn from wal_tables() order by name", "name\tsuspended\twriterTxn\n" +
+            assertSql("name\tsuspended\twriterTxn\n" +
                     "B\ttrue\t1\n" +
                     "C\tfalse\t2\n" +
-                    "D\tfalse\t1\n");
+                    "D\tfalse\t1\n", "select name, suspended, writerTxn from wal_tables() order by name");
 
-            assertSql("select name, suspended, writerTxn from wal_tables() where name = 'B'", "name\tsuspended\twriterTxn\n" +
-                    "B\ttrue\t1\n");
+            assertSql("name\tsuspended\twriterTxn\n" +
+                    "B\ttrue\t1\n", "select name, suspended, writerTxn from wal_tables() where name = 'B'");
         });
     }
 

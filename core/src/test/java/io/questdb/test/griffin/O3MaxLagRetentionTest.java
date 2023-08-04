@@ -25,18 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class O3MaxLagRetentionTest extends AbstractGriffinTest {
+public class O3MaxLagRetentionTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            compile("alter table my_table add column y symbol", sqlExecutionContext);
+            ddl("alter table my_table add column y symbol", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -46,8 +46,8 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            executeInsert("insert into my_table values(0, 1000, 'a')");
-            compile("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            insert("insert into my_table values(0, 1000, 'a')");
+            ddl("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -57,7 +57,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            compile("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            ddl("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -67,7 +67,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            compile("alter table my_table drop column x", sqlExecutionContext);
+            ddl("alter table my_table drop column x", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -77,10 +77,10 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            executeInsert("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
-            executeInsert("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
+            insert("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
+            insert("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
             assertO3MaxLagValues();
-            compile("alter TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
+            ddl("alter TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -90,14 +90,14 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            compile("alter table my_table rename column x to y", sqlExecutionContext);
+            ddl("alter table my_table rename column x to y", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
 
     private void assertO3MaxLagValues() throws SqlException {
         TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                 sink,
@@ -107,7 +107,7 @@ public class O3MaxLagRetentionTest extends AbstractGriffinTest {
     }
 
     private void createTable() throws SqlException {
-        compiler.compile("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
-                "PARTITION BY DAY WITH maxUncommittedRows=250000, o3MaxLag=240s", sqlExecutionContext);
+        ddl("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
+                "PARTITION BY DAY WITH maxUncommittedRows=250000, o3MaxLag=240s");
     }
 }

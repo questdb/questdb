@@ -39,7 +39,6 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -474,7 +473,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log,
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
-                (configuration, engine, functionFactoryCache, freeOnExitList) -> DefaultFactoryProvider.INSTANCE);
+                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE
+        );
     }
 
     public PropServerConfiguration(
@@ -558,7 +558,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
-            Rnd rnd = new Rnd(getCairoConfiguration().getMicrosecondClock().getTicks(), getCairoConfiguration().getMillisecondClock().getTicks());
+            Rnd rnd = new Rnd(cairoConfiguration.getMicrosecondClock().getTicks(), cairoConfiguration.getMillisecondClock().getTicks());
             if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
                 Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
             }
@@ -1202,8 +1202,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public void init(CairoEngine engine, FunctionFactoryCache functionFactoryCache, FreeOnExit freeOnExit) {
-        this.factoryProvider = fpf.getInstance(this, engine, functionFactoryCache, freeOnExit);
+    public void init(CairoEngine engine, FreeOnExit freeOnExit) {
+        this.factoryProvider = fpf.getInstance(this, engine, freeOnExit);
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigProperty key, int workerCount) throws ServerConfigurationException {
@@ -1469,75 +1469,98 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerObsolete(
                     "line.tcp.commit.timeout",
                     PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT,
-                    PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION);
+                    PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION
+            );
             registerObsolete(
                     "cairo.timestamp.locale",
-                    PropertyKey.CAIRO_DATE_LOCALE);
+                    PropertyKey.CAIRO_DATE_LOCALE
+            );
             registerObsolete(
                     "pg.timestamp.locale",
-                    PropertyKey.PG_DATE_LOCALE);
+                    PropertyKey.PG_DATE_LOCALE
+            );
             registerObsolete(
                     "cairo.sql.append.page.size",
-                    PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE);
+                    PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
+            );
 
             registerDeprecated(
                     PropertyKey.HTTP_MIN_BIND_TO,
-                    PropertyKey.HTTP_MIN_NET_BIND_TO);
+                    PropertyKey.HTTP_MIN_NET_BIND_TO
+            );
             registerDeprecated(
                     PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT,
-                    PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT);
+                    PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT
+            );
             registerDeprecated(
                     PropertyKey.HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT,
-                    PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT);
+                    PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT
+            );
             registerDeprecated(
                     PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE,
-                    PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF);
+                    PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF
+            );
             registerDeprecated(
                     PropertyKey.HTTP_NET_RCV_BUF_SIZE,
                     PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF,
-                    PropertyKey.HTTP_NET_CONNECTION_RCVBUF);
+                    PropertyKey.HTTP_NET_CONNECTION_RCVBUF
+            );
             registerDeprecated(
                     PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT,
-                    PropertyKey.HTTP_NET_CONNECTION_LIMIT);
+                    PropertyKey.HTTP_NET_CONNECTION_LIMIT
+            );
             registerDeprecated(
                     PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT,
-                    PropertyKey.HTTP_NET_CONNECTION_TIMEOUT);
+                    PropertyKey.HTTP_NET_CONNECTION_TIMEOUT
+            );
             registerDeprecated(
                     PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT,
-                    PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT);
+                    PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT
+            );
             registerDeprecated(
                     PropertyKey.HTTP_NET_SND_BUF_SIZE,
-                    PropertyKey.HTTP_NET_CONNECTION_SNDBUF);
+                    PropertyKey.HTTP_NET_CONNECTION_SNDBUF
+            );
             registerDeprecated(
                     PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT,
-                    PropertyKey.PG_NET_CONNECTION_LIMIT);
+                    PropertyKey.PG_NET_CONNECTION_LIMIT
+            );
             registerDeprecated(
                     PropertyKey.PG_NET_IDLE_TIMEOUT,
-                    PropertyKey.PG_NET_CONNECTION_TIMEOUT);
+                    PropertyKey.PG_NET_CONNECTION_TIMEOUT
+            );
             registerDeprecated(
                     PropertyKey.PG_NET_RECV_BUF_SIZE,
-                    PropertyKey.PG_NET_CONNECTION_RCVBUF);
+                    PropertyKey.PG_NET_CONNECTION_RCVBUF
+            );
             registerDeprecated(
                     PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT,
-                    PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT);
+                    PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
+            );
             registerDeprecated(
                     PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT,
-                    PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT);
+                    PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT
+            );
             registerDeprecated(
                     PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT,
-                    PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT);
+                    PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT
+            );
             registerDeprecated(
                     PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
-                    PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF);
+                    PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF
+            );
             registerDeprecated(
                     PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
-                    PropertyKey.LINE_DEFAULT_PARTITION_BY);
+                    PropertyKey.LINE_DEFAULT_PARTITION_BY
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
-                    PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE);
+                    PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
-                    PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
+                    PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -1614,7 +1637,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         private static <KeyT> void registerReplacements(
                 Map<KeyT, String> map,
                 KeyT old,
-                ConfigProperty... replacements) {
+                ConfigProperty... replacements
+        ) {
             StringBuilder sb = new StringBuilder("Replaced by ");
             for (int index = 0; index < replacements.length; ++index) {
                 if (index > 0) {

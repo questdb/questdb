@@ -26,7 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,9 +36,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.griffin.CompiledQuery.ALTER;
-
-public class AlterTableAlterColumnTest extends AbstractGriffinTest {
+public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAddIndexColumnWithCapacity_capacityCanBeReadByWriter() throws Exception {
@@ -46,7 +44,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
+                    ddl("alter table x alter column ik add index capacity 1024");
 
                     try (TableWriter writer = getWriter("x")) {
                         int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
@@ -69,7 +67,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         }
                     }
 
-                    Assert.assertEquals(ALTER, compile("alter table x alter column ik add index", sqlExecutionContext).getType());
+                    ddl("alter table x alter column ik add index");
 
                     try (TableReader reader = getReader("x")) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
@@ -137,7 +135,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compile("alter table x alter column ik add index", sqlExecutionContext);
+                    ddl("alter table x alter column ik add index", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -183,7 +181,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql, sqlExecutionContext);
+                select(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
@@ -193,7 +191,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
     }
 
     private void createX() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -213,8 +211,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp)",
-                sqlExecutionContext
+                        ") timestamp (timestamp)"
         );
     }
 }

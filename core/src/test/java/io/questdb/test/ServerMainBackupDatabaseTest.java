@@ -39,6 +39,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -120,7 +121,8 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 ILP_PORT + pgPortDelta,
                 root,
                 PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
-                PropertyKey.CAIRO_SQL_BACKUP_ROOT.getPropertyPath() + '=' + backupRoot));
+                PropertyKey.CAIRO_SQL_BACKUP_ROOT.getPropertyPath() + '=' + backupRoot
+        ));
     }
 
     @Test
@@ -135,12 +137,12 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             // - keep track of the table tokens that made it into the backup and the number of overall rows expected in the backup
             // - the first error breaks the test
 
-            AtomicReference<List<TableToken>> tableTokens = new AtomicReference<>(new ArrayList<>());
+            AtomicReference<ObjList<TableToken>> tableTokens = new AtomicReference<>(new ObjList<>());
             AtomicLong expectedTotalRows = new AtomicLong();
 
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompiler defaultCompiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -150,23 +152,20 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 SOCountDownLatch writersCompleted = new SOCountDownLatch(N);
                 SOCountDownLatch backupCompleted = new SOCountDownLatch(1);
                 AtomicBoolean endWriters = new AtomicBoolean(false);
-                AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
+                AtomicReference<ObjList<Throwable>> errors = new AtomicReference<>(new ObjList<>());
 
                 CairoEngine engine = qdb.getEngine();
-                List<SqlCompiler> compilers = new ArrayList<>();
-                List<SqlExecutionContext> contexts = new ArrayList<>();
+                ObjList<SqlExecutionContext> contexts = new ObjList<>();
 
                 // create/populate tables concurrently
                 for (int t = 0; t < N; t++) {
-                    compilers.add(new SqlCompiler(engine));
                     contexts.add(createSqlExecutionCtx(engine));
-                    startTableCreator(partitionBy, isWal, compilers.get(t), contexts.get(t), tableTokens, createsBarrier, expectedTotalRows, createsCompleted, errors);
+                    startTableCreator(partitionBy, isWal, engine, contexts.get(t), tableTokens, createsBarrier, expectedTotalRows, createsCompleted, errors);
                 }
                 // insert into tables concurrently
                 for (int t = 0; t < N; t++) {
-                    compilers.add(new SqlCompiler(engine));
                     contexts.add(createSqlExecutionCtx(engine));
-                    startTableWriter(t, compilers.get(t), contexts.get(t), tableTokens, expectedTotalRows, createsCompleted, writersCompleted, endWriters, errors);
+                    startTableWriter(t, engine, contexts.get(t), tableTokens, expectedTotalRows, createsCompleted, writersCompleted, endWriters, errors);
                 }
                 // backup database concurrently 3 seconds from now
                 startBackupDatabase(defaultCompiler, defaultContext, expectedTotalRows, createsCompleted, backupCompleted, errors);
@@ -175,16 +174,15 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 Assert.assertTrue(backupCompleted.await(TimeUnit.SECONDS.toNanos(60L)));
                 endWriters.set(true);
                 Assert.assertTrue(writersCompleted.await(TimeUnit.SECONDS.toNanos(10L)));
-                for (int i = 0, n = compilers.size(); i < n; i++) {
-                    Misc.free(compilers.get(i));
+                for (int i = 0, n = contexts.size(); i < n; i++) {
                     Misc.free(contexts.get(i));
                 }
-                compilers.clear();
                 contexts.clear();
 
                 // drop tables
-                for (TableToken tableToken : tableTokens.get()) {
-                    dropTable(defaultCompiler, defaultContext, tableToken);
+                ObjList<TableToken> tokens = tableTokens.get();
+                for (int i = 0, n = tokens.size(); i < n; i++) {
+                    dropTable(defaultCompiler, defaultContext, tokens.getQuick(i));
                 }
 
                 // fail on first error found
@@ -202,15 +200,14 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             String newRoot = getLatestBackupDbRoot();
             try (
                     ServerMain qdb = new ServerMain("-d", newRoot, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getEngine());
                     SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
                 long totalRows = 0L;
                 for (int i = 0, n = tableTokens.get().size(); i < n; i++) {
                     TableToken tableToken = tableTokens.get().get(i);
-                    totalRows += assertTableExists(tableToken, partitionBy, isWal, defaultCompiler, defaultContext);
-                    executeInsertGeneratorStmt(tableToken, 10, defaultCompiler, defaultContext);
+                    totalRows += assertTableExists(tableToken, partitionBy, isWal, qdb.getEngine(), defaultContext);
+                    executeInsertGeneratorStmt(tableToken, 10, qdb.getEngine(), defaultContext);
                     drainWalQueue(qdb.getEngine());
                 }
                 Assert.assertTrue(totalRows > (expectedTotalRows.get() * 0.5));
@@ -220,33 +217,42 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         });
     }
 
-    private static long assertTableExists(TableToken tableToken, int partitionBy, boolean isWal, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
-        CompiledQuery cc = compiler.compile(
-                "SELECT name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
-                        "FROM tables() " +
-                        "WHERE name='" + tableToken.getTableName() + '\'',
-                context);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
-            String expected = tableToken.getTableName() + "\ttimestamp2\t" + PartitionBy.toString(partitionBy) + '\t' + isWal + '\t' + tableToken.getDirName();
-            TestUtils.assertContains(sink, expected);
-        }
+    private static long assertTableExists(
+            TableToken tableToken,
+            int partitionBy,
+            boolean isWal,
+            CairoEngine engine,
+            SqlExecutionContext context
+    ) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CompiledQuery cc = compiler.compile(
+                    "SELECT name, designatedTimestamp, partitionBy, walEnabled, directoryName " +
+                            "FROM tables() " +
+                            "WHERE name='" + tableToken.getTableName() + '\'',
+                    context
+            );
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+                String expected = tableToken.getTableName() + "\ttimestamp2\t" + PartitionBy.toString(partitionBy) + '\t' + isWal + '\t' + tableToken.getDirName();
+                TestUtils.assertContains(sink, expected);
+            }
 
-        cc = compiler.compile("SELECT * FROM '" + tableToken.getTableName() + "' WHERE bool = true LIMIT -100", context);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-            // being able to iterate is the test
-            TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
-        }
-        cc = compiler.compile("SELECT count(*) n FROM '" + tableToken.getTableName() + '\'', context);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
-            sink.clear(sink.length() - 1);
-            return Long.parseLong(sink.toString());
+            cc = compiler.compile("SELECT * FROM '" + tableToken.getTableName() + "' WHERE bool = true LIMIT -100", context);
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+                // being able to iterate is the test
+                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+            }
+            cc = compiler.compile("SELECT count(*) n FROM '" + tableToken.getTableName() + '\'', context);
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+                sink.clear(sink.length() - 1);
+                return Long.parseLong(sink.toString());
+            }
         }
     }
 
     private static String getLatestBackupDbRoot() {
-        List<File> roots = new ArrayList<>();
+        ObjList<File> roots = new ObjList<>();
         for (File f : Objects.requireNonNull(new File(backupRoot).listFiles())) {
             if (f.isDirectory()) {
                 if (!f.getName().equals("tmp")) {
@@ -272,7 +278,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,
             SOCountDownLatch backupCompleted,
-            AtomicReference<List<Throwable>> errors
+            AtomicReference<ObjList<Throwable>> errors
     ) {
         startThread(backupCompleted, errors, () -> {
             long deadline = System.currentTimeMillis() + 3000L;
@@ -291,18 +297,18 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     private static void startTableCreator(
             int partitionBy,
             boolean isWal,
-            SqlCompiler compiler,
+            CairoEngine engine,
             SqlExecutionContext context,
-            AtomicReference<List<TableToken>> tableTokens,
+            AtomicReference<ObjList<TableToken>> tableTokens,
             CyclicBarrier creatorsBarrier,
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,
-            AtomicReference<List<Throwable>> errors
+            AtomicReference<ObjList<Throwable>> errors
     ) {
         startThread(createsCompleted, errors, () -> {
             creatorsBarrier.await();
             int numRows = ThreadLocalRandom.current().nextInt(100, 2000);
-            tableTokens.get().add(executeCreateTableStmt(UUID.randomUUID() + "_عظمة_", partitionBy, isWal, numRows, compiler, context));
+            tableTokens.get().add(executeCreateTableStmt(UUID.randomUUID() + "_عظمة_", partitionBy, isWal, numRows, engine, context));
             expectedTotalRows.getAndAdd(numRows);
             return null;
         });
@@ -310,14 +316,14 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
     private static void startTableWriter(
             int tableId,
-            SqlCompiler compiler,
+            CairoEngine engine,
             SqlExecutionContext context,
-            AtomicReference<List<TableToken>> tableTokens,
+            AtomicReference<ObjList<TableToken>> tableTokens,
             AtomicLong expectedTotalRows,
             SOCountDownLatch createsCompleted,
             SOCountDownLatch writersCompleted,
             AtomicBoolean endWriters,
-            AtomicReference<List<Throwable>> errors
+            AtomicReference<ObjList<Throwable>> errors
     ) {
         startThread(writersCompleted, errors, () -> {
             TableToken tableToken = null;
@@ -333,7 +339,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             Assert.assertNotNull(tableToken);
             while (!Thread.currentThread().isInterrupted() && !endWriters.get()) {
                 int numRows = ThreadLocalRandom.current().nextInt(1, 50);
-                executeInsertGeneratorStmt(tableToken, numRows, compiler, context);
+                executeInsertGeneratorStmt(tableToken, numRows, engine, context);
                 expectedTotalRows.getAndAdd(numRows);
                 Os.sleep(1L);
             }
@@ -341,7 +347,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void startThread(SOCountDownLatch completedLatch, AtomicReference<List<Throwable>> errors, Callable<Void> code) {
+    private static void startThread(SOCountDownLatch completedLatch, AtomicReference<ObjList<Throwable>> errors, Callable<Void> code) {
         new Thread(() -> {
             try {
                 code.call();

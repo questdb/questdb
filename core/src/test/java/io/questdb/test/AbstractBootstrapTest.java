@@ -161,7 +161,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now
@@ -169,11 +169,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         }
     }
 
-    static void dropTable(
-            SqlCompiler compiler,
-            SqlExecutionContext context,
-            TableToken tableToken
-    ) throws Exception {
+    static void dropTable(SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken) throws Exception {
         compiler.compile("DROP TABLE '" + tableToken.getTableName() + '\'', context);
     }
 

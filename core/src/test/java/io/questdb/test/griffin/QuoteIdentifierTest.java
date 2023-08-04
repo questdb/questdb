@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class QuoteIdentifierTest extends AbstractGriffinTest {
+public class QuoteIdentifierTest extends AbstractCairoTest {
 
     @Test
     public void testCreteTableWithQuotedNameAndColumns() throws Exception {

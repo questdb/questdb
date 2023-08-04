@@ -25,11 +25,9 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
@@ -339,7 +337,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             applyWal(transactions, tableName, 1, rnd);
             transactions.clear();
 
-            compile("alter table " + tableName + " add s symbol index", sqlExecutionContext);
+            ddl("alter table " + tableName + " add s symbol index", sqlExecutionContext);
 
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
@@ -469,19 +467,20 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void assertSqlCursorsNoDups(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
             String tableNameNoWal,
             ObjList<CharSequence> upsertKeyNames,
             String tableNameWal
     ) throws SqlException {
         Log log = LOG;
-        try (RecordCursorFactory factory = compiler.compile(tableNameNoWal, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursorFactory factoryPreview = compiler.compile(tableNameNoWal, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursorFactory factory2 = compiler.compile(tableNameWal, sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select(tableNameNoWal);
+             RecordCursorFactory factoryPreview = select(tableNameNoWal)) {
+            try (RecordCursorFactory factory2 = select(tableNameWal)) {
                 try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
                      RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)) {
-                    try (RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames); RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)) {
+                    try (
+                            RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames);
+                            RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
+                    ) {
                         try {
                             assertEquals(dedupWrapper, factory.getMetadata(), actualCursor, factory2.getMetadata(), false);
                         } catch (AssertionError e) {
@@ -537,7 +536,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void createEmptyTable(String tableName, String dedupOption) throws SqlException {
-        compile("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
+        ddl("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
                 , sqlExecutionContext);
     }
 
@@ -657,7 +656,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
             compile(alterStatement, sqlExecutionContext);
 
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
@@ -673,8 +672,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
                 LOG.info().$("asserting no dups on keys: ").$(renamedUpsertKeys).$();
                 assertSqlCursorsNoDups(
-                        compiler,
-                        sqlExecutionContext,
                         tableNameWalNoDedup,
                         upsertKeyNames,
                         tableNameWal
@@ -704,18 +701,18 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
 
             transactions = uniqueInserts(transactions);
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
                 applyNonWal(transactions, tableNameNoWal, rnd);
 
                 ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
-                compile("alter table " + tableNameWal + " dedup upsert keys(ts)", sqlExecutionContext);
+                ddl("alter table " + tableNameWal + " dedup upsert keys(ts)", sqlExecutionContext);
                 applyWal(transactionsWithDups, tableNameWal, 1 + rnd.nextInt(4), rnd);
 
                 String limit = "";
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
                 assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
             } finally {
                 sharedWorkerPool.halt();
