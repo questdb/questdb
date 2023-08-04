@@ -379,6 +379,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
     }
 
+    protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
+        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
+    }
+
+    protected static void configOverrideWalMaxLagTxnCount(int walMaxLagTxnCount) {
+        node1.getConfigurationOverrides().setWalMaxLagTxnCount(walMaxLagTxnCount);
+    }
+
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
         node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
@@ -551,6 +559,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void runWalPurgeJob() {
         runWalPurgeJob(engine.getConfiguration().getFilesFacade());
+    }
+
+    protected static void tickWalQueue(int ticks) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            for (int i = 0; i < ticks; i++) {
+                walApplyJob.run(0);
+            }
+        }
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {

@@ -1075,7 +1075,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
 
-            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableToken.getTableName() + "\ttrue\t1\t4\n");
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\ttrue\t1\t0\t4\n");
 
             compile("alter table " + tableToken.getTableName() + " resume wal");
             compile("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
@@ -1084,7 +1084,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
             assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
-            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t4\n");
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n");
         });
     }
 

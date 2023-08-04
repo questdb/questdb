@@ -293,6 +293,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
     private final boolean walEnabledDefault;
+    private final int walMaxLagTxnCount;
     private final long walPurgeInterval;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
@@ -507,6 +508,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Numbers.SIZE_1MB));
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 20.0);
+        this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, Math.max((int) Math.round(walSquashUncommittedRowsMultiplier), 1));
         this.walApplyTableTimeQuota = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
@@ -2431,6 +2433,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getWalEnabledDefault() {
             return walEnabledDefault;
+        }
+
+        @Override
+        public int getWalMaxLagTxnCount() {
+            return walMaxLagTxnCount;
         }
 
         @Override
