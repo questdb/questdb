@@ -285,8 +285,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
-                txReader.ofRO(path, PartitionBy.NONE);
-                TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                try {
+                    txReader.ofRO(path, PartitionBy.NONE);
+                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                } catch (CairoException ex) {
+                    if (engine.isTableDropped(tableToken)) {
+                        // This is ok, table dropped while we tried to read the txn
+                        return false;
+                    }
+                    throw ex;
+                }
                 final long lastAppliedTxn = txReader.getSeqTxn();
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();

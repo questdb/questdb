@@ -31,6 +31,6 @@ public class BasicWalInitializer implements WalInitializer {
     public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
 
     @Override
-    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
+    public void initDirectory(Path dirPath) {
     }
 }

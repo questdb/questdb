@@ -418,6 +418,8 @@ public interface CairoConfiguration {
 
     TelemetryConfiguration getTelemetryConfiguration();
 
+    CharSequence getTempTablePrefix();
+
     TextConfiguration getTextConfiguration();
 
     int getTxnScoreboardEntryCount();

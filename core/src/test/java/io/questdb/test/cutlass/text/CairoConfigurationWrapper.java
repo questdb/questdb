@@ -797,6 +797,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getTempTablePrefix() {
+        return conf.getTempTablePrefix();
+    }
+
+    @Override
     public TextConfiguration getTextConfiguration() {
         return conf.getTextConfiguration();
     }

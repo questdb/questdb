@@ -734,6 +734,10 @@ public final class TableUtils {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
+    public static boolean isInvisibleTempTableName(String tableName, CharSequence tempTablePrefix) {
+        return Chars.startsWith(tableName, tempTablePrefix);
+    }
+
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }

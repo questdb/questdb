@@ -28,5 +28,5 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.str.Path;
 
 public interface WalInitializer {
-    void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId);
+    void initDirectory(Path dirPath);
 }

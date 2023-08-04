@@ -806,6 +806,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getTempTablePrefix() {
+        return "temp_5822f658-31f6-11ee-be56-0242ac120002";
+    }
+
+    @Override
     public TextConfiguration getTextConfiguration() {
         return textConfiguration;
     }

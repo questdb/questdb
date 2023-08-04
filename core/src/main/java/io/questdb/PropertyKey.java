@@ -423,8 +423,12 @@ public enum PropertyKey implements ConfigProperty {
         return propertyPath;
     }
 
+    @Override
+    public String toString() {
+        return propertyPath;
+    }
+
     static {
         nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
     }
-
 }

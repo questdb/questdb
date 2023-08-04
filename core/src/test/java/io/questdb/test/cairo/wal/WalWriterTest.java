@@ -2982,8 +2982,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 public WalInitializerFactory getWalInitializerFactory() {
                     return () -> new WalInitializer() {
                         @Override
-                        public void initSegmentDirectory(Path segmentDir, TableToken tableToken1, int walId, int segmentId) {
-                            final File segmentDirFile = new File(segmentDir.toString());
+                        public void initDirectory(Path dirPath) {
+                            final File segmentDirFile = new File(dirPath.toString());
                             final File customInitFile = new File(segmentDirFile, "customInitFile");
                             try {
                                 customInitFile.createNewFile();
