@@ -95,6 +95,11 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
             return getStr0(size.getLong(rec), sinkA);
         }
 
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr0(size.getLong(rec), sinkB);
+        }
+
         @Nullable
         private StringSink getStr0(long s, StringSink sinkA) {
             if (s != Numbers.LONG_NaN) {
@@ -102,11 +107,6 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
                 return sinkA;
             }
             return null;
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr0(size.getLong(rec), sinkB);
         }
     }
 }

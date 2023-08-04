@@ -38,7 +38,6 @@ import io.questdb.std.LongList;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class CreateTableDedupTest extends AbstractGriffinTest {

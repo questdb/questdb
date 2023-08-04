@@ -245,6 +245,9 @@ public class RecordChainTest extends AbstractCairoTest {
                 case ColumnType.INT:
                     Assert.assertEquals(expected.getInt(i), actual.getInt(i));
                     break;
+                case ColumnType.IPv4:
+                    Assert.assertEquals(expected.getIPv4(i), actual.getIPv4(i));
+                    break;
                 case ColumnType.DOUBLE:
                     Assert.assertEquals(expected.getDouble(i), actual.getDouble(i), 0.000000001D);
                     break;

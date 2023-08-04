@@ -26,10 +26,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -121,7 +119,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             tableReaderMetadata = Misc.free(tableReaderMetadata);
         }
 
-        private class TableListRecordCursor implements RecordCursor {
+        private class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private int tableIndex = -1;
@@ -136,11 +134,6 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public Record getRecord() {
                 return record;
-            }
-
-            @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -160,11 +153,6 @@ public class TableListFunctionFactory implements FunctionFactory {
                 }
 
                 return tableIndex < n;
-            }
-
-            @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -201,18 +189,12 @@ public class TableListFunctionFactory implements FunctionFactory {
                     if (col == ID_COLUMN) {
                         return tableId;
                     }
-                    if (col == MAX_UNCOMMITTED_ROWS_COLUMN) {
-                        return maxUncommittedRows;
-                    }
-                    return Numbers.INT_NaN;
+                    return maxUncommittedRows;
                 }
 
                 @Override
                 public long getLong(int col) {
-                    if (col == O3MAXLAG_COLUMN) {
                         return o3MaxLag;
-                    }
-                    return Numbers.LONG_NaN;
                 }
 
                 @Override

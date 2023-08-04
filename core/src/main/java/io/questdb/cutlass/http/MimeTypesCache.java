@@ -29,7 +29,10 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 

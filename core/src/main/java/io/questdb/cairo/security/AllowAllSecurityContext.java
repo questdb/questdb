@@ -82,7 +82,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     @Override
     public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
-    
+
     @Override
     public void authorizeAlterTableSetDedup(TableToken tableToken) {
     }

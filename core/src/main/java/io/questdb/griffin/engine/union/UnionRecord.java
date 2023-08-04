@@ -129,6 +129,14 @@ public class UnionRecord extends AbstractUnionRecord {
     // symbol is not supported by set functions
 
     @Override
+    public int getIPv4(int col) {
+        if (useA) {
+            return recordA.getIPv4(col);
+        }
+        return recordB.getIPv4(col);
+    }
+
+    @Override
     public int getInt(int col) {
         if (useA) {
             return recordA.getInt(col);

@@ -28,8 +28,8 @@ import io.questdb.cairo.SecurityContext;
 
 public interface SecurityContextFactory {
     int HTTP = 0;
-    int PGWIRE = 1;
     int ILP = 2;
+    int PGWIRE = 1;
 
     SecurityContext getInstance(CharSequence principal, int interfaceId);
 

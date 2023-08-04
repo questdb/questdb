@@ -91,6 +91,11 @@ public abstract class FloatFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
