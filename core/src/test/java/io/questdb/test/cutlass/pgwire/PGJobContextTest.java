@@ -2847,6 +2847,49 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExecuteSameQueryManyTimesWithMaxRowsReturnsCorrectResult() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+
+            try (Statement stmt = connection.createStatement()) {
+                stmt.executeUpdate("create table if not exists tab ( a int, b long, ts timestamp)");
+            }
+
+            //max rows bigger than result set sie (empty result set)
+            assertResultNTimes(connection,
+                    "select * from tab",
+                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5, 10);
+
+            //max rows bigger than result set sie (non-empty result set)
+            assertResultNTimes(connection,
+                    "select 1 as x",
+                    "x[INTEGER]\n" +
+                            "1\n", 5, 10);
+
+            //max rows smaller than result set size
+            assertResultNTimes(connection,
+                    "select x from long_sequence(5)",
+                    "x[BIGINT]\n" +
+                            "1\n2\n3\n", 3, 10);
+
+            // max rows smaller than cursor size, cursor does not return size
+            assertResultNTimes(connection,
+                    "show columns from tab",
+                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
+                            "a,INT,false,0,false,0,false,false\n" +
+                            "b,LONG,false,0,false,0,false,false\n", 2, 10);
+
+            // max rows bigger than cursor size, cursor does not return size
+            assertResultNTimes(connection,
+                    "show columns from tab",
+                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
+                            "a,INT,false,0,false,0,false,false\n" +
+                            "b,LONG,false,0,false,0,false,false\n" +
+                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6, 10);
+        });
+    }
+
+    @Test
     public void testExplainPlan() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
@@ -8813,10 +8856,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8854,6 +8893,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8888,10 +8931,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -8931,6 +8970,10 @@ create table tab as (
                         "9,2.6,2020-06-01 00:00:06.0,null\n" +
                         "9,3.0,2020-06-01 00:00:12.0,null\n");
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateBatch() throws Exception {
@@ -9470,6 +9513,19 @@ create table tab as (
                 }
                 try (ResultSet result = ps.executeQuery()) {
                     assertResultSet(metaSink.toString(), expSink, sink, result);
+                }
+            }
+        }
+    }
+
+    private void assertResultNTimes(Connection connection, String sql, String expected, int maxRows, int times) throws SQLException, IOException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setMaxRows(maxRows);
+
+            for (int i = 0; i < times; i++) {
+                sink.clear();
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(expected, sink, rs);
                 }
             }
         }
