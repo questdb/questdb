@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
+   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
@@ -88,7 +88,7 @@ En este link se puede ver los resultados para un caso de uso de alta cardinalida
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="Una gráfica que compara el rendimiento máximo de QuestDB, ClickHouse, TimescaleDB e InfluxDB" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
+    <img alt="Una gráfica que compara el rendimiento máximo de QuestDB, ClickHouse, TimescaleDB e InfluxDB" width="600" alt="tsbs-results" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png">
   </a>
 </div>
 
