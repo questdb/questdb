@@ -825,7 +825,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
 
     @Override
     public int getWalMaxLagTxnCount() {
-        return conf.getWalMaxLagTxnCount();
+        return delegate.getWalMaxLagTxnCount();
     }
 
     @Override
