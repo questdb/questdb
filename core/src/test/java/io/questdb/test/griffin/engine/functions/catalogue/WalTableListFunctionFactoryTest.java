@@ -31,13 +31,35 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testWalTablesQueryCache() throws Exception {
+        assertMemoryLeak(() -> {
+            cloneCreateTable("A", false);
+            cloneCreateTable("B", true);
+            cloneCreateTable("C", true);
+
+            try (RecordCursorFactory factory = select("wal_tables()")) {
+                // RecordCursorFactory could be cached in QueryCache and reused
+                // so let's run the query few times using the same factory
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                        TestUtils.assertEquals("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
+                                "B\tfalse\t0\t0\t0\n" +
+                                "C\tfalse\t0\t0\t0\n", sink);
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testWalTablesSelectAll() throws Exception {
@@ -72,10 +94,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
-            assertSql("name\tsuspended\twriterTxn\tsequencerTxn\n" +
-                    "B\ttrue\t1\t3\n" +
-                    "C\tfalse\t2\t2\n" +
-                    "D\tfalse\t1\t1\n", "wal_tables() order by name");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
+                    "B\ttrue\t1\t0\t3\n" +
+                    "C\tfalse\t2\t0\t2\n" +
+                    "D\tfalse\t1\t0\t1\n", "wal_tables() order by name");
 
             assertSql("name\tsuspended\twriterTxn\n" +
                     "B\ttrue\t1\n" +
@@ -84,28 +106,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             assertSql("name\tsuspended\twriterTxn\n" +
                     "B\ttrue\t1\n", "select name, suspended, writerTxn from wal_tables() where name = 'B'");
-        });
-    }
-
-    @Test
-    public void testWalTablesQueryCache() throws Exception {
-        assertMemoryLeak(() -> {
-            cloneCreateTable("A", false);
-            cloneCreateTable("B", true);
-            cloneCreateTable("C", true);
-
-            try (RecordCursorFactory factory = select("wal_tables()")) {
-                // RecordCursorFactory could be cached in QueryCache and reused
-                // so let's run the query few times using the same factory
-                for (int i = 0; i < 5; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                        TestUtils.assertEquals("name\tsuspended\twriterTxn\tsequencerTxn\n" +
-                                "B\tfalse\t0\t0\n" +
-                                "C\tfalse\t0\t0\n", sink);
-                    }
-                }
-            }
         });
     }
 

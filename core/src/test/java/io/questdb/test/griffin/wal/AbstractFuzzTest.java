@@ -759,7 +759,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
-        node1.getConfigurationOverrides().setWalApplyTableTimeQuote(maxApplyTimePerTable);
+        node1.getConfigurationOverrides().setWalApplyTableTimeQuota(maxApplyTimePerTable);
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
         node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
     }

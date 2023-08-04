@@ -824,6 +824,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalMaxLagTxnCount() {
+        return conf.getWalMaxLagTxnCount();
+    }
+
+    @Override
     public long getWalPurgeInterval() {
         return delegate.getWalPurgeInterval();
     }

@@ -276,7 +276,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             }
 
             // Eject after every transaction
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(1);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(1);
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 for (int i = 0; i < count; i++) {
@@ -288,7 +288,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     rowCount += rows;
                 }
             }
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(Timestamps.MINUTE_MICROS);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(Timestamps.MINUTE_MICROS);
             drainWalQueue();
 
             assertSql("count\n" + rowCount + "\n", "select count(*) from " + tableName);
@@ -1094,8 +1094,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("name\tsuspended\twriterTxn\tsequencerTxn\n" +
-                    "testEmptyTruncate\tfalse\t1\t1\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
+                    "testEmptyTruncate\tfalse\t1\t0\t1\n", "wal_tables()");
         });
     }
 
@@ -1145,7 +1145,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
@@ -1518,7 +1518,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             // In order
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
-            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);

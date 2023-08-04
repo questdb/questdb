@@ -229,9 +229,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
-
             try {
-
                 int iTransaction = 0;
                 int totalTransactionCount = 0;
                 long rowsAdded = 0;
@@ -328,7 +326,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 }
                             }
 
-
                             isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
                                     writer,
@@ -400,7 +397,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 case DATA:
                     final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
                     if (writer.getWalTnxDetails().hasRecord(seqTxn)) {
-
                         long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
                         final long start = microClock.getTicks();
                         walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
@@ -496,7 +492,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     /**
      * Returns transaction number, which is always > -1. Negative values are used as status code.
      */
-    long applyWAL(
+    long applyWal(
             TableToken tableToken,
             CairoEngine engine,
             OperationCompiler operationCompiler,
@@ -567,7 +563,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
+        final long txn = applyWal(tableToken, engine, operationCompiler, runStatus);
         if (txn == WAL_APPLY_FAILED) {
             try {
                 engine.getTableSequencerAPI().suspendTable(tableToken);

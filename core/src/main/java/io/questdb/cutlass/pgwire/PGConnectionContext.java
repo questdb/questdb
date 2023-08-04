@@ -148,6 +148,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean completed = true;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
+    private long cursorRowCount;
     private boolean isEmptyQuery = false;
     private boolean isPausedQuery = false;
     private long maxRows;
@@ -1219,7 +1220,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         // make sure there is no current wrapper is set, so that we don't assign values
-        // from the wrapper back to context on the first pass where named statement is setup
+        // from the wrapper back to context on the first pass where named statement is set up
         if (statementName != null) {
             LOG.debug().$("named statement [name=").$(statementName).$(']').$();
             wrapper = namedStatementMap.get(statementName);
@@ -1897,6 +1898,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         hi = getStringLength(lo, msgLimit, "bad prepared statement name length [msgType='B']");
         final CharSequence statementName = getStatementName(lo, hi);
 
+        // clear currentCursor if it wasn't cleared by previous execute with maxRows or parse call
+        if (currentCursor != null) {
+            clearCursorAndFactory();
+        }
+
         configureContextFromNamedStatement(statementName, engine);
         if (portalName != null) {
             configurePortal(portalName, statementName);
@@ -2224,6 +2230,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         //query text
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
+
+        // clear currentCursor and factory if they weren't cleared by previous execute with maxRows
+        if (currentCursor != null) {
+            clearCursorAndFactory();
+        }
+
         //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !
         parseQueryText(lo, hi);
 
@@ -2479,7 +2491,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final Record record = currentCursor.getRecord();
         final RecordMetadata metadata = currentFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        final long cursorRowCount = currentCursor.size();
+        cursorRowCount = currentCursor.size();
         if (maxRows > 0) {
             this.maxRows = cursorRowCount > 0 ? Long.min(maxRows, cursorRowCount) : maxRows;
         } else {
@@ -2526,7 +2538,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         }
 
-        completed = maxRows <= 0 || rowCount < maxRows;
+        completed = maxRows <= 0 || rowCount < maxRows || (cursorRowCount > -1 && rowCount == cursorRowCount);
         if (completed) {
             clearCursorAndFactory();
             // at this point buffer can contain unsent data,

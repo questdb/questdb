@@ -1401,6 +1401,44 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxLagTxnCount() throws Exception {
+        configOverrideWalApplyTableTimeQuota(0);
+        configOverrideWalMaxLagTxnCount(1);
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
+            tickWalQueue(1);
+
+            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
+                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+
+            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
+            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
+            executeInsert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T20:00:00.000000Z')");
+
+            // Run WAL apply job two times:
+            // Tick 1. Put row 2023-08-04T22 into the lag.
+            // Tick 2. Instead of putting row 2023-08-04T21 into the lag, we force full commit.
+            tickWalQueue(2);
+
+            // We expect all, but the last row to be visible.
+            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
+                    "0\t\t2023-08-04T21:00:00.000000Z\n" +
+                    "0\t\t2023-08-04T22:00:00.000000Z\n" +
+                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+
+            drainWalQueue();
+
+            assertSql(tableToken.getTableName(), "a\tb\tts\n" +
+                    "0\t\t2023-08-04T20:00:00.000000Z\n" +
+                    "0\t\t2023-08-04T21:00:00.000000Z\n" +
+                    "0\t\t2023-08-04T22:00:00.000000Z\n" +
+                    "0\t\t2023-08-04T23:00:00.000000Z\n");
+        });
+    }
+
+    @Test
     public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
