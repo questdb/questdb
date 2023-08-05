@@ -28,18 +28,17 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f float)", sqlExecutionContext);
+        ddl("create table tab (f float)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -49,7 +48,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -61,8 +60,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-
-        compiler.compile("create table tab (f float)", sqlExecutionContext);
+        ddl("create table tab (f float)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -76,7 +74,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -88,8 +86,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
-        compiler.compile("create table tab (f float)", sqlExecutionContext);
+        ddl("create table tab (f float)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -100,7 +97,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select min(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -112,7 +109,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tmin\tk\n" +
+        assertQuery("b\tmin\tk\n" +
                         "HYRX\t0.1143\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t0.1250\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.0230\t1970-01-03T00:00:00.000000Z\n" +
@@ -136,9 +133,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CPSW\t0.1195\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t0.2535\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t0.0400\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t-0.2179\t1970-01-03T09:00:00.000000Z\n",
-                "select b, min(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "VTJW\t-0.2179\t1970-01-03T09:00:00.000000Z\n", "select b, min(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0) a," +
@@ -146,17 +141,14 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_float(0) a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tmin\tk\n" +
+                        ") timestamp(k)", "b\tmin\tk\n" +
                         "HYRX\t0.1143\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t0.1250\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.0230\t1970-01-03T00:00:00.000000Z\n" +
@@ -277,9 +269,6 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-1.1862\t1970-01-04T06:00:00.000000Z\n" +
                         "VTJW\t-2.2037\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t-4.1995\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\t-1.3064\t1970-01-04T06:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "RXGZ\t-1.3064\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
 }

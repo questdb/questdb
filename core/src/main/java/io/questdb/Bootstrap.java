@@ -25,7 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngineFactory;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.jit.JitUtil;
@@ -58,7 +58,6 @@ public class Bootstrap {
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
     private final String banner;
     private final BuildInformation buildInformation;
-    private final CairoEngineFactory cairoEngineFactory;
     private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
@@ -73,7 +72,6 @@ public class Bootstrap {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
         banner = bootstrapConfiguration.getBanner();
-        cairoEngineFactory = bootstrapConfiguration.getCairoEngineFactory();
         buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
 
         // non /server.conf properties
@@ -323,10 +321,6 @@ public class Bootstrap {
         return buildInformation;
     }
 
-    public CairoEngineFactory getCairoEngineFactory() {
-        return cairoEngineFactory;
-    }
-
     public ServerConfiguration getConfiguration() {
         return config;
     }
@@ -353,6 +347,10 @@ public class Bootstrap {
             properties.load(is);
         }
         return properties;
+    }
+
+    public CairoEngine newCairoEngine() {
+        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {

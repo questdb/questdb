@@ -28,19 +28,19 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class FirstLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f long)", sqlExecutionContext);
+        ddl("create table tab (f long)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -50,7 +50,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -63,7 +63,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFirstNull() throws SqlException {
 
-        compiler.compile("create table tab (f long)", sqlExecutionContext);
+        ddl("create table tab (f long)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -77,7 +77,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -90,7 +90,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f long)", sqlExecutionContext);
+        ddl("create table tab (f long)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -101,7 +101,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -113,7 +113,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tfirst\tk\n" +
+        assertQuery("b\tfirst\tk\n" +
                         "\t7953532976996720859\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-3985256597569472057\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t7039584373105579285\t1970-01-03T00:00:00.000000Z\n" +
@@ -137,9 +137,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t6127579245089953588\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-8371487291073160693\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t-6509291080879266816\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T09:00:00.000000Z\n",
-                "select b, first(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "HYRX\tNaN\t1970-01-03T09:00:00.000000Z\n", "select b, first(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_long() a," +
@@ -147,17 +145,14 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_long() a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tfirst\tk\n" +
+                        ") timestamp(k)", "b\tfirst\tk\n" +
                         "\t7953532976996720859\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-3985256597569472057\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t7039584373105579285\t1970-01-03T00:00:00.000000Z\n" +
@@ -278,16 +273,13 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t2650534809769686528\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t9223372036854775807\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSomeNull() throws SqlException {
 
-        compiler.compile("create table tab (f long)", sqlExecutionContext);
+        ddl("create table tab (f long)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -300,7 +292,7 @@ public class FirstLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

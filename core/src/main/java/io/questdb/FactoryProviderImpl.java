@@ -31,8 +31,7 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.griffin.SqlCompilerFactory;
-import io.questdb.griffin.SqlCompilerFactoryImpl;
+
 import io.questdb.std.Misc;
 import io.questdb.std.str.DirectByteCharSink;
 
@@ -75,11 +74,6 @@ public class FactoryProviderImpl implements FactoryProvider {
     @Override
     public SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
-    }
-
-    @Override
-    public SqlCompilerFactory getSqlCompilerFactory() {
-        return SqlCompilerFactoryImpl.INSTANCE;
     }
 
     @Override

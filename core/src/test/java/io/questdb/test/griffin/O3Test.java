@@ -109,6 +109,7 @@ public class O3Test extends AbstractO3Test {
                 TestUtils.create(model, engine);
             }
 
+            AtomicInteger errorCount = new AtomicInteger();
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
             IntList newColTypes = new IntList();
             CyclicBarrier barrier = new CyclicBarrier(1);
@@ -142,7 +143,9 @@ public class O3Test extends AbstractO3Test {
                         }
                         barrier.await();
                     } catch (Exception e) {
+                        //noinspection CallToPrintStackTrace
                         e.printStackTrace();
+                        errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
                         LOG.info().$("write is done").$();
@@ -152,6 +155,7 @@ public class O3Test extends AbstractO3Test {
                 writerT.start();
                 writerT.join();
             }
+            Assert.assertEquals(0, errorCount.get());
         });
     }
 
@@ -446,7 +450,7 @@ public class O3Test extends AbstractO3Test {
 
             // to_timestamp produces NULL because values does not match the pattern
             try {
-                TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
+                CairoEngine.insert(compiler, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
@@ -1035,7 +1039,7 @@ public class O3Test extends AbstractO3Test {
 
                     long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
-                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                    CairoEngine.insert(compiler, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
 
                     // Check that there was an attempt to write a file bigger than 2GB
                     long max = 0;
@@ -1990,7 +1994,7 @@ public class O3Test extends AbstractO3Test {
                 "y",
                 "x"
         );
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastAppendBlankColumn0(
@@ -2024,19 +2028,19 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v double", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", executionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", executionContext);
+        engine.ddl("alter table x add column v1 float", executionContext);
+        engine.ddl("alter table x add column v2 int", executionContext);
+        engine.ddl("alter table x add column v3 byte", executionContext);
+        engine.ddl("alter table x add column v4 short", executionContext);
+        engine.ddl("alter table x add column v5 boolean", executionContext);
+        engine.ddl("alter table x add column v6 date", executionContext);
+        engine.ddl("alter table x add column v7 timestamp", executionContext);
+        engine.ddl("alter table x add column v8 symbol", executionContext);
+        engine.ddl("alter table x add column v10 char", executionContext);
+        engine.ddl("alter table x add column v11 string", executionContext);
+        engine.ddl("alter table x add column v12 binary", executionContext);
+        engine.ddl("alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2091,7 +2095,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopLastAppendColumn0(
@@ -2227,7 +2231,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastDataMerge2Data0(
@@ -3123,7 +3127,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopMidAppendColumn0(
@@ -3259,7 +3263,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMidDataMergeData0(
@@ -3504,7 +3508,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopMidMergeBlankColumnGeoHash0(
@@ -3562,7 +3566,7 @@ public class O3Test extends AbstractO3Test {
                 "y",
                 "x"
         );
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopMidOOOData0(
@@ -4324,7 +4328,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testLagOverflowBySize0(
@@ -4665,7 +4669,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testOOOTouchesNotLastPartitionTop0(
@@ -4748,7 +4752,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testOooFollowedByAnotherOOO0(
@@ -5313,7 +5317,7 @@ public class O3Test extends AbstractO3Test {
         assertSqlResultAgainstFile(compiler, sqlExecutionContext,
                 filteredColumnSelect + " where sym = 'googl'",
                 "/o3/testPartitionedDataMergeData_Index.txt");
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataMergeEnd0(
@@ -5585,7 +5589,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 engine
         );
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOODataPbOODataDropColumn0(
@@ -5948,7 +5952,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedOOData0(
@@ -6772,7 +6776,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testRebuildIndexLastPartitionWithColumnTop(
@@ -7452,7 +7456,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile("create table z as (x union all y)", executionContext);
 
         // create another compiler to be used by second pool
-        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+        try (SqlCompiler compiler2 = engine.getSqlCompiler()) {
 
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
@@ -7472,6 +7476,7 @@ public class O3Test extends AbstractO3Test {
                             barrier.await();
                             compiler.compile("insert into x select * from y", executionContext);
                         } catch (Throwable e) {
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                             errorCount.incrementAndGet();
                         } finally {
@@ -7495,6 +7500,7 @@ public class O3Test extends AbstractO3Test {
                             barrier.await();
                             compiler2.compile("insert into x1 select * from y1", executionContext);
                         } catch (Throwable e) {
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                             errorCount.incrementAndGet();
                         } finally {
@@ -7636,7 +7642,7 @@ public class O3Test extends AbstractO3Test {
                     1);
 
             // Insert OOO to create partition dir 2020-01-01.1
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(1, 100.0, '2020-01-01T00:01:00')");
+            CairoEngine.insert(compiler, "insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
             TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
                     "count\n" +
                             "11\n"
@@ -7644,7 +7650,7 @@ public class O3Test extends AbstractO3Test {
 
             // Close and open writer. Partition dir 2020-01-01.1 should not be purged
             engine.releaseAllWriters();
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(2, 101.0, '2020-01-01T00:02:00')");
+            CairoEngine.insert(compiler, "insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
             TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
                     "count\n" +
                             "12\n"

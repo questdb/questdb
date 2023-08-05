@@ -26,23 +26,23 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
 
-public class UnionTest extends AbstractGriffinTest {
+public class UnionTest extends AbstractCairoTest {
 
     @Test
     public void testExcept() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
+            insert("insert into events2 values ('amy', 'grp1', 'flash')");
+            insert("insert into events2 values ('joey', 'grp2', 'sit')");
+            insert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            insert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            insert("insert into events2 values ('stewy', 'grp1', 'flash')");
 
             assertQuery(
                     "groupid\tcontact\n" +
@@ -66,7 +66,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query1 = "select '2020-04-21', 1\n" +
                     "except\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select(query1)) {
                 assertCursor(expected1, rcf, true, false);
             }
 
@@ -75,7 +75,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query2 = "select '2020-04-21' a, 1 b\n" +
                     "except\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select(query2)) {
                 assertCursor(expected2, rcf, true, false);
             }
         });
@@ -84,19 +84,19 @@ public class UnionTest extends AbstractGriffinTest {
     @Test
     public void testExceptSymbolsDifferentTables() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 'grp1', 'flash')");
-            executeInsert("insert into events1 values ('2', 'grp1', 'stand')");
-            executeInsert("insert into events1 values ('3', 'grp1', 'flash')");
-            executeInsert("insert into events1 values ('4', 'grp1', 'flash')");
-            executeInsert("insert into events1 values ('5', 'grp2', 'sit')");
+            ddl("create table events1 (contact symbol, groupid symbol, eventid string)");
+            insert("insert into events1 values ('1', 'grp1', 'flash')");
+            insert("insert into events1 values ('2', 'grp1', 'stand')");
+            insert("insert into events1 values ('3', 'grp1', 'flash')");
+            insert("insert into events1 values ('4', 'grp1', 'flash')");
+            insert("insert into events1 values ('5', 'grp2', 'sit')");
 
-            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('5', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('4', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('3', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('2', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('1', 'grp1', 'flash')");
+            ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
+            insert("insert into events2 values ('5', 'grp2', 'sit')");
+            insert("insert into events2 values ('4', 'grp1', 'flash')");
+            insert("insert into events2 values ('3', 'grp1', 'flash')");
+            insert("insert into events2 values ('2', 'grp1', 'stand')");
+            insert("insert into events2 values ('1', 'grp1', 'flash')");
 
             assertQuery(
                     "contact\teventid\n" +
@@ -118,22 +118,20 @@ public class UnionTest extends AbstractGriffinTest {
     @Test
     public void testFilteredUnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE', NULL) t, " +
                             " CAST(x%2 as int) i" +
-                            " FROM long_sequence(20) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(20) x)"
             );
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('BUS', 'BIKE', NULL) t, " +
                             " CAST(x%2 as int) i" +
-                            " FROM long_sequence(20) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(20) x)"
             );
 
             assertQuery("t\ti\n" +
@@ -152,12 +150,12 @@ public class UnionTest extends AbstractGriffinTest {
     @Test
     public void testIntersect() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
+            insert("insert into events2 values ('amy', 'grp1', 'flash')");
+            insert("insert into events2 values ('joey', 'grp2', 'sit')");
+            insert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            insert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            insert("insert into events2 values ('stewy', 'grp1', 'flash')");
 
             assertQuery(
                     "groupid\tcontact\n" +
@@ -179,7 +177,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query1 = "select '2020-04-21', 1\n" +
                     "intersect\n" +
                     "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select(query1)) {
                 assertCursor(expected1, rcf, true, false);
             }
 
@@ -188,7 +186,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query2 = "select '2020-04-21' a, 1 b\n" +
                     "intersect\n" +
                     "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select(query2)) {
                 assertCursor(expected2, rcf, true, false);
             }
         });
@@ -434,23 +432,21 @@ public class UnionTest extends AbstractGriffinTest {
                 "#SET# " +
                 "select * from (select 2 from t #CLAUSE2# ) ";
 
-        assertMemoryLeak(() -> compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table t as (select x, 's' || x from long_sequence(1) )"));
 
         for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
             for (int i = 0; i <= 2; i++) {
-
                 String orderQuery = template.replace("#SET#", setOperation)
                         .replace("#CLAUSE" + i + "#", "order by x desc")
                         .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
                         .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                System.out.println(orderQuery);
-                compiler.compile(orderQuery, sqlExecutionContext);
+                select(orderQuery).close();
 
                 String limitQuery = template.replace("#SET#", setOperation)
                         .replace("#CLAUSE" + i + "#", "limit 1        ")
                         .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
                         .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                compiler.compile(limitQuery, sqlExecutionContext);
+                select(limitQuery).close();
             }
         }
     }
@@ -464,17 +460,15 @@ public class UnionTest extends AbstractGriffinTest {
                 "#SET# " +
                 "select 2 from t ";
 
-        assertMemoryLeak(() -> compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table t as (select x, 's' || x from long_sequence(1))"));
 
         for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
             for (int i = 0; i <= 1; i++) {
-
                 String orderQuery = template.replace("#SET#", setOperation)
                         .replace("#CLAUSE" + i + "#", "order by x desc")
                         .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
 
-                assertFailure(orderQuery,
-                        null,
+                assertException(orderQuery,
                         (i == 0 ? 16 : 43),
                         "unexpected token 'order'"
                 );
@@ -483,8 +477,7 @@ public class UnionTest extends AbstractGriffinTest {
                         .replace("#CLAUSE" + i + "#", "limit 1        ")
                         .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
 
-                assertFailure(limitQuery,
-                        null,
+                assertException(limitQuery,
                         (i == 0 ? 16 : 43),
                         "unexpected token 'limit'"
                 );
@@ -560,60 +553,58 @@ public class UnionTest extends AbstractGriffinTest {
                     "-772867311\tfalse\tQ\t0.7653255982993546\tNaN\t681\t2015-05-07T02:45:07.603Z\t\t4794469881975683047\t1970-01-01T02:30:00.000000Z\t31\t00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
                     "00000010 a0 dd\tVTNPIW\t0x2d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe19b2faa4e8255a0d\tP\n";
 
-            compiler.compile("create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(20))",
-                    sqlExecutionContext
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(20))"
             );
 
 
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile("create table y as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(10))",
-                    sqlExecutionContext
+            ddl("create table y as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(10))"
             );
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x union all y")) {
                 assertCursor(expected2, factory, false, true);
             }
         });
@@ -628,7 +619,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query1 = "select '2020-04-21', 1\n" +
                     "union all\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select(query1)) {
                 assertCursor(expected1, rcf, false, true);
             }
 
@@ -638,7 +629,7 @@ public class UnionTest extends AbstractGriffinTest {
             final String query2 = "select '2020-04-21' a, 1 b\n" +
                     "union all\n" +
                     "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select(query2)) {
                 assertCursor(expected2, rcf, false, true);
             }
         });
@@ -669,29 +660,27 @@ public class UnionTest extends AbstractGriffinTest {
                     "SCOOTER\n" +
                     "VAN\n";
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
-            );//produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
+                            " FROM long_sequence(7) x)"
+            ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y order by t", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select distinct t from x union all y order by t")) {
                 assertCursor(expected2, factory, true, true);
             }
         });
@@ -735,43 +724,44 @@ public class UnionTest extends AbstractGriffinTest {
                     "MOTORBIKE\n" +
                     "HELICOPTER\n";
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
-            ); //produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
+                            " FROM long_sequence(7) x)"
+            ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
-                            " FROM long_sequence(13) x)",
-                    sqlExecutionContext
-            ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
+                            " FROM long_sequence(13) x)"
+            ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            try (RecordCursorFactory factory = compiler.compile("select t from (" +
-                    "select * from (select distinct t from x order by 1) " +
-                    "union all " +
-                    "y " +
-                    "union all " +
-                    "z " +
-                    ")", sqlExecutionContext).getRecordCursorFactory()) {
+            try (
+                    RecordCursorFactory factory = select(
+                            "select t from (" +
+                                    "select * from (select distinct t from x order by 1) " +
+                                    "union all " +
+                                    "y " +
+                                    "union all " +
+                                    "z " +
+                                    ")"
+                    )
+            ) {
                 assertCursor(expected2, factory, false, true);
             }
         });
@@ -780,31 +770,28 @@ public class UnionTest extends AbstractGriffinTest {
     @Test
     public void testUnionAllOfSymbolOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('BUS', NULL) t " +
-                            " FROM long_sequence(5) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(5) x)"
             );
 
-            assertSql("select typeof(t), t from (select t from x union all y)", "typeof\tt\n" +
+            assertSql("typeof\tt\n" +
                     "STRING\tCAR\n" +
                     "STRING\tCAR\n" +
                     "STRING\tVAN\n" +
@@ -818,9 +805,9 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tBICYCLE\n" +
                     "STRING\tSCOOTER\n" +
                     "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n");
+                    "STRING\tBICYCLE\n", "select typeof(t), t from (select t from x union all y)");
 
-            assertSql("select typeof(t), t from (select t from x union all y order by t)", "typeof\tt\n" +
+            assertSql("typeof\tt\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
@@ -834,9 +821,9 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tSCOOTER\n" +
-                    "STRING\tVAN\n");
+                    "STRING\tVAN\n", "select typeof(t), t from (select t from x union all y order by t)");
 
-            assertSql("select typeof(t), t from (select t from x union all y) order by t", "typeof\tt\n" +
+            assertSql("typeof\tt\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
                     "STRING\tBICYCLE\n" +
@@ -850,7 +837,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tSCOOTER\n" +
-                    "STRING\tVAN\n");
+                    "STRING\tVAN\n", "select typeof(t), t from (select t from x union all y) order by t");
 
             assertQuery("typeof\tt\n" +
                             "STRING\tBICYCLE\n" +
@@ -911,39 +898,40 @@ public class UnionTest extends AbstractGriffinTest {
                     "VAN\n" +
                     "VAN\n";
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
+                            " FROM long_sequence(7) x)"
             );
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)",
-                    sqlExecutionContext
-            ); //produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
+                            " FROM long_sequence(7) x)"
+            ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
-                            " FROM long_sequence(13) x)",
-                    sqlExecutionContext
-            ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
+                            " FROM long_sequence(13) x)"
+            ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            try (RecordCursorFactory factory = compiler.compile("select t from (" +
-                    "select distinct t from x " +
-                    "union all " +
-                    "y " +
-                    "union all " +
-                    "z " +
-                    ")  order by 1", sqlExecutionContext).getRecordCursorFactory()) {
+            try (
+                    RecordCursorFactory factory = select(
+                            "select t from (" +
+                                    "select distinct t from x " +
+                                    "union all " +
+                                    "y " +
+                                    "union all " +
+                                    "z " +
+                                    ")  order by 1"
+                    )
+            ) {
                 assertCursor(expected2, factory, true, true);
             }
         });
@@ -1012,84 +1000,81 @@ public class UnionTest extends AbstractGriffinTest {
                     "1996219179\ttrue\tZ\t0.7022152611814457\t0.3258\t410\t2015-10-24T06:25:39.828Z\t\t-8698821645604291033\t1970-01-01T00:33:20.000000Z\t25\t00000000 2a 42 71 a3 7a 58 e5 78 b8 1c d6 fc\tGZTOY\t0x6eb1dd50a390ca7e2c60ac400987268c77962e845080f34354377431fb8f0a1d\tS\n" +
                     "1403475204\tfalse\tR\t0.981074259037815\t0.9892\t483\t2015-05-09T04:42:23.511Z\t\t-4912776313422450773\t1970-01-01T00:50:00.000000Z\t48\t\tFCYQWPKLHTIIGQ\t0xb58ffdb93190ab917fb4298ae30f186b48c87eff38ac95a63fbc031330b2396e\tD\n";
 
-            compiler.compile("create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(20))",
-                    sqlExecutionContext
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(20))"
             );
 
 
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile("create table y as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(22))",
-                    sqlExecutionContext
+            ddl("create table y as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(22))"
             );
 
 
-            compiler.compile("create table z as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(4))",
-                    sqlExecutionContext
+            ddl("create table z as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(4))"
             );
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x union y union z", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x union y union z")) {
                 assertCursor(expected2, factory, false, false);
             }
         });
@@ -1160,86 +1145,83 @@ public class UnionTest extends AbstractGriffinTest {
                     "-1604872342\ttrue\tF\t0.9674352881185491\t0.3088\t643\t2015-12-07T03:56:58.742Z\tHYRX\t-6544713176186588811\t1970-01-01T06:06:40.000000Z\t35\t00000000 87 88 45 b9 9d 20 13 51 c0 e0 b7\tSNSXH\t0x5ae63bdf09a84e32bac4484bdeec40e887ec84d0151017668c17a681e308fd4d\tE\n" +
                     "172654235\tfalse\tM\tNaN\t0.8643\t184\t2015-10-10T03:50:18.267Z\t\t-6196664199248241482\t1970-01-01T06:23:20.000000Z\t50\t00000000 27 66 94 89 db 3c 1a 23 f3 88 83 73\tGJBFQ\t0xcfd0f01a76fbe32b8e7fd4a84ba9813349e5a0f99d31a104a75dd7280fc9b66b\tI\n";
 
-            compiler.compile("create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(20))",
-                    sqlExecutionContext
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(20))"
             );
 
 
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory rcf = select("x")) {
                 assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile("create table y as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(10))",
-                    sqlExecutionContext
+            ddl("create table y as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(10))"
             );
 
 
             SharedRandom.RANDOM.get().reset();
 
-            compiler.compile("create table z as " +
-                            "(" +
-                            "select" +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() l256," +
-                            " rnd_char() chr" +
-                            " from" +
-                            " long_sequence(24))",
-                    sqlExecutionContext
+            ddl("create table z as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_long256() l256," +
+                    " rnd_char() chr" +
+                    " from" +
+                    " long_sequence(24))"
             );
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x union all y union z")) {
                 assertCursor(expected2, factory, false, false);
             }
         });
@@ -1248,8 +1230,8 @@ public class UnionTest extends AbstractGriffinTest {
     @Test
     public void testUnionGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
-            compile("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            ddl("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            ddl("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
 
             assertQuery("typeof\ts\tsum\n" +
                             "STRING\tb\t9.711630235623893\n" +

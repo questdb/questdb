@@ -31,12 +31,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
+public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testDistinctFailAllocRosti() throws Exception {
         // fail Rosti instance #3
@@ -60,29 +60,15 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount);
 
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
                             "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
                             " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
                     sqlExecutionContext
             );
 
-            // remove partition
-            final String partition = "2020-02";
-
-            TableToken tableToken = engine.verifyTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition).$()) {
-                Assert.assertEquals(0, Files.rmdir(path));
-            }
-
             try {
-                TestUtils.printSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select DISTINCT sym from tab order by 1 LIMIT 3",
-                        sink
-                );
-                Assert.fail();
+                assertException("select DISTINCT sym from tab order by 1 LIMIT 3", sqlExecutionContext);
             } catch (OutOfMemoryError e) {
                 // ignore
             }
@@ -128,11 +114,10 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
     @Test
     public void testDistinctOnBrokenTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
                             "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
-                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
-                    sqlExecutionContext
+                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH"
             );
 
             // remove partition
@@ -144,13 +129,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             }
 
             try {
-                TestUtils.printSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select DISTINCT sym from tab order by 1 LIMIT 3",
-                        sink
-                );
-                Assert.fail();
+                assertException("select DISTINCT sym from tab order by 1 LIMIT 3");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
             }
@@ -183,7 +162,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testDistinctSymbolsIndexed() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -213,13 +192,14 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "2020-02-09\n" +
                         "2020-02-10\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testDistinctSymbolsIndexedWithUpdates() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -239,13 +219,14 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "2020-01-05\n" +
                         "2020-01-06\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testDistinctSymbolsNonIndexed() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -261,7 +242,8 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "2020-02-02\n" +
                         "2020-02-03\n",
                 true,
-                true
+                true,
+                false
         );
     }
 

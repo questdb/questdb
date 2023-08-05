@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -45,7 +46,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     private final MillisecondClock clock;
     private final StringSink tempStringSink = new StringSink();
     protected FilesFacade ff;
-    protected Path path = new Path();
+    protected Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
     private int lockFd;

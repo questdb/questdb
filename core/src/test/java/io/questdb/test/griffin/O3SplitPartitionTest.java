@@ -106,9 +106,9 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     ") timestamp (ts) partition by DAY",
                             executionContext
                     );
-                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column sym symbol index ", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+                    engine.ddl("alter table x add column k int", executionContext);
+                    engine.ddl("alter table x add column sym symbol index ", executionContext);
+                    engine.ddl("alter table x add column ks string", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -159,8 +159,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into x select * from z", executionContext);
 
                     assertX(compiler, executionContext, "zz");
-                    assertIndex(compiler, executionContext, "zz", "x", "sym = '5'");
-                    assertIndex(compiler, executionContext, "zz", "x", "sym is null");
+                    assertIndex(compiler, executionContext, "sym = '5'");
+                    assertIndex(compiler, executionContext, "sym is null");
                 });
     }
 
@@ -175,18 +175,17 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             ") timestamp(ts) partition by MONTH",
                     sqlExecutionContext);
 
-            compiler.compile(
+            engine.insert(
                     "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
                             "('2022-06-08T01:40:00.000000Z', '1', 'true', '2')," +
                             "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
                             "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
                             "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
-                    sqlExecutionContext).execute(null).await();
+                    sqlExecutionContext);
 
-            compiler.compile("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
-                    .execute(null).await();
+            engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)                    ;
 
-            compiler.compile("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
+            engine.insert("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                             "('2022-06-08T02:50:00.000000Z', '5', '3')," +
                             "('2022-06-08T02:50:00.000000Z', '6', '3')," +
                             "('2022-06-08T02:50:00.000000Z', '7', '1')," +
@@ -197,13 +196,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "('2022-06-08T03:50:00.000000Z', '12', '2')," +
                             "('2022-06-08T04:50:00.000000Z', '13', '2')," +
                             "('2022-06-08T04:50:00.000000Z', '14', '2')",
-                    sqlExecutionContext).execute(null).await();
+                    sqlExecutionContext);
 
             // OOO in the middle
-            compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+            engine.insert("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                             "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
                             "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
-                    sqlExecutionContext).execute(null).await();
+                    sqlExecutionContext);
 
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select ts, metric, loggerChannel from monthly_col_top", sink,
@@ -235,10 +234,10 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "2022-06-08T04:50:00.000000Z\t14\t\t\t2\n");
 
             // OOO appends to last partition
-            compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+            engine.insert("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                             "('2022-06-08T05:30:00.000000Z', '17', '4', '3')," +
                             "('2022-06-08T04:50:00.000000Z', '18', '4', '3')",
-                    sqlExecutionContext).execute(null).await();
+                    sqlExecutionContext);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                     "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
@@ -250,11 +249,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n");
 
             // OOO merges and appends to last partition
-            compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+            engine.insert("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                             "('2022-06-08T05:30:00.000000Z', '19', '4', '3')," +
                             "('2022-06-08T02:50:00.000000Z', '20', '4', '3')," +
                             "('2022-06-08T02:50:00.000000Z', '21', '4', '3')",
-                    sqlExecutionContext).execute(null).await();
+                    sqlExecutionContext);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                     "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
@@ -353,9 +352,9 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into zz(i,j,str,ts) select i,j,str,ts from z", executionContext);
                     compiler.compile("insert into x(i,j,str,ts) select i,j,str,ts from z", executionContext);
 
-                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column sym symbol index ", executionContext).execute(null).await();
+                    engine.ddl("alter table x add column k int", executionContext);
+                    engine.ddl("alter table x add column ks string", executionContext);
+                    engine.ddl("alter table x add column sym symbol index ", executionContext);
 
                     compiler.compile(
                             "create table z2 as (" +
@@ -375,16 +374,16 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into x select * from z2", executionContext);
 
                     assertX(compiler, executionContext, "zz");
-                    assertIndex(compiler, executionContext, "zz", "x", "sym = '5'");
-                    assertIndex(compiler, executionContext, "zz", "x", "sym is null");
+                    assertIndex(compiler, executionContext, "sym = '5'");
+                    assertIndex(compiler, executionContext, "sym is null");
 
                     // Squash last partition
-                    compiler.compile("insert into zz(ts) values('2020-02-06')", executionContext).execute(null).await();
-                    compiler.compile("insert into x(ts) values('2020-02-06')", executionContext).execute(null).await();
+                    engine.insert("insert into zz(ts) values('2020-02-06')", executionContext);
+                    engine.insert("insert into x(ts) values('2020-02-06')", executionContext);
 
                     assertX(compiler, executionContext, "zz");
-                    assertIndex(compiler, executionContext, "zz", "x", "sym = '5'");
-                    assertIndex(compiler, executionContext, "zz", "x", "sym is null");
+                    assertIndex(compiler, executionContext, "sym = '5'");
+                    assertIndex(compiler, executionContext, "sym is null");
                 });
     }
 
@@ -496,8 +495,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     ") timestamp (ts) partition by DAY",
                             executionContext
                     );
-                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+                    engine.ddl("alter table x add column k int", executionContext);
+                    engine.ddl("alter table x add column ks string", executionContext);
 
                     compiler.compile(
                             "create table z as (" +
@@ -667,12 +666,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         );
     }
 
-    private void assertIndex(SqlCompiler compiler, SqlExecutionContext executionContext, String table1, String table2, String filter) throws SqlException {
+    private void assertIndex(SqlCompiler compiler, SqlExecutionContext executionContext, String filter) throws SqlException {
         TestUtils.assertSqlCursors(
                 compiler,
                 executionContext,
-                "select * from " + table1 + " where " + filter + " order by ts",
-                "select * from " + table2 + " where " + filter,
+                "select * from " + "zz" + " where " + filter + " order by ts",
+                "select * from " + "x" + " where " + filter,
                 LOG
         );
     }

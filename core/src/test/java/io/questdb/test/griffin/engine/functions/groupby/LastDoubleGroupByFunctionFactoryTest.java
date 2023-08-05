@@ -28,18 +28,18 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -49,7 +49,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -88,7 +88,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -99,7 +99,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -111,7 +111,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tlast\tk\n" +
+        assertQuery("b\tlast\tk\n" +
                         "\t0.44804689668613573\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -135,9 +135,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t0.4182912727422209\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t0.7317695244811556\t1970-01-03T09:00:00.000000Z\n",
-                "select b, last(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "CPSW\t0.7317695244811556\t1970-01-03T09:00:00.000000Z\n", "select b, last(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0) a," +
@@ -145,17 +143,14 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0) a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tlast\tk\n" +
+                        ") timestamp(k)", "b\tlast\tk\n" +
                         "\t0.44804689668613573\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -276,9 +271,6 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "RXGZ\t0.19947046128810061\t1970-01-04T06:00:00.000000Z\n" +
                         "PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z\n" +
-                        "CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
 }

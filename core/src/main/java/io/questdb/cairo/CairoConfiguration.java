@@ -434,6 +434,8 @@ public interface CairoConfiguration {
 
     boolean getWalEnabledDefault();
 
+    int getWalMaxLagTxnCount();
+
     long getWalPurgeInterval();
 
     int getWalRecreateDistressedSequencerAttempts();

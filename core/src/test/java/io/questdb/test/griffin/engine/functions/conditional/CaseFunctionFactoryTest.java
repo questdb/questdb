@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.conditional;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CaseFunctionFactoryTest extends AbstractGriffinTest {
+public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBinary() throws Exception {
@@ -330,32 +330,32 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testCaseErrors() throws Exception {
-        assertFailure("select case from long_sequence(1)", null, 7, "unbalanced 'case'");
-        assertFailure("select case end from long_sequence(1)", null, 12, "'when' expected");
-        assertFailure("select case x end from long_sequence(1)", null, 14, "'when' expected");
-        assertFailure("select case 1 end from long_sequence(1)", null, 14, "'when' expected");
-        assertFailure("select case false end from long_sequence(1)", null, 18, "'when' expected");
-        assertFailure("select case x/2 end from long_sequence(1)", null, 16, "'when' expected");
-        assertFailure("select case x/2 z end from long_sequence(1)", null, 18, "'when' expected");
-        assertFailure("select case 1+5 end from long_sequence(1)", null, 16, "'when' expected");
-        assertFailure("select case rnd_double() end from long_sequence(1)", null, 25, "'when' expected");
-        assertFailure("select case x else 2 end from long_sequence(1)", null, 14, "'when' expected");
-        assertFailure("select case x when else 2 end from long_sequence(1)", null, 19, "missing arguments");
-        assertFailure("select case x when 1 end from long_sequence(1)", null, 21, "'then' expected");
-        assertFailure("select case x when 1 else 2 end from long_sequence(1)", null, 21, "'then' expected");
-        assertFailure("select case x when 1 then else 2 end from long_sequence(1)", null, 26, "missing arguments");
-        assertFailure("select case x when 1 then 1 else else end from long_sequence(1)", null, 33, "missing arguments");
-        assertFailure("select case x when 1 then 1 when else 2 end from long_sequence(1)", null, 33, "missing arguments");
-        assertFailure("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)", null, 35, "'then' expected");
-        assertFailure("select case when end from long_sequence(1)", null, 17, "missing arguments");
-        assertFailure("select case when then else end from long_sequence(1)", null, 17, "missing arguments");
-        assertFailure("select case when else end from long_sequence(1)", null, 17, "missing arguments");
-        assertFailure("select case when x end from long_sequence(1)", null, 19, "'then' expected");
-        assertFailure("select case when x else end from long_sequence(1)", null, 19, "'then' expected");
-        assertFailure("select case when x else 2 end from long_sequence(1)", null, 19, "'then' expected");
-        assertFailure("select case when x then end from long_sequence(1)", null, 24, "missing arguments");
-        assertFailure("select case when x then else end from long_sequence(1)", null, 24, "missing arguments");
-        assertFailure("select case when x then x else end from long_sequence(1)", null, 31, "missing arguments");
+        assertException("select case from long_sequence(1)",  7, "unbalanced 'case'");
+        assertException("select case end from long_sequence(1)",  12, "'when' expected");
+        assertException("select case x end from long_sequence(1)",  14, "'when' expected");
+        assertException("select case 1 end from long_sequence(1)", 14, "'when' expected");
+        assertException("select case false end from long_sequence(1)",  18, "'when' expected");
+        assertException("select case x/2 end from long_sequence(1)",  16, "'when' expected");
+        assertException("select case x/2 z end from long_sequence(1)",  18, "'when' expected");
+        assertException("select case 1+5 end from long_sequence(1)",  16, "'when' expected");
+        assertException("select case rnd_double() end from long_sequence(1)",  25, "'when' expected");
+        assertException("select case x else 2 end from long_sequence(1)",  14, "'when' expected");
+        assertException("select case x when else 2 end from long_sequence(1)",  19, "missing arguments");
+        assertException("select case x when 1 end from long_sequence(1)",  21, "'then' expected");
+        assertException("select case x when 1 else 2 end from long_sequence(1)",  21, "'then' expected");
+        assertException("select case x when 1 then else 2 end from long_sequence(1)",  26, "missing arguments");
+        assertException("select case x when 1 then 1 else else end from long_sequence(1)",  33, "missing arguments");
+        assertException("select case x when 1 then 1 when else 2 end from long_sequence(1)",  33, "missing arguments");
+        assertException("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)",  35, "'then' expected");
+        assertException("select case when end from long_sequence(1)", 17, "missing arguments");
+        assertException("select case when then else end from long_sequence(1)", 17, "missing arguments");
+        assertException("select case when else end from long_sequence(1)", 17, "missing arguments");
+        assertException("select case when x end from long_sequence(1)",  19, "'then' expected");
+        assertException("select case when x else end from long_sequence(1)",  19, "'then' expected");
+        assertException("select case when x else 2 end from long_sequence(1)", 19, "'then' expected");
+        assertException("select case when x then end from long_sequence(1)", 24, "missing arguments");
+        assertException("select case when x then else end from long_sequence(1)", 24, "missing arguments");
+        assertException("select case when x then x else end from long_sequence(1)", 31, "missing arguments");
     }
 
     @Test
@@ -381,7 +381,7 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testCaseWithNoElseInWhereClause() throws Exception {
-        assertFailure("select x from long_sequence(3) where case x when 1 then 0 end", null, 37, "boolean expression expected");
+        assertException("select x from long_sequence(3) where case x when 1 then 0 end",  37, "boolean expression expected");
 
         assertQuery("x\n1\n",
                 "select x from long_sequence(3) where case when x<2 then true end", null, true, false);
@@ -843,7 +843,7 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testIntOrElseMalformedBinaryOperator() throws Exception {
-        assertFailure(
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1003,19 +1003,18 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
         String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
 
         for (String type : types) {
-            compiler.compile("create table tt as (" +
+            ddl("create table tt as (" +
                     "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
-                    ") timestamp(ts)", sqlExecutionContext);
+                    ") timestamp(ts)");
 
             // this is a bit confusing. for booleans, every value x != 0 will evaluate to 1
             // however, for int etc, only the value 1 will evaluate to 1
-            assertSql("select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
-                            "from tt",
-                    "sum\n" +
-                            (type.equals("BOOLEAN") ? "10\n" : "1\n")
+            assertSql("sum\n" +
+                    (type.equals("BOOLEAN") ? "10\n" : "1\n"), "select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
+                            "from tt"
             );
 
-            compiler.compile("drop table tt", sqlExecutionContext);
+            drop("drop table tt");
         }
     }
 
@@ -1199,7 +1198,7 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNonBooleanWhen() throws Exception {
-        assertFailure(
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +

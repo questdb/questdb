@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,7 +38,7 @@ import org.junit.Test;
  * int -> short, byte
  * short -> byte
  */
-public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
+public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertDoubleAsByte_Causes_Overflow_and_throws_exception() throws Exception {
@@ -524,8 +524,8 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     private void testInsert(String valueType, String value, String targetColumnType, String expectedValue) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(x " + targetColumnType + " );", sqlExecutionContext);
-            executeInsert("insert into tab values (cast(" + value + " as " + valueType + " ));");
+            ddl("create table tab(x " + targetColumnType + " );");
+            insert("insert into tab values (cast(" + value + " as " + valueType + " ));");
 
             String expected = "x\n" + expectedValue + "\n";
 
@@ -540,8 +540,8 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
     private void testInsertCausesException(String valueType, String value, String targetColumnType) throws Exception {
         try {
             assertMemoryLeak(() -> {
-                compiler.compile("create table tab(x " + targetColumnType + " );", sqlExecutionContext);
-                executeInsert("insert into tab values (cast(" + value + " as " + valueType + " ));");
+                ddl("create table tab(x " + targetColumnType + " );");
+                insert("insert into tab values (cast(" + value + " as " + valueType + " ));");
             });
 
             Assert.fail("SqlException should be thrown!");

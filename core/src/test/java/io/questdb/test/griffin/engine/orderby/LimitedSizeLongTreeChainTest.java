@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.std.LongList;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
@@ -40,7 +40,7 @@ import org.junit.Test;
 /**
  * Test RBTree removal cases asserting final tree structure .
  */
-public class LimitedSizeLongTreeChainTest extends AbstractGriffinTest {
+public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     //used in all tests to hide api complexity
     LimitedSizeLongTreeChain chain;

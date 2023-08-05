@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
@@ -68,18 +68,9 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "sum\n" +
-                        "NaN\n",
-                "select sum(f) from tab",
-                "create table tab as (select cast(null as double) f from long_sequence(33))",
-                null,
-                "insert into tab select 0.9822 from long_sequence(1)",
-                "sum\n" +
-                        "0.9822\n",
-                false,
-                true
-        );
+        assertQuery("sum\n" +
+                        "NaN\n", "select sum(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 0.9822 from long_sequence(1)", "sum\n" +
+                        "0.9822\n", false, true, false);
     }
 
     @Test

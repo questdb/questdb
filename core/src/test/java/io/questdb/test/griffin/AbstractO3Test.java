@@ -254,9 +254,9 @@ public class AbstractO3Test extends AbstractTest {
         TestUtils.assertEquals(sink2, sink);
     }
 
-    protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    protected static void assertXCountY(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.assertEquals(compiler, sqlExecutionContext, "select count() from x", "select count() from y");
-        assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
     protected static void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {

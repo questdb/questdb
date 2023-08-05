@@ -42,7 +42,7 @@ import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -57,7 +57,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
-public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
+public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private static final int QUEUE_CAPACITY = 4;
 
@@ -69,7 +69,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         pageFrameReduceQueueCapacity = QUEUE_CAPACITY;
 
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test
@@ -466,22 +466,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             configOverrideColumnPreTouchEnabled(false);
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
-            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
+            ddl("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
-
-            assertQuery5(compiler,
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    sql,
+                    sink,
                     "c1\tc2\tc3\tc4\n" +
                             "foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163\n" +
                             "foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911\n" +
                             "foobar\t1970-01-01T00:42:39.700000Z\t0.3457641654104435\t0.5880171472078374\n" +
                             "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
-                            "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n",
-                    sql,
-                    "c2",
-                    sqlExecutionContext,
-                    true,
-                    false,
-                    true
+                            "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
             );
         });
     }
@@ -623,7 +620,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     Record r1 = c1.getRecord();
                     Record r2 = c2.getRecord();
 
-                    // We expect both cursors to be able to make progress even although only one of them
+                    // We expect both cursors to be able to make progress even though only one of them
                     // occupies the reduce queue most of the time. The second one should be using a local task.
                     while (c1.hasNext()) {
                         printer.print(r1, f1.getMetadata(), sink1);
@@ -759,17 +756,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 protected boolean runSerially() {
                     if (run) {
                         try {
-                            runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
-                                @Override
-                                public Rnd getRandom() {
-                                    return rnd;
-                                }
+                            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
+                                    @Override
+                                    public Rnd getRandom() {
+                                        return rnd;
+                                    }
 
-                                @Override
-                                public int getWorkerCount() {
-                                    return sharedPoolWorkerCount;
-                                }
-                            });
+                                    @Override
+                                    public int getWorkerCount() {
+                                        return sharedPoolWorkerCount;
+                                    }
+                                });
+                            }
                         } catch (Throwable e) {
                             e.printStackTrace();
                             errorCounter.incrementAndGet();
@@ -802,23 +801,24 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
         assertMemoryLeak(() -> {
-
             WorkerPool pool = new TestWorkerPool(workerCount);
             TestUtils.setupWorkerPool(pool, engine);
             pool.start();
 
             try {
-                runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
-                    @Override
-                    public int getSharedWorkerCount() {
-                        return sharedWorkerCount;
-                    }
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
+                        @Override
+                        public int getSharedWorkerCount() {
+                            return sharedWorkerCount;
+                        }
 
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-                });
+                        @Override
+                        public int getWorkerCount() {
+                            return workerCount;
+                        }
+                    });
+                }
             } catch (Throwable e) {
                 e.printStackTrace();
                 throw e;

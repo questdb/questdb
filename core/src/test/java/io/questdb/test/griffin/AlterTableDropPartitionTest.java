@@ -25,12 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -40,37 +41,37 @@ import org.junit.Test;
 import java.io.File;
 import java.nio.file.Paths;
 
-import static io.questdb.griffin.CompiledQuery.ALTER;
-
-public class AlterTableDropPartitionTest extends AbstractGriffinTest {
+public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnAndDropPartition() throws Exception {
         assertMemoryLeak(() -> {
-                    compile("create table x as (" +
+                    ddl(
+                            "create table x as (" +
                             "select x as i," +
                             "x as j," +
                             "x as g," +
                             "timestamp_sequence('2018-01-01', 72000000L) ts " +
                             "from long_sequence(1000)" +
-                            ") timestamp (ts) partition by DAY");
+                            ") timestamp (ts) partition by DAY"
+                    );
 
-                    compile("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(20)");
-                    compile("alter table x add column new_col int");
-                    compile("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
-                    compile("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
+                    ddl("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(20)");
+                    ddl("alter table x add column new_col int");
+                    ddl("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
+                    ddl("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
                     try (TableReader ignored = getReader("x")) {
                         // Open table reader and all partitions
-                        assertSql("select sum(i) / sum(i) from x", "column\n" +
-                                "1\n");
+                        assertSql("column\n" +
+                                "1\n", "select sum(i) / sum(i) from x");
                     }
 
-                    compile("alter table x add column new_col2 int");
-                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-02'", sqlExecutionContext).getType());
+                    ddl("alter table x add column new_col2 int");
+                    ddl("alter table x DROP partition list '2018-01-02'");
 
                     try (TableReader ignored = getReader("x")) {
-                        assertSql("select sum(i) / sum(i) from x", "column\n" +
-                                "1\n");
+                        assertSql("column\n" +
+                                "1\n", "select sum(i) / sum(i) from x");
                     }
                 }
         );
@@ -82,7 +83,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     createX("DAY", 72000000);
 
                     try {
-                        compile("alter table x drop partition list '2017-01-no'", sqlExecutionContext);
+                        ddl("alter table x drop partition list '2017-01-no'", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
@@ -98,7 +99,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     createX("DAY", 72000000);
 
                     try {
-                        compile("alter table x drop partition list '2017-01'", sqlExecutionContext);
+                        ddl("alter table x drop partition list '2017-01'", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
@@ -114,7 +115,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     createX("DAY", 72000000);
 
                     try {
-                        compile("alter table x drop partition list '2017-01-05'", sqlExecutionContext);
+                        ddl("alter table x drop partition list '2017-01-05'", sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException e) {
                         Assert.assertEquals(34, e.getPosition());
@@ -152,7 +153,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionListWithMixedWeekDayFormats() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table trade as (" +
+            ddl("create table trade as (" +
                             "select" +
                             "  rnd_symbol('A', 'B', 'C') sym," +
                             "  rnd_long(1, 10000000000, 0) px," +
@@ -162,12 +163,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                             "    to_timestamp('2024-01-03', 'yyyy-MM-dd')," +
                             "    0) ts" +
                             "  from long_sequence(360)" +
-                            "), index(sym capacity 128) timestamp(ts) partition by week;",
-                    sqlExecutionContext);
+                            "), index(sym capacity 128) timestamp(ts) partition by week;");
             assertSql(
-                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10",
                     "year\tweek_of_year\twoy\n" +
                             "2024\t1\t2024-W01\n" +
                             "2023\t52\t2023-W52\n" +
@@ -178,15 +175,14 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                             "2023\t47\t2023-W47\n" +
                             "2023\t46\t2023-W46\n" +
                             "2023\t45\t2023-W45\n" +
-                            "2023\t44\t2023-W44\n"
+                            "2023\t44\t2023-W44\n", "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10"
             );
 
-            compile("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
+            ddl("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
 
             assertSql(
-                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10",
                     "year\tweek_of_year\twoy\n" +
                             "2024\t1\t2024-W01\n" +
                             "2023\t52\t2023-W52\n" +
@@ -197,7 +193,9 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                             "2023\t44\t2023-W44\n" +
                             "2023\t43\t2023-W43\n" +
                             "2023\t42\t2023-W42\n" +
-                            "2023\t41\t2023-W41\n"
+                            "2023\t41\t2023-W41\n", "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10"
             );
         });
     }
@@ -213,7 +211,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+                    ddl("alter table x DROP partition list '2018-01-05', '2018-01-07'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -236,7 +234,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     // names have extra characters
-                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05T23', '2018-01-07T15'", sqlExecutionContext).getType());
+                    ddl("alter table x DROP partition list '2018-01-05T23', '2018-01-07T15'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -258,8 +256,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05';", sqlExecutionContext).getType());
-                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-07'; \n\n", sqlExecutionContext).getType());
+                    ddl("alter table x DROP partition list '2018-01-05';");
+                    ddl("alter table x DROP partition list '2018-01-07'; \n\n");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -302,7 +300,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResultForTimestampColumnNameTs("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -325,14 +323,16 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp = to_timestamp('2020-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition where timestamp = to_timestamp('2020-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
-                    assertPartitionResult("count\n" +
+                    assertPartitionResult(
+                            "count\n" +
                                     "145\n",
-                            "2018");
+                            "2018"
+                    );
                     assertPartitionResult(expectedAfterDrop, "2020");
                 }
         );
@@ -350,7 +350,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp > 0 ", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition where timestamp > 0 ");
 
                     String zeroCount = "count\n0\n";
                     for (int i = 2018; i < 2025; i++) {
@@ -372,7 +372,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp = to_timestamp('2022-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition where timestamp = to_timestamp('2022-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
 
                     assertPartitionResult("count\n" +
                                     "145\n",
@@ -403,7 +403,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     "select x, timestamp_sequence('2022-02-26T12', 10*60*1000000), x " +
                     "from long_sequence(10)");
 
-            assertSql("x where ts in '2022-02-26'", "inn\tts\tlo\n" +
+            assertSql("inn\tts\tlo\n" +
                     "1\t2022-02-26T12:00:00.000000Z\t1\n" +
                     "2\t2022-02-26T12:10:00.000000Z\t2\n" +
                     "3\t2022-02-26T12:20:00.000000Z\t3\n" +
@@ -413,7 +413,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     "7\t2022-02-26T13:00:00.000000Z\t7\n" +
                     "8\t2022-02-26T13:10:00.000000Z\t8\n" +
                     "9\t2022-02-26T13:20:00.000000Z\t9\n" +
-                    "10\t2022-02-26T13:30:00.000000Z\t10\n");
+                    "10\t2022-02-26T13:30:00.000000Z\t10\n", "x where ts in '2022-02-26'");
         });
     }
 
@@ -421,13 +421,16 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     public void testDropPartitionWithO3Version() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "x";
-            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)) {
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
+            ) {
                 tm.timestamp();
                 TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
             }
-            compiler.compile("insert into " + tableName + " " +
+            ddl("insert into " + tableName + " " +
                     "select timestamp_sequence('2020-01-01', " + Timestamps.HOUR_MICROS + "L) " +
-                    "from long_sequence(50)", sqlExecutionContext);
+                    "from long_sequence(50)");
 
             assertPartitionResult("count\n44\n", "2020-01-01");
 
@@ -437,7 +440,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(path));
                 engine.releaseAllReaders();
 
-                compile("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
+                ddl("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
 
                 assertPartitionResult("count\n0\n", "2020-01-01");
                 Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(path));
@@ -531,7 +534,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -553,11 +556,11 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
-                    Assert.assertEquals(ALTER, compile("alter table x rename column timestamp to ts ", sqlExecutionContext).getType());
+                    ddl("alter table x rename column timestamp to ts ");
 
                     assertPartitionResultForTimestampColumnNameTs(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where ts = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition where ts = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ");
 
                     assertPartitionResultForTimestampColumnNameTs(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2018-01-05");
@@ -576,11 +579,11 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
-                    Assert.assertEquals(ALTER, compile("alter table x rename column b to bbb ", sqlExecutionContext).getType());
+                    ddl("alter table x rename column b to bbb ");
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition list '2018-01-05' ", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition list '2018-01-05' ");
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
@@ -594,7 +597,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     createXWithoutDesignatedColumn();
 
                     try {
-                        compile("alter table x drop partition " +
+                        ddl("alter table x drop partition " +
                                         "where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
                                 sqlExecutionContext);
                         Assert.fail();
@@ -610,8 +613,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     public void testDropSplitLastPartition() throws Exception {
         assertMemoryLeak(() -> {
                     createXSplit("DAY", Timestamps.DAY_MICROS / 2000, 200); // 300 records per day
-                    compile("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
-                    assertSql("select count() from x where timestamp in '2018-01-01'", "count\n0\n");
+                    ddl("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                    assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
         );
     }
@@ -620,8 +623,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     public void testDropSplitMidPartition() throws Exception {
         assertMemoryLeak(() -> {
                     createXSplit("DAY", Timestamps.DAY_MICROS / 300, 200); // 300 records per day
-                    compile("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
-                    assertSql("select count() from x where timestamp in '2018-01-01'", "count\n0\n");
+                    ddl("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                    assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
         );
     }
@@ -637,7 +640,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition list '2018-01-05', '2018-01-07'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -659,7 +662,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+                    ddl("alter table x DROP partition list '2018-01-05', '2018-01-07'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -682,7 +685,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "120\n", "2018-04");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition list '2018-02', '2018-04'", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition list '2018-02', '2018-04'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -705,7 +708,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "146\n", "2022");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition list '2020', '2022'", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition list '2020', '2022'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -822,7 +825,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ", sqlExecutionContext).getType());
+                    ddl("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -838,7 +841,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 createX("YEAR", 720000000);
-                compiler.compile(sql, sqlExecutionContext);
+                select(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -849,20 +852,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws SqlException {
         assertSql(
-                "select count() from x where timestamp in '" + intervalSearch + "'",
-                expectedBeforeDrop
+                expectedBeforeDrop, "select count() from x where timestamp in '" + intervalSearch + "'"
         );
     }
 
     private void assertPartitionResultForTimestampColumnNameTs(String expectedBeforeDrop, String intervalSearch) throws SqlException {
         assertSql(
-                "select count() from x where ts in '" + intervalSearch + "'",
-                expectedBeforeDrop
+                expectedBeforeDrop, "select count() from x where ts in '" + intervalSearch + "'"
         );
     }
 
     private void createX(String partitionBy, long increment) throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -883,8 +884,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(1000)" +
                         ") timestamp (timestamp)" +
-                        " partition by " + partitionBy,
-                sqlExecutionContext
+                        " partition by " + partitionBy
         );
     }
 
@@ -921,7 +921,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
 
     private void createXWithDifferentTimestampName() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -942,13 +942,12 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(1000)" +
                         ") timestamp (ts)" +
-                        "partition by " + "YEAR",
-                sqlExecutionContext
+                        "partition by " + "YEAR"
         );
     }
 
     private void createXWithoutDesignatedColumn() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -968,8 +967,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(1000)" +
-                        ")",
-                sqlExecutionContext
+                        ")"
         );
     }
 
@@ -1064,7 +1062,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         }
 
                         if (partitionBy != PartitionBy.NONE) {
-                            compile("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
+                            ddl("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
                         }
                     }
                 }
