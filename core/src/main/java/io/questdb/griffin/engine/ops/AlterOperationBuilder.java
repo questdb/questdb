@@ -155,7 +155,7 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofDedupEnable(int tableNamePosition, TableToken tableToken, boolean status) {
+    public AlterOperationBuilder ofDedupEnable(int tableNamePosition, TableToken tableToken) {
         this.command = SET_DEDUP_ENABLE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;

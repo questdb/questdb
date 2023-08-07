@@ -33,7 +33,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -41,7 +41,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class ConcurrentWalTableRenameTest extends AbstractGriffinTest {
+public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentSelectRename() throws Exception {
@@ -67,14 +67,11 @@ public class ConcurrentWalTableRenameTest extends AbstractGriffinTest {
                     try {
                         barrier.await();
                         StringSink sink = new StringSink();
-                        try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
                                     TestUtils.assertSql(
-                                            compiler,
+                                            engine,
                                             executionContext,
                                             "select t1.ts from t1 join t2 on t1.ts = t2.ts",
                                             sink,
@@ -108,7 +105,7 @@ public class ConcurrentWalTableRenameTest extends AbstractGriffinTest {
                 try {
                     barrier.await();
                     try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
                         while (!done.get()) {

@@ -929,11 +929,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
 
         if (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT) {
-            // If committed to this timestamp, will it make any of the transactions fully committed?
-            long canCommitToTxn = walTxnDetails.getFullyCommittedTxn(txWriter.getSeqTxn(), seqTxn, commitToTimestamp);
-            if (canCommitToTxn <= txWriter.getSeqTxn()) {
-                // no transactions will be fully committed anyway, copy to LAG without committing.
-                commitToTimestamp = Long.MIN_VALUE;
+            final int maxLagTxnCount = configuration.getWalMaxLagTxnCount();
+            if (txWriter.getLagTxnCount() >= maxLagTxnCount) {
+                // Too many txns are in the lag, so force a full commit.
+                commitToTimestamp = WalTxnDetails.FORCE_FULL_COMMIT;
+            } else {
+                // If committed to this timestamp, will it make any of the transactions fully committed?
+                long canCommitToTxn = walTxnDetails.getFullyCommittedTxn(txWriter.getSeqTxn(), seqTxn, commitToTimestamp);
+                if (canCommitToTxn <= txWriter.getSeqTxn()) {
+                    // no transactions will be fully committed anyway, copy to LAG without committing.
+                    commitToTimestamp = Long.MIN_VALUE;
+                }
             }
         }
 
@@ -1644,7 +1650,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
                 if (copyToLagOnly && totalUncommitted <= maxLagRows) {
-
                     // Don't commit anything, move everything to memory instead.
                     // This usually happens when WAL transactions are very small, so it's faster
                     // to squash several of them together before writing anything to disk.
@@ -1805,12 +1810,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 o3RowCount = o3Hi - o3Lo + walLagRowCount;
 
-
                 // Real data writing into table happens here.
                 // Everything above it is to figure out how much data to write now,
                 // map symbols and sort data if necessary.
                 if (o3Hi > o3Lo) {
-
                     // Now that everything from WAL lag is in memory or in WAL columns,
                     // we can remove artificial 0 length partition created to store lag when table did not have any partitions
                     if (txWriter.getRowCount() == 0 && txWriter.getPartitionCount() == 1 && txWriter.getPartitionSize(0) == 0) {
@@ -1823,7 +1826,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.removeAttachedPartitions(partitionTimestamp);
                         safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
                     }
-                    
+
                     processO3Block(
                             walLagRowCount,
                             timestampIndex,

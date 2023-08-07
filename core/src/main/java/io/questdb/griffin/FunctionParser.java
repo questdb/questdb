@@ -1011,8 +1011,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     static {
-        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
-            FunctionFactoryCache.invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
+        for (int i = 0, n = SqlCompilerImpl.sqlControlSymbols.size(); i < n; i++) {
+            FunctionFactoryCache.invalidFunctionNames.add(SqlCompilerImpl.sqlControlSymbols.getQuick(i));
         }
         FunctionFactoryCache.invalidFunctionNameChars.add(' ');
         FunctionFactoryCache.invalidFunctionNameChars.add('\"');

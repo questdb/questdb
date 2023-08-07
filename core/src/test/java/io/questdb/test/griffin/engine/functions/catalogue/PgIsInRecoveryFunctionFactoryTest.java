@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class PgIsInRecoveryFunctionFactoryTest extends AbstractGriffinTest {
+public class PgIsInRecoveryFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgIsInRecoveryFunc() throws Exception {

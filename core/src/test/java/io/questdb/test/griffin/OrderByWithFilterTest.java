@@ -24,13 +24,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
  * Test order by asc and desc with filter(s)/where clause
  */
-public class OrderByWithFilterTest extends AbstractGriffinTest {
+public class OrderByWithFilterTest extends AbstractCairoTest {
 
     static final int ORDER_ASC = 0;
     static final int ORDER_DESC = 1;
@@ -684,7 +684,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext).execute(null).await();
+                compile(query);
             }
         });
     }

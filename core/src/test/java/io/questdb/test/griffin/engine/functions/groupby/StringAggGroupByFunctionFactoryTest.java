@@ -25,12 +25,11 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstantNull() throws Exception {
@@ -61,19 +60,17 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testGroupKeyedUnsupported() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
-                            "select * from (" +
-                            "   select " +
-                            "       rnd_symbol('a','b','c','d','e','f') a," +
-                            "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
-                            "       timestamp_sequence(0, 100000) ts " +
-                            "   from long_sequence(5)" +
-                            ") timestamp(ts))",
-                    sqlExecutionContext
+            ddl("create table x as (" +
+                    "select * from (" +
+                    "   select " +
+                    "       rnd_symbol('a','b','c','d','e','f') a," +
+                    "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
+                    "       timestamp_sequence(0, 100000) ts " +
+                    "   from long_sequence(5)" +
+                    ") timestamp(ts))"
             );
             try {
-                compiler.compile("select a, string_agg(s, ',') from x", sqlExecutionContext);
-                Assert.fail();
+                assertException("select a, string_agg(s, ',') from x");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "value type is not supported: STRING");
             }
@@ -95,17 +92,8 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSkipNull() throws Exception {
-        assertQuery13(
-                "string_agg\n" +
-                        "\n",
-                "select string_agg(s, ',') from x",
-                "create table x as (select * from (select cast(null as string) s from long_sequence(5)))",
-                null,
-                "insert into x select 'abc' from long_sequence(1)",
-                "string_agg\n" +
-                        "abc\n",
-                false,
-                true
-        );
+        assertQuery("string_agg\n" +
+                        "\n", "select string_agg(s, ',') from x", "create table x as (select * from (select cast(null as string) s from long_sequence(5)))", null, "insert into x select 'abc' from long_sequence(1)", "string_agg\n" +
+                        "abc\n", false, true, false);
     }
 }

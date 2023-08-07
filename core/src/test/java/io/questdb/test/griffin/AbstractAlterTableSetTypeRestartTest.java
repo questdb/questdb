@@ -30,7 +30,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -64,12 +63,9 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     }
 
     static void assertNumOfRows(CairoEngine engine, String tableName, int count) throws SqlException {
-        try (
-                final SqlExecutionContext context = createSqlExecutionContext(engine);
-                final SqlCompiler compiler = new SqlCompiler(engine)
-        ) {
+        try (SqlExecutionContext context = createSqlExecutionContext(engine)) {
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     context,
                     "SELECT count() FROM " + tableName,
                     Misc.getThreadLocalBuilder(),
@@ -79,16 +75,31 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         }
     }
 
-    static void setSeqTxn(CairoEngine engine, TableToken token) {
-        try (final TableWriter writer = TestUtils.getWriter(engine, token)) {
-            writer.commitSeqTxn(12345);
-        }
-    }
-
     static void assertSeqTxn(CairoEngine engine, TableToken token, long expectedSeqTxn) {
         try (final TableReader reader = engine.getReader(token)) {
             assertEquals(expectedSeqTxn, reader.getTxFile().getSeqTxn());
         }
+    }
+
+    static void checkSuspended(String tableName) throws SQLException {
+        try (
+                final Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                final PreparedStatement stmt = connection.prepareStatement("select name, suspended from wal_tables()")
+        ) {
+            final ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                assertEquals(tableName, rs.getString(1));
+                assertTrue(rs.getBoolean(2));
+            }
+            if (rs.next()) {
+                fail("Too many records returned");
+            }
+        }
+    }
+
+    static void createNonPartitionedTable(String tableName) throws SQLException {
+        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts)");
+        LOG.info().$("created table: ").utf8(tableName).$();
     }
 
     static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
@@ -103,11 +114,6 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static void createTable(String tableName, String walMode) throws SQLException {
         runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts) PARTITION BY DAY " + walMode);
-        LOG.info().$("created table: ").utf8(tableName).$();
-    }
-
-    static void createNonPartitionedTable(String tableName) throws SQLException {
-        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts)");
         LOG.info().$("created table: ").utf8(tableName).$();
     }
 
@@ -127,28 +133,18 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         LOG.info().$("inserted 1 row into table: ").utf8(tableName).$();
     }
 
-    static void checkSuspended(String tableName) throws SQLException {
-        try (
-                final Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-                final PreparedStatement stmt = connection.prepareStatement("select name, suspended from wal_tables()")
-        ) {
-            final ResultSet rs = stmt.executeQuery();
-            if (rs.next()) {
-                assertEquals(tableName, rs.getString(1));
-                assertTrue(rs.getBoolean(2));
-            }
-            if (rs.next()) {
-                fail("Too many records returned");
-            }
-        }
-    }
-
     static void runSqlViaPG(String sql) throws SQLException {
         try (
                 final Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                 final PreparedStatement stmt = connection.prepareStatement(sql)
         ) {
             stmt.execute();
+        }
+    }
+
+    static void setSeqTxn(CairoEngine engine, TableToken token) {
+        try (final TableWriter writer = TestUtils.getWriter(engine, token)) {
+            writer.commitSeqTxn(12345);
         }
     }
 

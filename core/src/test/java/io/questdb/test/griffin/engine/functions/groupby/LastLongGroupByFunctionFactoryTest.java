@@ -28,19 +28,19 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f long)", sqlExecutionContext);
+        ddl("create table tab (f long)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -50,7 +50,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -63,7 +63,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f long)", sqlExecutionContext);
+        ddl("create table tab (f long)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -74,7 +74,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -86,7 +86,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tlast\tk\n" +
+        assertQuery("b\tlast\tk\n" +
                         "\t2968650253814730084\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-7723703968879725602\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t7039584373105579285\t1970-01-03T00:00:00.000000Z\n" +
@@ -110,9 +110,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t5552835357100545895\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-8371487291073160693\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t2486874217850272768\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t6959985021334530048\t1970-01-03T09:00:00.000000Z\n",
-                "select b, last(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "HYRX\t6959985021334530048\t1970-01-03T09:00:00.000000Z\n", "select b, last(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_long() a," +
@@ -120,17 +118,14 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_long() a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tlast\tk\n" +
+                        ") timestamp(k)", "b\tlast\tk\n" +
                         "\t2968650253814730084\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-7723703968879725602\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t7039584373105579285\t1970-01-03T00:00:00.000000Z\n" +
@@ -251,16 +246,13 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-1947416294145578496\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t9223372036854775807\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t9223372036854775807\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSomeNull() throws SqlException {
 
-        compiler.compile("create table tab (f long)", sqlExecutionContext);
+        ddl("create table tab (f long)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -273,7 +265,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

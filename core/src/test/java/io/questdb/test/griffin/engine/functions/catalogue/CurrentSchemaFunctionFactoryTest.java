@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CurrentSchemaFunctionFactoryTest extends AbstractGriffinTest {
+public class CurrentSchemaFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCurrentSchemaFunc() throws Exception {

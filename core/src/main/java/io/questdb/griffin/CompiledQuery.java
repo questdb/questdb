@@ -28,7 +28,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
@@ -102,8 +101,6 @@ public interface CompiledQuery {
     CharSequence getStatementName();
 
     TableToken getTableToken();
-
-    TextLoader getTextLoader();
 
     short getType();
 

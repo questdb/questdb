@@ -24,16 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class EqStrCharFunctionTest extends AbstractGriffinTest {
+public class EqStrCharFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSymEqChar() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
-            compiler.compile(
+            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            insert(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -41,16 +41,14 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                             "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
                             "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                             "rnd_str('B', 'S') side\n" +
-                            "from long_sequence(100000) x",
-                    sqlExecutionContext
+                            "from long_sequence(100000) x"
             );
 
             String expected = "instrument\tsum\n" +
                     "CZ\t2886736\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'"
             );
         });
     }
@@ -58,8 +56,8 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
     @Test
     public void testSymEqCharFunction() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
-            compiler.compile(
+            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            insert(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -67,16 +65,14 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                             "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
                             "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                             "rnd_str('B', 'S') side\n" +
-                            "from long_sequence(100000) x",
-                    sqlExecutionContext
+                            "from long_sequence(100000) x"
             );
 
             String expected = "instrument\tsum\n" +
                     "ML\t563832\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()"
             );
         });
     }
@@ -84,22 +80,21 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
     @Test
     public void testSymEqCharFunctionConst() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
-            compiler.compile("insert into tanc2 \n" +
+            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            insert("insert into tanc2 \n" +
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
                     "rnd_str(2,2,3) instrument,\n" +
                     "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
                     "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                     "rnd_str('B', 'S') side\n" +
-                    "from long_sequence(100000) x", sqlExecutionContext);
+                    "from long_sequence(100000) x");
 
             String expected = "instrument\tsum\n" +
                     "ML\t2617153\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'"
             );
         });
     }
@@ -107,8 +102,8 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
     @Test
     public void testSymEqCharNotFound() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
-            compiler.compile(
+            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            insert(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -116,14 +111,13 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                             "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
                             "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                             "rnd_str('B', 'S') side\n" +
-                            "from long_sequence(100000) x", sqlExecutionContext
+                            "from long_sequence(100000) x"
             );
 
             String expected = "instrument\tsum\n";
 
             assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'",
-                    expected
+                    expected, "select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'"
             );
         });
     }

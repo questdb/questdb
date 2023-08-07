@@ -36,7 +36,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     private final CairoEngine engine;
 
     public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
-        super(configuration);
+        super(configuration, configuration.getReaderPoolMaxSegments(), configuration.getInactiveReaderTTL());
         this.engine = engine;
     }
 

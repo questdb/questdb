@@ -38,10 +38,7 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -1036,45 +1033,41 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table weather as (" +
-                        "select x as windspeed," +
-                        "x*2 as timetocycle, " +
-                        "cast(x as timestamp) as ts " +
-                        "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
+            ddl(
+                    "create table weather as (" +
+                            "select x as windspeed," +
+                            "x*2 as timetocycle, " +
+                            "cast(x as timestamp) as ts " +
+                            "from long_sequence(2)) timestamp(ts)"
+            );
 
-                CompiledQuery cq = compiler.compile("weather", sqlExecutionContext);
-                try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
-                    try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                        TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
-                        TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
-                                "1\t2\t1970-01-01T00:00:00.000001Z\n" +
-                                "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
-                    }
+            try (RecordCursorFactory cursorFactory = select("weather")) {
+                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                    TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
+                            "1\t2\t1970-01-01T00:00:00.000001Z\n" +
+                            "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
+                }
 
-                    compiler.compile("drop table weather", sqlExecutionContext);
+                drop("drop table weather");
 
-                    runInContext((receiver) -> {
-                        String lineData =
-                                "weather windspeed=1.0 631150000000000000\n" +
-                                        "weather windspeed=2.0 631152000000000000\n" +
-                                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
-                                        "weather windspeed=4.0 631170000000000000\n";
-                        sendLinger(lineData, "weather");
-                    });
-                    mayDrainWalQueue();
-                    if (walEnabled) {
-                        Assert.assertTrue(isWalTable("weather"));
-                    }
+                runInContext((receiver) -> {
+                    String lineData =
+                            "weather windspeed=1.0 631150000000000000\n" +
+                                    "weather windspeed=2.0 631152000000000000\n" +
+                                    "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                                    "weather windspeed=4.0 631170000000000000\n";
+                    sendLinger(lineData, "weather");
+                });
+                mayDrainWalQueue();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("weather"));
+                }
 
-                    try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                        TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
-                        Assert.fail();
-                    } catch (TableReferenceOutOfDateException ignored) {
-                    }
+                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                    Assert.fail();
+                } catch (TableReferenceOutOfDateException ignored) {
                 }
             }
         });
@@ -1083,154 +1076,130 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table test (" +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"1.1.1.1\" 631150000000000000\n" +
-                                    "test col=\"1.1.1.1\" 31152000000000000\n" +
-                                    "test col=\"1.1.1.1\" 631160000000000000\n" +
-                                    "test col=\"1.1.1.1\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("test"));
-                }
-
-                String expected = "col\tts\n" +
-                        "1.1.1.1\t1970-12-27T13:20:00.000000Z\n" +
-                        "1.1.1.1\t1989-12-31T23:26:40.000000Z\n" +
-                        "1.1.1.1\t1990-01-01T02:13:20.000000Z\n" +
-                        "1.1.1.1\t1990-01-01T05:00:00.000000Z\n";
-                assertTable(expected, "test");
+            engine.releaseInactive();
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"1.1.1.1\" 631150000000000000\n" +
+                                "test col=\"1.1.1.1\" 31152000000000000\n" +
+                                "test col=\"1.1.1.1\" 631160000000000000\n" +
+                                "test col=\"1.1.1.1\" 631170000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("test"));
             }
+
+            String expected = "col\tts\n" +
+                    "1.1.1.1\t1970-12-27T13:20:00.000000Z\n" +
+                    "1.1.1.1\t1989-12-31T23:26:40.000000Z\n" +
+                    "1.1.1.1\t1990-01-01T02:13:20.000000Z\n" +
+                    "1.1.1.1\t1990-01-01T05:00:00.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
     @Test
     public void testTcpIPv4Duplicate() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table test (" +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"12.35.40.11\",col=\"23.44.87.56\" 631150000000000000\n" +
-                                    "test col=\"23.45.09.12\",col=\"32.11.35.67\" 31152000000000000\n" +
-                                    "test col=\"255.255.255.255\",col=\"80.45.86.21\" 631160000000000000\n" +
-                                    "test col=\"34.54.23.89\",col=\"22.54.68.90\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
+            engine.releaseInactive();
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"12.35.40.11\",col=\"23.44.87.56\" 631150000000000000\n" +
+                                "test col=\"23.45.09.12\",col=\"32.11.35.67\" 31152000000000000\n" +
+                                "test col=\"255.255.255.255\",col=\"80.45.86.21\" 631160000000000000\n" +
+                                "test col=\"34.54.23.89\",col=\"22.54.68.90\" 631170000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
 
-                String expected = "col\tts\n" +
-                        "23.45.9.12\t1970-12-27T13:20:00.000000Z\n" +
-                        "12.35.40.11\t1989-12-31T23:26:40.000000Z\n" +
-                        "255.255.255.255\t1990-01-01T02:13:20.000000Z\n" +
-                        "34.54.23.89\t1990-01-01T05:00:00.000000Z\n";
-                assertTable(expected, "test");
-            }
+            String expected = "col\tts\n" +
+                    "23.45.9.12\t1970-12-27T13:20:00.000000Z\n" +
+                    "12.35.40.11\t1989-12-31T23:26:40.000000Z\n" +
+                    "255.255.255.255\t1990-01-01T02:13:20.000000Z\n" +
+                    "34.54.23.89\t1990-01-01T05:00:00.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
     @Test
     public void testTcpIPv4MultiCol() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table test (" +
-                        "col ipv4, " +
-                        "coll ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "coll ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"12.35.40.11\",coll=\"23.44.87.56\" 631150000000000000\n" +
-                                    "test col=\"23.45.09.12\",coll=\"32.11.35.67\" 31152000000000000\n" +
-                                    "test col=\"255.255.255.255\",coll=\"80.45.86.21\" 631160000000000000\n" +
-                                    "test col=\"34.54.23.89\",coll=\"22.54.68.90\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("test"));
-                }
-
-                String expected = "col\tcoll\tts\n" +
-                        "23.45.9.12\t32.11.35.67\t1970-12-27T13:20:00.000000Z\n" +
-                        "12.35.40.11\t23.44.87.56\t1989-12-31T23:26:40.000000Z\n" +
-                        "255.255.255.255\t80.45.86.21\t1990-01-01T02:13:20.000000Z\n" +
-                        "34.54.23.89\t22.54.68.90\t1990-01-01T05:00:00.000000Z\n";
-                assertTable(expected, "test");
+            engine.releaseInactive();
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"12.35.40.11\",coll=\"23.44.87.56\" 631150000000000000\n" +
+                                "test col=\"23.45.09.12\",coll=\"32.11.35.67\" 31152000000000000\n" +
+                                "test col=\"255.255.255.255\",coll=\"80.45.86.21\" 631160000000000000\n" +
+                                "test col=\"34.54.23.89\",coll=\"22.54.68.90\" 631170000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("test"));
             }
+
+            String expected = "col\tcoll\tts\n" +
+                    "23.45.9.12\t32.11.35.67\t1970-12-27T13:20:00.000000Z\n" +
+                    "12.35.40.11\t23.44.87.56\t1989-12-31T23:26:40.000000Z\n" +
+                    "255.255.255.255\t80.45.86.21\t1990-01-01T02:13:20.000000Z\n" +
+                    "34.54.23.89\t22.54.68.90\t1990-01-01T05:00:00.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
     @Test
     public void testTcpIPv4NoMagicNumbers() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table test (" +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
+            engine.releaseInactive();
 
-                // Check that -1 and -2 are not magic numbers in ILP parsing
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"255.255.255.254\" 631150000000000000\n" +
-                                    "test col=\"255.255.255.255\" 631150000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("test"));
-                }
-
-                String expected = "col\tts\n" +
-                        "255.255.255.254\t1989-12-31T23:26:40.000000Z\n" +
-                        "255.255.255.255\t1989-12-31T23:26:40.000000Z\n";
-                assertTable(expected, "test");
+            // Check that -1 and -2 are not magic numbers in ILP parsing
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"255.255.255.254\" 631150000000000000\n" +
+                                "test col=\"255.255.255.255\" 631150000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("test"));
             }
+
+            String expected = "col\tts\n" +
+                    "255.255.255.254\t1989-12-31T23:26:40.000000Z\n" +
+                    "255.255.255.255\t1989-12-31T23:26:40.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
     @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table test (" +
+                ddl("create table test (" +
                         "col ipv4, " +
                         "ts timestamp " +
-                        ") timestamp(ts) partition by day", sqlExecutionContext);
+                        ") timestamp(ts) partition by day");
 
                 engine.releaseInactive();
                 runInContext((receiver) -> {
@@ -1252,21 +1221,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         "\t1990-01-01T02:13:20.000000Z\n" +
                         "\t1990-01-01T05:00:00.000000Z\n";
                 assertTable(expected, "test");
-            }
         });
     }
 
     @Test
     public void testTcpIPv4Null2() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("create table test (" +
+                ddl("create table test (" +
                         "col ipv4, " +
                         "ts timestamp " +
-                        ") timestamp(ts) partition by day", sqlExecutionContext);
+                        ") timestamp(ts) partition by day");
 
                 engine.releaseInactive();
                 runInContext((receiver) -> {
@@ -1288,7 +1252,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         "\t1990-01-01T02:13:20.000000Z\n" +
                         "\t1990-01-01T05:00:00.000000Z\n";
                 assertTable(expected, "test");
-            }
         });
     }
 
@@ -1909,7 +1872,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
         if (ioPool == writerPool) {
-            O3Utils.setupWorkerPool(ioPool, engine, null, null);
+            O3Utils.setupWorkerPool(ioPool, engine, null);
         }
         ioPool.start(LOG);
         if (ioPool != writerPool) {
@@ -1981,7 +1944,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.authenticate(authKeyId, authPrivateKey);
                     }
                     return sender;
-                });
+                }
+        );
     }
 
     private void test(

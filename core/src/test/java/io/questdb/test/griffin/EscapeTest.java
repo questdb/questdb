@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class EscapeTest extends AbstractGriffinTest {
+public class EscapeTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithMultipleEscapedQuote() throws Exception {
@@ -47,8 +47,8 @@ public class EscapeTest extends AbstractGriffinTest {
     public void testInsertWithMultipleEscapedQuotes() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t ( s1 string, s2 string, sym symbol );");
-            compile("insert into t values ( '1st ''', '2nd ''''', '3rd ''''''' );");
-            assertSql("select * from t", "s1\ts2\tsym\n1st '\t2nd ''\t3rd '''\n");
+            insert("insert into t values ( '1st ''', '2nd ''''', '3rd ''''''' );");
+            assertSql("s1\ts2\tsym\n1st '\t2nd ''\t3rd '''\n", "select * from t");
         });
     }
 

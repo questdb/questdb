@@ -24,8 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoEngineFactory;
 import io.questdb.std.FilesFacade;
 
 import java.util.Map;
@@ -44,11 +42,6 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public CairoEngineFactory getCairoEngineFactory() {
-        return CairoEngine::new;
-    }
-
-    @Override
     public Map<String, String> getEnv() {
         return System.getenv();
     }
@@ -59,7 +52,7 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception{
         return null;
     }
 

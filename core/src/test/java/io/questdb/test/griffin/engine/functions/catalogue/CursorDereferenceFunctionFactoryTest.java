@@ -24,14 +24,14 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CursorDereferenceFunctionFactoryTest extends AbstractGriffinTest {
+public class CursorDereferenceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCatalogue() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table pg_test(a int)", sqlExecutionContext);
+            ddl("create table pg_test(a int)");
             assertQuery(
                     "x\tpg_class\n" +
                             "11\t\n" +

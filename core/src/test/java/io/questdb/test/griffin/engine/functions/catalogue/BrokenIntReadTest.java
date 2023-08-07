@@ -25,7 +25,7 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.FilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.CreateTableTestUtils;
@@ -33,7 +33,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import org.junit.Test;
 
-public class BrokenIntReadTest extends AbstractGriffinTest {
+public class BrokenIntReadTest extends AbstractCairoTest {
 
     @Test
     public void testFailToReadInt_ColumnCountOfFirstTable() throws Exception {
@@ -186,16 +186,12 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         ff = new BrokenIntRead(i);
         assertMemoryLeak(ff, () -> {
             createTables(ff);
-            printSqlResult3(
+            printSqlResult(
                     expected,
                     "pg_catalog.pg_attrdef order by 1",
                     null,
-                    null,
-                    null,
                     true,
-                    false,
-                    false,
-                    null
+                    false
             );
         });
     }

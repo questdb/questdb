@@ -25,27 +25,27 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
+public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testOfNull() throws SqlException {
-        assertSql("select typeOf(null)",
-                "typeOf\n" +
-                        "NULL\n");
-        assertSql("select typeOf(cast(null as string))",
-                "typeOf\n" +
-                        "STRING\n");
-        assertSql("select typeOf(value) from (select null value from long_sequence(1))",
-                "typeOf\n" +
-                        "NULL\n");
-        assertSql("select typeOf(value) from (select cast(null as long) value from long_sequence(1))",
-                "typeOf\n" +
-                        "LONG\n");
+        assertSql("typeOf\n" +
+                "NULL\n", "select typeOf(null)"
+        );
+        assertSql("typeOf\n" +
+                "STRING\n", "select typeOf(cast(null as string))"
+        );
+        assertSql("typeOf\n" +
+                "NULL\n", "select typeOf(value) from (select null value from long_sequence(1))"
+        );
+        assertSql("typeOf\n" +
+                "LONG\n", "select typeOf(value) from (select cast(null as long) value from long_sequence(1))"
+        );
     }
 
     @Test
@@ -64,7 +64,7 @@ public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
             int type = ColumnType.getGeoHashTypeWithBits(i);
             sink.clear();
             sink.put("select typeOf(rnd_geohash(").put(i).put("))");
-            assertSql(sink, "typeOf\n" + ColumnType.nameOf(type) + "\n");
+            assertSql("typeOf\n" + ColumnType.nameOf(type) + "\n", sink);
         }
     }
 
@@ -72,8 +72,7 @@ public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     try {
-                        compiler.compile(sql, sqlExecutionContext);
-                        Assert.fail();
+                        assertException(sql);
                     } catch (SqlException e) {
                         Assert.assertEquals(7, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "exactly one argument expected");

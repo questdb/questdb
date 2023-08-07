@@ -157,7 +157,7 @@ public class MessageBusImpl implements MessageBus {
         int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
-                    () -> new PageFrameReduceTask(configuration),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
                     reduceQueueCapacity
             );
 

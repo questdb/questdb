@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class InSymbolCursorFunctionFactoryTest extends AbstractGriffinTest {
+public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullInCursorInFilter() throws Exception {
@@ -343,7 +343,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testUnsupportedColumnType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x where b in (select 12, rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as (" +
                         "select" +

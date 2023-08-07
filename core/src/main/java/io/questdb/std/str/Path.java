@@ -47,6 +47,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
+    private final int memoryTag;
     private int capacity;
     private long headPtr;
     private long tailPtr;
@@ -56,9 +57,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path(int capacity) {
+        this(capacity, MemoryTag.NATIVE_PATH);
+    }
+
+    public Path(int capacity, int memoryTag) {
         assert capacity > 0;
         this.capacity = capacity;
-        headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+        this.memoryTag = memoryTag;
+        headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
     }
 
     public static void clearThreadLocals() {
@@ -118,7 +124,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public void close() {
         if (headPtr != 0L) {
-            Unsafe.free(headPtr, capacity + 1, MemoryTag.NATIVE_PATH);
+            Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
         }
     }

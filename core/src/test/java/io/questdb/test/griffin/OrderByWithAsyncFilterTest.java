@@ -24,12 +24,12 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
+public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
 
     private static final String DDL = "create table weather_data as \n" +
             "(select  dateadd( 'm' , cast(x-1000 as int), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ) sensor_time, " +
@@ -46,7 +46,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
 
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     // tearDown() overrides settings set in setUpStatic()

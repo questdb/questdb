@@ -22,15 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo;
 
-import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -40,7 +41,6 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,7 +51,7 @@ import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
-public class DatabaseSnapshotAgent implements Closeable {
+public class DatabaseSnapshotAgent implements QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);
     private final AtomicBoolean activePrepareFlag = new AtomicBoolean();
@@ -65,15 +65,207 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
-    public DatabaseSnapshotAgent(CairoEngine engine) {
+    DatabaseSnapshotAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
     }
 
-    public static void recoverSnapshot(CairoEngine engine) {
-        final CairoConfiguration configuration = engine.getConfiguration();
+    @TestOnly
+    public void clear() {
+        lock.lock();
+        try {
+            unsafeReleaseReaders();
+            metadata.clear();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void close() {
+        lock.lock();
+        try {
+            Misc.free(path);
+            unsafeReleaseReaders();
+            metadata.close();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
+        this.walPurgeJobRunLock = walPurgeJobRunLock;
+    }
+
+    private void unsafeReleaseReaders() {
+        Misc.freeObjListAndClear(snapshotReaders);
+    }
+
+    void completeSnapshot() throws SqlException {
+        if (!lock.tryLock()) {
+            throw SqlException.position(0).put("Another snapshot command in progress");
+        }
+        try {
+            activePrepareFlag.set(false); // reset snapshot prepare flag
+            if (snapshotReaders.size() == 0) {
+                LOG.info().$("Snapshot has no tables, SNAPSHOT COMPLETE is ignored.").$();
+            }
+
+            // Delete snapshot/db directory.
+            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
+
+            // Release locked readers if any.
+            unsafeReleaseReaders();
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                try {
+                    walPurgeJobRunLock.unlock();
+                } catch (IllegalStateException ignore) {
+                    // not an error here
+                    // completeSnapshot can be called several time in a row.
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+        // Windows doesn't support sync() system call.
+        if (Os.isWindows()) {
+            throw SqlException.position(0).put("Snapshots are not supported on Windows");
+        }
+
+        if (!lock.tryLock()) {
+            throw SqlException.position(0).put("Another snapshot command in progress");
+        }
+        try {
+            // activePrepareFlag is used to detect active snapshot prepare called on an empty DB
+            if (activePrepareFlag.get()) {
+                throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
+            }
+
+            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+            int snapshotLen = path.length();
+            // Delete all contents of the snapshot/db dir.
+            if (ff.exists(path.slash$())) {
+                path.trimTo(snapshotLen).$();
+                if (ff.rmdir(path) != 0) {
+                    throw CairoException.critical(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
+                }
+            }
+            // Recreate the snapshot/db dir.
+            path.trimTo(snapshotLen).slash$();
+            if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
+            }
+
+            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {
+                final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    final Record record = cursor.getRecord();
+
+                    // Suspend the WalPurgeJob
+                    if (walPurgeJobRunLock != null) {
+                        final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
+                        while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
+                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        }
+                    }
+
+                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                        // Copy metadata files for all tables.
+                        while (cursor.hasNext()) {
+                            CharSequence tableName = record.getStr(tableNameIndex);
+                            path.of(configuration.getRoot());
+                            TableToken tableToken = engine.verifyTableName(tableName);
+                            if (
+                                    TableUtils.isValidTableName(tableName, tableName.length())
+                                            && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
+                            ) {
+                                boolean isWalTable = engine.isWalTable(tableToken);
+                                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                                LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
+
+                                TableReader reader = engine.getReaderWithRepair(tableToken);
+                                snapshotReaders.add(reader);
+
+                                path.trimTo(snapshotLen).concat(tableToken);
+                                int rootLen = path.length();
+
+                                if (isWalTable) {
+                                    path.concat(WalUtils.SEQ_DIR);
+                                }
+                                if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
+                                    throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
+                                }
+
+                                // Copy _meta file.
+                                path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                reader.getMetadata().dumpTo(mem);
+                                mem.close(false);
+                                // Copy _txn file.
+                                path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
+                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                reader.getTxFile().dumpTo(mem);
+                                mem.close(false);
+                                // Copy _cv file.
+                                path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                reader.getColumnVersionReader().dumpTo(mem);
+                                mem.close(false);
+
+                                if (isWalTable) {
+                                    metadata.clear();
+                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
+                                    path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                    metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
+                                    metadata.close(Vm.TRUNCATE_TO_POINTER);
+
+                                    mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                    mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn
+                                    mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                                }
+                            } else {
+                                LOG.error().$("skipping, invalid table name or missing metadata [table=").$(tableName).I$();
+                            }
+                        }
+
+                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
+                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                        mem.putStr(configuration.getSnapshotInstanceId());
+                        mem.close();
+
+                        // Flush dirty pages and filesystem metadata to disk
+                        if (ff.sync() != 0) {
+                            throw CairoException.critical(ff.errno()).put("Could not sync");
+                        }
+
+                        activePrepareFlag.set(true);
+                        LOG.info().$("snapshot copying finished").$();
+                    } catch (Throwable e) {
+                        // Resume the WalPurgeJob
+                        if (walPurgeJobRunLock != null) {
+                            walPurgeJobRunLock.unlock();
+                        }
+                        unsafeReleaseReaders();
+                        LOG.error()
+                                .$("snapshot error [e=").$(e)
+                                .I$();
+                        throw e;
+                    }
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    void recoverSnapshot() {
         if (!configuration.isSnapshotRecoveryEnabled()) {
             return;
         }
@@ -255,198 +447,5 @@ public class DatabaseSnapshotAgent implements Closeable {
                         .put(']');
             }
         }
-    }
-
-    @TestOnly
-    public void clear() {
-        lock.lock();
-        try {
-            unsafeReleaseReaders();
-            metadata.clear();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public void close() {
-        lock.lock();
-        try {
-            Misc.free(path);
-            unsafeReleaseReaders();
-            metadata.close();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    public void completeSnapshot() throws SqlException {
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another snapshot command in progress");
-        }
-        try {
-            activePrepareFlag.set(false); // reset snapshot prepare flag
-            if (snapshotReaders.size() == 0) {
-                LOG.info().$("Snapshot has no tables, SNAPSHOT COMPLETE is ignored.").$();
-            }
-
-            // Delete snapshot/db directory.
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
-            ff.rmdir(path); // it's fine to ignore errors here
-
-            // Release locked readers if any.
-            unsafeReleaseReaders();
-            // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null) {
-                try {
-                    walPurgeJobRunLock.unlock();
-                } catch (IllegalStateException ignore) {
-                    // not an error here
-                    // completeSnapshot can be called several time in a row.
-                }
-            }
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
-        // Windows doesn't support sync() system call.
-        if (Os.isWindows()) {
-            throw SqlException.position(0).put("Snapshots are not supported on Windows");
-        }
-
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another snapshot command in progress");
-        }
-        try {
-            // activePrepareFlag is used to detect active snapshot prepare called on an empty DB
-            if (activePrepareFlag.get()) {
-                throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
-            }
-
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-            int snapshotLen = path.length();
-            // Delete all contents of the snapshot/db dir.
-            if (ff.exists(path.slash$())) {
-                path.trimTo(snapshotLen).$();
-                if (ff.rmdir(path) != 0) {
-                    throw CairoException.critical(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
-                }
-            }
-            // Recreate the snapshot/db dir.
-            path.trimTo(snapshotLen).slash$();
-            if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
-            }
-
-            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {
-                final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    final Record record = cursor.getRecord();
-
-                    // Suspend the WalPurgeJob
-                    if (walPurgeJobRunLock != null) {
-                        final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
-                        while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
-                        }
-                    }
-
-                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                        // Copy metadata files for all tables.
-                        while (cursor.hasNext()) {
-                            CharSequence tableName = record.getStr(tableNameIndex);
-                            path.of(configuration.getRoot());
-                            TableToken tableToken = engine.verifyTableName(tableName);
-                            if (
-                                    TableUtils.isValidTableName(tableName, tableName.length())
-                                            && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
-                            ) {
-                                boolean isWalTable = engine.isWalTable(tableToken);
-                                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                                LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
-
-                                TableReader reader = engine.getReaderWithRepair(tableToken);
-                                snapshotReaders.add(reader);
-
-                                path.trimTo(snapshotLen).concat(tableToken);
-                                int rootLen = path.length();
-
-                                if (isWalTable) {
-                                    path.concat(WalUtils.SEQ_DIR);
-                                }
-                                if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
-                                    throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
-                                }
-
-                                // Copy _meta file.
-                                path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                                reader.getMetadata().dumpTo(mem);
-                                mem.close(false);
-                                // Copy _txn file.
-                                path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
-                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                                reader.getTxFile().dumpTo(mem);
-                                mem.close(false);
-                                // Copy _cv file.
-                                path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                                reader.getColumnVersionReader().dumpTo(mem);
-                                mem.close(false);
-
-                                if (isWalTable) {
-                                    metadata.clear();
-                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
-                                    path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                    metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
-                                    metadata.close(Vm.TRUNCATE_TO_POINTER);
-
-                                    mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                    mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn
-                                    mem.close(true, Vm.TRUNCATE_TO_POINTER);
-                                }
-                            } else {
-                                LOG.error().$("skipping, invalid table name or missing metadata [table=").$(tableName).I$();
-                            }
-                        }
-
-                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
-                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                        mem.putStr(configuration.getSnapshotInstanceId());
-                        mem.close();
-
-                        // Flush dirty pages and filesystem metadata to disk
-                        if (ff.sync() != 0) {
-                            throw CairoException.critical(ff.errno()).put("Could not sync");
-                        }
-
-                        activePrepareFlag.set(true);
-                        LOG.info().$("snapshot copying finished").$();
-                    } catch (Throwable e) {
-                        // Resume the WalPurgeJob
-                        if (walPurgeJobRunLock != null) {
-                            walPurgeJobRunLock.unlock();
-                        }
-                        unsafeReleaseReaders();
-                        LOG.error()
-                                .$("snapshot error [e=").$(e)
-                                .I$();
-                        throw e;
-                    }
-                }
-            }
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
-        this.walPurgeJobRunLock = walPurgeJobRunLock;
-    }
-
-    private void unsafeReleaseReaders() {
-        Misc.freeObjListAndClear(snapshotReaders);
     }
 }

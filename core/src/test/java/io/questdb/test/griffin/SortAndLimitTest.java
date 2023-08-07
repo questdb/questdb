@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SortAndLimitTest extends AbstractGriffinTest {
+public class SortAndLimitTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAndSelectDesc_Lo_10_Hi_20_on_table_with_random_order() throws Exception {
@@ -309,7 +309,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext);
+                ddl(query);
             }
         });
     }

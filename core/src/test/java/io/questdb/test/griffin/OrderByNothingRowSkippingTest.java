@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
@@ -33,7 +33,7 @@ import org.junit.Test;
  * Note: this might turn into a flaky test one day because if SQL doesn't specify order then any order is allowed
  * and limit clause makes little sense when table is neither ordered physically nor by an order by clause.
  */
-public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
+public class OrderByNothingRowSkippingTest extends AbstractCairoTest {
 
     @Test
     public void testSelectAll() throws Exception {
@@ -154,7 +154,7 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     private void runInserts(String... statements) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : statements) {
-                executeInsert(query);
+                insert(query);
             }
         });
     }
@@ -162,7 +162,7 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext);
+                compile(query);
             }
         });
     }

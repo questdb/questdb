@@ -27,21 +27,21 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
+public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testJoinReorderNoStackOverflow() throws Exception {
         // LEFT JOIN is outer, therefore it does not reduce one of other tables to 0 rows, hence we
         // expect row duplication
-        assertQuery9(
+        assertQuery(
                 "nspname\toid\txmin\tnspowner\toid1\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin1\tobjoid\tclassoid\tobjsubid\tdescription\n" +
                         "pg_catalog\t11\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
                         "public\t2200\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
@@ -58,7 +58,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testKafkaJdbcTableQuery() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n" +
                         "null\tpublic\talpha\tTABLE\t\t\t\t\t\t\n",
                 "SELECT \n" +
@@ -136,7 +136,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     public void testLeakAfterIncompleteFetch() throws Exception {
         assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from pg_catalog.pg_class")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
@@ -145,7 +145,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                             sink
                     );
 
-                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
+                    ddl("create table xyz (a int)", sqlExecutionContext);
                     engine.clear();
 
                     cursor.toTop();
@@ -159,12 +159,12 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table abc (b double)", sqlExecutionContext);
+                    ddl("create table abc (b double)");
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
 
-                    compiler.compile("drop table abc;", sqlExecutionContext);
+                    drop("drop table abc;");
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
@@ -198,7 +198,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgClassOneTable() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                         "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
                         "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
@@ -211,21 +211,12 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgClassTwoTables() throws Exception {
-        assertQuery13(
-                "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+        assertQuery("oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                         "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
-                "pg_catalog.pg_class order by 1",
-                "create table x(a int)",
-                null,
-                "create table y(a int)",
-                "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", "pg_catalog.pg_class order by 1", "create table x(a int)", null, "create table y(a int)", "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                         "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
                         "2\ty\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
-                true,
-                false
-        );
+                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", true, false, false);
     }
 
     @Test
@@ -242,59 +233,56 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testShowMaxIdentifierLength() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "max_identifier_length\n" +
                         "63\n",
                 "show max_identifier_length",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }
 
     @Test
     public void testShowTransactionIsolationLevel() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "transaction_isolation\n" +
                         "read committed\n",
                 "show transaction isolation level",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }
 
     @Test
     public void testShowTransactionIsolationLevelErr1() throws Exception {
-        assertFailure("show transaction", null, 16, "expected 'isolation'");
+        assertException("show transaction", 16, "expected 'isolation'");
     }
 
     @Test
     public void testShowTransactionIsolationLevelErr2() throws Exception {
-        assertFailure("show transaction oh", null, 17, "expected 'isolation'");
+        assertException("show transaction oh", 17, "expected 'isolation'");
     }
 
     @Test
     public void testShowTransactionIsolationLevelErr3() throws Exception {
-        assertFailure("show transaction isolation", null, 26, "expected 'level'");
+        assertException("show transaction isolation", 26, "expected 'level'");
     }
 
     @Test
     public void testShowTransactionIsolationLevelErr4() throws Exception {
-        assertFailure("show transaction isolation oops", null, 27, "expected 'level'");
+        assertException("show transaction isolation oops", 27, "expected 'level'");
     }
 
     @Test
     public void testShowTransactionIsolationUnderscore() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "transaction_isolation\n" +
                         "read committed\n",
                 "show transaction_isolation",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }
@@ -303,7 +291,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from pg_catalog.pg_class() order by relname")) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -313,7 +301,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                             sink
                     );
 
-                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
+                    ddl("create table xyz (a int)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -333,7 +321,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table автомобилей (b double)", sqlExecutionContext);
+                    ddl("create table автомобилей (b double)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -347,7 +335,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                                     "2\tавтомобилей\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n"
                             , sink);
 
-                    compiler.compile("drop table автомобилей;", sqlExecutionContext);
+                    drop("drop table автомобилей;");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -371,11 +359,11 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testVarcharCast() throws SqlException {
-        assertQuery12("anon_1\n" +
+        assertQuery(
+                "anon_1\n" +
                         "test plain returns\n", "SELECT CAST('test plain returns' AS VARCHAR(60)) AS anon_1",
                 null,
                 true,
-                sqlExecutionContext,
                 true
         );
     }
