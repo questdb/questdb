@@ -133,32 +133,15 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
-        // Convert tables to WAL/non-WAL, if necessary.
-        final ObjList<TableToken> convertedTables;
-        try {
-            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-
         try {
             tableNameRegistry = configuration.isReadOnlyInstance() ?
                     new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            tableNameRegistry.reloadTableNameCache(convertedTables);
+            tableNameRegistry.reloadTableNameCache();
         } catch (Throwable e) {
             close();
             throw e;
         }
 
-        if (convertedTables != null) {
-            for (int i = 0, n = convertedTables.size(); i < n; i++) {
-                final TableToken token = convertedTables.get(i);
-                try (TableWriter writer = getWriter(token, "tableTypeConversion")) {
-                    writer.commitSeqTxn(0);
-                }
-            }
-        }
         this.sqlCompilerPool = new SqlCompilerPool(this);
     }
 
@@ -713,6 +696,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken.isWal();
     }
 
+    public void load() {
+        // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
+        tableNameRegistry.reloadTableNameCache(convertedTables);
+    }
+
     public String lock(TableToken tableToken, String lockReason) {
         assert null != lockReason;
         // busy metadata is same as busy reader from user perspective
@@ -815,13 +804,13 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
-    public void releaseAllWriters() {
-        writerPool.releaseAll();
+    public void releaseAllWalWriters() {
+        walWriterPool.releaseAll();
     }
 
     @TestOnly
-    public void releaseAllWalWriters() {
-        walWriterPool.releaseAll();
+    public void releaseAllWriters() {
+        writerPool.releaseAll();
     }
 
     public boolean releaseInactive() {
