@@ -64,6 +64,6 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public void start() {
+    public void load() {
     }
 }

@@ -46,5 +46,5 @@ public interface FactoryProvider extends QuietCloseable {
 
     WalInitializerFactory getWalInitializerFactory();
 
-    void start();
+    void load();
 }
