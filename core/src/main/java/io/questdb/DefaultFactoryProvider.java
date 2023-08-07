@@ -69,4 +69,8 @@ public class DefaultFactoryProvider implements FactoryProvider {
     public WalInitializerFactory getWalInitializerFactory() {
         return BasicWalInitializerFactory.INSTANCE;
     }
+
+    @Override
+    public void start() {
+    }
 }

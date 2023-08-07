@@ -352,7 +352,7 @@ public class TableTransactionLog implements Closeable {
         private int fd;
         private FilesFacade ff;
         private long txn;
-        private long txnCount;
+        private long txnCount = -1;
         private long txnLo;
         private long txnOffset;
 
@@ -370,7 +370,7 @@ public class TableTransactionLog implements Closeable {
             if (fd > 0) {
                 ff.close(fd);
             }
-            if (txnCount > 0 && address > 0) {
+            if (txnCount > -1 && address > 0) {
                 LOG.info().$("MMAP_TX_LOG_CURSOR unmpap  [size=").$(getMappedLen()).I$();
                 ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
                 txnCount = 0;

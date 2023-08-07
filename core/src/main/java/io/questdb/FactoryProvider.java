@@ -48,4 +48,6 @@ public interface FactoryProvider extends QuietCloseable {
     SqlCompilerFactory getSqlCompilerFactory();
 
     WalInitializerFactory getWalInitializerFactory();
+
+    void start();
 }
