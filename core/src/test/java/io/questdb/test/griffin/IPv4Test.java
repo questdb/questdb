@@ -3496,6 +3496,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testBroadcastAddrUseCase() throws Exception {
+        assertSql(
+                "column\n" +
+                        "68.255.255.255\n",
+                "select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'"
+        );
+    }
+
+    @Test
     public void testIPv4StrBitwiseOrHalfConst() throws Exception {
         assertQuery(
                 "column\n" +
