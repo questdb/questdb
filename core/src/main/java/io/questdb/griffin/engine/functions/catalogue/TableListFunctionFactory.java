@@ -83,7 +83,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final boolean hideTelemetryTables;
         private final CharSequence sysTablePrefix;
-        private final CharSequence tempTablePrefix;
+        private final CharSequence tempPendingRenameTablePrefix;
         private CairoEngine engine;
         private Path path;
         private TableReaderMetadata tableReaderMetadata;
@@ -95,7 +95,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             cursor = new TableListRecordCursor();
             hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
             tableReaderMetadata = new TableReaderMetadata(configuration);
-            tempTablePrefix = configuration.getTempTablePrefix();
+            tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
         }
 
         @Override
@@ -149,7 +149,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     tableToken = tableBucket.get(tableIndex);
-                    if (!TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), tempTablePrefix) && record.open(tableToken)) {
+                    if (!TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) && record.open(tableToken)) {
                         break;
                     }
                 }

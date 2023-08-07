@@ -277,6 +277,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryEnabled;
     private final boolean telemetryHideTables;
     private final int telemetryQueueCapacity;
+    private final CharSequence tempRenamePendingTablePrefix;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
@@ -454,7 +455,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private final CharSequence tempInvisibleTablePrefix;
     private int textAnalysisMaxLines;
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
@@ -513,7 +513,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walApplyTableTimeQuota = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
-        this.tempInvisibleTablePrefix = "temp_5822f658-31f6-11ee-be56-0242ac120002";
+        this.tempRenamePendingTablePrefix = getString(properties, env, PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX, "temp_5822f658-31f6-11ee-be56-0242ac120002");
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
@@ -2423,8 +2423,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getTempTablePrefix() {
-            return tempInvisibleTablePrefix;
+        public CharSequence getTempRenamePendingTablePrefix() {
+            return tempRenamePendingTablePrefix;
         }
 
         @Override

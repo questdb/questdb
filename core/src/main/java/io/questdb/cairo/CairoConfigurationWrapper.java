@@ -784,8 +784,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getTempTablePrefix() {
-        return delegate.getTempTablePrefix();
+    public CharSequence getTempRenamePendingTablePrefix() {
+        return delegate.getTempRenamePendingTablePrefix();
     }
 
     @Override

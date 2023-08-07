@@ -418,7 +418,7 @@ public interface CairoConfiguration {
 
     TelemetryConfiguration getTelemetryConfiguration();
 
-    CharSequence getTempTablePrefix();
+    CharSequence getTempRenamePendingTablePrefix();
 
     TextConfiguration getTextConfiguration();
 

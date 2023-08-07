@@ -806,7 +806,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getTempTablePrefix() {
+    public CharSequence getTempRenamePendingTablePrefix() {
         return "temp_5822f658-31f6-11ee-be56-0242ac120002";
     }
 
