@@ -787,10 +787,6 @@ public class CairoEngine implements Closeable, WriterSource {
         unpublishedWalTxnCount.incrementAndGet();
     }
 
-    public void notifyWalTxnRepublisher() {
-        unpublishedWalTxnCount.incrementAndGet();
-    }
-
     public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
         snapshotAgent.prepareSnapshot(executionContext);
     }

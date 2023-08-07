@@ -251,7 +251,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
-        final boolean sysTable = Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
+        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
         this.ddlListener = sysTable || configuration.getFactoryProvider() == null
                 ? DdlListenerImpl.INSTANCE
                 : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
@@ -5473,7 +5473,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff,
+            mem1.of(
+                    ff,
                     dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,

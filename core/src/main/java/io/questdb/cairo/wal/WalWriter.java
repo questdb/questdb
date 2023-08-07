@@ -115,7 +115,10 @@ public class WalWriter implements TableWriterAPI {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
-        this.ddlListener = configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
+        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
+                ? DdlListenerImpl.INSTANCE
+                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
@@ -1131,7 +1134,8 @@ public class WalWriter implements TableWriterAPI {
         try {
             final MemoryMA mem1 = getPrimaryColumn(columnIndex);
             mem1.close(true, Vm.TRUNCATE_TO_POINTER);
-            mem1.of(ff,
+            mem1.of(
+                    ff,
                     dFile(path.trimTo(pathTrimToLen), name),
                     configuration.getWalDataAppendPageSize(),
                     -1,
@@ -1143,7 +1147,8 @@ public class WalWriter implements TableWriterAPI {
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
                 mem2.close(true, Vm.TRUNCATE_TO_POINTER);
-                mem2.of(ff,
+                mem2.of(
+                        ff,
                         iFile(path.trimTo(pathTrimToLen), name),
                         configuration.getWalDataAppendPageSize(),
                         -1,
