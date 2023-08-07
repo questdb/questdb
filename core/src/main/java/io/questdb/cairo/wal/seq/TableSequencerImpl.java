@@ -396,7 +396,7 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw e;
         }
-//        walInitializer.initDirectory(path);
+        walInitializer.initDirectory(path);
         path.trimTo(rootLen);
     }
 
