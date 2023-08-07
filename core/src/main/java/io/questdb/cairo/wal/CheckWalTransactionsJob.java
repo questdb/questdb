@@ -83,7 +83,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             // Dropped table
             engine.notifyWalTxnCommitted(tableToken);
         } else {
-            if (TableUtils.isInvisibleTempTableName(tableToken.getTableName(), engine.getConfiguration().getTempTablePrefix())) {
+            if (TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), engine.getConfiguration().getTempTablePrefix())) {
                 tableToken = tryRenameToReadTableName(tableToken);
             }
 

@@ -182,19 +182,19 @@ public class TableTransactionLog implements Closeable {
         }
     }
 
+    @NotNull
+    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
+        final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
+        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
+        return cursor;
+    }
+
     boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
             return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
         }
         return false;
-    }
-
-    @NotNull
-    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
-        final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
-        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
-        return cursor;
     }
 
     long lastTxn() {
@@ -314,7 +314,6 @@ public class TableTransactionLog implements Closeable {
                             txnMetaOffsetHi = ff.readNonNegativeLong(txnMetaIndexFd, maxStructureVersion * Long.BYTES);
 
                             if (txnMetaOffsetHi > txnMetaOffset) {
-                                LOG.info().$("MMAP_TX_LOG_CURSOR map  [size=").$(txnMetaOffsetHi).I$();
                                 txnMetaAddress = ff.mmap(
                                         txnMetaFd,
                                         txnMetaOffsetHi,
@@ -371,7 +370,6 @@ public class TableTransactionLog implements Closeable {
                 ff.close(fd);
             }
             if (txnCount > -1 && address > 0) {
-                LOG.info().$("MMAP_TX_LOG_CURSOR unmpap  [size=").$(getMappedLen()).I$();
                 ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
                 txnCount = 0;
                 address = 0;
@@ -469,7 +467,6 @@ public class TableTransactionLog implements Closeable {
             long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > -1L) {
                 this.txnCount = newTxnCount;
-                LOG.info().$("MMAP_TX_LOG_CURSOR map [size=").$(getMappedLen()).I$();
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             } else {
@@ -484,7 +481,6 @@ public class TableTransactionLog implements Closeable {
             final long oldSize = getMappedLen();
             txnCount = newTxnCount;
             final long newSize = getMappedLen();
-            LOG.info().$("MMAP_TX_LOG_CURSOR remap [old=").$(oldSize).$(", new=").$(newSize).$(", diff=").$(newSize - oldSize).I$();
             address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
         }
     }

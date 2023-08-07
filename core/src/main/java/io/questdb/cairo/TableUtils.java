@@ -736,7 +736,7 @@ public final class TableUtils {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
-    public static boolean isInvisibleTempTableName(String tableName, CharSequence tempTablePrefix) {
+    public static boolean isPendingRenameTempTableName(String tableName, CharSequence tempTablePrefix) {
         return Chars.startsWith(tableName, tempTablePrefix);
     }
 
