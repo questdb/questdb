@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
@@ -62,16 +61,15 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getIPv4(Record rec) {
-            final int val = Numbers.getIPv4Netmask(arg.getStr(rec));
-            return val == -2 ? Numbers.IPv4_NULL : val;
-        }
-
-        @Override
         public Function getArg() {
             return arg;
         }
 
+        @Override
+        public int getIPv4(Record rec) {
+            final int val = Numbers.getIPv4Netmask(arg.getStr(rec));
+            return val == -2 ? Numbers.IPv4_NULL : val;
+        }
 
         @Override
         public void toPlan(PlanSink sink) {

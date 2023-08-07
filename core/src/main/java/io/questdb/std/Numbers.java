@@ -678,19 +678,6 @@ public final class Numbers {
         return netmask;
     }
 
-    public static int getIPv4Netmask(int ip, int bits) {
-        int netmask = 0xffffffff;
-
-        if(bits < 0 || bits > 32) {
-            return IPv4_NULL;
-        }
-
-        bits = 32 - bits;
-        netmask = (netmask << bits);
-
-        return netmask;
-    }
-
     public static int getIPv4Subnet(CharSequence sequence)  {
         int mid = Chars.indexOf(sequence, 0, '/');
         int subnet;
