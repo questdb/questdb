@@ -53,6 +53,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -454,7 +455,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, PRODUCT, metrics)) {
@@ -585,7 +586,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, PRODUCT, metrics)) {
@@ -644,7 +645,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         };
@@ -669,7 +670,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         };
@@ -813,7 +814,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, PRODUCT, metrics)) {
@@ -856,7 +857,7 @@ public class TableWriterTest extends AbstractCairoTest {
             long increment = 60 * 60000 * 1000L;
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, PRODUCT, metrics)) {
@@ -1199,7 +1200,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
                 }, PRODUCT, metrics)) {
@@ -1314,7 +1315,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try {
                 newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
                 }, PRODUCT, metrics).close();
@@ -2684,7 +2685,7 @@ public class TableWriterTest extends AbstractCairoTest {
         Rnd rnd = new Rnd();
         try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, PRODUCT, metrics)) {
@@ -2735,7 +2736,7 @@ public class TableWriterTest extends AbstractCairoTest {
         Rnd rnd = new Rnd();
         try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, PRODUCT, metrics)) {
@@ -3111,7 +3112,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 ff.count = 0;
                 newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
                 }, PRODUCT, metrics).close();
@@ -3370,7 +3371,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private void create(FilesFacade ff, int partitionBy, int N) {
         try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, PRODUCT, partitionBy)
@@ -3439,7 +3440,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private long populateTable0(FilesFacade ff, int N) throws NumericException {
         try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, PRODUCT, metrics)) {
@@ -3477,7 +3478,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, name, metrics)) {
@@ -3523,7 +3524,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, name, metrics)) {
@@ -3580,7 +3581,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -3616,7 +3617,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -3650,7 +3651,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -3718,7 +3719,7 @@ public class TableWriterTest extends AbstractCairoTest {
         long blob = Unsafe.malloc(blobLen, MemoryTag.NATIVE_DEFAULT);
         try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return TableWriterTest.FF;
             }
         }, "all", metrics)) {
@@ -3786,7 +3787,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try {
                 newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
                 }, PRODUCT, metrics).close();
@@ -3944,7 +3945,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, PRODUCT, metrics)) {
@@ -4056,7 +4057,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, PRODUCT, metrics)) {
@@ -4138,7 +4139,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try {
                 newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
                 }, "all", metrics).close();
@@ -4284,7 +4285,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, PRODUCT, metrics)) {
@@ -4304,7 +4305,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             }, PRODUCT, metrics)) {
@@ -4327,7 +4328,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -4358,7 +4359,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
