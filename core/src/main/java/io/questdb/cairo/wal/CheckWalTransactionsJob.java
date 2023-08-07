@@ -52,8 +52,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
     private long lastProcessedCount = 0;
-    private Path threadLocalPath;
     private RenameTrackingMetadataService renameTrackingMetadataService = new RenameTrackingMetadataService();
+    private Path threadLocalPath;
 
 
     public CheckWalTransactionsJob(CairoEngine engine) {
@@ -84,33 +84,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             engine.notifyWalTxnCommitted(tableToken);
         } else {
             if (TableUtils.isInvisibleTempTableName(tableToken.getTableName(), engine.getConfiguration().getTempTablePrefix())) {
-                LOG.info().$("attempting to apply deferred table rename [name=").utf8(tableToken.getTableName()).I$();
-
-                // Table name is temporary, because the real table name was occupied by another one at the point of creation
-                // Rename the table to the correct name.
-                renameTrackingMetadataService.tableName = TableUtils.getTableNameFromDirName(tableToken.getDirName());
-                try (TableMetadataChangeLog metaChangeCursor = engine.getTableSequencerAPI().getMetadataChangeLog(tableToken, 0)) {
-                    while (metaChangeCursor.hasNext()) {
-                        TableMetadataChange change = metaChangeCursor.next();
-                        change.apply(renameTrackingMetadataService, true);
-                    }
-                }
-
-                TableToken updatedTableToken = tableToken.renamed(Chars.toString(renameTrackingMetadataService.tableName));
-                try {
-                    engine.applyTableRename(tableToken, updatedTableToken);
-                    LOG.info().$("successfully applied deferred table rename [from=").utf8(tableToken.getTableName())
-                            .$(", to=").utf8(updatedTableToken.getTableName())
-                            .$(", tableDir=").utf8(tableToken.getDirName())
-                            .I$();
-                    tableToken = updatedTableToken;
-                } catch (CairoException e) {
-                    // In most cases it's expected, the table name can be still occupied by another table
-                    LOG.info().$("could not apply deferred table rename [from=").utf8(tableToken.getTableName())
-                            .$(", to=").utf8(updatedTableToken.getTableName())
-                            .$(", error=").$(e.getFlyweightMessage())
-                            .I$();
-                }
+                tableToken = tryRenameToReadTableName(tableToken);
             }
 
             if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
@@ -144,6 +118,38 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         checkMissingWalTransactions();
         lastProcessedCount = unpublishedWalTxnCount;
         return true;
+    }
+
+    @NotNull
+    private TableToken tryRenameToReadTableName(TableToken tableToken) {
+        LOG.info().$("attempting to apply deferred table rename [name=").utf8(tableToken.getTableName()).I$();
+
+        // Table name is temporary, because the real table name was occupied by another one at the point of creation
+        // Rename the table to the correct name.
+        renameTrackingMetadataService.tableName = TableUtils.getTableNameFromDirName(tableToken.getDirName());
+        try (TableMetadataChangeLog metaChangeCursor = engine.getTableSequencerAPI().getMetadataChangeLog(tableToken, 0)) {
+            while (metaChangeCursor.hasNext()) {
+                TableMetadataChange change = metaChangeCursor.next();
+                change.apply(renameTrackingMetadataService, true);
+            }
+        }
+
+        TableToken updatedTableToken = tableToken.renamed(Chars.toString(renameTrackingMetadataService.tableName));
+        try {
+            engine.applyTableRename(tableToken, updatedTableToken);
+            LOG.info().$("successfully applied deferred table rename [from=").utf8(tableToken.getTableName())
+                    .$(", to=").utf8(updatedTableToken.getTableName())
+                    .$(", tableDir=").utf8(tableToken.getDirName())
+                    .I$();
+            tableToken = updatedTableToken;
+        } catch (CairoException e) {
+            // In most cases it's expected, the table name can be still occupied by another table
+            LOG.info().$("could not apply deferred table rename [from=").utf8(tableToken.getTableName())
+                    .$(", to=").utf8(updatedTableToken.getTableName())
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .I$();
+        }
+        return tableToken;
     }
 
     private class RenameTrackingMetadataService implements MetadataServiceStub {
