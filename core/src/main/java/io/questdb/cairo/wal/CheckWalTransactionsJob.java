@@ -77,7 +77,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
-    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long seqTxn) {
+    public void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
         if (!tablesToCheck.isEmpty() && !tablesToCheck.contains(tableToken)) {
             return;
         }
@@ -161,7 +161,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         return tableToken;
     }
 
-    private class RenameTrackingMetadataService implements MetadataServiceStub {
+    private static class RenameTrackingMetadataService implements MetadataServiceStub {
         private CharSequence tableName;
 
         @Override
