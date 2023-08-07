@@ -85,6 +85,104 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4StrNetmask() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "255.255.255.240\n",
+                "select netmask('68.11.22.1/28')"
+        );
+    }
+
+    @Test
+    public void testIPv4StrNetmaskNull() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "\n",
+                "select netmask('68.11.22.1/33')"
+        );
+    }
+
+    @Test
+    public void testIPv4StrBadStr() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "\n",
+                "select netmask('bdfsir/33')"
+        );
+    }
+
+    @Test
+    public void testIPv4Netmask() throws Exception {
+        assertQuery(
+                "netmask\n" +
+                        "255.255.254.0\n" +
+                        "254.0.0.0\n" +
+                        "255.255.255.255\n" +
+                        "255.255.255.252\n" +
+                        "255.255.255.254\n" +
+                        "255.224.0.0\n" +
+                        "248.0.0.0\n" +
+                        "224.0.0.0\n" +
+                        "255.255.255.255\n" +
+                        "255.255.255.240\n" +
+                        "255.255.0.0\n" +
+                        "\n" +
+                        "255.255.255.254\n" +
+                        "255.255.255.128\n" +
+                        "255.255.255.248\n" +
+                        "255.255.0.0\n" +
+                        "255.255.255.0\n" +
+                        "255.255.252.0\n" +
+                        "255.255.255.128\n" +
+                        "255.255.255.192\n" +
+                        "255.192.0.0\n" +
+                        "255.192.0.0\n" +
+                        "255.255.255.0\n" +
+                        "255.255.248.0\n" +
+                        "255.255.248.0\n" +
+                        "\n" +
+                        "254.0.0.0\n" +
+                        "255.255.255.240\n" +
+                        "255.255.248.0\n" +
+                        "255.255.255.192\n" +
+                        "255.224.0.0\n" +
+                        "255.192.0.0\n" +
+                        "255.255.255.0\n" +
+                        "255.255.252.0\n" +
+                        "248.0.0.0\n" +
+                        "255.255.255.240\n" +
+                        "255.255.255.192\n" +
+                        "255.255.224.0\n" +
+                        "255.255.254.0\n" +
+                        "255.0.0.0\n" +
+                        "255.255.128.0\n" +
+                        "255.255.255.0\n" +
+                        "255.255.255.128\n" +
+                        "255.255.255.255\n" +
+                        "248.0.0.0\n" +
+                        "255.252.0.0\n" +
+                        "255.240.0.0\n" +
+                        "255.255.255.255\n" +
+                        "255.248.0.0\n" +
+                        "255.255.255.0\n",
+                "select netmask(ip, bits) from test",
+                "create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,33,0) bits," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+
+
+    @Test
     public void testCaseIPv41() throws Exception {
         assertQuery(
                 "ip\tbytes\tcase\n" +
