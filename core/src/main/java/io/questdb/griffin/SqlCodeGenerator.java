@@ -143,8 +143,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
-        this.jitIRMem = Vm.getCARWInstance(configuration.getSqlJitIRMemoryPageSize(),
-                configuration.getSqlJitIRMemoryMaxPages(), MemoryTag.NATIVE_SQL_COMPILER
+        this.jitIRMem = Vm.getCARWInstance(
+                configuration.getSqlJitIRMemoryPageSize(),
+                configuration.getSqlJitIRMemoryMaxPages(),
+                MemoryTag.NATIVE_SQL_COMPILER
         );
         // Pre-touch JIT IR memory to avoid false positive memory leak detections.
         jitIRMem.putByte((byte) 0);
