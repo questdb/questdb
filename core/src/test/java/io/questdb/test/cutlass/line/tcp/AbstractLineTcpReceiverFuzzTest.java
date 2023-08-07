@@ -195,14 +195,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     throw new AssertionError("Table: " + table.getName(), e);
                 }
             } else {
-                    final String sql = tableName + " where timestamp > " + timestampMark;
-                    try (RecordCursorFactory factory = select(sql)) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                                    .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
-                            assertCursorTwoPass(expected, cursor, metadata);
-                        }
+                final String sql = tableName + " where timestamp > " + timestampMark;
+                try (RecordCursorFactory factory = select(sql)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                                .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
+                        assertCursorTwoPass(expected, cursor, metadata);
                     }
+                }
             }
         }
     }
@@ -330,23 +330,23 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             }
         }
 
-            final String sql = tableName + " where timestamp > " + timestampMark;
-            try (RecordCursorFactory factory = select(sql)) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                            .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
-                    return table.size() <= cursor.size();
-                }
-            } catch (SqlException ex) {
-                if (ex.getFlyweightMessage().toString().contains("table does not exist")
-                        || ex.getFlyweightMessage().toString().contains("table directory is of unknown format")) {
-                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                            .$(", table.size(): ").$(table.size()).$(", cursor.size(): table does not exist").$();
-                    return table.size() <= 0;
-                } else {
-                    throw ex;
-                }
+        final String sql = tableName + " where timestamp > " + timestampMark;
+        try (RecordCursorFactory factory = select(sql)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                        .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
+                return table.size() <= cursor.size();
             }
+        } catch (SqlException ex) {
+            if (ex.getFlyweightMessage().toString().contains("table does not exist")
+                    || ex.getFlyweightMessage().toString().contains("table directory is of unknown format")) {
+                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                        .$(", table.size(): ").$(table.size()).$(", cursor.size(): table does not exist").$();
+                return table.size() <= 0;
+            } else {
+                throw ex;
+            }
+        }
     }
 
     protected void clearTables() {
@@ -419,8 +419,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         Assert.assertEquals(0, failureCounter.get());
     }
 
-    void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
-                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace) {
+    void initFuzzParameters(
+            int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
+            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace
+    ) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
